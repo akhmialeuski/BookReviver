@@ -119,21 +119,21 @@ class TestPageSide:
         :param fx_sided_kit: The processing kit with the step that reads the side.
         :type fx_sided_kit: ProcessingKit
         """
-        actor, book_record = await fx_sided_kit.seed_record()
+        actor, book_id = await fx_sided_kit.seed_book()
         pages = []
         for order_key in ('b0', 'b1'):
-            page, _ = await fx_sided_kit.seed_scan_page(book_record, order_key=order_key)
-            await fx_sided_kit.seed_base_version(book_record.id, page)
+            page, _ = await fx_sided_kit.seed_scan_page(book_id, order_key=order_key)
+            await fx_sided_kit.seed_base_version(book_id, page)
             pages.append(page)
-        await run_stage(fx_sided_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        before = [await head_of(book_record.id, page, databases=fx_sided_kit.databases) for page in pages]
-        newcomer, _ = await fx_sided_kit.seed_scan_page(book_record, order_key='a0')
-        await fx_sided_kit.seed_base_version(book_record.id, newcomer)
+        await run_stage(fx_sided_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        before = [await head_of(book_id, page, databases=fx_sided_kit.databases) for page in pages]
+        newcomer, _ = await fx_sided_kit.seed_scan_page(book_id, order_key='a0')
+        await fx_sided_kit.seed_base_version(book_id, newcomer)
         # The second run names the pages, since a run of the whole book leaves out those whose result is fresh, and the
         # newcomer was added with no change of the stage of the others
         again = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
-        await run_stage(fx_sided_kit, actor, book_record, again)
-        after = [await head_of(book_record.id, page, databases=fx_sided_kit.databases) for page in pages]
+        await run_stage(fx_sided_kit, actor, book_id, again)
+        after = [await head_of(book_id, page, databases=fx_sided_kit.databases) for page in pages]
         expect([version.data[SIDE_KEY] for version in before] == [PageSide.RIGHT.value, PageSide.LEFT.value])
         expect([version.data[SIDE_KEY] for version in after] == [PageSide.LEFT.value, PageSide.RIGHT.value])
         expect(all(old.id != new.id for old, new in zip(before, after, strict=True)))

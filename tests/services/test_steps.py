@@ -31,10 +31,10 @@ from tests.helpers.builders import (
     EPOCH,
     make_book_tools,
     make_page,
-    make_record,
     make_scan,
     make_source,
     new_account_id,
+    new_book_id,
 )
 from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
@@ -87,7 +87,7 @@ class Rig:
         :type files: BookFileStores
         """
         self.keys = BookKeys()
-        book_id = make_record().id
+        book_id = new_book_id()
         self.book = Book(
             book_id,
             new_account_id(),

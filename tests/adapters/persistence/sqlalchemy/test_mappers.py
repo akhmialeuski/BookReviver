@@ -123,14 +123,9 @@ class TestBookRecordMapper:
         book_record = make_record()
         described = evolve(book_record, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS)
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
-        await (
-            fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(described))
-        )
-        assert (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
-            == described
-        )
+        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(described))
+        assert await fx_databases().open(book_id).read(lambda repos: repos.book_record.get()) == described
 
     async def test_lists_are_stored_as_json_of_plain_values(self) -> None:
         """Verify contributors and identifiers become lists of objects holding role and scheme values, not members."""
@@ -162,7 +157,6 @@ class TestPageMapper:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=11)
         page = evolve(
@@ -175,10 +169,10 @@ class TestPageMapper:
             updated_at=EPOCH + timedelta(minutes=5),
         )
         uow = fx_uow()
-        await store_book(
-            uow, book_record, page, sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
+        book_id = await store_book(
+            uow, make_record(), page, sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
         )
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.pages.get(page.id)) == page
+        assert await fx_databases().open(book_id).read(lambda repos: repos.pages.get(page.id)) == page
 
 
 class TestPageVersionMapper:
@@ -207,7 +201,6 @@ class TestPageVersionMapper:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
         base = make_page_version(page_id=page.id)
         version = evolve(
@@ -222,10 +215,10 @@ class TestPageVersionMapper:
             state=VersionState.READY,
         )
         uow = fx_uow()
-        await store_book(uow, book_record, page, versions=[base, version], owner=fx_owner_id, databases=fx_databases())
-        assert (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.get(version.id)) == version
+        book_id = await store_book(
+            uow, make_record(), page, versions=[base, version], owner=fx_owner_id, databases=fx_databases()
         )
+        assert await fx_databases().open(book_id).read(lambda repos: repos.page_versions.get(version.id)) == version
 
     @pytest.mark.parametrize(
         'transform',
@@ -255,13 +248,14 @@ class TestPageVersionMapper:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
         version = evolve(make_page_version(page_id=page.id), transform=transform)
         uow = fx_uow()
-        await store_book(uow, book_record, page, versions=[version], owner=fx_owner_id, databases=fx_databases())
+        book_id = await store_book(
+            uow, make_record(), page, versions=[version], owner=fx_owner_id, databases=fx_databases()
+        )
         assert (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.get(version.id))
+            await fx_databases().open(book_id).read(lambda repos: repos.page_versions.get(version.id))
         ).transform == transform
 
 
@@ -280,7 +274,6 @@ class TestSourceMapper:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = evolve(
             make_source(),
             kind=SourceKind.DJVU,
@@ -296,8 +289,10 @@ class TestSourceMapper:
         # The count is read from the scans of the source, so the source is stored with as many
         scans = [make_scan(source=source, number=number) for number in range(source.scan_count)]
         uow = fx_uow()
-        await store_book(uow, book_record, sources=[source], scans=scans, owner=fx_owner_id, databases=fx_databases())
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.sources.get(source.id)) == source
+        book_id = await store_book(
+            uow, make_record(), sources=[source], scans=scans, owner=fx_owner_id, databases=fx_databases()
+        )
+        assert await fx_databases().open(book_id).read(lambda repos: repos.sources.get(source.id)) == source
 
     @pytest.mark.parametrize(
         ('status', 'rejection'),
@@ -324,7 +319,6 @@ class TestSourceMapper:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = evolve(
             make_source(),
             kind=None,
@@ -335,8 +329,8 @@ class TestSourceMapper:
             detail=SOURCE_DETAIL,
         )
         uow = fx_uow()
-        await store_book(uow, book_record, sources=[source], owner=fx_owner_id, databases=fx_databases())
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.sources.get(source.id)) == source
+        book_id = await store_book(uow, make_record(), sources=[source], owner=fx_owner_id, databases=fx_databases())
+        assert await fx_databases().open(book_id).read(lambda repos: repos.sources.get(source.id)) == source
 
 
 class TestScanMapper:
@@ -354,7 +348,6 @@ class TestScanMapper:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scan = evolve(
             make_scan(source=source, number=11),
@@ -363,5 +356,7 @@ class TestScanMapper:
             renditions=Renditions(ready=True, version=3, full=Rendition.FULL_PNG),
         )
         uow = fx_uow()
-        await store_book(uow, book_record, sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases())
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.scans.get(scan.id)) == scan
+        book_id = await store_book(
+            uow, make_record(), sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
+        )
+        assert await fx_databases().open(book_id).read(lambda repos: repos.scans.get(scan.id)) == scan

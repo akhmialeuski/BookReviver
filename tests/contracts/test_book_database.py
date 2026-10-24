@@ -21,7 +21,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABL
 from bookreviver.domain.enums import ImagePolicy
 from bookreviver.domain.errors import NotFoundError
 from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import make_page, make_record
+from tests.helpers.builders import make_page, new_book_id
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,8 +51,8 @@ class TestChange:
         :param fx_book: Stored book the change belongs to.
         :type fx_book: Book
         """
-        database = fx_databases().open(fx_book.book_record.id)
-        received = await database.change(lambda _repos, book_record: book_record)
+        database = fx_databases().open(fx_book.book_id)
+        received = await database.change(lambda _repos, book_id: book_id)
         assert received == fx_book.book_record
 
     async def test_missing_book_raises_not_found_and_runs_no_work(self, fx_databases: BookDatabasesFactory) -> None:
@@ -61,10 +61,10 @@ class TestChange:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        missing = make_record()
+        missing_id = new_book_id()
         ran: list[bool] = []
-        database = fx_databases().open(missing.id)
-        with pytest.raises(NotFoundError, match=str(missing.id)):
+        database = fx_databases().open(missing_id)
+        with pytest.raises(NotFoundError, match=str(missing_id)):
             await database.change(lambda _repos, _book_record: ran.append(True))
         assert ran == []
 
@@ -79,9 +79,9 @@ class TestChange:
         :type fx_book: Book
         """
         changed = evolve(fx_book.book_record, image_policy=ImagePolicy.LOSSLESS)
-        first, second = fx_databases().open(fx_book.book_record.id), fx_databases().open(fx_book.book_record.id)
+        first, second = fx_databases().open(fx_book.book_id), fx_databases().open(fx_book.book_id)
         await first.change(lambda repos, _book_record: repos.book_record.update(changed))
-        received = await second.change(lambda _repos, book_record: book_record)
+        received = await second.change(lambda _repos, book_id: book_id)
         assert received == changed
 
     async def test_two_changes_that_read_and_write_one_page_keep_both_writes(
@@ -97,7 +97,7 @@ class TestChange:
         :param fx_book: Stored book both changes belong to.
         :type fx_book: Book
         """
-        book_id = fx_book.book_record.id
+        book_id = fx_book.book_id
         page = make_page()
         first, second = fx_databases().open(book_id), fx_databases().open(book_id)
         await first.change(lambda repos, _book_record: repos.pages.add(page))
@@ -142,9 +142,8 @@ class TestRead:
         :param fx_book: Stored book that is read.
         :type fx_book: Book
         """
-        book_record = fx_book.book_record
-        read = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
-        assert read == book_record
+        read = await fx_databases().open(fx_book.book_id).read(lambda repos: repos.book_record.get())
+        assert read == fx_book.book_record
 
     async def test_read_of_a_missing_book_raises_not_found_and_runs_no_work(
         self, fx_databases: BookDatabasesFactory
@@ -154,10 +153,10 @@ class TestRead:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        missing = make_record()
+        missing_id = new_book_id()
         ran: list[bool] = []
-        with pytest.raises(NotFoundError, match=str(missing.id)):
-            await fx_databases().open(missing.id).read(lambda _repos: ran.append(True))
+        with pytest.raises(NotFoundError, match=str(missing_id)):
+            await fx_databases().open(missing_id).read(lambda _repos: ran.append(True))
         assert ran == []
 
 
@@ -172,11 +171,11 @@ class TestVersionAndSnapshot:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        missing = make_record()
-        database = fx_databases().open(missing.id)
-        with pytest.raises(NotFoundError, match=str(missing.id)):
+        missing_id = new_book_id()
+        database = fx_databases().open(missing_id)
+        with pytest.raises(NotFoundError, match=str(missing_id)):
             await database.version()
-        with pytest.raises(NotFoundError, match=str(missing.id)):
+        with pytest.raises(NotFoundError, match=str(missing_id)):
             await database.snapshot()
 
     async def test_snapshot_is_a_database_file_that_holds_the_record_of_the_book(
@@ -191,7 +190,7 @@ class TestVersionAndSnapshot:
         :param tmp_path: Directory of the test, where the snapshot is written as a file.
         :type tmp_path: Path
         """
-        snapshot = await fx_databases().open(fx_book.book_record.id).snapshot()
+        snapshot = await fx_databases().open(fx_book.book_id).snapshot()
         copied = tmp_path / COPY_FILE
         copied.write_bytes(snapshot)
         with closing(sqlite3.connect(copied)) as copy:

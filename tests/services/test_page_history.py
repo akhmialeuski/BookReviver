@@ -79,28 +79,22 @@ async def step_key(kit: ProcessingKit, book_id: BookId, page: Page) -> PageStepK
     return await kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
 
 
-async def history_of(
-    kit: ProcessingKit, actor: Actor, book_record: BookRecord, key: PageStepKey
-) -> list[PageHistoryEntry]:
+async def history_of(kit: ProcessingKit, actor: Actor, book_id: BookId, key: PageStepKey) -> list[PageHistoryEntry]:
     """Read the changes of a step on a page as the history lists them, oldest first.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: The signed-in account.
     :type actor: Actor
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :returns: The changes.
     :rtype: list[PageHistoryEntry]
     """
     return list(
-        (
-            await kit.page_history().list(
-                open_for(actor, book_record.id, databases=kit.databases, files=kit.files), key
-            )
-        ).changes
+        (await kit.page_history().list(open_for(actor, book_id, databases=kit.databases, files=kit.files), key)).changes
     )
 
 
@@ -120,32 +114,32 @@ async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: BookDatab
     return None if state is None else state.edit
 
 
-async def has_files(kit: ProcessingKit, book_record: BookRecord, version: PageVersion) -> bool:
+async def has_files(kit: ProcessingKit, book_id: BookId, version: PageVersion) -> bool:
     """Tell whether the directory of a version is in the store of the derived files.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: The book owning the version.
-    :type book_record: BookRecord
+    :param book_id: The book owning the version.
+    :type book_id: BookId
     :param version: The version.
     :type version: PageVersion
     :returns: Whether the store has the directory.
     :rtype: bool
     """
     try:
-        async with kit.files.assets(book_record.id).readable(BookKeys().version_directory(version)):
+        async with kit.files.assets(book_id).readable(BookKeys().version_directory(version)):
             return True
     except NotFoundError:
         return False
 
 
 async def store_carried_batch(
-    book_record: BookRecord, keys: tuple[PageStepKey, ...], batch: ChangeBatchId, *, databases: BookDatabases
+    book_id: BookId, keys: tuple[PageStepKey, ...], batch: ChangeBatchId, *, databases: BookDatabases
 ) -> None:
     """Store the setting and the change that one carry-over batch writes on each of the pages of some steps.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param keys: The page, the stage and the step of each page the batch reached.
     :type keys: tuple[PageStepKey, ...]
     :param batch: The batch the changes belong to.
@@ -177,7 +171,7 @@ async def store_carried_batch(
                 )
             )
 
-    await databases.open(book_record.id).change(carry)
+    await databases.open(book_id).change(carry)
 
 
 class TestHistoryOfEdits:
@@ -193,12 +187,12 @@ class TestHistoryOfEdits:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        first = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        second = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, SECOND, None)
-        await fx_kit.edits().delete(fx_open_book(actor, book_record.id), key)
-        history = await history_of(fx_kit, actor, book_record, key)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        first = await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        second = await fx_kit.edits().save(fx_open_book(actor, book_id), key, SECOND, None)
+        await fx_kit.edits().delete(fx_open_book(actor, book_id), key)
+        history = await history_of(fx_kit, actor, book_id, key)
         expect([change.layer for change in history] == [StepLayer.HAND] * 3)
         expect(all(change.source is ChangeSource.USER for change in history))
         expect([change.before is None for change in history] == [True, False, False])
@@ -218,11 +212,11 @@ class TestHistoryOfEdits:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        assert len(await history_of(fx_kit, actor, book_record, key)) == 1
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        assert len(await history_of(fx_kit, actor, book_id, key)) == 1
 
     async def test_the_changes_of_a_page_list_only_for_its_step(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -234,13 +228,13 @@ class TestHistoryOfEdits:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, book_record.id, page)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), evolve(key, page_id=other.id), SECOND, None)
-        history = await history_of(fx_kit, actor, book_record, key)
-        elsewhere = await history_of(fx_kit, actor, book_record, evolve(key, step_id=StepId(uuid4())))
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        key = await step_key(fx_kit, book_id, page)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), evolve(key, page_id=other.id), SECOND, None)
+        history = await history_of(fx_kit, actor, book_id, key)
+        elsewhere = await history_of(fx_kit, actor, book_id, evolve(key, step_id=StepId(uuid4())))
         expect([change.page_id for change in history] == [page.id])
         expect(elsewhere == [])
         assert_expectations()
@@ -259,16 +253,13 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        [change] = await history_of(fx_kit, actor, book_record, key)
-        [undo] = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        history = await fx_kit.page_history().list(fx_open_book(actor, book_record.id), key)
-        expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key))
-            is None
-        )
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        [change] = await history_of(fx_kit, actor, book_id, key)
+        [undo] = await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        history = await fx_kit.page_history().list(fx_open_book(actor, book_id), key)
+        expect(await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key)) is None)
         expect(history.changes == (change, undo))
         expect((undo.source, undo.layer, undo.undoes) == (ChangeSource.UNDO, StepLayer.SETTINGS, change.id))
         expect((undo.before, undo.after) == (change.after, change.before))
@@ -285,23 +276,18 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGEST)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        after_one = await fx_open_book.databases.open(book_record.id).read(
-            lambda repos: repos.page_step_states.get(key)
-        )
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        nothing = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGEST)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        after_one = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.get(key))
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        nothing = await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
         expect(after_one.params == {STRENGTH_PARAMETER: STRONGER})
-        expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key))
-            is None
-        )
+        expect(await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key)) is None)
         expect(len(nothing) == 0)
-        expect(len(await history_of(fx_kit, actor, book_record, key)) == 4)
+        expect(len(await history_of(fx_kit, actor, book_id, key)) == 4)
         assert_expectations()
 
     async def test_a_saved_edit_is_taken_back_to_the_edit_before_it_or_to_none(
@@ -314,15 +300,15 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        first = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, SECOND, None)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        back = await stored_edit(book_record.id, key, databases=fx_open_book.databases)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        first = await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, SECOND, None)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        back = await stored_edit(book_id, key, databases=fx_open_book.databases)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
         expect(back is not None and (back.edit_hash, back.geometry) == (first.edit_hash, first.geometry))
-        expect(await stored_edit(book_record.id, key, databases=fx_open_book.databases) is None)
+        expect(await stored_edit(book_id, key, databases=fx_open_book.databases) is None)
         assert_expectations()
 
     async def test_a_deleted_edit_comes_back_and_the_settings_stay_as_they_are(
@@ -335,18 +321,15 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        saved = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        await fx_kit.edits().delete(fx_open_book(actor, book_record.id), key)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key))
-            is None
-        )
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        back = await stored_edit(book_record.id, key, databases=fx_open_book.databases)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        saved = await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        await fx_kit.edits().delete(fx_open_book(actor, book_id), key)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        expect(await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key)) is None)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        back = await stored_edit(book_id, key, databases=fx_open_book.databases)
         expect(back is not None and (back.edit_hash, back.geometry) == (saved.edit_hash, saved.geometry))
         assert_expectations()
 
@@ -358,9 +341,9 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
 
         def make_fresh(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Mark the record of the geometry stage fresh, as a run leaves it.
@@ -373,9 +356,9 @@ class TestUndo:
             record = repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
             repos.page_stages.save(evolve(record, state=StageState.FRESH))
 
-        await fx_open_book.databases.open(book_record.id).change(make_fresh)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        stored = await fx_open_book.databases.open(book_record.id).read(
+        await fx_open_book.databases.open(book_id).change(make_fresh)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
         assert stored.state is StageState.STALE
@@ -390,24 +373,22 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        [change] = await history_of(fx_kit, actor, book_record, key)
-        await fx_open_book.databases.open(book_record.id).change(
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        [change] = await history_of(fx_kit, actor, book_id, key)
+        await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.page_step_states.save(
                 make_page_step_state(page_id=page.id, step_id=key.step_id, params={'x': 1})
             ),
         )
         with pytest.raises(ConflictError):
-            await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, change.id)
+            await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, change.id)
         expect(
-            (
-                await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.get(key))
-            ).params
+            (await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.get(key))).params
             == {'x': 1}
         )
-        expect(await history_of(fx_kit, actor, book_record, key) == [change])
+        expect(await history_of(fx_kit, actor, book_id, key) == [change])
         assert_expectations()
 
     async def test_other_book_and_unknown_change_are_not_found(
@@ -420,15 +401,15 @@ class TestUndo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        _, other_record = await fx_kit.seed_record()
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        attempts = ((other_record, None), (book_record, PageHistoryEntryId(uuid4())))
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        _, other_record = await fx_kit.seed_book()
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        attempts = ((other_record, None), (book_id, PageHistoryEntryId(uuid4())))
         for book, change_id in attempts:
             with pytest.raises(NotFoundError):
-                await fx_kit.page_history().undo(fx_open_book(actor, book.id), key, change_id)
-        assert len(await history_of(fx_kit, actor, book_record, key)) == 1
+                await fx_kit.page_history().undo(fx_open_book(actor, book), key, change_id)
+        assert len(await history_of(fx_kit, actor, book_id, key)) == 1
 
 
 class TestUndoBackTo:
@@ -444,16 +425,16 @@ class TestUndoBackTo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        await PageValues(fx_kit, actor, book_record.id).set(key, FAILING_PARAMETER, NOT_FAILING)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, SECOND, None)
-        chosen = (await history_of(fx_kit, actor, book_record, key))[1]
-        undone = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, chosen.id)
-        state = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.get(key))
-        history = await fx_kit.page_history().list(fx_open_book(actor, book_record.id), key)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        await PageValues(fx_kit, actor, book_id).set(key, FAILING_PARAMETER, NOT_FAILING)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, SECOND, None)
+        chosen = (await history_of(fx_kit, actor, book_id, key))[1]
+        undone = await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, chosen.id)
+        state = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.get(key))
+        history = await fx_kit.page_history().list(fx_open_book(actor, book_id), key)
         expect([undo.undoes for undo in undone] == [change.id for change in reversed(history.changes[1:4])])
         expect(state.params == {STRENGTH_PARAMETER: STRONGER} and state.edit is None)
         expect([change.id for change in history.standing] == [history.changes[0].id])
@@ -470,14 +451,14 @@ class TestUndoBackTo:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        [change] = await history_of(fx_kit, actor, book_record, key)
-        [undo] = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        [change] = await history_of(fx_kit, actor, book_id, key)
+        [undo] = await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
         for gone in (change.id, undo.id):
             with pytest.raises(NotFoundError):
-                await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, gone)
+                await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, gone)
 
 
 class TestUndoOfABatch:
@@ -493,24 +474,21 @@ class TestUndoOfABatch:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, book_record.id, page)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        key = await step_key(fx_kit, book_id, page)
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
-        await store_carried_batch(book_record, (key, other_key), batch, databases=fx_open_book.databases)
-        undone = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
+        await store_carried_batch(book_id, (key, other_key), batch, databases=fx_open_book.databases)
+        undone = await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
         expect(sorted(undo.page_id for undo in undone) == sorted([page.id, other.id]))
         expect(len({undo.batch_id for undo in undone}) == 1 and undone[0].batch_id not in {None, batch})
+        expect(await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key)) is None)
         expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key))
+            await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(other_key))
             is None
         )
-        expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(other_key))
-            is None
-        )
-        expect(len(await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), other_key, None)) == 0)
+        expect(len(await fx_kit.page_history().undo(fx_open_book(actor, book_id), other_key, None)) == 0)
         assert_expectations()
 
     async def test_a_page_of_the_batch_that_changed_since_stops_the_whole_undo(
@@ -523,9 +501,9 @@ class TestUndoOfABatch:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, book_record.id, page)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        key = await step_key(fx_kit, book_id, page)
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
 
@@ -548,20 +526,16 @@ class TestUndoOfABatch:
                     )
                 )
 
-        await fx_open_book.databases.open(book_record.id).change(carry_then_change_one_page)
+        await fx_open_book.databases.open(book_id).change(carry_then_change_one_page)
         with pytest.raises(ConflictError):
-            await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
+            await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
         expect(
-            (
-                await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.get(key))
-            ).params
+            (await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.get(key))).params
             == {STRENGTH_PARAMETER: STRONGER}
         )
         expect(
             len(
-                await fx_open_book.databases.open(book_record.id).read(
-                    lambda repos: repos.page_history.list_for_page(page.id)
-                )
+                await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_history.list_for_page(page.id))
             )
             == 1
         )
@@ -581,23 +555,19 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, FIRST, None)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        written = len(await history_of(fx_kit, actor, book_record, key))
-        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, FIRST, None)
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        written = len(await history_of(fx_kit, actor, book_id, key))
+        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
         expect(cleared.changes == written == HISTORY)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
-        expect(await history_of(fx_kit, actor, book_record, key) == [])
+        expect(await history_of(fx_kit, actor, book_id, key) == [])
+        expect(await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key)) is None)
         expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key))
-            is None
-        )
-        expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_versions.find(version.id))
-            is None
+            await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_versions.find(version.id)) is None
         )
         assert_expectations()
 
@@ -611,11 +581,11 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
         )
-        stored = await fx_open_book.databases.open(book_record.id).read(
+        stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
         assert (stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0)
@@ -630,11 +600,11 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
         expect(not made[0].tiles_ready)
         queued = len(fx_kit.board.put_jobs)
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
         )
         cutting = fx_kit.board.put_jobs[queued:]
         expect([job.kind for job in cutting] == [JobKind.CUT_TILES])
@@ -651,16 +621,16 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
-        await fx_open_book.databases.open(book_record.id).change(
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
+        await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.page_versions.update(evolve(made[0], tiles_ready=True))
         )
         queued = len(fx_kit.board.put_jobs)
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
         )
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
         )
         expect(fx_kit.board.put_jobs[queued:] == [])
         assert_expectations()
@@ -675,9 +645,9 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
-        blank_recipe = await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, draft, RecipeKind.BLANK)
+        blank_recipe = await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, draft, RecipeKind.BLANK)
 
         def run_by_the_blank_recipe(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Record that the page was run by the recipe for blank pages.
@@ -690,11 +660,11 @@ class TestClear:
             record = repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
             repos.page_stages.save(evolve(record, recipe_id=blank_recipe.id))
 
-        await fx_open_book.databases.open(book_record.id).change(run_by_the_blank_recipe)
+        await fx_open_book.databases.open(book_id).change(run_by_the_blank_recipe)
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
         )
-        stored = await fx_open_book.databases.open(book_record.id).read(
+        stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
         expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
@@ -710,11 +680,11 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, _ = await ran_two_steps(fx_kit)
+        actor, book_id, page, step_ids, _ = await ran_two_steps(fx_kit)
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
         )
-        record = await fx_open_book.databases.open(book_record.id).read(
+        record = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))
         )
         expect(record is None)
@@ -730,11 +700,11 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
         key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        expect([await has_files(fx_kit, book_record, version) for version in made] == [True, True])
-        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        expect([await has_files(fx_kit, book_id, version) for version in made] == [True, True])
+        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
 
         def read_what_is_left(
             repos: BookRepositories,
@@ -752,12 +722,12 @@ class TestClear:
                 repos.page_step_states.list_for_step([page.id], Stage.GEOMETRY, key.step_id),
             )
 
-        remaining, changes, states = await fx_open_book.databases.open(book_record.id).read(read_what_is_left)
+        remaining, changes, states = await fx_open_book.databases.open(book_id).read(read_what_is_left)
         expect({version.id for version in cleared.versions} == {version.id for version in made})
         expect({version.id for version in remaining} == {made[0].input_id})
         expect(changes == [])
         expect(states == [])
-        expect([await has_files(fx_kit, book_record, version) for version in made] == [False, False])
+        expect([await has_files(fx_kit, book_id, version) for version in made] == [False, False])
         assert_expectations()
 
     async def test_the_versions_the_step_did_not_read_stay_with_those_of_other_pages_and_stages(
@@ -770,19 +740,19 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
         first, second = made
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        await fx_kit.seed_base_version(book_record.id, other)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        await fx_kit.seed_base_version(book_id, other)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         before = {
             version.id
-            for version in await fx_open_book.databases.open(book_record.id).read(
+            for version in await fx_open_book.databases.open(book_id).read(
                 lambda repos: repos.page_versions.list_for_page(other.id)
             )
         }
         await fx_kit.page_history().clear(
-            fx_open_book(actor, book_record.id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
+            fx_open_book(actor, book_id), PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
         )
 
         def read_what_stays(repos: BookRepositories) -> tuple[Sequence[PageVersion], Sequence[PageVersion]]:
@@ -798,12 +768,12 @@ class TestClear:
                 repos.page_versions.list_for_page(other.id),
             )
 
-        of_page, of_other = await fx_open_book.databases.open(book_record.id).read(read_what_stays)
+        of_page, of_other = await fx_open_book.databases.open(book_id).read(read_what_stays)
         kept = {version.id for version in of_page}
         expect(second.id not in kept and first.id in kept and first.input_id in kept)
         expect(len(before) > 1)
         expect({version.id for version in of_other} == before)
-        expect(await has_files(fx_kit, book_record, first))
+        expect(await has_files(fx_kit, book_id, first))
         assert_expectations()
 
     async def test_a_later_stage_that_read_the_step_loses_its_result_and_its_record(
@@ -816,15 +786,15 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, step_ids, made = await ran_two_steps(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        later = await fx_open_book.databases.open(book_record.id).read(
+        actor, book_id, page, step_ids, made = await ran_two_steps(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        later = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
         )
         assert later.head_version_id is not None
         head_id = later.head_version_id
         key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
-        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
+        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
 
         def read_what_is_left(
             repos: BookRepositories,
@@ -843,9 +813,7 @@ class TestClear:
                 repos.page_versions.find(made[0].id),
             )
 
-        later_version, later_record, first_version = await fx_open_book.databases.open(book_record.id).read(
-            read_what_is_left
-        )
+        later_version, later_record, first_version = await fx_open_book.databases.open(book_id).read(read_what_is_left)
         expect(head_id in {version.id for version in cleared.versions})
         expect(later_version is None)
         expect(later_record is None)
@@ -864,20 +832,19 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
         monkeypatch.setattr(
-            fx_kit.files.assets(book_record.id),
+            fx_kit.files.assets(book_id),
             'delete_prefix',
             AsyncMock(side_effect=OSError('The disk is read only.')),
         )
-        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
+        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
         expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_versions.find(version.id))
-            is None
+            await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_versions.find(version.id)) is None
         )
-        expect(await has_files(fx_kit, book_record, version))
+        expect(await has_files(fx_kit, book_id, version))
         assert_expectations()
 
     async def test_a_step_with_nothing_on_the_page_is_a_clear_of_nothing(
@@ -890,11 +857,11 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, _ = await fx_kit.seed_scan_page(book_record)
-        key = await step_key(fx_kit, book_record.id, page)
+        actor, book_id = await fx_kit.seed_book()
+        page, _ = await fx_kit.seed_scan_page(book_id)
+        key = await step_key(fx_kit, book_id, page)
         fx_kit.events.published.clear()
-        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
+        cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
         expect((cleared.changes, cleared.versions) == (0, ()))
         expect(not fx_kit.events.published)
         assert_expectations()
@@ -909,19 +876,19 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, book_record.id, page)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        key = await step_key(fx_kit, book_id, page)
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
-        await store_carried_batch(book_record, (key, other_key), batch, databases=fx_open_book.databases)
-        await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
-        kept = await history_of(fx_kit, actor, book_record, other_key)
-        undone = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), other_key, None)
+        await store_carried_batch(book_id, (key, other_key), batch, databases=fx_open_book.databases)
+        await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
+        kept = await history_of(fx_kit, actor, book_id, other_key)
+        undone = await fx_kit.page_history().undo(fx_open_book(actor, book_id), other_key, None)
         expect(len(kept) == 1 and kept[0].batch_id == batch)
         expect([undo.page_id for undo in undone] == [other.id])
         expect(
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(other_key))
+            await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(other_key))
             is None
         )
         assert_expectations()
@@ -934,13 +901,13 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        _, other_record = await fx_kit.seed_record()
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        _, other_record = await fx_kit.seed_book()
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         with pytest.raises(NotFoundError):
-            await fx_kit.page_history().clear(fx_open_book(actor, other_record.id), key)
-        assert len(await history_of(fx_kit, actor, book_record, key)) == 1
+            await fx_kit.page_history().clear(fx_open_book(actor, other_record), key)
+        assert len(await history_of(fx_kit, actor, book_id, key)) == 1
 
     async def test_a_clear_is_refused_while_the_book_is_processing_something_and_deletes_nothing(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -952,20 +919,20 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        written = len(await history_of(fx_kit, actor, book_record, key))
-        await fx_kit.service().start_collection(fx_open_book(actor, book_record.id))
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        written = len(await history_of(fx_kit, actor, book_id, key))
+        await fx_kit.service().start_collection(fx_open_book(actor, book_id))
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
-        state, kept = await fx_open_book.databases.open(book_record.id).read(
+            await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
+        state, kept = await fx_open_book.databases.open(book_id).read(
             lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )
-        expect(len(await history_of(fx_kit, actor, book_record, key)) == written)
+        expect(len(await history_of(fx_kit, actor, book_id, key)) == written)
         expect(state is not None)
         expect(kept is not None)
-        expect(await has_files(fx_kit, book_record, version))
+        expect(await has_files(fx_kit, book_id, version))
         assert_expectations()
 
     @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
@@ -984,22 +951,22 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         # The preview is of another page, so the version it makes while its step is held is none of those the clear deletes
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        await fx_kit.seed_base_version(book_record.id, other)
-        async with previewed(fx_kit, actor, book_record, other, state) as preview:
-            cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        await fx_kit.seed_base_version(book_id, other)
+        async with previewed(fx_kit, actor, book_id, other, state) as preview:
+            cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
         announced = [
             (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
         ]
-        left = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key))
+        left = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key))
         expect(fx_kit.board.get(preview.id).state is JobState.CANCELLED)
         expect((preview.id, JobState.CANCELLED) in announced)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
-        expect(await history_of(fx_kit, actor, book_record, key) == [])
+        expect(await history_of(fx_kit, actor, book_id, key) == [])
         expect(left is None)
         assert_expectations()
 
@@ -1018,20 +985,16 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        written = len(await history_of(fx_kit, actor, book_record, key))
-        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
-            book_record.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
-        )
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        written = len(await history_of(fx_kit, actor, book_id, key))
+        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(book_id, active, StageRun(stage=Stage.GEOMETRY).to_map())
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
-        kept = await fx_open_book.databases.open(book_record.id).read(
-            lambda repos: repos.page_versions.find(version.id)
-        )
+            await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
+        kept = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_versions.find(version.id))
         expect(fx_kit.board.get(job.id).state is JobState.QUEUED)
-        expect(len(await history_of(fx_kit, actor, book_record, key)) == written)
+        expect(len(await history_of(fx_kit, actor, book_id, key)) == written)
         expect(kept is not None)
         assert_expectations()
 
@@ -1045,11 +1008,11 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(book_record.id, JobKind.PREVIEW_STEP, {})
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(book_id, JobKind.PREVIEW_STEP, {})
         with pytest.raises(NotFoundError):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), evolve(key, step_id=StepId(uuid4())))
+            await fx_kit.page_history().clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
         assert fx_kit.board.get(preview.id).state is JobState.QUEUED
 
     async def test_a_step_that_no_recipe_of_the_stage_has_is_not_found_and_deletes_nothing(
@@ -1062,15 +1025,15 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, book_record.id, page)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         with pytest.raises(NotFoundError):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), evolve(key, step_id=StepId(uuid4())))
-        state, kept = await fx_open_book.databases.open(book_record.id).read(
+            await fx_kit.page_history().clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
+        state, kept = await fx_open_book.databases.open(book_id).read(
             lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )
-        expect(len(await history_of(fx_kit, actor, book_record, key)) == 1)
+        expect(len(await history_of(fx_kit, actor, book_id, key)) == 1)
         expect(state is not None)
         expect(kept is not None)
         assert_expectations()

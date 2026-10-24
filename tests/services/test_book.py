@@ -58,7 +58,7 @@ class TestOverview:
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
         pages = [make_page(order_key=f'a{scan.number}', scan=scan) for scan in scans]
         # A duplicate scan kept out of the book is no page of it
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
             book_record,
             *pages[:-1],
@@ -69,7 +69,7 @@ class TestOverview:
             databases=fx_open_book.databases,
         )
 
-        overview = await fx_open_book(fx_actor, book_record.id).overview()
+        overview = await fx_open_book(fx_actor, book_id).overview()
 
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
@@ -94,10 +94,9 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
 
-        changed = await fx_open_book(fx_actor, book_record.id).update(BookChanges(image_policy=ImagePolicy.LOSSLESS))
+        changed = await fx_open_book(fx_actor, book_id).update(BookChanges(image_policy=ImagePolicy.LOSSLESS))
 
         assert changed.book_record.image_policy == ImagePolicy.LOSSLESS
 
@@ -116,12 +115,12 @@ class TestUpdate:
         :type fx_tools: BookTools
         """
         book_record = make_record(title='Old')
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-        book = evolve(fx_open_book(fx_actor, book_record.id), tools=fx_tools)
+        book_id = await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book = evolve(fx_open_book(fx_actor, book_id), tools=fx_tools)
 
         overview = await book.update(BookChanges(details=BookDetailsChanges(title=NEW_TITLE)))
 
-        stored = await book.read(lambda repos: repos.book_record.get(book.id))
+        stored = await book.read(lambda repos: repos.book_record.get())
         expect(stored == overview.book_record)
         expect(stored.details == BookDetails(title=NEW_TITLE))
         expect((stored.created_at, stored.updated_at) == (book_record.created_at, CHANGED_AT))

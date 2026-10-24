@@ -202,14 +202,14 @@ class ProcessingKit:
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
     async def recipe_of(
-        self, actor: Actor, book_record: BookRecord, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
+        self, actor: Actor, book_id: BookId, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
     ) -> Recipe:
         """Read the recipe of one kind of a stage of a book, which the first read creates with the others.
 
         :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Record of the book whose recipe is read.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book whose recipe is read.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page, text unless given.
@@ -218,7 +218,7 @@ class ProcessingKit:
         :rtype: Recipe
         """
         listed = await self.service().recipes(
-            open_for(actor, book_record.id, databases=self.databases, files=self.files),
+            open_for(actor, book_id, databases=self.databases, files=self.files),
             stage,
             SliceRequest(limit=len(RecipeKind)),
         )
@@ -227,7 +227,7 @@ class ProcessingKit:
     async def edit_recipe(
         self,
         actor: Actor,
-        book_record: BookRecord,
+        book_id: BookId,
         stage: Stage,
         draft: RecipeDraft,
         kind: RecipeKind = RecipeKind.TEXT,
@@ -236,8 +236,8 @@ class ProcessingKit:
 
         :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Record of the book whose recipe is changed.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book whose recipe is changed.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param draft: The new steps.
@@ -247,9 +247,9 @@ class ProcessingKit:
         :returns: The recipe as stored.
         :rtype: Recipe
         """
-        recipe = await self.recipe_of(actor, book_record, stage, kind)
+        recipe = await self.recipe_of(actor, book_id, stage, kind)
         return await self.service().save_recipe(
-            open_for(actor, book_record.id, databases=self.databases, files=self.files),
+            open_for(actor, book_id, databases=self.databases, files=self.files),
             RecipeKey(stage, recipe.id),
             draft,
         )
@@ -375,22 +375,23 @@ class ProcessingKit:
         """
         return self._new_uow()
 
-    async def seed_record(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookRecord]:
+    async def seed_book(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookId]:
         """Commit a new account and a book owned by it.
 
         :param image_policy: Image policy of the book.
         :type image_policy: ImagePolicy
-        :returns: The actor owning the book, and the record of the book.
-        :rtype: tuple[Actor, BookRecord]
+        :returns: The actor owning the book, and the identifier of the book.
+        :rtype: tuple[Actor, BookId]
         """
         owner = await commit_account(self.database)
-        book_record = evolve(make_record(), image_policy=image_policy)
-        await store_book(self.uow(), book_record, owner=owner, databases=self.databases)
-        return Actor(account_id=owner), book_record
+        book_id = await store_book(
+            self.uow(), evolve(make_record(), image_policy=image_policy), owner=owner, databases=self.databases
+        )
+        return Actor(account_id=owner), book_id
 
     async def seed_scan_page(
         self,
-        book_record: BookRecord,
+        book_id: BookId,
         *,
         order_key: str = 'a0',
         image: bytes = IMAGE_CONTENT,
@@ -398,8 +399,8 @@ class ProcessingKit:
     ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
-        :param book_record: Record of the book owning the page.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book owning the page.
+        :type book_id: BookId
         :param order_key: Order key of the page.
         :type order_key: str
         :param image: Content of the ``full`` and the preview image of the scan.
@@ -425,10 +426,10 @@ class ProcessingKit:
             repos.scans.add(scan)
             repos.pages.add(page)
 
-        await self.databases.open(book_record.id).change(add_scan_page)
+        await self.databases.open(book_id).change(add_scan_page)
         keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-            async with self.files.assets(book_record.id).writable(keys.scan_rendition(scan, rendition)) as target:
+            async with self.files.assets(book_id).writable(keys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
         return page, scan
 

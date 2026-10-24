@@ -18,7 +18,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.entities import LibraryEntry
-from tests.helpers.builders import EPOCH, make_record
+from tests.helpers.builders import EPOCH, make_record, new_book_id
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -138,9 +138,9 @@ class TestSqlDatabase:
         book_record = make_record()
         renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(renamed))
-        stored = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
+        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
         assert stored.updated_at == renamed.updated_at
 
     async def test_url_of_the_async_driver_gets_the_driver_of_the_standard_library(self, tmp_path: Path) -> None:
@@ -288,7 +288,7 @@ class TestSqliteTransactions:
         :param fx_owner_id: Committed account the entry of the change names.
         :type fx_owner_id: AccountId
         """
-        entry = LibraryEntry(book_id=make_record().id, owner_id=fx_owner_id, added_at=EPOCH)
+        entry = LibraryEntry(book_id=new_book_id(), owner_id=fx_owner_id, added_at=EPOCH)
         uow = fx_uow()
         path = fx_database.engine.url.database
         assert path is not None
@@ -313,7 +313,7 @@ class TestSqliteTransactions:
         book_record = make_record()
         renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(renamed))
-        held = await fx_databases().open(book_record.id).change(lambda _repos, current: current)
+        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        held = await fx_databases().open(book_id).change(lambda _repos, current: current)
         assert held.details.title == NEW_TITLE

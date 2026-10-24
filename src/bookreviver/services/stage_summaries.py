@@ -186,7 +186,7 @@ class StageSummaries:
         :rtype: BookOverview
         """
         tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
-        jobs = self._board.jobs_of({overview.book_record.id}, active=True)
+        jobs = self._board.jobs_of({overview.book_id}, active=True)
         running = {job.stage for job in jobs if job.stage is not None}
         return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
 

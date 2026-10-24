@@ -118,9 +118,7 @@ class Book:
         :raises NotFoundError: If the book is not stored.
         """
         return await self.read(
-            lambda repos: self.tools.stages.with_progress(
-                repos, repos.book_record.overview(repos.book_record.get(self.id))
-            )
+            lambda repos: self.tools.stages.with_progress(repos, repos.book_record.overview(self.id))
         )
 
     async def update(self, changes: BookChanges) -> BookOverview:
@@ -168,7 +166,7 @@ class Book:
             :returns: The window of the stages in the order of the pipeline, and the number of all the stages.
             :rtype: Slice[StageSummary]
             """
-            summaries = self.tools.stages.of_book(repos, repos.book_record.overview(repos.book_record.get(self.id)))
+            summaries = self.tools.stages.of_book(repos, repos.book_record.overview(self.id))
             return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
 
         return await self.read(work)
@@ -199,6 +197,6 @@ class Book:
         :rtype: ArchivedBook
         :raises NotFoundError: If the book is not stored.
         """
-        book_record = await self.read(lambda repos: repos.book_record.get(self.id))
+        book_record = await self.read(lambda repos: repos.book_record.get())
         database = await self.snapshot()
         return ArchivedBook(title=book_record.details.title, pieces=self.tools.archive.export(self.id, database))

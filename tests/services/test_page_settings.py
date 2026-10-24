@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from unittest.mock import MagicMock
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import Step
@@ -71,24 +71,22 @@ GEOMETRY_RUN: StageRun = StageRun(stage=Stage.GEOMETRY)
 ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
 
 
-async def step_of(kit: ProcessingKit, book_record: BookRecord) -> Step:
+async def step_of(kit: ProcessingKit, book_id: BookId) -> Step:
     """Read the step of the active geometry recipe of the book, which runs the fake processor.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :returns: The first step of the recipe.
     :rtype: Step
     """
     return (
-        await kit.parts(kit.uow()).recipes.of_kind(
-            await open_book(kit, book_record.id), Stage.GEOMETRY, RecipeKind.TEXT
-        )
+        await kit.parts(kit.uow()).recipes.of_kind(await open_book(kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
     ).steps[0]
 
 
-async def ran_book(kit: ProcessingKit, *, count: int = 4) -> tuple[Actor, BookRecord, list[Page], StepId]:
+async def ran_book(kit: ProcessingKit, *, count: int = 4) -> tuple[Actor, BookId, list[Page], StepId]:
     """Seed a book of text pages in order, run the geometry stage on all of them, and find its step.
 
     The pages are at the places 1 to ``count`` of the book, so the first is an odd page and the second an even one.
@@ -100,12 +98,12 @@ async def ran_book(kit: ProcessingKit, *, count: int = 4) -> tuple[Actor, BookRe
     :returns: The actor, the book, the pages and the identifier of the step of the geometry recipe.
     :rtype: tuple[Actor, BookRecord, list[Page], StepId]
     """
-    actor, book_record = await kit.seed_record()
-    pages = [(await kit.seed_scan_page(book_record, order_key=f'a{number}'))[0] for number in range(count)]
+    actor, book_id = await kit.seed_book()
+    pages = [(await kit.seed_scan_page(book_id, order_key=f'a{number}'))[0] for number in range(count)]
     for page in pages:
-        await kit.seed_base_version(book_record.id, page)
-    await run_stage(kit, actor, book_record, GEOMETRY_RUN)
-    return actor, book_record, pages, (await step_of(kit, book_record)).step_id
+        await kit.seed_base_version(book_id, page)
+    await run_stage(kit, actor, book_id, GEOMETRY_RUN)
+    return actor, book_id, pages, (await step_of(kit, book_id)).step_id
 
 
 def strength_field(step_id: StepId, target: ValueTarget) -> ValueField:
@@ -153,15 +151,15 @@ async def put_in_group(book_id: BookId, page: Page, label: str, *, databases: Bo
     )
 
 
-async def strengths(kit: ProcessingKit, actor: Actor, book_record: BookRecord, pages: list[Page]) -> list[object]:
+async def strengths(kit: ProcessingKit, actor: Actor, book_id: BookId, pages: list[Page]) -> list[object]:
     """Read the strength each page runs the step with, as the service lists it, which is the recipe's for no value.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: Owner of the book.
     :type actor: Actor
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param pages: The pages.
     :type pages: list[Page]
     :returns: The strength of each page.
@@ -170,17 +168,17 @@ async def strengths(kit: ProcessingKit, actor: Actor, book_record: BookRecord, p
     found: list[object] = []
     for page in pages:
         listed = await kit.page_settings().list(
-            open_for(actor, book_record.id, databases=kit.databases, files=kit.files), page.id, Stage.GEOMETRY
+            open_for(actor, book_id, databases=kit.databases, files=kit.files), page.id, Stage.GEOMETRY
         )
         found.append(listed[0].effective[STRENGTH_PARAMETER] if listed else RECIPE_STRENGTH)
     return found
 
 
-async def stored_parts(book_record: BookRecord, step_id: StepId, *, databases: BookDatabases) -> Sequence[StepValues]:
+async def stored_parts(book_id: BookId, step_id: StepId, *, databases: BookDatabases) -> Sequence[StepValues]:
     """Read the values the odd pages, the even pages and the groups have for a step, as committed.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param step_id: The step of a recipe.
     :type step_id: StepId
     :param databases: Opens the databases of the books of the test.
@@ -188,7 +186,7 @@ async def stored_parts(book_record: BookRecord, step_id: StepId, *, databases: B
     :returns: The stored values of the step.
     :rtype: Sequence[StepValues]
     """
-    return await databases.open(book_record.id).read(lambda repos: repos.step_values.list_for_step(step_id))
+    return await databases.open(book_id).read(lambda repos: repos.step_values.list_for_step(step_id))
 
 
 async def stages_of(book_id: BookId, pages: list[Page], *, databases: BookDatabases) -> list[StageState]:
@@ -219,12 +217,12 @@ class TestPageValues:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
         runs = fx_kit.fake.runs
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        [listed] = await fx_kit.page_settings().list(fx_open_book(actor, book_record.id), page.id, Stage.GEOMETRY)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        [listed] = await fx_kit.page_settings().list(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
         expect(listed.params == {STRENGTH_PARAMETER: STRONGER})
         expect(listed.effective[STRENGTH_PARAMETER] == STRONGER)
         expect(listed.parts == [])
@@ -238,12 +236,12 @@ class TestPageValues:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        values = PageValues(fx_kit, actor, book_record.id)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        values = PageValues(fx_kit, actor, book_id)
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
         await values.set(key, FAILING_PARAMETER, NOT_FAILING)
-        history = await fx_kit.databases.open(book_record.id).read(
+        history = await fx_kit.databases.open(book_id).read(
             lambda repos: repos.page_history.list_for_page(page.id, Stage.GEOMETRY)
         )
         expect(
@@ -264,15 +262,13 @@ class TestPageValues:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
-        again = await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        history = await fx_kit.databases.open(book_record.id).read(
-            lambda repos: repos.page_history.list_for_page(page.id)
-        )
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
+        again = await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        history = await fx_kit.databases.open(book_id).read(lambda repos: repos.page_history.list_for_page(page.id))
         expect(record.state is StageState.FRESH)
         expect(again.changes == ())
         expect(len(history) == 1)
@@ -286,11 +282,11 @@ class TestPageValues:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
         with pytest.raises(InvalidParametersError):
-            await PageValues(fx_kit, actor, book_record.id).set(key, UNKNOWN_FIELD, 1)
-        state, history = await fx_kit.databases.open(book_record.id).read(
+            await PageValues(fx_kit, actor, book_id).set(key, UNKNOWN_FIELD, 1)
+        state, history = await fx_kit.databases.open(book_id).read(
             lambda repos: (repos.page_step_states.find(key), repos.page_history.list_for_page(page.id))
         )
         expect(state is None)
@@ -303,17 +299,17 @@ class TestPageValues:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        _, other_record = await fx_kit.seed_record()
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        _, other_record = await fx_kit.seed_book()
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
         attempts = (
-            (book_record, evolve(key, step_id=StepId(uuid4()))),
-            (book_record, evolve(key, stage=Stage.CLEANUP)),
+            (book_id, evolve(key, step_id=StepId(uuid4()))),
+            (book_id, evolve(key, stage=Stage.CLEANUP)),
             (other_record, key),
         )
         for book, address in attempts:
             with pytest.raises(NotFoundError):
-                await PageValues(fx_kit, actor, book.id).set(address, STRENGTH_PARAMETER, STRONGER)
+                await PageValues(fx_kit, actor, book).set(address, STRENGTH_PARAMETER, STRONGER)
 
     async def test_selected_pages_each_get_the_value_in_one_batch_and_one_undo_takes_it_back(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -325,21 +321,21 @@ class TestPageValues:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         target = on(ValueScope.PAGES, pages[0], pages[2])
         done = await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, target), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, target), STRONGER
         )
         expect(sorted(change.page_id for change in done.changes) == sorted([pages[0].id, pages[2].id]))
         expect(len({change.batch_id for change in done.changes}) == 1 and done.changes[0].batch_id == done.batch_id)
-        expect(await strengths(fx_kit, actor, book_record, pages) == [STRONGER, 1, STRONGER, 1])
+        expect(await strengths(fx_kit, actor, book_id, pages) == [STRONGER, 1, STRONGER, 1])
         expect(
-            await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+            await stages_of(book_id, pages, databases=fx_open_book.databases)
             == [StageState.STALE, StageState.FRESH] * 2
         )
         key = PageStepKey(pages[0].id, Stage.GEOMETRY, step_id)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
-        expect(await strengths(fx_kit, actor, book_record, pages) == [1, 1, 1, 1])
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
+        expect(await strengths(fx_kit, actor, book_id, pages) == [1, 1, 1, 1])
         assert_expectations()
 
     async def test_a_page_of_another_book_is_not_found_and_nothing_is_written(
@@ -352,15 +348,13 @@ class TestPageValues:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
-        _, other_record = await fx_kit.seed_record()
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
+        _, other_record = await fx_kit.seed_book()
         stranger, _ = await fx_kit.seed_scan_page(other_record)
         target = on(ValueScope.PAGES, pages[0], stranger)
         with pytest.raises(NotFoundError):
-            await fx_kit.page_settings().change(
-                fx_open_book(actor, book_record.id), strength_field(step_id, target), STRONGER
-            )
-        assert await strengths(fx_kit, actor, book_record, pages) == [1, 1, 1, 1]
+            await fx_kit.page_settings().change(fx_open_book(actor, book_id), strength_field(step_id, target), STRONGER)
+        assert await strengths(fx_kit, actor, book_id, pages) == [1, 1, 1, 1]
 
 
 class TestTakingAPageValueBack:
@@ -372,17 +366,15 @@ class TestTakingAPageValueBack:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        values = PageValues(fx_kit, actor, book_record.id)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        values = PageValues(fx_kit, actor, book_id)
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         await values.take_back(key, STRENGTH_PARAMETER)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        history = await fx_kit.databases.open(book_record.id).read(
-            lambda repos: repos.page_history.list_for_page(page.id)
-        )
-        expect(await fx_kit.databases.open(book_record.id).read(lambda repos: repos.page_step_states.find(key)) is None)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        history = await fx_kit.databases.open(book_id).read(lambda repos: repos.page_history.list_for_page(page.id))
+        expect(await fx_kit.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key)) is None)
         expect(record.state is StageState.STALE)
         expect((history[-1].before, history[-1].after) == ({STRENGTH_PARAMETER: STRONGER}, None))
         assert_expectations()
@@ -397,16 +389,16 @@ class TestTakingAPageValueBack:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        values = PageValues(fx_kit, actor, book_record.id)
-        edit = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        values = PageValues(fx_kit, actor, book_id)
+        edit = await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
         await values.take_back(key, STRENGTH_PARAMETER)
-        left = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.get(key))
+        left = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.get(key))
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.edits().delete(fx_open_book(actor, book_record.id), key)
-        state = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.page_step_states.get(key))
+        await fx_kit.edits().delete(fx_open_book(actor, book_id), key)
+        state = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.get(key))
         expect(left.params == {} and left.edit == edit)
         expect((state.params, state.edit) == ({STRENGTH_PARAMETER: STRONGER}, None))
         assert_expectations()
@@ -417,10 +409,10 @@ class TestTakingAPageValueBack:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
         with pytest.raises(NotFoundError):
-            await PageValues(fx_kit, actor, book_record.id).take_back(key, STRENGTH_PARAMETER)
+            await PageValues(fx_kit, actor, book_id).take_back(key, STRENGTH_PARAMETER)
 
 
 class TestValuesForPartsOfTheBook:
@@ -436,17 +428,17 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         done = await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
         )
-        stored = await stored_parts(book_record, step_id, databases=fx_open_book.databases)
+        stored = await stored_parts(book_id, step_id, databases=fx_open_book.databases)
         expect(
             [(values.scope, values.params) for values in stored] == [(ValueScope.EVEN, {STRENGTH_PARAMETER: STRONGER})]
         )
-        expect(await strengths(fx_kit, actor, book_record, pages) == [1, STRONGER, 1, STRONGER])
+        expect(await strengths(fx_kit, actor, book_id, pages) == [1, STRONGER, 1, STRONGER])
         expect(
-            await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+            await stages_of(book_id, pages, databases=fx_open_book.databases)
             == [StageState.FRESH, StageState.STALE] * 2
         )
         expect(sorted(change.page_id for change in done.changes) == sorted([pages[1].id, pages[3].id]))
@@ -464,14 +456,14 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.ODD)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.ODD)), STRONGER
         )
         await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
         )
-        assert await strengths(fx_kit, actor, book_record, pages) == [STRONGER, STRONGEST, STRONGER, STRONGEST]
+        assert await strengths(fx_kit, actor, book_id, pages) == [STRONGER, STRONGEST, STRONGER, STRONGEST]
 
     async def test_a_run_lays_a_page_over_a_group_over_a_side_over_the_recipe(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -486,23 +478,19 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         for page in pages[1:3]:
-            await put_in_group(book_record.id, page, GROUP, databases=fx_open_book.databases)
+            await put_in_group(book_id, page, GROUP, databases=fx_open_book.databases)
         settings = fx_kit.page_settings()
+        await settings.change(fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER)
         await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGEST
         )
         await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGEST
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.PAGES, pages[2])), OWN
         )
-        await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.PAGES, pages[2])), OWN
-        )
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
-        ran = [
-            (await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)).params[STRENGTH_PARAMETER] for page in pages
-        ]
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
+        ran = [(await head_of(fx_kit, book_id, page, Stage.GEOMETRY)).params[STRENGTH_PARAMETER] for page in pages]
         assert ran == [1, STRONGEST, OWN, STRONGER]
 
     async def test_taking_a_value_back_leaves_the_pages_the_next_part_by_strength(
@@ -515,26 +503,26 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         for page in pages[1:3]:
-            await put_in_group(book_record.id, page, GROUP, databases=fx_open_book.databases)
+            await put_in_group(book_id, page, GROUP, databases=fx_open_book.databases)
         settings = fx_kit.page_settings()
         group = strength_field(step_id, on(ValueScope.GROUP, label=GROUP))
         even = strength_field(step_id, on(ValueScope.EVEN))
         own = strength_field(step_id, on(ValueScope.PAGES, pages[1]))
         for field, value in ((even, STRONGER), (group, STRONGEST), (own, OWN)):
-            await settings.change(fx_open_book(actor, book_record.id), field, value)
-        seen = [await strengths(fx_kit, actor, book_record, pages)]
+            await settings.change(fx_open_book(actor, book_id), field, value)
+        seen = [await strengths(fx_kit, actor, book_id, pages)]
         for field in (own, group, even):
-            await settings.reset(fx_open_book(actor, book_record.id), field)
-            seen.append(await strengths(fx_kit, actor, book_record, pages))
+            await settings.reset(fx_open_book(actor, book_id), field)
+            seen.append(await strengths(fx_kit, actor, book_id, pages))
         assert seen == [
             [1, OWN, STRONGEST, STRONGER],
             [1, STRONGEST, STRONGEST, STRONGER],
             [1, STRONGER, 1, STRONGER],
             [1, 1, 1, 1],
         ]
-        assert await stored_parts(book_record, step_id, databases=fx_open_book.databases) == []
+        assert await stored_parts(book_id, step_id, databases=fx_open_book.databases) == []
 
     async def test_a_change_goes_stale_only_the_pages_it_changes_the_parameters_of(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -546,19 +534,19 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
-        await put_in_group(book_record.id, pages[1], GROUP, databases=fx_open_book.databases)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
+        await put_in_group(book_id, pages[1], GROUP, databases=fx_open_book.databases)
         settings = fx_kit.page_settings()
         await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
         )
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         done = await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
         )
         expect([change.page_id for change in done.changes] == [pages[3].id])
         expect(
-            await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+            await stages_of(book_id, pages, databases=fx_open_book.databases)
             == [StageState.FRESH] * 3 + [StageState.STALE]
         )
         assert_expectations()
@@ -573,19 +561,19 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
-        await put_in_group(book_record.id, pages[0], GROUP, databases=fx_open_book.databases)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
+        await put_in_group(book_id, pages[0], GROUP, databases=fx_open_book.databases)
         done = await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
         )
         expect(
             [(change.page_id, change.scope, change.group_label) for change in done.changes]
             == [(pages[0].id, ValueScope.GROUP, GROUP)]
         )
-        expect(await strengths(fx_kit, actor, book_record, pages) == [STRONGER, 1, 1, 1])
-        await put_in_group(book_record.id, pages[2], GROUP, databases=fx_open_book.databases)
-        await put_in_group(book_record.id, pages[0], '', databases=fx_open_book.databases)
-        expect(await strengths(fx_kit, actor, book_record, pages) == [1, 1, STRONGER, 1])
+        expect(await strengths(fx_kit, actor, book_id, pages) == [STRONGER, 1, 1, 1])
+        await put_in_group(book_id, pages[2], GROUP, databases=fx_open_book.databases)
+        await put_in_group(book_id, pages[0], '', databases=fx_open_book.databases)
+        expect(await strengths(fx_kit, actor, book_id, pages) == [1, 1, STRONGER, 1])
         assert_expectations()
 
     async def test_the_listing_gives_every_part_value_of_a_step_and_what_the_page_runs_with(
@@ -598,16 +586,14 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
-        await put_in_group(book_record.id, pages[3], GROUP, databases=fx_open_book.databases)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
+        await put_in_group(book_id, pages[3], GROUP, databases=fx_open_book.databases)
         settings = fx_kit.page_settings()
+        await settings.change(fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER)
         await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGEST
         )
-        await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGEST
-        )
-        [listed] = await settings.list(fx_open_book(actor, book_record.id), pages[0].id, Stage.GEOMETRY)
+        [listed] = await settings.list(fx_open_book(actor, book_id), pages[0].id, Stage.GEOMETRY)
         expect(listed.step_id == step_id)
         expect(listed.params == {})
         expect(
@@ -627,12 +613,12 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         field = ValueField(stage=Stage.GEOMETRY, step_id=step_id, name=UNKNOWN_FIELD, target=on(ValueScope.EVEN))
         with pytest.raises(InvalidParametersError):
-            await fx_kit.page_settings().change(fx_open_book(actor, book_record.id), field, 1)
-        expect(await stored_parts(book_record, step_id, databases=fx_open_book.databases) == [])
-        expect(await stages_of(book_record.id, pages, databases=fx_open_book.databases) == [StageState.FRESH] * 4)
+            await fx_kit.page_settings().change(fx_open_book(actor, book_id), field, 1)
+        expect(await stored_parts(book_id, step_id, databases=fx_open_book.databases) == [])
+        expect(await stages_of(book_id, pages, databases=fx_open_book.databases) == [StageState.FRESH] * 4)
         assert_expectations()
 
     async def test_taking_back_what_no_value_holds_is_not_found(
@@ -645,10 +631,10 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _, step_id = await ran_book(fx_kit)
+        actor, book_id, _, step_id = await ran_book(fx_kit)
         with pytest.raises(NotFoundError):
             await fx_kit.page_settings().reset(
-                fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN))
+                fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN))
             )
 
     async def test_a_group_with_no_page_in_it_has_nobody_to_take_the_value(
@@ -661,10 +647,10 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _, step_id = await ran_book(fx_kit)
+        actor, book_id, _, step_id = await ran_book(fx_kit)
         with pytest.raises(NotFoundError):
             await fx_kit.page_settings().change(
-                fx_open_book(actor, book_record.id),
+                fx_open_book(actor, book_id),
                 strength_field(step_id, on(ValueScope.GROUP, label=GROUP)),
                 STRONGER,
             )
@@ -679,12 +665,12 @@ class TestValuesForPartsOfTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit, count=2)
-        await put_in_group(book_record.id, pages[1], GROUP, databases=fx_open_book.databases)
+        actor, book_id, pages, step_id = await ran_book(fx_kit, count=2)
+        await put_in_group(book_id, pages[1], GROUP, databases=fx_open_book.databases)
         await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
         )
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
 
         async def moved(page: Page, labels: set[str]) -> list[StageState]:
             """Mark the stage of a page for a change between groups, commit it and read the stages of the book.
@@ -697,10 +683,10 @@ class TestValuesForPartsOfTheBook:
             :rtype: list[StageState]
             """
             records = fx_kit.parts(fx_kit.uow()).records
-            await fx_open_book.databases.open(book_record.id).change(
+            await fx_open_book.databases.open(book_id).change(
                 lambda repos, _book_record: records.mark_group_stale(repos, page.id, labels),
             )
-            return await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+            return await stages_of(book_id, pages, databases=fx_open_book.databases)
 
         expect(await moved(pages[0], {'', 'Plates'}) == [StageState.FRESH, StageState.FRESH])
         expect(await moved(pages[0], {'', GROUP}) == [StageState.STALE, StageState.FRESH])
@@ -721,29 +707,29 @@ class TestValuesForPartsOfTheBook:
         """
         actor, first, _, step_id = await ran_book(fx_kit, count=2)
         await fx_kit.page_settings().change(
-            fx_open_book(actor, first.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
+            fx_open_book(actor, first), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
         )
-        other_actor, second = await fx_kit.seed_record()
+        other_actor, second = await fx_kit.seed_book()
         pages = [(await fx_kit.seed_scan_page(second, order_key=f'a{number}'))[0] for number in range(2)]
         for page in pages:
-            await fx_kit.seed_base_version(second.id, page)
-        recipes = await fx_open_book.databases.open(first.id).read(
+            await fx_kit.seed_base_version(second, page)
+        recipes = await fx_open_book.databases.open(first).read(
             lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY)
         )
-        await fx_open_book.databases.open(second.id).change(
+        await fx_open_book.databases.open(second).change(
             lambda repos, _book_record: repos.recipes.add_many(
                 [evolve(recipe, id=RecipeId(uuid4())) for recipe in recipes]
             ),
         )
         await run_stage(fx_kit, other_actor, second, GEOMETRY_RUN)
-        heads = [await head_of(fx_kit, second.id, page, Stage.GEOMETRY) for page in pages]
+        heads = [await head_of(fx_kit, second, page, Stage.GEOMETRY) for page in pages]
         expect([head.params[STRENGTH_PARAMETER] for head in heads] == [RECIPE_STRENGTH, RECIPE_STRENGTH])
         await fx_kit.page_settings().change(
-            fx_open_book(other_actor, second.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
+            fx_open_book(other_actor, second), strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
         )
         stored = [
-            [values.params for values in await stored_parts(book_record, step_id, databases=fx_open_book.databases)]
-            for book_record in (first, second)
+            [values.params for values in await stored_parts(book_id, step_id, databases=fx_open_book.databases)]
+            for book_id in (first, second)
         ]
         expect(stored == [[{STRENGTH_PARAMETER: STRONGER}], [{STRENGTH_PARAMETER: STRONGEST}]])
         assert_expectations()
@@ -762,20 +748,20 @@ class TestUndoOfAValueForParts:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
         )
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         undone = await fx_kit.page_history().undo(
-            fx_open_book(actor, book_record.id), PageStepKey(pages[1].id, Stage.GEOMETRY, step_id), None
+            fx_open_book(actor, book_id), PageStepKey(pages[1].id, Stage.GEOMETRY, step_id), None
         )
         expect(sorted(undo.page_id for undo in undone) == sorted([pages[1].id, pages[3].id]))
         expect(all(undo.scope is ValueScope.EVEN and undo.source is ChangeSource.UNDO for undo in undone))
-        expect(await stored_parts(book_record, step_id, databases=fx_open_book.databases) == [])
-        expect(await strengths(fx_kit, actor, book_record, pages) == [1, 1, 1, 1])
+        expect(await stored_parts(book_id, step_id, databases=fx_open_book.databases) == [])
+        expect(await strengths(fx_kit, actor, book_id, pages) == [1, 1, 1, 1])
         expect(
-            await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+            await stages_of(book_id, pages, databases=fx_open_book.databases)
             == [StageState.FRESH, StageState.STALE] * 2
         )
         assert_expectations()
@@ -792,21 +778,21 @@ class TestUndoOfAValueForParts:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         key = PageStepKey(pages[1].id, Stage.GEOMETRY, step_id)
         even = strength_field(step_id, on(ValueScope.EVEN))
-        first = await fx_kit.page_settings().change(fx_open_book(actor, book_record.id), even, STRONGER)
-        await fx_kit.page_settings().change(fx_open_book(actor, book_record.id), even, STRONGEST)
-        newest = await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, None)
+        first = await fx_kit.page_settings().change(fx_open_book(actor, book_id), even, STRONGER)
+        await fx_kit.page_settings().change(fx_open_book(actor, book_id), even, STRONGEST)
+        newest = await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, None)
         expect(len(newest) == 2)
         expect(len({change.id for change in first.changes}) == len({change.id for change in newest}) == 1)
         expect(
-            [values.params for values in await stored_parts(book_record, step_id, databases=fx_open_book.databases)]
+            [values.params for values in await stored_parts(book_id, step_id, databases=fx_open_book.databases)]
             == [{STRENGTH_PARAMETER: STRONGER}]
         )
         oldest = next(change for change in first.changes if change.page_id == pages[1].id)
-        await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, oldest.id)
-        expect(await stored_parts(book_record, step_id, databases=fx_open_book.databases) == [])
+        await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, oldest.id)
+        expect(await stored_parts(book_id, step_id, databases=fx_open_book.databases) == [])
         assert_expectations()
 
     async def test_an_undo_marks_the_pages_the_part_covers_now_and_not_only_the_pages_of_its_history(
@@ -822,23 +808,23 @@ class TestUndoOfAValueForParts:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
-        await put_in_group(book_record.id, pages[0], GROUP, databases=fx_open_book.databases)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
+        await put_in_group(book_id, pages[0], GROUP, databases=fx_open_book.databases)
         await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
         )
-        await put_in_group(book_record.id, pages[2], GROUP, databases=fx_open_book.databases)
+        await put_in_group(book_id, pages[2], GROUP, databases=fx_open_book.databases)
         # The run names the pages, since the page that joined the group has no stale mark and a run of the whole book
         # would leave it out, though it is the page that must run with the value of the group
         every_page = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
-        await run_stage(fx_kit, actor, book_record, every_page)
-        before = await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+        await run_stage(fx_kit, actor, book_id, every_page)
+        before = await stages_of(book_id, pages, databases=fx_open_book.databases)
         await fx_kit.page_history().undo(
-            fx_open_book(actor, book_record.id), PageStepKey(pages[0].id, Stage.GEOMETRY, step_id), None
+            fx_open_book(actor, book_id), PageStepKey(pages[0].id, Stage.GEOMETRY, step_id), None
         )
         expect(before == [StageState.FRESH] * len(pages))
         expect(
-            await stages_of(book_record.id, pages, databases=fx_open_book.databases)
+            await stages_of(book_id, pages, databases=fx_open_book.databases)
             == [StageState.STALE, StageState.FRESH, StageState.STALE, StageState.FRESH]
         )
         assert_expectations()
@@ -856,21 +842,21 @@ class TestUndoOfAValueForParts:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit)
+        actor, book_id, pages, step_id = await ran_book(fx_kit)
         key = PageStepKey(pages[1].id, Stage.GEOMETRY, step_id)
         even = strength_field(step_id, on(ValueScope.EVEN))
         settings = fx_kit.page_settings()
-        await settings.change(fx_open_book(actor, book_record.id), even, STRONGER)
-        first = (await fx_kit.page_history().list(fx_open_book(actor, book_record.id), key)).standing[0]
+        await settings.change(fx_open_book(actor, book_id), even, STRONGER)
+        first = (await fx_kit.page_history().list(fx_open_book(actor, book_id), key)).standing[0]
         await settings.change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.PAGES, pages[1])), OWN
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.PAGES, pages[1])), OWN
         )
-        await settings.change(fx_open_book(actor, book_record.id), even, STRONGEST)
+        await settings.change(fx_open_book(actor, book_id), even, STRONGEST)
         with pytest.raises(ConflictError):
-            await fx_kit.page_history().undo(fx_open_book(actor, book_record.id), key, first.id)
-        assert [
-            values.params for values in await stored_parts(book_record, step_id, databases=fx_open_book.databases)
-        ] == [{STRENGTH_PARAMETER: STRONGEST}]
+            await fx_kit.page_history().undo(fx_open_book(actor, book_id), key, first.id)
+        assert [values.params for values in await stored_parts(book_id, step_id, databases=fx_open_book.databases)] == [
+            {STRENGTH_PARAMETER: STRONGEST}
+        ]
 
 
 class TestRunWithPageSettings:
@@ -884,15 +870,15 @@ class TestRunWithPageSettings:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        await fx_kit.seed_base_version(book_record.id, other)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        await fx_kit.seed_base_version(book_id, other)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         own, shared = (
-            await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY),
-            await head_of(fx_kit, book_record.id, other, Stage.GEOMETRY),
+            await head_of(fx_kit, book_id, page, Stage.GEOMETRY),
+            await head_of(fx_kit, book_id, other, Stage.GEOMETRY),
         )
         expect(own.params[STRENGTH_PARAMETER] == STRONGER)
         expect(own.data[RAN_KEY] == STRONGER)
@@ -912,15 +898,15 @@ class TestRunWithPageSettings:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, step_id = await ran_book(fx_kit, count=2)
-        step = await step_of(fx_kit, book_record)
+        actor, book_id, pages, step_id = await ran_book(fx_kit, count=2)
+        step = await step_of(fx_kit, book_id)
         steps = [step, *(evolve(step, step_id=StepId(uuid4())) for _ in range(STEPS_OF_A_CHAIN - 1))]
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, RecipeDraft(steps=steps, order=OrderMode.FREE))
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps, order=OrderMode.FREE))
         await fx_kit.page_settings().change(
-            fx_open_book(actor, book_record.id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
+            fx_open_book(actor, book_id), strength_field(step_id, on(ValueScope.EVEN)), STRONGER
         )
         counting.reset_mock()
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         assert counting.call_count == len(pages)
 
     async def test_the_page_keeps_its_value_when_the_recipe_changes_and_the_others_follow_it(
@@ -931,21 +917,21 @@ class TestRunWithPageSettings:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key=OTHER_ORDER_KEY)
-        await fx_kit.seed_base_version(book_record.id, other)
-        step = await step_of(fx_kit, book_record)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
+        await fx_kit.seed_base_version(book_id, other)
+        step = await step_of(fx_kit, book_id)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.parts(fx_kit.uow()).recipes.of_kind(
-            await open_book(fx_kit, book_record.id), Stage.GEOMETRY, RecipeKind.TEXT
+            await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT
         )
         draft = RecipeDraft(steps=[evolve(step, params={STRENGTH_PARAMETER: STRONGEST})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, draft)
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, draft)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         own, shared = (
-            await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY),
-            await head_of(fx_kit, book_record.id, other, Stage.GEOMETRY),
+            await head_of(fx_kit, book_id, page, Stage.GEOMETRY),
+            await head_of(fx_kit, book_id, other, Stage.GEOMETRY),
         )
         expect((own.params[STRENGTH_PARAMETER], shared.params[STRENGTH_PARAMETER]) == (STRONGER, STRONGEST))
         assert_expectations()
@@ -959,20 +945,20 @@ class TestRunWithPageSettings:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        step = await step_of(fx_kit, book_record)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
-        first, runs = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY), fx_kit.fake.runs
-        await PageValues(fx_kit, actor, book_record.id).take_back(key, STRENGTH_PARAMETER)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        step = await step_of(fx_kit, book_id)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
+        first, runs = await head_of(fx_kit, book_id, page, Stage.GEOMETRY), fx_kit.fake.runs
+        await PageValues(fx_kit, actor, book_id).take_back(key, STRENGTH_PARAMETER)
         await fx_kit.parts(fx_kit.uow()).recipes.of_kind(
-            await open_book(fx_kit, book_record.id), Stage.GEOMETRY, RecipeKind.TEXT
+            await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT
         )
         draft = RecipeDraft(steps=[evolve(step, params={STRENGTH_PARAMETER: STRONGER})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, draft)
-        await run_stage(fx_kit, actor, book_record, GEOMETRY_RUN)
-        second = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, draft)
+        await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
+        second = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         expect(second.id == first.id)
         expect(fx_kit.fake.runs == runs)
         assert_expectations()
@@ -987,15 +973,15 @@ class TestRunWithPageSettings:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, _ = await ran_geometry(fx_kit)
-        step = await step_of(fx_kit, book_record)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await PageValues(fx_kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
+        step = await step_of(fx_kit, book_id)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         form = evolve(step, params={STRENGTH_PARAMETER: STRONGEST})
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=(form,), step_index=0)
-        await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+        await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         await fx_kit.work_queue()
-        previews = await fx_open_book.databases.open(book_record.id).read(
+        previews = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING),
         )
         [version] = previews.items

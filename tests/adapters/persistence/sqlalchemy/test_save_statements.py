@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
@@ -46,7 +46,7 @@ SAVES: dict[str, Callable[[BookRepositories, Page], object]] = {
 @pytest.fixture
 async def fx_stored_book(
     fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
-) -> tuple[BookRecord, list[Page]]:
+) -> tuple[BookId, list[Page]]:
     """Commit a book of five pages, which the writes of a test change.
 
     :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
@@ -55,18 +55,16 @@ async def fx_stored_book(
     :type fx_owner_id: AccountId
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
-    :returns: The book and its pages.
-    :rtype: tuple[BookRecord, list[Page]]
+    :returns: The identifier of the book and its pages.
+    :rtype: tuple[BookId, list[Page]]
     """
-    book_record = make_record()
     pages = [make_page(order_key=f'a{index}') for index in range(BATCH)]
-    await store_book(fx_uow(), book_record, *pages, owner=fx_owner_id, databases=fx_databases())
-    return book_record, pages
+    return await store_book(fx_uow(), make_record(), *pages, owner=fx_owner_id, databases=fx_databases()), pages
 
 
 async def _statements_of(
     books: BookRegistry,
-    book_record: BookRecord,
+    book_id: BookId,
     calls: Sequence[Callable[[BookRepositories], object]],
     *,
     databases: BookDatabases,
@@ -75,8 +73,8 @@ async def _statements_of(
 
     :param books: Registry of the books, whose engine of the writer of the book is listened to.
     :type books: BookRegistry
-    :param book_record: Book whose book the change holds.
-    :type book_record: BookRecord
+    :param book_id: Book whose book the change holds.
+    :type book_id: BookId
     :param calls: Functions over the repositories of the change.
     :type calls: Sequence[Callable[[BookRepositories], object]]
     :param databases: Opens the databases of the books of the test.
@@ -84,7 +82,7 @@ async def _statements_of(
     :returns: The number of statements of each call, in the order given.
     :rtype: list[int]
     """
-    async with books.use(book_record.id) as book:
+    async with books.use(book_id) as book:
         with StatementLog(book.engine) as log:
 
             def work(repos: BookRepositories, _book_record: BookRecord) -> list[int]:
@@ -104,7 +102,7 @@ async def _statements_of(
                     counts.append(len(log.statements) - sent)
                 return counts
 
-            return await databases.open(book_record.id).change(work)
+            return await databases.open(book_id).change(work)
 
 
 class TestKeyedSave:
@@ -114,7 +112,7 @@ class TestKeyedSave:
     async def test_save_sends_one_statement_whether_the_key_is_new_or_stored(
         self,
         fx_books: BookRegistry,
-        fx_stored_book: tuple[BookRecord, list[Page]],
+        fx_stored_book: tuple[BookId, list[Page]],
         save: Callable[[BookRepositories, Page], object],
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -126,17 +124,17 @@ class TestKeyedSave:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
         :param fx_stored_book: The committed book and its pages.
-        :type fx_stored_book: tuple[BookRecord, list[Page]]
+        :type fx_stored_book: tuple[BookId, list[Page]]
         :param save: Function that saves an entity of the page in the repository under test.
         :type save: Callable[[BookRepositories, Page], object]
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record, pages = fx_stored_book
+        book_id, pages = fx_stored_book
 
         counts = await _statements_of(
             fx_books,
-            book_record,
+            book_id,
             [lambda repos: save(repos, pages[0]), lambda repos: save(repos, pages[0])],
             databases=fx_databases(),
         )
@@ -144,22 +142,22 @@ class TestKeyedSave:
         assert counts == [1, 1]
 
     async def test_save_many_sends_one_statement_for_five_records(
-        self, fx_books: BookRegistry, fx_stored_book: tuple[BookRecord, list[Page]], fx_databases: BookDatabasesFactory
+        self, fx_books: BookRegistry, fx_stored_book: tuple[BookId, list[Page]], fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify five records of five pages are stored by one statement, not one for each.
 
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
         :param fx_stored_book: The committed book and its pages.
-        :type fx_stored_book: tuple[BookRecord, list[Page]]
+        :type fx_stored_book: tuple[BookId, list[Page]]
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record, pages = fx_stored_book
+        book_id, pages = fx_stored_book
         records = [make_page_stage(page_id=page.id, stage=Stage.CLEANUP) for page in pages]
 
         counts = await _statements_of(
-            fx_books, book_record, [lambda repos: repos.page_stages.save_many(records)], databases=fx_databases()
+            fx_books, book_id, [lambda repos: repos.page_stages.save_many(records)], databases=fx_databases()
         )
 
         assert counts == [1]
@@ -169,22 +167,22 @@ class TestUpdateMany:
     """Tests for the statements ``update_many`` of the pages sends."""
 
     async def test_update_many_sends_one_read_and_one_update_for_five_pages(
-        self, fx_books: BookRegistry, fx_stored_book: tuple[BookRecord, list[Page]], fx_databases: BookDatabasesFactory
+        self, fx_books: BookRegistry, fx_stored_book: tuple[BookId, list[Page]], fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify five pages are read by one statement and updated by one, not read and updated one at a time.
 
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
         :param fx_stored_book: The committed book and its pages.
-        :type fx_stored_book: tuple[BookRecord, list[Page]]
+        :type fx_stored_book: tuple[BookId, list[Page]]
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record, pages = fx_stored_book
+        book_id, pages = fx_stored_book
         updated = [evolve(page, manual_label=UPDATED_LABEL, included=False) for page in pages]
 
         counts = await _statements_of(
-            fx_books, book_record, [lambda repos: repos.pages.update_many(updated)], databases=fx_databases()
+            fx_books, book_id, [lambda repos: repos.pages.update_many(updated)], databases=fx_databases()
         )
 
         assert counts == [2]

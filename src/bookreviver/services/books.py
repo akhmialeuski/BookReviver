@@ -166,20 +166,18 @@ class BooksService:
         :returns: The new book, open for its owner, which has no pages, sources or scans yet.
         :rtype: Book
         """
-        moment = self._tools.clock.now()
-        book_record = await self._uow.create_book(
-            BookRecord(id=BookId(uuid4()), details=details, created_at=moment, updated_at=moment)
-        )
-        entry = LibraryEntry(book_id=book_record.id, owner_id=owner.account_id, added_at=moment)
+        book_id, moment = BookId(uuid4()), self._tools.clock.now()
+        await self._uow.create_book(book_id, BookRecord(details=details, created_at=moment, updated_at=moment))
+        entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=moment)
         await self._uow.change(lambda repos: repos.library.add(entry))
         return self.book(entry)
 
     async def import_archive(self, owner: Actor, archive: BinaryIO) -> Book:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
-        The archive is unpacked database first, then the database is brought to this release and the record of its book
-        renamed, and the entry of the library comes last, as for a book created here. A failure removes what was
-        unpacked, and an import broken off is a store without an entry, which nobody lists.
+        The archive is unpacked database first, then the database is brought to this release, and the entry of the
+        library comes last, as for a book created here. The record of the book names no book, so nothing in it changes.
+        A failure removes what was unpacked, and an import broken off is a store without an entry, which nobody lists.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor

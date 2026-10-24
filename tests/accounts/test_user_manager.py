@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.entities import Page
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, SharedDatabaseProvider
 
 pytestmark = pytest.mark.anyio
@@ -55,23 +56,19 @@ async def fx_container(
     await container.close()
 
 
-async def _stored(container: AsyncContainer, book_record: BookRecord) -> bool:
+async def _stored(container: AsyncContainer, book_id: BookId) -> bool:
     """Return whether the book is still stored.
 
     :param container: The application's container.
     :type container: AsyncContainer
-    :param book_record: Record of the book to look up.
-    :type book_record: BookRecord
+    :param book_id: The book to look up.
+    :type book_id: BookId
     :returns: True when a new book database still finds the book.
     :rtype: bool
     """
     async with container() as scope:
         try:
-            await (
-                (await scope.get(BookDatabases))
-                .open(book_record.id)
-                .read(lambda repos: repos.book_record.get(book_record.id))
-            )
+            await (await scope.get(BookDatabases)).open(book_id).read(lambda repos: repos.book_record.get())
         except NotFoundError:
             return False
     return True
@@ -96,20 +93,19 @@ class TestDelete:
         """
         database = await fx_container.get(SqlDatabase)
         owner_id, neighbour_id = await commit_account(database), await commit_account(database)
-        owned = [make_record(minutes=minute) for minute in range(OWNED_BOOKS)]
-        kept = make_record()
-        pages = {book_record.id: make_page() for book_record in (*owned, kept)}
+        pages: dict[BookId, Page] = {}
         async with fx_container() as scope:
             uow = await scope.get(UnitOfWork)
-            for book_record in (*owned, kept):
-                owner = neighbour_id if book_record is kept else owner_id
-                await store_book(uow, book_record, pages[book_record.id], owner=owner, databases=fx_databases())
+            for owner in (*[owner_id] * OWNED_BOOKS, neighbour_id):
+                page = make_page()
+                pages[await store_book(uow, make_record(), page, owner=owner, databases=fx_databases())] = page
+        *owned, kept = pages
         files = BookFiles(
             stores=await fx_container.get(BookFileStores),
             root=fx_settings.storage_root,
         )
-        for page in pages.values():
-            await files.store(book_record.id, page)
+        for book_id, page in pages.items():
+            await files.store(book_id, page)
 
         async with fx_container() as scope:
             manager = await scope.get(UserManager)
@@ -118,10 +114,10 @@ class TestDelete:
         async with fx_container() as scope:
             accounts = await scope.get(UserManager)
             expect(await accounts.user_db.get(AccountId(owner_id)) is None)
-        expect([await _stored(fx_container, book_record) for book_record in owned] == [False] * OWNED_BOOKS)
-        expect(all(files.gone(book_record.id) for book_record in owned))
+        expect([await _stored(fx_container, book_id) for book_id in owned] == [False] * OWNED_BOOKS)
+        expect(all(files.gone(book_id) for book_id in owned))
         expect(await _stored(fx_container, kept))
-        expect(files.kept(pages[kept.id]))
+        expect(files.kept(pages[kept]))
         assert_expectations()
 
 

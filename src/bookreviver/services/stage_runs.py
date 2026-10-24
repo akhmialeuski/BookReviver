@@ -700,7 +700,7 @@ class StageWork:
             raise
         if made.state is VersionState.READY:
             span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
-            await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=made))
+            await self._publisher.publish(PageVersionReady(book_id=self._book.id, version=made))
         return made
 
 

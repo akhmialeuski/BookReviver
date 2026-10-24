@@ -95,15 +95,15 @@ class TestRead:
         """
         book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
 
         with pytest.raises(NoChangeOpenError):
-            await fx_databases().open(book_record.id).read(lambda repos: write(repos, book_record))
+            await fx_databases().open(book_id).read(lambda repos: write(repos, book_record))
 
         stored, pages = (
             await fx_databases()
-            .open(book_record.id)
-            .read(lambda repos: (repos.book_record.get(book_record.id), count_pages(repos, book_record)))
+            .open(book_id)
+            .read(lambda repos: (repos.book_record.get(), count_pages(repos, book_record)))
         )
         expect(stored == book_record)
         expect(pages == 0)
@@ -127,7 +127,9 @@ class TestRead:
         """
         book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, make_page(order_key='a0'), owner=fx_owner_id, databases=fx_databases())
+        book_id = await store_book(
+            uow, book_record, make_page(order_key='a0'), owner=fx_owner_id, databases=fx_databases()
+        )
         written = make_page(order_key='a1')
         snapshot_taken, change_committed = threading.Event(), threading.Event()
         seen: list[tuple[int, int]] = []
@@ -147,15 +149,15 @@ class TestRead:
 
         async def read_twice() -> None:
             """Run the work of the two reads in a read of the unit of work, and keep what it saw."""
-            seen.append(await fx_databases().open(book_record.id).read(count_twice))
+            seen.append(await fx_databases().open(book_id).read(count_twice))
 
         async with anyio.create_task_group() as group:
             group.start_soon(read_twice)
             assert await to_thread.run_sync(snapshot_taken.wait, HOLD_LIMIT_SECONDS)
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(written))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(written))
             change_committed.set()
 
-        after = await fx_databases().open(book_record.id).read(lambda repos: count_pages(repos, book_record))
+        after = await fx_databases().open(book_id).read(lambda repos: count_pages(repos, book_record))
         expect(seen == [(1, 1)], f'{seen} seen by the read')
         expect(after == 2, f'{after} seen by a later read')
         assert_expectations()
@@ -194,10 +196,9 @@ class TestBookVersion:
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
-        database = fx_databases().open(book_record.id)
+        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_databases())
+        database = fx_databases().open(book_id)
         before = await database.version()
         fx_book_changes.published.clear()
 
@@ -207,7 +208,7 @@ class TestBookVersion:
         expect(after == before + 1)
         expect(
             fx_book_changes.published
-            == [BookChanged(book_id=book_record.id, version=after, resources=frozenset({BookResource.PAGES}))]
+            == [BookChanged(book_id=book_id, version=after, resources=frozenset({BookResource.PAGES}))]
         )
         assert_expectations()
 
@@ -229,10 +230,9 @@ class TestBookVersion:
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
-        database = fx_databases().open(book_record.id)
+        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_databases())
+        database = fx_databases().open(book_id)
         before = await database.version()
         fx_book_changes.published.clear()
 
@@ -264,8 +264,8 @@ class TestBookVersion:
         book_record, page = make_record(), make_page()
         version = make_page_version(page_id=page.id)
         uow = fx_uow()
-        await store_book(uow, book_record, page, owner=fx_owner_id, databases=fx_databases())
-        database = fx_databases().open(book_record.id)
+        book_id = await store_book(uow, book_record, page, owner=fx_owner_id, databases=fx_databases())
+        database = fx_databases().open(book_id)
         await database.change(lambda repos, _book_record: repos.page_versions.add(version))
         fx_book_changes.published.clear()
 
@@ -294,17 +294,17 @@ class TestGroups:
         """
         book_record, page = make_record(), make_page()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(page))
+        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(page))
 
         grouped = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .change(lambda repos, _book_record: repos.pages.update(evolve(page, group_label=GROUP)))
         )
-        made = await fx_databases().open(book_record.id).read(group_key)
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.update(page))
-        left = await fx_databases().open(book_record.id).read(group_key)
+        made = await fx_databases().open(book_id).read(group_key)
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.update(page))
+        left = await fx_databases().open(book_id).read(group_key)
 
         expect(grouped.group_label == GROUP)
         expect(made is not None)

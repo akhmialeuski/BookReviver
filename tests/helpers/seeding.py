@@ -6,14 +6,14 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import new_account_id
+from tests.helpers.builders import new_account_id, new_book_id
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Page, PageVersion, Scan, Source
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
@@ -89,13 +89,14 @@ async def store_book(
     *pages: Page,
     owner: AccountId,
     databases: BookDatabases,
+    book_id: BookId | None = None,
     **content: Unpack[BookContent],
-) -> None:
-    """Store a book with its record, then its sources, their scans, its pages and their versions, and list it.
+) -> BookId:
+    """Store a new book with its record, then its sources, their scans, its pages and their versions, and list it.
 
-    The store of the book is made first, then the content of the book is stored by ``Book.change``, and the library entry
-    of the owner is added last, as the creation of a book does. The entry names an account, so the catalogue must store
-    the owner.
+    The store of the book is made first, then the content of the book is stored by ``Book.change``, and the library
+    entry of the owner is added last, as the creation of a book does. The entry names an account, so the catalogue must
+    store the owner.
 
     :param uow: Unit of work to store through, over a catalogue that stores the account owning the book.
     :type uow: UnitOfWork
@@ -107,8 +108,13 @@ async def store_book(
     :type owner: AccountId
     :param databases: Opens the database that stores the content.
     :type databases: BookDatabases
+    :param book_id: Identifier the book gets, for a test that builds what refers to the book before storing it; a new
+                    one when omitted.
+    :type book_id: BookId | None
     :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
+    :returns: The identifier of the new book.
+    :rtype: BookId
     """
 
     def store_content(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -124,10 +130,13 @@ async def store_book(
         repos.pages.add_many(pages)
         repos.page_versions.add_many(content.get('versions', ()))
 
-    await uow.create_book(book_record)
-    await databases.open(book_record.id).change(store_content)
-    entry = LibraryEntry(book_id=book_record.id, owner_id=owner, added_at=book_record.created_at)
+    if book_id is None:
+        book_id = new_book_id()
+    await uow.create_book(book_id, book_record)
+    await databases.open(book_id).change(store_content)
+    entry = LibraryEntry(book_id=book_id, owner_id=owner, added_at=book_record.created_at)
     await uow.change(lambda repos: repos.library.add(entry))
+    return book_id
 
 
 async def commit_record(
@@ -138,8 +147,8 @@ async def commit_record(
     owner: AccountId,
     databases: BookDatabases,
     **content: Unpack[BookContent],
-) -> None:
-    """Store a book as ``store_project`` does, after committing its owner account when the catalogue lacks it.
+) -> BookId:
+    """Store a new book as ``store_book`` does, after committing its owner account when the catalogue lacks it.
 
     :param database: Catalogue to commit the owner account into.
     :type database: SqlDatabase
@@ -155,6 +164,8 @@ async def commit_record(
     :type databases: BookDatabases
     :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
+    :returns: The identifier of the new book.
+    :rtype: BookId
     """
     await ensure_account(database, owner)
-    await store_book(uow, book_record, *pages, owner=owner, databases=databases, **content)
+    return await store_book(uow, book_record, *pages, owner=owner, databases=databases, **content)

@@ -41,9 +41,8 @@ async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *
     :returns: The identifier of the book.
     :rtype: BookId
     """
-    book_record = make_record()
-    await store_book(uow_factory(), book_record, owner=await new_owner(), databases=databases)
-    return book_record.id
+    book_id = await store_book(uow_factory(), make_record(), owner=await new_owner(), databases=databases)
+    return book_id
 
 
 class TestBookPlaceRepository:

@@ -21,19 +21,16 @@ accounts of fastapi-users are tables of the catalogue but not part of the port, 
 transactions, for the account database.
 """
 
-from functools import partial
 from typing import TYPE_CHECKING, override
 
-from sqlalchemy import func, select, update
 from sqlalchemy.exc import DatabaseError
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookRepositories,
     SqlAlchemyCatalogueRepositories,
 )
-from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow
 from bookreviver.domain.enums import BlockKind
-from bookreviver.domain.errors import InvalidArchiveError
+from bookreviver.domain.errors import InvalidArchiveError, NotFoundError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, UnitOfWork
 
 if TYPE_CHECKING:
@@ -48,7 +45,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import CatalogueRepositories
 
 
-NOT_ONE_RECORD: str = 'The database of the archive does not hold exactly one book.'
+NO_RECORD: str = 'The database of the archive holds no book.'
 NOT_A_DATABASE: str = 'The database of the archive is not a database of a book.'
 
 
@@ -107,23 +104,25 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         return await self.change_session(lambda session: work(SqlAlchemyCatalogueRepositories(session)))
 
     @override
-    async def create_book(self, book_record: BookRecord) -> BookRecord:
+    async def create_book(self, book_id: BookId, book_record: BookRecord) -> BookRecord:
         """Make the file of a new book and store the record of the book in it.
 
         A failure after the file was made leaves a file the library does not list.
 
+        :param book_id: Identifier of the new book, which names its file and is not written into it.
+        :type book_id: BookId
         :param book_record: The record of the new book.
         :type book_record: BookRecord
         :returns: The record of the book as stored.
         :rtype: BookRecord
         :raises ConflictError: If a book with this identifier is stored.
         """
-        await self._books.create(book_record.id)
-        async with self._books.use(book_record.id) as database:
+        await self._books.create(book_id)
+        async with self._books.use(book_id) as database:
             return await database.write(
                 lambda session: SqlAlchemyBookRepositories(session).book_record.add(book_record),
                 kind=BlockKind.BOOK,
-                book=book_record.id,
+                book=book_id,
                 wait_seconds=self._wait_seconds,
             )
 
@@ -138,7 +137,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     @override
     async def adopt_book(self, book_id: BookId) -> BookRecord:
-        """Open the file an archive placed for a new book, which brings it to the head revision, and rename its record.
+        """Open the file an archive placed for a new book, which brings it to the head revision, and read its record.
 
         :param book_id: Identifier of the new book, whose file the archive placed.
         :type book_id: BookId
@@ -146,16 +145,11 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :rtype: BookRecord
         :raises NotFoundError: If no file was placed for the book.
         :raises BookTooNewError: If the file is at a revision this code does not ship.
-        :raises InvalidArchiveError: If the file is not an SQLite database, or does not hold exactly one record.
+        :raises InvalidArchiveError: If the file is not an SQLite database, or holds no record of a book.
         """
         try:
             async with self._books.use(book_id) as database:
-                return await database.write(
-                    partial(_rename_the_record, book_id),
-                    kind=BlockKind.BOOK,
-                    book=book_id,
-                    wait_seconds=self._wait_seconds,
-                )
+                return await database.read(_the_record)
         except DatabaseError as error:
             raise InvalidArchiveError(NOT_A_DATABASE) from error
 
@@ -189,20 +183,16 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         return await self._catalogue.write(work, kind=BlockKind.OTHER, book=None, wait_seconds=self._wait_seconds)
 
 
-def _rename_the_record(book_id: BookId, session: Session) -> BookRecord:
-    """Give the one record of a book file the identifier of the book it now is.
+def _the_record(session: Session) -> BookRecord:
+    """Read the one record of a book file an archive placed.
 
-    No other table of a book names the book, so only the row of its record changes.
-
-    :param book_id: Identifier of the new book.
-    :type book_id: BookId
-    :param session: Session of the transaction of the change.
+    :param session: Session of the transaction of the read.
     :type session: Session
-    :returns: The record under its new identifier.
+    :returns: The record of the book.
     :rtype: BookRecord
-    :raises InvalidArchiveError: If the file does not hold exactly one record of a book.
+    :raises InvalidArchiveError: If the file holds no record of a book.
     """
-    if session.scalar(select(func.count()).select_from(BookRecordRow)) != 1:
-        raise InvalidArchiveError(NOT_ONE_RECORD)
-    session.execute(update(BookRecordRow).values(id=book_id))
-    return SqlAlchemyBookRepositories(session).book_record.get(book_id)
+    try:
+        return SqlAlchemyBookRepositories(session).book_record.get()
+    except NotFoundError as error:
+        raise InvalidArchiveError(NO_RECORD) from error

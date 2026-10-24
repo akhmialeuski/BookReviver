@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.domain.ids import PageId
+    from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
     from tests.helpers.tracers import AskingTracer
 
@@ -39,7 +39,7 @@ class TestMoveAgainstJobWrite:
     """Tests for a change that moves pages while a job writes one of them, on SQLite."""
 
     async def test_a_job_write_asked_inside_a_group_move_waits_and_both_writes_are_kept(
-        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookRecord, fx_tracer: AskingTracer
+        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookId, fx_tracer: AskingTracer
     ) -> None:
         """Verify the job's change waits for the move, reads the new order, and writes the content type over it.
 
@@ -50,11 +50,11 @@ class TestMoveAgainstJobWrite:
         :param fx_traced_databases: Function opening the databases of the traced books.
         :type fx_traced_databases: Callable[..., BookDatabases]
         :param fx_book: Committed book of the database, which has no page yet.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         :param fx_tracer: Tracer of the test, which tells when the job has asked for its change.
         :type fx_tracer: AskingTracer
         """
-        database = fx_traced_databases().open(fx_book.id)
+        database = fx_traced_databases().open(fx_book)
         pages = [make_page(order_key=key) for key in ORDER_KEYS]
         await database.change(lambda repos, _book_record: repos.pages.add_many(pages))
         moved = [pages[0].id, pages[1].id]

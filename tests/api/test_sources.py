@@ -99,7 +99,7 @@ def _sources_path(book: Book) -> str:
     :returns: The path below the API prefix.
     :rtype: str
     """
-    return f'{BOOKS_PATH}/{book.book_record.id}/sources'
+    return f'{BOOKS_PATH}/{book.book_id}/sources'
 
 
 @pytest.fixture
@@ -152,7 +152,7 @@ async def _add_unimported(
         rejection=RejectionReason.UNSUPPORTED_TYPE if rejected else None,
         detail=RejectionReason.UNSUPPORTED_TYPE.label if rejected else '',
     )
-    await databases.open(book.book_record.id).change(lambda repos, _book_record: repos.sources.add(source))
+    await databases.open(book.book_id).change(lambda repos, _book_record: repos.sources.add(source))
     return source
 
 
@@ -312,13 +312,13 @@ class TestDeleteSource:
         response = await fx_client.delete(f'{_sources_path(fx_book)}/{fx_book.first.id}')
 
         page = PageSchema.model_validate_json(
-            (await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pages/{fx_book.page.id}')).content
+            (await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/pages/{fx_book.page.id}')).content
         )
         assert page.images is not None
         image = await fx_client.get(page.images.full)
         sources = Page[SourceSchema].model_validate_json((await fx_client.get(_sources_path(fx_book))).content)
         scans = Page[ScanSchema].model_validate_json(
-            (await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/scans')).content
+            (await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/scans')).content
         )
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
@@ -358,7 +358,7 @@ class TestDeleteSource:
         :param fx_storage_root: Storage root of the application.
         :type fx_storage_root: Path
         """
-        fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
+        fx_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/{fx_book.first.id}')
 
@@ -431,7 +431,7 @@ class TestDeleteUnimportedSources:
         :type fx_databases: BookDatabasesFactory
         """
         kept = await _add_unimported(fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5, databases=fx_databases())
-        fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
+        fx_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
 
@@ -470,14 +470,14 @@ class TestListScans:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/scans')
+        response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/scans')
 
         scans = Page[ScanSchema].model_validate_json(response.content)
         expect(response.status_code == status.HTTP_200_OK)
         expect([item.id for item in scans.items] == [scan.id for scan in fx_book.scans])
         expect(scans.total == len(fx_book.scans))
         expect(all(item.images is not None for item in scans.items))
-        prefix = f'{IIIF_PATH}/{fx_book.book_record.id}/assets/'
+        prefix = f'{IIIF_PATH}/{fx_book.book_id}/assets/'
         expect(all(item.images.full.startswith(prefix) for item in scans.items if item.images))
         assert_expectations()
 
@@ -506,18 +506,22 @@ class TestListScans:
         :type fx_databases: BookDatabasesFactory
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
-        book_record = evolve(make_record(), image_policy=policy)
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
-        await store_book(
-            fx_uow(), book_record, owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(),
+            evolve(make_record(), image_policy=policy),
+            owner=fx_actor.account_id,
+            sources=[source],
+            scans=[scan],
+            databases=fx_databases(),
         )
 
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/scans')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}/scans')
 
         images = Page[ScanSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        assert images.full == f'{IIIF_PATH}/{book_record.id}/{BookKeys().scan_rendition(scan, full)}'
+        assert images.full == f'{IIIF_PATH}/{book_id}/{BookKeys().scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
         self,
@@ -537,18 +541,17 @@ class TestListScans:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             owner=fx_actor.account_id,
             sources=[source],
             scans=[make_scan(source=source, number=0)],
             databases=fx_databases(),
         )
 
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/scans')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}/scans')
 
         assert Page[ScanSchema].model_validate_json(response.content).items[0].images is None
 
@@ -561,7 +564,7 @@ class TestListScans:
         :type fx_book: Book
         """
         response = await fx_client.get(
-            f'{BOOKS_PATH}/{fx_book.book_record.id}/scans',
+            f'{BOOKS_PATH}/{fx_book.book_id}/scans',
             params={SOURCE_ID_PARAM: str(fx_book.second.id), PAGE_SIZE_PARAM: 2, PAGE_NUMBER_PARAM: 2},
         )
 
@@ -582,10 +585,8 @@ class TestListScans:
         :param fx_strangers_book: Book of another account.
         :type fx_strangers_book: Book
         """
-        unknown = await fx_client.get(
-            f'{BOOKS_PATH}/{fx_book.book_record.id}/scans', params={SOURCE_ID_PARAM: str(uuid4())}
-        )
-        foreign = await fx_client.get(f'{BOOKS_PATH}/{fx_strangers_book.book_record.id}/scans')
+        unknown = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/scans', params={SOURCE_ID_PARAM: str(uuid4())})
+        foreign = await fx_client.get(f'{BOOKS_PATH}/{fx_strangers_book.book_id}/scans')
 
         assert [unknown.status_code, foreign.status_code] == [status.HTTP_404_NOT_FOUND] * 2
 
@@ -598,7 +599,7 @@ class TestListScans:
         :type fx_book: Book
         """
         response = await fx_client.get(
-            f'{BOOKS_PATH}/{fx_book.book_record.id}/scans', params={SOURCE_ID_PARAM: 'not-an-identifier'}
+            f'{BOOKS_PATH}/{fx_book.book_id}/scans', params={SOURCE_ID_PARAM: 'not-an-identifier'}
         )
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT

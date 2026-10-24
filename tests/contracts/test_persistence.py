@@ -50,6 +50,7 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     new_account_id,
+    new_book_id,
 )
 from tests.helpers.seeding import store_book
 
@@ -97,13 +98,13 @@ WIDTH_PX: str = 'width_px'
 BLANK_PROCESSOR_KEY: str = 'pages.blank'
 
 
-async def _add_book(book_record: BookRecord, *, databases: BookDatabases) -> list[Page]:
+async def _add_book(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
     """Add a source of ``PAGE_COUNT`` scans and one page per scan, the last kept out of the book, in one change.
 
     The change is ``Book.change`` of the book, so the book must be stored already.
 
-    :param book_record: The record of the book.
-    :type book_record: BookRecord
+    :param book_id: The identifier of the book.
+    :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
     :type databases: BookDatabases
     :returns: The pages in book order.
@@ -126,7 +127,7 @@ async def _add_book(book_record: BookRecord, *, databases: BookDatabases) -> lis
         repos.scans.add_many(scans)
         repos.pages.add_many(pages)
 
-    await databases.open(book_record.id).change(add_rows)
+    await databases.open(book_id).change(add_rows)
     return pages
 
 
@@ -185,11 +186,8 @@ class TestBookRecordRepository:
         :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
-        assert (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
-            == book_record
-        )
+        book_id = await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
+        assert await fx_databases().open(book_id).read(lambda repos: repos.book_record.get()) == book_record
 
     async def test_update_replaces_details(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -205,11 +203,9 @@ class TestBookRecordRepository:
         """
         book_record = make_record()
         described = evolve(book_record, details=FULL_DETAILS)
-        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
-        await (
-            fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(described))
-        )
-        stored = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
+        book_id = await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(described))
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
         assert stored.details == FULL_DETAILS
 
     async def test_update_clears_lists_and_height(
@@ -226,9 +222,9 @@ class TestBookRecordRepository:
         """
         book_record = evolve(make_record(), details=FULL_DETAILS)
         cleared = evolve(book_record, details=BookDetails(title=FULL_DETAILS.title))
-        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(cleared))
-        stored = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
+        book_id = await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(cleared))
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
         assert stored.details == BookDetails(title=FULL_DETAILS.title)
 
     async def test_overview_counts_the_book_of_one_book(
@@ -245,9 +241,9 @@ class TestBookRecordRepository:
         """
         book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
-        await _add_book(book_record, databases=fx_databases())
-        overview = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.overview(book_record))
+        book_id = await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        await _add_book(book_id, databases=fx_databases())
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
             *BOOK,
@@ -265,13 +261,12 @@ class TestBookRecordRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
-        await _add_book(book_record, databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        await _add_book(book_id, databases=fx_databases())
         placeholder = make_page(order_key=KEY_B0)
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(placeholder))
-        overview = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.overview(book_record))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
         assert (overview.page_count, overview.image_page_count) == (BOOK[0] + 1, PAGE_COUNT)
 
     async def test_the_cover_is_the_first_page_of_the_kind_cover(
@@ -286,13 +281,14 @@ class TestBookRecordRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         text, cover, back = (
             make_page(order_key=key, kind=kind)
             for key, kind in (('a0', PageKind.TEXT), ('a1', PageKind.COVER), ('a2', PageKind.COVER))
         )
-        await store_book(fx_uow(), book_record, back, text, cover, owner=await fx_new_owner(), databases=fx_databases())
-        overview = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.overview(book_record))
+        book_id = await store_book(
+            fx_uow(), make_record(), back, text, cover, owner=await fx_new_owner(), databases=fx_databases()
+        )
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
         assert overview.cover_page_id == cover.id
 
     async def test_a_book_without_a_cover_page_shows_its_first_page_and_an_empty_book_none(
@@ -308,24 +304,21 @@ class TestBookRecordRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        empty, book_record = make_record(), make_record()
         first, second = (make_page(order_key=key) for key in ('a0', 'a1'))
-        await store_book(fx_uow(), empty, owner=owner_id, databases=fx_databases())
-        await store_book(fx_uow(), book_record, second, first, owner=owner_id, databases=fx_databases())
+        empty = await store_book(fx_uow(), make_record(), owner=owner_id, databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), second, first, owner=owner_id, databases=fx_databases())
 
-        async def cover_of(book: BookRecord) -> PageId | None:
+        async def cover_of(book: BookId) -> PageId | None:
             """Read the cover the overview of a book names.
 
-            :param book: The record of the book.
-            :type book: BookRecord
+            :param book: The book.
+            :type book: BookId
             :returns: The cover page, or None.
             :rtype: PageId | None
             """
-            return (
-                await fx_databases().open(book.id).read(lambda repos: repos.book_record.overview(book))
-            ).cover_page_id
+            return (await fx_databases().open(book).read(lambda repos: repos.book_record.overview(book))).cover_page_id
 
-        assert [await cover_of(book) for book in (empty, book_record)] == [None, first.id]
+        assert [await cover_of(book) for book in (empty, book_id)] == [None, first.id]
 
 
 class TestLibraryRepository:
@@ -493,18 +486,12 @@ class TestSourceRepository:
         )
         foreign = make_source()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=owner_id, databases=fx_databases())
-        await store_book(uow, other, owner=owner_id, databases=fx_databases())
-        await (
-            fx_databases()
-            .open(book_record.id)
-            .change(lambda repos, _book_record: repos.sources.add_many([later, earlier]))
-        )
-        await fx_databases().open(other.id).change(lambda repos, _book_record: repos.sources.add(foreign))
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.sources.get(earlier.id)) == earlier)
-        expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.sources.list_all()) == [earlier, later]
-        )
+        book_id = await store_book(uow, book_record, owner=owner_id, databases=fx_databases())
+        other_id = await store_book(uow, other, owner=owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.sources.add_many([later, earlier]))
+        await fx_databases().open(other_id).change(lambda repos, _book_record: repos.sources.add(foreign))
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.sources.get(earlier.id)) == earlier)
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.sources.list_all()) == [earlier, later])
         assert_expectations()
 
     async def test_find_by_sha256_looks_only_inside_the_book(
@@ -523,14 +510,13 @@ class TestSourceRepository:
         book_record, other = make_record(), make_record()
         source = make_source()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=owner_id, sources=[source], databases=fx_databases())
-        await store_book(uow, other, owner=owner_id, databases=fx_databases())
+        book_id = await store_book(uow, book_record, owner=owner_id, sources=[source], databases=fx_databases())
+        other_id = await store_book(uow, other, owner=owner_id, databases=fx_databases())
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.sources.find_by_sha256(source.sha256))
-            == source
+            await fx_databases().open(book_id).read(lambda repos: repos.sources.find_by_sha256(source.sha256)) == source
         )
         expect(
-            await fx_databases().open(other.id).read(lambda repos: repos.sources.find_by_sha256(source.sha256)) is None
+            await fx_databases().open(other_id).read(lambda repos: repos.sources.find_by_sha256(source.sha256)) is None
         )
         assert_expectations()
 
@@ -546,13 +532,12 @@ class TestSourceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(
-            fx_uow(), book_record, owner=await fx_new_owner(), sources=[make_source()], databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(), make_record(), owner=await fx_new_owner(), sources=[make_source()], databases=fx_databases()
         )
         duplicate = make_source()
         with pytest.raises(ConflictError, match=duplicate.sha256):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.sources.add(duplicate))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.sources.add(duplicate))
 
     async def test_same_file_in_another_book_is_stored(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -567,22 +552,23 @@ class TestSourceRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        first, second = make_record(), make_record()
         uow = fx_uow()
-        for book_record in (first, second):
-            await store_book(uow, book_record, owner=owner_id, sources=[make_source()], databases=fx_databases())
+        books = [
+            await store_book(uow, make_record(), owner=owner_id, sources=[make_source()], databases=fx_databases())
+            for _ in range(2)
+        ]
 
-        async def sources_of(book_record: BookRecord) -> int:
+        async def sources_of(book_id: BookId) -> int:
             """Count the sources of one book.
 
-            :param book_record: The book.
-            :type book_record: BookRecord
+            :param book_id: The book.
+            :type book_id: BookId
             :returns: How many sources it has.
             :rtype: int
             """
-            return await fx_databases().open(book_record.id).read(lambda repos: len(repos.sources.list_all()))
+            return await fx_databases().open(book_id).read(lambda repos: len(repos.sources.list_all()))
 
-        counts = [await sources_of(book_record) for book_record in (first, second)]
+        counts = [await sources_of(book_id) for book_id in books]
         assert counts == [1, 1]
 
     async def test_source_of_a_missing_book_raises_not_found(self, fx_databases: BookDatabasesFactory) -> None:
@@ -591,7 +577,7 @@ class TestSourceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = make_record().id
+        book_id = new_book_id()
         orphan = make_source()
         # The book is not stored, so the change is refused before the source is added
         with pytest.raises(NotFoundError, match=str(book_id)):
@@ -609,26 +595,21 @@ class TestSourceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         doomed, kept = (
             make_source(name=FIRST_PDF),
             make_source(name=SECOND_PDF),
         )
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             owner=await fx_new_owner(),
             sources=[doomed, kept],
             scans=[make_scan(source=source, number=0) for source in (doomed, kept)],
             databases=fx_databases(),
         )
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.sources.delete(doomed.id))
-        expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_for_source(doomed.id)) == []
-        )
-        expect(
-            len(await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_for_source(kept.id))) == 1
-        )
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.sources.delete(doomed.id))
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.scans.list_for_source(doomed.id)) == [])
+        expect(len(await fx_databases().open(book_id).read(lambda repos: repos.scans.list_for_source(kept.id))) == 1)
         assert_expectations()
 
     async def test_delete_leaves_the_pages_of_its_scans(
@@ -643,12 +624,11 @@ class TestSourceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
-        pages = await _add_book(book_record, databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        pages = await _add_book(book_id, databases=fx_databases())
         version = make_page_version(page_id=pages[0].id)
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.page_versions.add(version))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_versions.add(version))
 
         def delete_the_source(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Delete the only source of the book, which the work finds by listing.
@@ -660,11 +640,11 @@ class TestSourceRepository:
             """
             repos.sources.delete(repos.sources.list_all()[0].id)
 
-        await fx_databases().open(book_record.id).change(delete_the_source)
-        kept = await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_window(SliceRequest()))
+        await fx_databases().open(book_id).change(delete_the_source)
+        kept = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_window(SliceRequest()))
         expect(list(kept.items) == [evolve(page, scan_id=None) for page in pages])
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(pages[0].id))
+            await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(pages[0].id))
             == [version]
         )
         assert_expectations()
@@ -685,17 +665,16 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
-        await store_book(
-            fx_uow(), book_record, owner=await fx_new_owner(), sources=[source], scans=scans, databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(), make_record(), owner=await fx_new_owner(), sources=[source], scans=scans, databases=fx_databases()
         )
         unstored = make_scan(source=source, number=PAGE_COUNT)
         wanted = [scans[0].id, scans[2].id, scans[2].id, unstored.id]
-        found = await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_by_ids(wanted))
+        found = await fx_databases().open(book_id).read(lambda repos: repos.scans.list_by_ids(wanted))
         expect(sorted(found, key=attrgetter('number')) == [scans[0], scans[2]])
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_by_ids([])) == [])
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.scans.list_by_ids([])) == [])
         assert_expectations()
 
     async def test_scans_read_back_by_number_within_their_source(
@@ -710,18 +689,17 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scans = [
             evolve(make_scan(source=source, number=number), source_label=f'{number + 1}')
             for number in reversed(range(PAGE_COUNT))
         ]
-        await store_book(
-            fx_uow(), book_record, owner=await fx_new_owner(), sources=[source], scans=scans, databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(), make_record(), owner=await fx_new_owner(), sources=[source], scans=scans, databases=fx_databases()
         )
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.scans.get(scans[0].id)) == scans[0])
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.scans.get(scans[0].id)) == scans[0])
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_for_source(source.id))
+            await fx_databases().open(book_id).read(lambda repos: repos.scans.list_for_source(source.id))
             == list(reversed(scans))
         )
         assert_expectations()
@@ -738,25 +716,22 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         first = make_source(name=FIRST_PART_PDF, minutes=1)
         second = make_source(name=SECOND_PART_PDF, minutes=2)
         expected = [make_scan(source=source, number=number) for source in (first, second) for number in range(2)]
         # Insert against the expected order, so neither insertion nor storage order can pass for it
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             owner=await fx_new_owner(),
             sources=[second, first],
             scans=list(reversed(expected)),
             databases=fx_databases(),
         )
-        everything = (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_window(SliceRequest()))
-        )
+        everything = await fx_databases().open(book_id).read(lambda repos: repos.scans.list_window(SliceRequest()))
         window = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: repos.scans.list_window(SliceRequest(offset=1, limit=2)))
         )
         expect([scan.id for scan in everything.items] == [scan.id for scan in expected])
@@ -776,10 +751,11 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=0)
-        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[source], databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(), owner=await fx_new_owner(), sources=[source], databases=fx_databases()
+        )
         ready = evolve(scan, renditions=Renditions(ready=True, version=2, full=Rendition.FULL_PNG))
 
         def add_and_ready(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -793,8 +769,8 @@ class TestScanRepository:
             repos.scans.add(scan)
             repos.scans.update(ready)
 
-        await fx_databases().open(book_record.id).change(add_and_ready)
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.scans.get(scan.id)) == ready
+        await fx_databases().open(book_id).change(add_and_ready)
+        assert await fx_databases().open(book_id).read(lambda repos: repos.scans.get(scan.id)) == ready
 
     async def test_list_unready_returns_the_scans_without_ready_renditions_in_import_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -822,7 +798,7 @@ class TestScanRepository:
             make_scan(source=first, number=2),
         ]
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow, book_record, owner=owner_id, sources=[second, first], scans=scans, databases=fx_databases()
         )
         await store_book(
@@ -833,7 +809,7 @@ class TestScanRepository:
             scans=[make_scan(source=foreign, number=0)],
             databases=fx_databases(),
         )
-        unready = await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_unready())
+        unready = await fx_databases().open(book_id).read(lambda repos: repos.scans.list_unready())
         assert [(scan.source_id, scan.number) for scan in unready] == [
             (first.id, 1),
             (first.id, 2),
@@ -853,11 +829,10 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_unready()) == [])
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.scans.list_unready()) == [])
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
 
         def add_ready_scan(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -871,8 +846,8 @@ class TestScanRepository:
             repos.sources.add(source)
             repos.scans.add(scan)
 
-        await fx_databases().open(book_record.id).change(add_ready_scan)
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.scans.list_unready()) == [])
+        await fx_databases().open(book_id).change(add_ready_scan)
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.scans.list_unready()) == [])
         assert_expectations()
 
     async def test_same_number_twice_in_a_source_raises_conflict(
@@ -887,12 +862,11 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
-            book_record,
+            make_record(),
             owner=await fx_new_owner(),
             sources=[source],
             scans=[make_scan(source=source, number=0)],
@@ -900,7 +874,7 @@ class TestScanRepository:
         )
         clashing = [make_scan(source=source, number=1), make_scan(source=source, number=0)]
         with pytest.raises(ConflictError, match=str(source.id)):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.scans.add_many(clashing))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.scans.add_many(clashing))
 
     async def test_scan_of_a_missing_source_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -914,13 +888,12 @@ class TestScanRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         orphan = make_scan(source=source, number=0)
         with pytest.raises(NotFoundError, match=str(source.id)):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.scans.add(orphan))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.scans.add(orphan))
 
 
 class TestPageRepository:
@@ -941,20 +914,19 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
-        await store_book(fx_uow(), book_record, *pages, owner=await fx_new_owner(), databases=fx_databases())
-        everything = (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_window(SliceRequest()))
+        book_id = await store_book(
+            fx_uow(), make_record(), *pages, owner=await fx_new_owner(), databases=fx_databases()
         )
+        everything = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_window(SliceRequest()))
         window = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=2)))
         )
         beyond = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(
                 lambda repos: repos.pages.list_window(SliceRequest(offset=len(UNORDERED_KEYS), limit=1)),
             )
@@ -980,10 +952,10 @@ class TestPageRepository:
         book_record, empty = make_record(), make_record()
         uow = fx_uow()
         pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
-        await store_book(uow, book_record, *pages, owner=owner_id, databases=fx_databases())
-        await store_book(uow, empty, owner=owner_id, databases=fx_databases())
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.pages.last_order_key()) == KEY_A1)
-        expect(await fx_databases().open(empty.id).read(lambda repos: repos.pages.last_order_key()) is None)
+        book_id = await store_book(uow, book_record, *pages, owner=owner_id, databases=fx_databases())
+        empty_id = await store_book(uow, empty, owner=owner_id, databases=fx_databases())
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.pages.last_order_key()) == KEY_A1)
+        expect(await fx_databases().open(empty_id).read(lambda repos: repos.pages.last_order_key()) is None)
         assert_expectations()
 
     async def test_kind_tally_counts_the_pages_with_an_image_of_each_kind(
@@ -1014,7 +986,7 @@ class TestPageRepository:
         found = evolve(found, content_type=ContentType.BW_PICTURE)
         by_hand = evolve(by_hand, content_type=ContentType.TEXT, content_by_hand=True)
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
             book_record,
             text,
@@ -1029,7 +1001,7 @@ class TestPageRepository:
             databases=fx_databases(),
         )
         await store_book(uow, other, make_page(order_key=KEY_A0), owner=owner_id, databases=fx_databases())
-        tally = await fx_databases().open(book_record.id).read(lambda repos: repos.pages.kind_tally())
+        tally = await fx_databases().open(book_id).read(lambda repos: repos.pages.kind_tally())
         assert dict(tally) == {
             RecipeKind.TEXT: 2,
             RecipeKind.COLOR_PICTURE: 1,
@@ -1050,11 +1022,10 @@ class TestPageRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record = make_record()
         uow = fx_uow()
         book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         book[0] = evolve(book[0], included=False)
-        await store_book(uow, book_record, *book, owner=owner_id, databases=fx_databases())
+        book_id = await store_book(uow, make_record(), *book, owner=owner_id, databases=fx_databases())
 
         def count_before_each(repos: BookRepositories) -> list[int]:
             """Count the pages before each page of the book.
@@ -1066,7 +1037,7 @@ class TestPageRepository:
             """
             return [repos.pages.count_before(page) for page in book]
 
-        positions = await fx_databases().open(book_record.id).read(count_before_each)
+        positions = await fx_databases().open(book_id).read(count_before_each)
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
         expect(positions == [4, 3, 2, 1, 0])
         assert_expectations()
@@ -1083,7 +1054,6 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         spread, other = make_scan(source=source, number=0), make_scan(source=source, number=1)
         right = evolve(make_page(order_key=KEY_A1, scan=spread), slot=2)
@@ -1091,9 +1061,9 @@ class TestPageRepository:
         elsewhere = make_page(order_key=KEY_A3, scan=other)
         placeholder = make_page(order_key='a4')
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
-            book_record,
+            make_record(),
             right,
             left,
             elsewhere,
@@ -1104,12 +1074,10 @@ class TestPageRepository:
             databases=fx_databases(),
         )
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_for_scan(spread.id))
-            == [left, right]
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_for_scan(spread.id)) == [left, right]
         )
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_for_scan(other.id))
-            == [elsewhere]
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_for_scan(other.id)) == [elsewhere]
         )
         assert_expectations()
 
@@ -1125,18 +1093,17 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
         book[1] = evolve(book[1], included=False)
-        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), *book, owner=await fx_new_owner(), databases=fx_databases())
         everything = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: repos.pages.list_window(SliceRequest(), included_only=True))
         )
         window = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(
                 lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=1), included_only=True),
             )
@@ -1157,11 +1124,10 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         book = [make_page(order_key=key) for key in UNORDERED_KEYS]
-        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), *book, owner=await fx_new_owner(), databases=fx_databases())
         wanted = [book[0].id, book[2].id, book[4].id, book[2].id]
-        listed = await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_by_ids(wanted))
+        listed = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_by_ids(wanted))
         # Stored as a1, a0v, a0V, a0, Zz, so these three are a1, a0V and Zz
         assert [page.order_key for page in listed] == [KEY_ZZ, KEY_A0_UPPER, KEY_A1]
 
@@ -1181,13 +1147,13 @@ class TestPageRepository:
         book_record, other = make_record(), make_record()
         own, foreign = make_page(), make_page()
         uow = fx_uow()
-        await store_book(uow, book_record, own, owner=owner_id, databases=fx_databases())
+        book_id = await store_book(uow, book_record, own, owner=owner_id, databases=fx_databases())
         await store_book(uow, other, foreign, owner=owner_id, databases=fx_databases())
         missing = make_page()
         with pytest.raises(NotFoundError, match=str(foreign.id)):
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_by_ids([own.id, foreign.id]))
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_by_ids([own.id, foreign.id]))
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_by_ids([own.id, missing.id]))
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_by_ids([own.id, missing.id]))
 
     async def test_list_for_source_returns_the_pages_of_its_scans_in_book_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1201,7 +1167,6 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         first, second = (
             make_source(name=FIRST_PDF),
             make_source(name=SECOND_PDF),
@@ -1216,9 +1181,9 @@ class TestPageRepository:
         )
         placeholder = make_page(order_key=KEY_A3)
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
-            book_record,
+            make_record(),
             late,
             elsewhere,
             early,
@@ -1229,16 +1194,14 @@ class TestPageRepository:
             databases=fx_databases(),
         )
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_for_source(first.id))
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_for_source(first.id))
             == [early, late]
         )
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_for_source(second.id))
-            == [elsewhere]
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_for_source(second.id)) == [elsewhere]
         )
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_for_source(SourceId(uuid4())))
-            == []
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.list_for_source(SourceId(uuid4()))) == []
         )
         assert_expectations()
 
@@ -1258,7 +1221,7 @@ class TestPageRepository:
         book_record, other = make_record(), make_record()
         book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         uow = fx_uow()
-        await store_book(uow, book_record, *book, owner=owner_id, databases=fx_databases())
+        book_id = await store_book(uow, book_record, *book, owner=owner_id, databases=fx_databases())
         await store_book(uow, other, make_page(order_key=KEY_A0_W), owner=owner_id, databases=fx_databases())
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
         by_key = {page.order_key: page.id for page in book}
@@ -1281,7 +1244,7 @@ class TestPageRepository:
                 pages.neighbour_key(KEY_A1, Side.AFTER),
             ]
 
-        assert await fx_databases().open(book_record.id).read(look_around) == [
+        assert await fx_databases().open(book_id).read(look_around) == [
             KEY_A0,
             KEY_A0_LOWER,
             KEY_A1,
@@ -1302,14 +1265,11 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
-        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), *book, owner=await fx_new_owner(), databases=fx_databases())
         moved = [evolve(book[0], order_key='a1V'), evolve(book[1], order_key='a1G')]
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.update_many(moved))
-        everything = (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_window(SliceRequest()))
-        )
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.update_many(moved))
+        everything = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_window(SliceRequest()))
         assert list(everything.items) == [moved[1], moved[0], book[2]]
 
     async def test_get_after_update_many_in_the_same_change_returns_the_new_state(
@@ -1324,9 +1284,8 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1)]
-        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), *book, owner=await fx_new_owner(), databases=fx_databases())
         moved = [evolve(page, manual_label=PAGE_LABEL, included=False) for page in book]
 
         def update_and_read(repos: BookRepositories, _book_record: BookRecord) -> list[Page]:
@@ -1342,7 +1301,7 @@ class TestPageRepository:
             repos.pages.update_many(moved)
             return [repos.pages.get(page.id) for page in book]
 
-        assert await fx_databases().open(book_record.id).change(update_and_read) == moved
+        assert await fx_databases().open(book_id).change(update_and_read) == moved
 
     async def test_update_to_a_key_another_page_holds_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1356,18 +1315,15 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         first, second = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
-        await store_book(fx_uow(), book_record, first, second, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(), first, second, owner=await fx_new_owner(), databases=fx_databases()
+        )
         taking = evolve(first, order_key=KEY_A1)
         with pytest.raises(ConflictError, match=KEY_A1):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.update(taking))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.update(taking))
         with pytest.raises(ConflictError, match=KEY_A1):
-            await (
-                fx_databases()
-                .open(book_record.id)
-                .change(lambda repos, _book_record: repos.pages.update_many([taking]))
-            )
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.update_many([taking]))
 
     async def test_update_many_with_a_missing_page_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1381,16 +1337,11 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         missing = make_page()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await (
-                fx_databases()
-                .open(book_record.id)
-                .change(lambda repos, _book_record: repos.pages.update_many([missing]))
-            )
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.update_many([missing]))
 
     async def test_updated_page_reads_back(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1404,14 +1355,13 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), page, owner=await fx_new_owner(), databases=fx_databases())
         changed = evolve(
             page, order_key=KEY_A0_UPPER, manual_label=PAGE_LABEL, kind=PageKind.TITLE, included=False, notes='Stamp'
         )
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.update(changed))
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.pages.get(page.id)) == changed
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.update(changed))
+        assert await fx_databases().open(book_id).read(lambda repos: repos.pages.get(page.id)) == changed
 
     async def test_same_order_key_twice_in_a_book_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1426,13 +1376,14 @@ class TestPageRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record, other = make_record(), make_record()
         uow = fx_uow()
-        for owned in (book_record, other):
-            await store_book(uow, owned, make_page(order_key=KEY_A5), owner=owner_id, databases=fx_databases())
+        book_id, _ = [
+            await store_book(uow, make_record(), make_page(order_key=KEY_A5), owner=owner_id, databases=fx_databases())
+            for _ in range(2)
+        ]
         clashing = make_page(order_key=KEY_A5)
         with pytest.raises(ConflictError, match=KEY_A5):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(clashing))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(clashing))
 
     async def test_same_part_of_a_scan_twice_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1446,13 +1397,12 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=0)
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
-            book_record,
+            make_record(),
             *[make_page(order_key=key) for key in (KEY_A0, KEY_A1)],
             make_page(order_key=KEY_A2, scan=scan),
             owner=await fx_new_owner(),
@@ -1462,7 +1412,7 @@ class TestPageRepository:
         )
         second_page = make_page(order_key=KEY_A3, scan=scan)
         with pytest.raises(ConflictError, match=str(scan.id)):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(second_page))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(second_page))
 
     async def test_page_of_a_missing_parent_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1476,17 +1426,17 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
+        book_id = new_book_id()
         missing_scan = make_scan(source=make_source(), number=0)
         orphan = make_page()
         uow = fx_uow()
         # The book is not stored, so the change is refused before the page is added
-        with pytest.raises(NotFoundError, match=str(book_record.id)):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(orphan))
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        with pytest.raises(NotFoundError, match=str(book_id)):
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(orphan))
+        await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases(), book_id=book_id)
         scanned = make_page(scan=missing_scan)
         with pytest.raises(NotFoundError, match=str(missing_scan.id)):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(scanned))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(scanned))
 
     async def test_delete_cascades_to_its_versions(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1500,27 +1450,22 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         doomed, kept = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             doomed,
             kept,
             owner=await fx_new_owner(),
             versions=[make_page_version(page_id=page.id) for page in (doomed, kept)],
             databases=fx_databases(),
         )
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.delete(doomed.id))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.delete(doomed.id))
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(doomed.id))
-            == []
+            await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(doomed.id)) == []
         )
         expect(
-            len(
-                await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(kept.id))
-            )
-            == 1
+            len(await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(kept.id))) == 1
         )
         assert_expectations()
 
@@ -1536,11 +1481,10 @@ class TestPageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), owner=await fx_new_owner(), databases=fx_databases())
         page = make_page()
         with pytest.raises(NotFoundError, match=str(page.id)):
-            await fx_databases().open(book_record.id).read(lambda repos: repos.pages.get(page.id))
+            await fx_databases().open(book_id).read(lambda repos: repos.pages.get(page.id))
 
 
 class TestPageVersionRepository:
@@ -1580,7 +1524,7 @@ class TestPageVersionRepository:
             state=VersionState.FAILED,
         )
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
             book_record,
             *pages,
@@ -1598,14 +1542,14 @@ class TestPageVersionRepository:
         )
         found = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(
                 lambda repos: repos.page_versions.list_to_prepare({'split.none', BLANK_PROCESSOR_KEY}),
             )
         )
         only_blank = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: repos.page_versions.list_to_prepare({BLANK_PROCESSOR_KEY}))
         )
         expect(list(found) == [failed, pending])
@@ -1628,8 +1572,7 @@ class TestPageVersionRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record, other = make_record(), make_record()
-        sources = [make_source() for owned in (book_record, other)]
+        sources = [make_source() for _ in range(2)]
         scans = [make_scan(source=sources[0], number=number) for number in range(5)]
         foreign_scan = make_scan(source=sources[1], number=0)
         pages = [make_page(order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
@@ -1656,9 +1599,9 @@ class TestPageVersionRepository:
             ),
         ]
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
-            book_record,
+            make_record(),
             *pages,
             leaf,
             owner=owner_id,
@@ -1669,7 +1612,7 @@ class TestPageVersionRepository:
         )
         await store_book(
             uow,
-            other,
+            make_record(),
             foreign_page,
             owner=owner_id,
             sources=[sources[1]],
@@ -1677,7 +1620,7 @@ class TestPageVersionRepository:
             versions=[versions[-1]],
             databases=fx_databases(),
         )
-        found = await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.base_sizes())
+        found = await fx_databases().open(book_id).read(lambda repos: repos.page_versions.base_sizes())
         assert sorted(found, key=attrgetter(WIDTH_PX)) == [
             PageSize(width_px=10, height_px=20, dpi=None),
             PageSize(width_px=2000, height_px=3000, dpi=300.0),
@@ -1695,13 +1638,12 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=0)
         page = make_page(scan=scan, kind=PageKind.BLANK)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             page,
             owner=await fx_new_owner(),
             sources=[source],
@@ -1725,12 +1667,12 @@ class TestPageVersionRepository:
             repos.pages.update(evolve(stored, blank_fill=blank_fill))
             return stored
 
-        stored = await fx_databases().open(book_record.id).change(partial(fill, blank_fill=BlankFill.PAPER))
-        leaf = await fx_databases().open(book_record.id).change(partial(fill, blank_fill=BlankFill.SCAN))
+        stored = await fx_databases().open(book_id).change(partial(fill, blank_fill=BlankFill.PAPER))
+        leaf = await fx_databases().open(book_id).change(partial(fill, blank_fill=BlankFill.SCAN))
         expect(stored.blank_fill is BlankFill.SCAN)
         expect((leaf.blank_fill, leaf.scan_id) == (BlankFill.PAPER, scan.id))
         expect(
-            (await fx_databases().open(book_record.id).read(lambda repos: repos.pages.get(page.id))).blank_fill
+            (await fx_databases().open(book_id).read(lambda repos: repos.pages.get(page.id))).blank_fill
             is BlankFill.SCAN
         )
         assert_expectations()
@@ -1747,9 +1689,8 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), page, owner=await fx_new_owner(), databases=fx_databases())
 
         def set_content(
             repos: BookRepositories, _book_record: BookRecord, *, content_type: ContentType, by_hand: bool
@@ -1773,9 +1714,9 @@ class TestPageVersionRepository:
 
         by_found = partial(set_content, content_type=ContentType.BW_PICTURE, by_hand=False)
         by_user = partial(set_content, content_type=ContentType.COLOR_PICTURE, by_hand=True)
-        added = await fx_databases().open(book_record.id).change(by_found)
-        found = await fx_databases().open(book_record.id).change(by_user)
-        by_hand = await fx_databases().open(book_record.id).read(lambda repos: repos.pages.get(page.id))
+        added = await fx_databases().open(book_id).change(by_found)
+        found = await fx_databases().open(book_id).change(by_user)
+        by_hand = await fx_databases().open(book_id).read(lambda repos: repos.pages.get(page.id))
         expect((added.content_type, added.content_by_hand) == (None, False))
         expect((found.content_type, found.content_by_hand) == (ContentType.BW_PICTURE, False))
         expect((by_hand.content_type, by_hand.content_by_hand) == (ContentType.COLOR_PICTURE, True))
@@ -1793,22 +1734,21 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page, other = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
         base = make_page_version(page_id=page.id, minutes=1)
         later = evolve(make_page_version(page_id=page.id, minutes=2), input_id=base.id, renditions=None)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             page,
             other,
             owner=await fx_new_owner(),
             versions=[base, later, make_page_version(page_id=other.id)],
             databases=fx_databases(),
         )
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.get(later.id)) == later)
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.page_versions.get(later.id)) == later)
         expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(page.id))
+            await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id))
             == [base, later]
         )
         assert_expectations()
@@ -1825,14 +1765,13 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         first, second, unasked = (make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2))
         first_base = make_page_version(page_id=first.id, minutes=2)
         second_base = make_page_version(page_id=second.id, minutes=1)
         derived = evolve(make_page_version(page_id=first.id, minutes=3), input_id=first_base.id)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             first,
             second,
             unasked,
@@ -1842,14 +1781,11 @@ class TestPageVersionRepository:
         )
         both = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: repos.page_versions.list_base_versions([first.id, second.id]))
         )
         expect(both == [second_base, first_base])
-        expect(
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_base_versions([]))
-            == []
-        )
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_base_versions([])) == [])
         assert_expectations()
 
     async def test_version_of_a_missing_parent_raises_not_found(
@@ -1864,20 +1800,17 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
         missing_input = make_page_version(page_id=page.id)
         orphan = make_page_version(page_id=page.id)
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         with pytest.raises(NotFoundError, match=str(page.id)):
-            await (
-                fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.page_versions.add(orphan))
-            )
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(page))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_versions.add(orphan))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(page))
         fed = evolve(orphan, input_id=missing_input.id)
         with pytest.raises(NotFoundError, match=missing_input.id):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.page_versions.add(fed))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_versions.add(fed))
 
     async def test_deleted_input_leaves_the_versions_it_fed(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -1891,19 +1824,14 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
         base = make_page_version(page_id=page.id)
         later = evolve(make_page_version(page_id=page.id, minutes=1), input_id=base.id)
-        await store_book(
-            fx_uow(), book_record, page, owner=await fx_new_owner(), versions=[base, later], databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(), make_record(), page, owner=await fx_new_owner(), versions=[base, later], databases=fx_databases()
         )
-        await (
-            fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.page_versions.delete(base.id))
-        )
-        listed = (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(page.id))
-        )
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_versions.delete(base.id))
+        listed = await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id))
         assert listed == [evolve(later, input_id=None)]
 
     async def test_update_of_a_version_read_before_its_page_was_deleted_raises_not_found(
@@ -1921,30 +1849,24 @@ class TestPageVersionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
         version = make_page_version(page_id=page.id)
-        await store_book(
-            fx_uow(), book_record, page, owner=await fx_new_owner(), versions=[version], databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(), make_record(), page, owner=await fx_new_owner(), versions=[version], databases=fx_databases()
         )
-        [read] = (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(page.id))
-        )
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.delete(page.id))
+        [read] = await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.delete(page.id))
 
         with pytest.raises(NotFoundError, match=version.id):
             await (
                 fx_databases()
-                .open(book_record.id)
+                .open(book_id)
                 .change(
                     lambda repos, _book_record: repos.page_versions.update(evolve(read, state=VersionState.READY)),
                 )
             )
 
-        assert (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.page_versions.list_for_page(page.id))
-            == []
-        )
+        assert await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)) == []
 
 
 class TestSourceStatus:
@@ -1962,13 +1884,12 @@ class TestSourceStatus:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         rejected = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
         untyped = _unimported(status=SourceStatus.REJECTED, name=NOTES_TXT, minutes=2, typed=False)
         skipped = _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=3)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             owner=await fx_new_owner(),
             sources=[rejected, untyped, skipped],
             databases=fx_databases(),
@@ -1984,7 +1905,7 @@ class TestSourceStatus:
             """
             return [repos.sources.get(source.id) for source in (rejected, untyped, skipped)]
 
-        stored = await fx_databases().open(book_record.id).read(read_all)
+        stored = await fx_databases().open(book_id).read(read_all)
         expect(stored == [rejected, untyped, skipped])
         expect(
             [(source.status, source.rejection, source.detail) for source in stored]
@@ -2009,17 +1930,18 @@ class TestSourceStatus:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         imported = make_source()
         repeats = [
             evolve(_unimported(status=status, name=FIRST_PDF), sha256=imported.sha256)
             for status in (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
         ]
         uow = fx_uow()
-        await store_book(uow, book_record, owner=await fx_new_owner(), sources=[imported], databases=fx_databases())
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.sources.add_many(repeats))
+        book_id = await store_book(
+            uow, make_record(), owner=await fx_new_owner(), sources=[imported], databases=fx_databases()
+        )
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.sources.add_many(repeats))
 
-        listed = await fx_databases().open(book_record.id).read(lambda repos: repos.sources.list_unimported())
+        listed = await fx_databases().open(book_id).read(lambda repos: repos.sources.list_unimported())
 
         assert {source.id for source in listed} == {source.id for source in repeats}
 
@@ -2035,17 +1957,16 @@ class TestSourceStatus:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         imported = make_source()
         rejected = evolve(_unimported(status=SourceStatus.REJECTED, name=FIRST_PDF), sha256=imported.sha256)
         uow = fx_uow()
-        await store_book(
-            uow, book_record, owner=await fx_new_owner(), sources=[imported, rejected], databases=fx_databases()
+        book_id = await store_book(
+            uow, make_record(), owner=await fx_new_owner(), sources=[imported, rejected], databases=fx_databases()
         )
         duplicate = make_source()
 
         with pytest.raises(ConflictError, match=duplicate.sha256):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.sources.add(duplicate))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.sources.add(duplicate))
 
     async def test_listing_and_digest_lookup_return_imported_sources_only(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -2059,13 +1980,12 @@ class TestSourceStatus:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         imported = make_source(name=FIRST_PDF)
         rejected = _unimported(status=SourceStatus.REJECTED, name=SECOND_PDF)
         skipped = _unimported(status=SourceStatus.SKIPPED, name=FIRST_PART_PDF)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             owner=await fx_new_owner(),
             sources=[imported, rejected, skipped],
             databases=fx_databases(),
@@ -2081,8 +2001,8 @@ class TestSourceStatus:
             """
             return [repos.sources.find_by_sha256(source.sha256) for source in (rejected, skipped)]
 
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.sources.list_all()) == [imported])
-        expect(await fx_databases().open(book_record.id).read(find_digests) == [None, None])
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.sources.list_all()) == [imported])
+        expect(await fx_databases().open(book_id).read(find_digests) == [None, None])
         assert_expectations()
 
     async def test_unimported_sources_list_in_recorded_order_inside_the_book(
@@ -2102,7 +2022,7 @@ class TestSourceStatus:
         later = _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=2)
         earlier = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
             book_record,
             owner=owner_id,
@@ -2117,7 +2037,7 @@ class TestSourceStatus:
             databases=fx_databases(),
         )
 
-        listed = await fx_databases().open(book_record.id).read(lambda repos: repos.sources.list_unimported())
+        listed = await fx_databases().open(book_id).read(lambda repos: repos.sources.list_unimported())
 
         assert listed == [earlier, later]
 
@@ -2138,7 +2058,7 @@ class TestSourceStatus:
         imported = make_source()
         foreign = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF)
         uow = fx_uow()
-        await store_book(
+        book_id = await store_book(
             uow,
             book_record,
             owner=owner_id,
@@ -2149,13 +2069,13 @@ class TestSourceStatus:
             ],
             databases=fx_databases(),
         )
-        await store_book(uow, other, owner=owner_id, sources=[foreign], databases=fx_databases())
+        other_id = await store_book(uow, other, owner=owner_id, sources=[foreign], databases=fx_databases())
 
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.sources.delete_unimported())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.sources.delete_unimported())
 
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.sources.list_unimported()) == [])
-        expect(await fx_databases().open(book_record.id).read(lambda repos: repos.sources.list_all()) == [imported])
-        expect(await fx_databases().open(other.id).read(lambda repos: repos.sources.list_unimported()) == [foreign])
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.sources.list_unimported()) == [])
+        expect(await fx_databases().open(book_id).read(lambda repos: repos.sources.list_all()) == [imported])
+        expect(await fx_databases().open(other_id).read(lambda repos: repos.sources.list_unimported()) == [foreign])
         assert_expectations()
 
     async def test_book_overview_counts_imported_sources_only(
@@ -2171,13 +2091,12 @@ class TestSourceStatus:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record = make_record()
         sources = [
             make_source(),
             _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF),
             _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF),
         ]
-        await store_book(fx_uow(), book_record, owner=owner_id, sources=sources, databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), owner=owner_id, sources=sources, databases=fx_databases())
 
-        overview = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.overview(book_record))
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
         assert overview.source_count == 1

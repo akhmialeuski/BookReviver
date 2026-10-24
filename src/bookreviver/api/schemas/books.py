@@ -402,7 +402,7 @@ class BookSchema(ResponseModel):
         book_record = overview.book_record
         progress = overview.progress
         return cls(
-            id=book_record.id,
+            id=overview.book_id,
             details=BookDetailsSchema.model_validate(book_record.details),
             image_policy=book_record.image_policy,
             cover_page_id=overview.cover_page_id,

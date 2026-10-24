@@ -51,10 +51,10 @@ from tests.helpers.builders import (
     make_page_step_state,
     make_page_version,
     make_recipe,
-    make_record,
     make_scan,
     make_source,
     new_account_id,
+    new_book_id,
 )
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ class TestLibraryEntry:
 
     def test_the_entry_is_stored_under_the_identifier_of_its_book(self) -> None:
         """Verify a book is in one library, so the identifier of the entry is the identifier of the book."""
-        entry = LibraryEntry(book_id=make_record().id, owner_id=new_account_id(), added_at=EPOCH)
+        entry = LibraryEntry(book_id=new_book_id(), owner_id=new_account_id(), added_at=EPOCH)
         assert entry.id == entry.book_id
 
 
@@ -79,7 +79,7 @@ class TestJobStage:
     def test_a_run_stage_job_names_the_stage_of_its_parameters(self) -> None:
         """Verify the stage comes out of the parameters the job stores."""
         job = make_job(
-            book_id=make_record().id,
+            book_id=new_book_id(),
             kind=JobKind.RUN_STAGE,
             params=StageRun(stage=Stage.CLEANUP).to_map(),
         )
@@ -87,12 +87,12 @@ class TestJobStage:
 
     def test_a_job_of_another_kind_has_no_stage(self) -> None:
         """Verify an import job has no stage, whatever its parameters hold."""
-        job = make_job(book_id=make_record().id, params=StageRun(stage=Stage.CLEANUP).to_map())
+        job = make_job(book_id=new_book_id(), params=StageRun(stage=Stage.CLEANUP).to_map())
         assert job.stage is None
 
     def test_a_run_stage_job_with_unreadable_parameters_has_no_stage(self) -> None:
         """Verify parameters that are not those of a stage run give no stage and no error."""
-        job = make_job(book_id=make_record().id, kind=JobKind.RUN_STAGE)
+        job = make_job(book_id=new_book_id(), kind=JobKind.RUN_STAGE)
         assert job.stage is None
 
 

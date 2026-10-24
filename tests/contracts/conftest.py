@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
@@ -164,10 +164,12 @@ async def fx_book_archive(fx_storage: AsyncContainer) -> BookArchive:
 class Book(NamedTuple):
     """A stored book and the account that owns it.
 
+    :ivar book_id: The identifier of the book.
     :ivar book_record: The record of the book.
     :ivar owner_id: The account that owns the book.
     """
 
+    book_id: BookId
     book_record: BookRecord
     owner_id: AccountId
 
@@ -185,8 +187,8 @@ async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *
     :rtype: Book
     """
     book_record, owner_id = make_record(), await new_owner()
-    await store_book(uow_factory(), book_record, owner=owner_id, databases=databases)
-    return Book(book_record=book_record, owner_id=owner_id)
+    book_id = await store_book(uow_factory(), book_record, owner=owner_id, databases=databases)
+    return Book(book_id=book_id, book_record=book_record, owner_id=owner_id)
 
 
 @pytest.fixture

@@ -82,14 +82,14 @@ SIZES: list[tuple[int, int, float | None]] = [(100, 500, 100.0), (300, 100, 300.
 class BookOfScans(NamedTuple):
     """A book whose pages are cut from scans that are cut and stored, each page with its ready base version.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: The identifier of the book.
     :ivar source: The source of every scan.
     :ivar scans: The scans, whose full images are stored.
     :ivar pages: The pages in book order, one per scan.
     :ivar versions: The ready base versions of the pages.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     source: Source
     scans: list[Scan]
     pages: list[Page]
@@ -158,7 +158,6 @@ async def _commit_book(
     :returns: The stored book.
     :rtype: BookOfScans
     """
-    book_record = make_record()
     source = make_source()
     scans = []
     for number, (width, height, dpi) in enumerate(sizes):
@@ -170,9 +169,9 @@ async def _commit_book(
         BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
-    await store_book(
+    book_id = await store_book(
         uow,
-        book_record,
+        make_record(),
         *pages,
         owner=owner.account_id,
         sources=[source],
@@ -182,9 +181,9 @@ async def _commit_book(
     )
     keys = BookKeys()
     for scan in scans:
-        async with files.assets(book_record.id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+        async with files.assets(book_id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(IMAGE)
-    return BookOfScans(book_record=book_record, source=source, scans=scans, pages=pages, versions=versions)
+    return BookOfScans(book_id=book_id, source=source, scans=scans, pages=pages, versions=versions)
 
 
 async def _placeholder_book(
@@ -206,7 +205,7 @@ async def _placeholder_book(
     book = await _commit_book(uow, files, owner, databases=databases)
     page = make_page(order_key=PLACEHOLDER_ORDER_KEY)
     placeholder = evolve(page, kind=PageKind.COVER, notes=PLACEHOLDER_NOTES)
-    await databases.open(book.book_record.id).change(lambda repos, _book_record: repos.pages.add(placeholder))
+    await databases.open(book.book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
     return book, placeholder
 
 
@@ -236,8 +235,8 @@ async def _spare_scan(files: BookFileStores, book: BookOfScans, *, databases: Bo
         repos.sources.add(source)
         repos.scans.add(scan)
 
-    await databases.open(book.book_record.id).change(add_scan)
-    async with files.assets(book.book_record.id).writable(BookKeys().scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+    await databases.open(book.book_id).change(add_scan)
+    async with files.assets(book.book_id).writable(BookKeys().scan_rendition(scan, Rendition.FULL_JPEG)) as path:
         path.write_bytes(IMAGE)
     return scan
 
@@ -257,28 +256,28 @@ async def _stored_versions(book_id: BookId, page: Page, *, databases: BookDataba
     return list(await databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
-async def _stored_pages(*books: BookRecord, databases: BookDatabases) -> list[Page]:
+async def _stored_pages(*books: BookId, databases: BookDatabases) -> list[Page]:
     """Read the committed pages of books.
 
     :param books: Books whose pages are read.
-    :type books: BookRecord
+    :type books: BookId
     :param databases: Opens the databases of the books of the test.
     :type databases: BookDatabases
     :returns: The pages of each book in book order, one book after the other.
     :rtype: list[Page]
     """
 
-    async def pages_of(book_record: BookRecord) -> list[Page]:
+    async def pages_of(book_id: BookId) -> list[Page]:
         """Read the pages of one book in book order.
 
-        :param book_record: The record of the book.
-        :type book_record: BookRecord
+        :param book_id: The identifier of the book.
+        :type book_id: BookId
         :returns: Its pages.
         :rtype: list[Page]
         """
-        return await databases.open(book_record.id).read(lambda repos: book_pages(repos.pages))
+        return await databases.open(book_id).read(lambda repos: book_pages(repos.pages))
 
-    return [page for book_record in books for page in await pages_of(book_record)]
+    return [page for book_id in books for page in await pages_of(book_id)]
 
 
 @pytest.fixture
@@ -378,7 +377,7 @@ class TestAddPlaceholder:
         book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label=THIRD_LABEL, notes=LOST_NOTES)
 
-        overview = await fx_service().add(fx_open_book(fx_actor, book.book_record.id), new)
+        overview = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
 
         page = overview.page
         expect(
@@ -388,7 +387,7 @@ class TestAddPlaceholder:
         expect((page.scan_id, page.slot, page.included) == (None, 0, True))
         expect(page.order_key > book.pages[0].order_key)
         expect((overview.position, overview.image_version) == (1, None))
-        expect(await _stored_versions(book.book_record.id, page, databases=fx_open_book.databases) == [])
+        expect(await _stored_versions(book.book_id, page, databases=fx_open_book.databases) == [])
         expect(_job_kinds(board) == [])
         assert_expectations()
 
@@ -424,7 +423,7 @@ class TestAddPlaceholder:
         anchor = PageAnchor(page_id=book.pages[0].id, side=side)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.COVER, anchor=anchor)
 
-        overview = await fx_service().add(fx_open_book(fx_actor, book.book_record.id), new)
+        overview = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
 
         # The anchor is the first of two pages, so the new page is the first one before it and the second one after it
         assert overview.position == {Side.BEFORE: 0, Side.AFTER: 1}[side]
@@ -452,7 +451,7 @@ class TestAddPlaceholder:
         """
         book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
         stranger = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_stranger, databases=fx_open_book.databases)
-        pages_before = await _stored_pages(book.book_record, stranger.book_record, databases=fx_open_book.databases)
+        pages_before = await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases)
         lost = NewPage(
             origin=NewPageOrigin.PLACEHOLDER,
             kind=PageKind.TEXT,
@@ -460,12 +459,9 @@ class TestAddPlaceholder:
         )
 
         with pytest.raises(NotFoundError):
-            await fx_service().add(fx_open_book(fx_actor, book.book_record.id), lost)
+            await fx_service().add(fx_open_book(fx_actor, book.book_id), lost)
 
-        assert (
-            await _stored_pages(book.book_record, stranger.book_record, databases=fx_open_book.databases)
-            == pages_before
-        )
+        assert await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases) == pages_before
 
 
 class TestAddBlank:
@@ -497,17 +493,17 @@ class TestAddBlank:
         book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, SIZES, databases=fx_open_book.databases)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER)
 
-        first = await fx_service().add(fx_open_book(fx_actor, book.book_record.id), new)
-        second = await fx_service().add(fx_open_book(fx_actor, book.book_record.id), new)
+        first = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
+        second = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
 
-        [version] = await _stored_versions(book.book_record.id, first.page, databases=fx_open_book.databases)
+        [version] = await _stored_versions(book.book_id, first.page, databases=fx_open_book.databases)
         expect(first.page.origin is PageOrigin.BLANK)
         expect(
             (version.stage, version.processor, version.state) == (Stage.PAGE_ORDER, PAGES_BLANK, VersionState.PENDING)
         )
         expect(PageSize.from_data(version.data) == PageSize(width_px=200, height_px=300, dpi=200.0))
         expect(version.renditions == Renditions(ready=False, full=Rendition.FULL_PNG))
-        expect(len(await _stored_versions(book.book_record.id, second.page, databases=fx_open_book.databases)) == 1)
+        expect(len(await _stored_versions(book.book_id, second.page, databases=fx_open_book.databases)) == 1)
         expect(_job_kinds(fx_board) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)])
         assert_expectations()
 
@@ -534,20 +530,20 @@ class TestAddBlank:
         """
         sizes = [(100, 100, None), (102, 200, None), (9999, 9999, None), (500, 500, None), (300, 300, None)]
         book = await _commit_book(fx_uow(), fx_file_stores, fx_actor, sizes, databases=fx_open_book.databases)
-        await fx_open_book.databases.open(book.book_record.id).change(
+        await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(book.pages[2], included=False))
         )
 
         overview = await fx_service().add(
-            fx_open_book(fx_actor, book.book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
+            fx_open_book(fx_actor, book.book_id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
         )
         again = await fx_service().add(
-            fx_open_book(fx_actor, book.book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
+            fx_open_book(fx_actor, book.book_id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
         )
 
-        [version] = await _stored_versions(book.book_record.id, overview.page, databases=fx_open_book.databases)
+        [version] = await _stored_versions(book.book_id, overview.page, databases=fx_open_book.databases)
         expect(PageSize.from_data(version.data) == PageSize(width_px=round((102 + 300) / 2), height_px=250, dpi=None))
-        again_version = (await _stored_versions(book.book_record.id, again.page, databases=fx_open_book.databases))[0]
+        again_version = (await _stored_versions(book.book_id, again.page, databases=fx_open_book.databases))[0]
         expect(PageSize.from_data(again_version.data) == PageSize.from_data(version.data))
         assert_expectations()
 
@@ -569,15 +565,14 @@ class TestAddBlank:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
         size = PageSize(width_px=640, height_px=480, dpi=96.0)
 
         overview = await fx_service().add(
-            fx_open_book(fx_actor, book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
+            fx_open_book(fx_actor, book_id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
         )
 
-        [version] = await _stored_versions(book_record.id, overview.page, databases=fx_open_book.databases)
+        [version] = await _stored_versions(book_id, overview.page, databases=fx_open_book.databases)
         assert PageSize.from_data(version.data) == size
 
     async def test_without_a_size_and_without_pages_with_images_conflicts_and_stores_nothing(
@@ -601,17 +596,16 @@ class TestAddBlank:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(
-            fx_uow(), book_record, make_page(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        book_id = await store_book(
+            fx_uow(), make_record(), make_page(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
 
         with pytest.raises(ConflictError):
             await fx_service().add(
-                fx_open_book(fx_actor, book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
+                fx_open_book(fx_actor, book_id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
             )
 
-        expect(len(await _stored_pages(book_record, databases=fx_open_book.databases)) == 1)
+        expect(len(await _stored_pages(book_id, databases=fx_open_book.databases)) == 1)
         expect(fx_board.put_jobs == [])
         assert_expectations()
 
@@ -645,10 +639,10 @@ class TestAttachScan:
         )
         scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
 
-        overview = await fx_service().attach_scan(fx_open_book(fx_actor, book.book_record.id), placeholder.id, scan.id)
+        overview = await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
         page = overview.page
-        [version] = await _stored_versions(book.book_record.id, page, databases=fx_open_book.databases)
+        [version] = await _stored_versions(book.book_id, page, databases=fx_open_book.databases)
         expect(
             (page.id, page.order_key, page.kind, page.notes)
             == (placeholder.id, PLACEHOLDER_ORDER_KEY, PageKind.COVER, PLACEHOLDER_NOTES)
@@ -708,16 +702,14 @@ class TestAttachScan:
 
         async def bind() -> None:
             """Bind the scan to the placeholder and keep the overview."""
-            bound.append(
-                await binding.attach_scan(fx_open_book(fx_actor, book.book_record.id), placeholder.id, scan.id)
-            )
+            bound.append(await binding.attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id))
 
         # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
         async with (
             anyio.create_task_group() as group,
-            hold_book_in_thread(fx_open_book.databases.open(book.book_record.id)),
+            hold_book_in_thread(fx_open_book.databases.open(book.book_id)),
         ):
-            group.start_soon(fx_open_book.databases.open(book.book_record.id).change, write_the_number)
+            group.start_soon(fx_open_book.databases.open(book.book_id).change, write_the_number)
             await anyio.wait_all_tasks_blocked()
             group.start_soon(bind)
             await anyio.wait_all_tasks_blocked()
@@ -752,12 +744,12 @@ class TestAttachScan:
         book, placeholder = await _placeholder_book(
             fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
         )
-        await fx_open_book.databases.open(book.book_record.id).change(
+        await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(placeholder, manual_label=FIRST_LABEL)),
         )
         scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
 
-        overview = await fx_service().attach_scan(fx_open_book(fx_actor, book.book_record.id), placeholder.id, scan.id)
+        overview = await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
         assert overview.label == FIRST_LABEL
 
@@ -788,16 +780,14 @@ class TestAttachScan:
         elsewhere = await _commit_book(fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
-            await fx_service().attach_scan(
-                fx_open_book(fx_actor, book.book_record.id), placeholder.id, elsewhere.scans[0].id
-            )
+            await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, elsewhere.scans[0].id)
         with pytest.raises(NotFoundError):
             await fx_service().attach_scan(
-                fx_open_book(fx_actor, book.book_record.id), placeholder.id, make_scan(source=book.source, number=9).id
+                fx_open_book(fx_actor, book.book_id), placeholder.id, make_scan(source=book.source, number=9).id
             )
 
         assert (
-            await fx_open_book.databases.open(book.book_record.id).read(lambda repos: repos.pages.get(placeholder.id))
+            await fx_open_book.databases.open(book.book_id).read(lambda repos: repos.pages.get(placeholder.id))
             == placeholder
         )
 
@@ -828,12 +818,10 @@ class TestAttachScan:
         page = book.pages[0]
         if origin is PageOrigin.BLANK:
             page = evolve(make_page(order_key='a9'), origin=PageOrigin.BLANK)
-            await fx_open_book.databases.open(book.book_record.id).change(
-                lambda repos, _book_record: repos.pages.add(page)
-            )
+            await fx_open_book.databases.open(book.book_id).change(lambda repos, _book_record: repos.pages.add(page))
 
         with pytest.raises(NotAPlaceholderError):
-            await fx_service().attach_scan(fx_open_book(fx_actor, book.book_record.id), page.id, scan.id)
+            await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), page.id, scan.id)
 
     async def test_scan_another_page_shows_conflicts_naming_the_place_of_that_page(
         self,
@@ -859,14 +847,12 @@ class TestAttachScan:
         book, placeholder = await _placeholder_book(
             fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
         )
-        before = await _stored_pages(book.book_record, databases=fx_open_book.databases)
+        before = await _stored_pages(book.book_id, databases=fx_open_book.databases)
 
         with pytest.raises(ScanAlreadyInBookError, match='position 1'):
-            await fx_service().attach_scan(
-                fx_open_book(fx_actor, book.book_record.id), placeholder.id, book.scans[0].id
-            )
+            await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, book.scans[0].id)
 
-        assert await _stored_pages(book.book_record, databases=fx_open_book.databases) == before
+        assert await _stored_pages(book.book_id, databases=fx_open_book.databases) == before
 
     async def test_take_over_deletes_the_page_of_the_scan_with_its_versions_and_files(
         self,
@@ -893,24 +879,24 @@ class TestAttachScan:
             fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
         )
         keys = BookKeys()
-        async with fx_file_stores.assets(book.book_record.id).writable(
+        async with fx_file_stores.assets(book.book_id).writable(
             keys.version_rendition(book.versions[0], Rendition.FULL_JPEG)
         ) as path:
             await anyio.Path(path).write_bytes(IMAGE)
-        taken_directory = book_directory(fx_storage_root, book.book_record.id) / keys.page(book.pages[0].id)
+        taken_directory = book_directory(fx_storage_root, book.book_id) / keys.page(book.pages[0].id)
         assert taken_directory.is_dir()
 
         overview = await fx_service().attach_scan(
-            fx_open_book(fx_actor, book.book_record.id), placeholder.id, book.scans[0].id, take_over=True
+            fx_open_book(fx_actor, book.book_id), placeholder.id, book.scans[0].id, take_over=True
         )
 
         expect(
             book.pages[0].id
-            not in {page.id for page in await _stored_pages(book.book_record, databases=fx_open_book.databases)}
+            not in {page.id for page in await _stored_pages(book.book_id, databases=fx_open_book.databases)}
         )
         expect(overview.page.scan_id == book.scans[0].id)
         expect(
-            not await fx_open_book.databases.open(book.book_record.id).read(
+            not await fx_open_book.databases.open(book.book_id).read(
                 lambda repos: repos.page_versions.list_by_ids([book.versions[0].id])
             )
         )
@@ -944,7 +930,7 @@ class TestAttachScan:
         fx_book_changes.published.clear()
 
         await fx_service().attach_scan(
-            fx_open_book(fx_actor, book.book_record.id), placeholder.id, book.scans[0].id, take_over=True
+            fx_open_book(fx_actor, book.book_id), placeholder.id, book.scans[0].id, take_over=True
         )
 
         assert [BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True]
@@ -974,12 +960,12 @@ class TestAttachScan:
             fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
-        await fx_open_book.databases.open(book.book_record.id).change(
+        await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.scans.update(evolve(scan, renditions=Renditions(ready=False))),
         )
 
         with pytest.raises(ConflictError):
-            await fx_service().attach_scan(fx_open_book(fx_actor, book.book_record.id), placeholder.id, scan.id)
+            await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
 
 class TestDelete:
@@ -1016,26 +1002,26 @@ class TestDelete:
         keys = BookKeys()
         doomed, kept = book.pages
         for version in book.versions:
-            async with fx_file_stores.assets(book.book_record.id).writable(
+            async with fx_file_stores.assets(book.book_id).writable(
                 keys.version_rendition(version, Rendition.FULL_JPEG)
             ) as path:
                 await anyio.Path(path).write_bytes(IMAGE)
 
-        await fx_service().delete(fx_open_book(fx_actor, book.book_record.id), doomed.id)
+        await fx_service().delete(fx_open_book(fx_actor, book.book_id), doomed.id)
 
-        stored_ids = {page.id for page in await _stored_pages(book.book_record, databases=fx_open_book.databases)}
+        stored_ids = {page.id for page in await _stored_pages(book.book_id, databases=fx_open_book.databases)}
         versions = [
-            *await _stored_versions(book.book_record.id, doomed, databases=fx_open_book.databases),
-            *await _stored_versions(book.book_record.id, kept, databases=fx_open_book.databases),
+            *await _stored_versions(book.book_id, doomed, databases=fx_open_book.databases),
+            *await _stored_versions(book.book_id, kept, databases=fx_open_book.databases),
         ]
-        scans = await fx_open_book.databases.open(book.book_record.id).read(
+        scans = await fx_open_book.databases.open(book.book_id).read(
             lambda repos: repos.scans.list_by_ids([book.scans[0].id])
         )
-        sources = await fx_open_book.databases.open(book.book_record.id).read(lambda repos: repos.sources.list_all())
+        sources = await fx_open_book.databases.open(book.book_id).read(lambda repos: repos.sources.list_all())
         expect(doomed.id not in stored_ids and kept.id in stored_ids)
         expect([version.page_id for version in versions] == [kept.id])
-        expect(not (book_directory(fx_storage_root, book.book_record.id) / keys.page(doomed.id)).exists())
-        expect((book_directory(fx_storage_root, book.book_record.id) / keys.page(kept.id)).is_dir())
+        expect(not (book_directory(fx_storage_root, book.book_id) / keys.page(doomed.id)).exists())
+        expect((book_directory(fx_storage_root, book.book_id) / keys.page(kept.id)).is_dir())
         expect([scan.id for scan in scans] == [book.scans[0].id] and book.source.id in {each.id for each in sources})
         assert_expectations()
 
@@ -1063,7 +1049,7 @@ class TestDelete:
         book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
         fx_book_changes.published.clear()
 
-        await fx_service().delete(fx_open_book(fx_actor, book.book_record.id), book.pages[0].id)
+        await fx_service().delete(fx_open_book(fx_actor, book.book_id), book.pages[0].id)
 
         assert [BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True]
 
@@ -1092,9 +1078,9 @@ class TestDelete:
         stranger = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_stranger, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
-            await fx_service().delete(fx_open_book(fx_actor, book.book_record.id), stranger.pages[0].id)
+            await fx_service().delete(fx_open_book(fx_actor, book.book_id), stranger.pages[0].id)
 
-        assert len(await _stored_pages(book.book_record, stranger.book_record, databases=fx_open_book.databases)) == 2
+        assert len(await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases)) == 2
 
 
 def _white_leaf_facts(path: Path) -> tuple[str, tuple[int, int], bool, int]:
@@ -1134,18 +1120,19 @@ class TestPrepareImages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         size = PageSize(width_px=64, height_px=48, dpi=150.0)
         overview = await fx_service().add(
-            fx_open_book(fx_actor, book_record.id),
+            fx_open_book(fx_actor, book_id),
             NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER, size=size),
         )
 
         await fx_board.run_queued()
 
-        [version] = await _stored_versions(book_record.id, overview.page, databases=fx_open_book.databases)
-        directory = book_directory(fx_storage_root, book_record.id) / BookKeys().version_directory(version)
+        [version] = await _stored_versions(book_id, overview.page, databases=fx_open_book.databases)
+        directory = book_directory(fx_storage_root, book_id) / BookKeys().version_directory(version)
         expect(version.state is VersionState.READY)
         expect(version.renditions == Renditions(ready=True, full=Rendition.FULL_PNG))
         expect(_white_leaf_facts(directory / Rendition.FULL_PNG) == ('1', (64, 48), True, 1))
@@ -1180,12 +1167,12 @@ class TestPrepareImages:
         )
         scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
         service = make_page_service(fx_open_book, fx_runtime)
-        await service.attach_scan(fx_open_book(fx_actor, book.book_record.id), placeholder.id, scan.id)
+        await service.attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
         await fx_runtime[2].run_queued()
 
-        [version] = await _stored_versions(book.book_record.id, placeholder, databases=fx_open_book.databases)
-        copy = book_directory(fx_storage_root, book.book_record.id) / BookKeys().version_rendition(
+        [version] = await _stored_versions(book.book_id, placeholder, databases=fx_open_book.databases)
+        copy = book_directory(fx_storage_root, book.book_id) / BookKeys().version_rendition(
             version, Rendition.FULL_JPEG
         )
         expect(version.state is VersionState.READY)
@@ -1214,12 +1201,13 @@ class TestPrepareImages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         size = PageSize(width_px=8, height_px=8)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
-        first = await fx_service().add(fx_open_book(fx_actor, book_record.id), new)
-        second = await fx_service().add(fx_open_book(fx_actor, book_record.id), new)
+        first = await fx_service().add(fx_open_book(fx_actor, book_id), new)
+        second = await fx_service().add(fx_open_book(fx_actor, book_id), new)
 
         await fx_board.run_queued()
 
@@ -1267,28 +1255,29 @@ class TestPrepareImages:
             )
 
         board = _board_that_runs(service, fx_events, fx_clock)
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=PageSize(width_px=8, height_px=8))
-        first = await service().add(fx_open_book(fx_actor, book_record.id), new)
+        first = await service().add(fx_open_book(fx_actor, book_id), new)
 
         await board.run_queued()
 
-        [failed] = await _stored_versions(book_record.id, first.page, databases=fx_open_book.databases)
+        [failed] = await _stored_versions(book_id, first.page, databases=fx_open_book.databases)
         [failed_job] = _prepare_jobs(board)
         expect(failed.state is VersionState.FAILED)
         expect(
             VersionData.ERROR in failed.data and failed.renditions == Renditions(ready=False, full=Rendition.FULL_PNG)
         )
         expect((failed_job.state, failed_job.error) == (JobState.FAILED, PAGES_FAILED.format(count=1)))
-        second = await service().add(fx_open_book(fx_actor, book_record.id), new)
+        second = await service().add(fx_open_book(fx_actor, book_id), new)
         await board.run_queued()
-        [again] = await _stored_versions(book_record.id, first.page, databases=fx_open_book.databases)
+        [again] = await _stored_versions(book_id, first.page, databases=fx_open_book.databases)
         [_, later_job] = _prepare_jobs(board)
         expect(again.state is VersionState.READY)
         expect(VersionData.ERROR not in again.data)
         expect(
-            (await _stored_versions(book_record.id, second.page, databases=fx_open_book.databases))[0].state
+            (await _stored_versions(book_id, second.page, databases=fx_open_book.databases))[0].state
             is VersionState.READY
         )
         expect(later_job.state is JobState.SUCCEEDED)
@@ -1319,14 +1308,14 @@ class TestPrepareImages:
             fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
-        await fx_service().attach_scan(fx_open_book(fx_actor, book.book_record.id), placeholder.id, scan.id)
-        await fx_open_book.databases.open(book.book_record.id).change(
+        await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
+        await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.sources.delete(scan.source_id)
         )
 
         await fx_board.run_queued()
 
-        [version] = await _stored_versions(book.book_record.id, placeholder, databases=fx_open_book.databases)
+        [version] = await _stored_versions(book.book_id, placeholder, databases=fx_open_book.databases)
         expect(version.state is VersionState.FAILED)
         expect('deleted' in version.data[VersionData.ERROR])
         assert_expectations()
@@ -1352,11 +1341,12 @@ class TestPrepareImages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         size = PageSize(width_px=8, height_px=8)
         overview = await fx_service().add(
-            fx_open_book(fx_actor, book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
+            fx_open_book(fx_actor, book_id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
         )
         [job] = fx_board.put_jobs
         await fx_board.cancel(job.id)
@@ -1366,7 +1356,7 @@ class TestPrepareImages:
 
         expect(fx_board.get(job.id).state is JobState.CANCELLED)
         expect(
-            (await _stored_versions(book_record.id, overview.page, databases=fx_open_book.databases))[0].state
+            (await _stored_versions(book_id, overview.page, databases=fx_open_book.databases))[0].state
             is VersionState.PENDING
         )
         expect(len(fx_events.published) == published)
@@ -1386,9 +1376,8 @@ class TestPrepareImages:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-        job = fx_board.put(make_job(book_id=book_record.id, kind=JobKind.PREPARE_PAGES))
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        job = fx_board.put(make_job(book_id=book_id, kind=JobKind.PREPARE_PAGES))
 
         await fx_board.run_queued()
 
@@ -1399,18 +1388,18 @@ class TestPrepareImages:
 class TwoLeaves(NamedTuple):
     """A book with two blank leaves that wait for their images.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: The identifier of the book.
     :ivar pages: The pages of the leaves, in book order.
     :ivar root: Storage root of the test, under which the files of the pages lie.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[Page]
     root: Path
 
 
 async def _add_leaves(
-    service: Callable[[], PageService], actor: Actor, book_record: BookRecord, count: int, *, opener: BookOpener
+    service: Callable[[], PageService], actor: Actor, book_id: BookId, count: int, *, opener: BookOpener
 ) -> list[Page]:
     """Add blank leaves of a size given, each in a request of its own, and return their pages.
 
@@ -1418,8 +1407,8 @@ async def _add_leaves(
     :type service: Callable[[], PageService]
     :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Record of the book to add the leaves to.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book to add the leaves to.
+    :type book_id: BookId
     :param count: Number of leaves.
     :type count: int
     :param opener: Opens the books of the test with their databases and their files.
@@ -1428,7 +1417,7 @@ async def _add_leaves(
     :rtype: list[Page]
     """
     new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=PageSize(width_px=8, height_px=8))
-    return [(await service().add(opener(actor, book_record.id), new)).page for _ in range(count)]
+    return [(await service().add(opener(actor, book_id), new)).page for _ in range(count)]
 
 
 class TestPrepareImagesWhileTheBookChanges:
@@ -1455,16 +1444,17 @@ class TestPrepareImagesWhileTheBookChanges:
         :returns: The book, its two pages and the storage root.
         :rtype: TwoLeaves
         """
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         pages = await _add_leaves(
             lambda: make_page_service(fx_open_book, fx_runtime),
             fx_actor,
-            book_record,
+            book_id,
             2,
             opener=fx_open_book,
         )
-        return TwoLeaves(book_record=book_record, pages=pages, root=fx_storage_root)
+        return TwoLeaves(book_id=book_id, pages=pages, root=fx_storage_root)
 
     @pytest.mark.parametrize('victim', [WRITTEN_VICTIM, 'other'])
     async def test_a_page_deleted_while_the_job_runs_is_nothing_to_make_and_not_a_failure(
@@ -1489,7 +1479,7 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_open_book: BookOpener
         """
         events, clock, board = fx_runtime
-        book_record, pages, root = fx_leaves
+        book_id, pages, root = fx_leaves
         deleted: list[PageId] = []
 
         async def delete_in_another_transaction(written: PageId) -> None:
@@ -1499,9 +1489,7 @@ class TestPrepareImagesWhileTheBookChanges:
             :type written: PageId
             """
             page_id = written if victim == WRITTEN_VICTIM else next(page.id for page in pages if page.id != written)
-            await fx_open_book.databases.open(book_record.id).change(
-                lambda repos, _book_record: repos.pages.delete(page_id)
-            )
+            await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(page_id))
             deleted.append(page_id)
 
         service = make_page_service(
@@ -1520,22 +1508,19 @@ class TestPrepareImagesWhileTheBookChanges:
         job = runner_board.get(queued.id)
         expect((job.state, job.error, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, '', 2, 2))
         expect(
-            [
-                version.state
-                for version in await _stored_versions(book_record.id, kept, databases=fx_open_book.databases)
-            ]
+            [version.state for version in await _stored_versions(book_id, kept, databases=fx_open_book.databases)]
             == [VersionState.READY]
         )
         expect(
             await _stored_versions(
-                book_record.id, next(page for page in pages if page.id == gone), databases=fx_open_book.databases
+                book_id, next(page for page in pages if page.id == gone), databases=fx_open_book.databases
             )
             == []
         )
         expect(
             [event.version.page_id for event in events.published if isinstance(event, PageVersionReady)] == [kept.id]
         )
-        expect(not (book_directory(root, book_record.id) / BookKeys().page(gone)).exists())
+        expect(not (book_directory(root, book_id) / BookKeys().page(gone)).exists())
         assert_expectations()
 
     async def test_unexpected_error_in_the_files_of_a_version_fails_the_version_and_the_job_and_frees_the_book(
@@ -1573,18 +1558,19 @@ class TestPrepareImagesWhileTheBookChanges:
             )
 
         board = _board_that_runs(service, fx_events, fx_clock)
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-        [leaf] = await _add_leaves(service, fx_actor, book_record, 1, opener=fx_open_book)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        [leaf] = await _add_leaves(service, fx_actor, book_id, 1, opener=fx_open_book)
 
         await board.run_queued()
 
         [job] = _prepare_jobs(board)
-        [version] = await _stored_versions(book_record.id, leaf, databases=fx_open_book.databases)
+        [version] = await _stored_versions(book_id, leaf, databases=fx_open_book.databases)
         expect((version.state, version.data[VersionData.ERROR]) == (VersionState.FAILED, UNEXPECTED_FAILURE))
         expect((job.state, job.error) == (JobState.FAILED, PAGES_FAILED.format(count=1)))
         expect(job.finished_at is not None)
-        await _add_leaves(service, fx_actor, book_record, 1, opener=fx_open_book)
+        await _add_leaves(service, fx_actor, book_id, 1, opener=fx_open_book)
         expect(len(_prepare_jobs(board)) == FAILED_AND_NEXT_JOBS)
         assert_expectations()
 
@@ -1626,7 +1612,7 @@ class TestPrepareImagesWhileTheBookChanges:
             :param _: The page whose leaf the job is writing.
             :type _: PageId
             """
-            added.extend(await _add_leaves(request_service, fx_actor, book_record, 1, opener=fx_open_book))
+            added.extend(await _add_leaves(request_service, fx_actor, book_id, 1, opener=fx_open_book))
             queued_while_running.append(len(_prepare_jobs(board)))
 
         acting = ActingRenditionWriter(add_a_leaf)
@@ -1644,9 +1630,10 @@ class TestPrepareImagesWhileTheBookChanges:
             )
 
         board = _board_that_runs(job_service, fx_events, fx_clock)
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-        [first] = await _add_leaves(request_service, fx_actor, book_record, 1, opener=fx_open_book)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        [first] = await _add_leaves(request_service, fx_actor, book_id, 1, opener=fx_open_book)
 
         await board.run_queued()
 
@@ -1654,7 +1641,7 @@ class TestPrepareImagesWhileTheBookChanges:
         expect([job.kind for job in _prepare_jobs(board)] == [JobKind.PREPARE_PAGES, JobKind.PREPARE_PAGES])
         expect(
             [
-                (await _stored_versions(book_record.id, page, databases=fx_open_book.databases))[0].state
+                (await _stored_versions(book_id, page, databases=fx_open_book.databases))[0].state
                 for page in (first, *added)
             ]
             == [VersionState.READY, VersionState.READY]
@@ -1683,10 +1670,9 @@ class TestPrepareImagesWhileTheBookChanges:
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
 
-        await _add_leaves(fx_service, fx_actor, book_record, 3, opener=fx_open_book)
+        await _add_leaves(fx_service, fx_actor, book_id, 3, opener=fx_open_book)
 
         assert _job_kinds(fx_board) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)]
 
@@ -1719,19 +1705,19 @@ class TestAddBlankWithoutSizedPages:
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(fx_uow(), fx_file_stores, fx_actor, SIZES, databases=fx_open_book.databases)
-        await fx_open_book.databases.open(book.book_record.id).change(
+        await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update_many([evolve(page, included=False) for page in book.pages]),
         )
         blank = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
 
         with pytest.raises(ConflictError, match='cut from a scan and part of the book has a recorded size') as refused:
-            await fx_service().add(fx_open_book(fx_actor, book.book_record.id), blank)
+            await fx_service().add(fx_open_book(fx_actor, book.book_id), blank)
         made = await fx_service().add(
-            fx_open_book(fx_actor, book.book_record.id), evolve(blank, size=PageSize(width_px=8, height_px=9))
+            fx_open_book(fx_actor, book.book_id), evolve(blank, size=PageSize(width_px=8, height_px=9))
         )
 
         expect('has an image' not in str(refused.value))
-        made_version = (await _stored_versions(book.book_record.id, made.page, databases=fx_open_book.databases))[0]
+        made_version = (await _stored_versions(book.book_id, made.page, databases=fx_open_book.databases))[0]
         expect(PageSize.from_data(made_version.data) == PageSize(width_px=8, height_px=9))
         assert_expectations()
 
@@ -1763,17 +1749,17 @@ class CountingOrderKeys(FractionalOrderKeys):
         return super().spread(lower=lower, upper=upper, count=count)
 
 
-async def _labels_in_book_order(book_record: BookRecord, *, databases: BookDatabases) -> list[str]:
+async def _labels_in_book_order(book_id: BookId, *, databases: BookDatabases) -> list[str]:
     """Read the labels the committed pages of a book show, in the order of the book.
 
-    :param book_record: Record of the book whose pages are read.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book whose pages are read.
+    :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
     :type databases: BookDatabases
     :returns: The label of each page, in order key order.
     :rtype: list[str]
     """
-    return (await stored_book(book_record.id, databases=databases)).labels
+    return (await stored_book(book_id, databases=databases)).labels
 
 
 def _placeholder(label: str, anchor: PageAnchor | None = None) -> NewPage:
@@ -1819,13 +1805,12 @@ class TestAddMany:
         fx_book_changes.published.clear()
 
         added = await service.add_many(
-            fx_open_book(fx_actor, book.book_record.id), [_placeholder(str(n)) for n in range(1, 6)]
+            fx_open_book(fx_actor, book.book_id), [_placeholder(str(n)) for n in range(1, 6)]
         )
 
         expect([overview.position for overview in added] == [1, 2, 3, 4, 5])
         expect(
-            await _labels_in_book_order(book.book_record, databases=fx_open_book.databases)
-            == ['', '1', '2', '3', '4', '5']
+            await _labels_in_book_order(book.book_id, databases=fx_open_book.databases) == ['', '1', '2', '3', '4', '5']
         )
         expect(keys.calls == 1)
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
@@ -1869,10 +1854,10 @@ class TestAddMany:
             _placeholder('e', before_last),
         ]
 
-        added = await service.add_many(fx_open_book(fx_actor, book.book_record.id), new)
+        added = await service.add_many(fx_open_book(fx_actor, book.book_id), new)
 
         expect(
-            await _labels_in_book_order(book.book_record, databases=fx_open_book.databases)
+            await _labels_in_book_order(book.book_id, databases=fx_open_book.databases)
             == ['', 'c', 'd', '', 'a', 'b', 'e', '']
         )
         expect([overview.label for overview in added] == ['a', 'b', 'c', 'd', 'e'])
@@ -1909,16 +1894,16 @@ class TestAddMany:
             NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=sized),
         ]
 
-        added = await fx_service().add_many(fx_open_book(fx_actor, book.book_record.id), new)
+        added = await fx_service().add_many(fx_open_book(fx_actor, book.book_id), new)
 
         sizes = [
             PageSize.from_data(
-                (await _stored_versions(book.book_record.id, added[i].page, databases=fx_open_book.databases))[0].data
+                (await _stored_versions(book.book_id, added[i].page, databases=fx_open_book.databases))[0].data
             )
             for i in (0, 2)
         ]
         expect(sizes == [PageSize(width_px=200, height_px=300, dpi=200.0), sized])
-        expect(await _stored_versions(book.book_record.id, added[1].page, databases=fx_open_book.databases) == [])
+        expect(await _stored_versions(book.book_id, added[1].page, databases=fx_open_book.databases) == [])
         expect([job.kind for job in fx_board.put_jobs] == [JobKind.PREPARE_PAGES])
         assert_expectations()
 
@@ -1949,9 +1934,9 @@ class TestAddMany:
 
         fx_book_changes.published.clear()
         with pytest.raises(ConflictError, match='index 2 of the list'):
-            await fx_service().add_many(fx_open_book(fx_actor, book.book_record.id), new)
+            await fx_service().add_many(fx_open_book(fx_actor, book.book_id), new)
 
-        expect(len(await _stored_pages(book.book_record, databases=fx_open_book.databases)) == len(book.pages))
+        expect(len(await _stored_pages(book.book_id, databases=fx_open_book.databases)) == len(book.pages))
         expect(fx_book_changes.published == [])
         assert_expectations()
 
@@ -1973,14 +1958,13 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
         new = [_placeholder('1'), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)]
 
         with pytest.raises(ConflictError, match='index 1 of the list'):
-            await fx_service().add_many(fx_open_book(fx_actor, book_record.id), new)
+            await fx_service().add_many(fx_open_book(fx_actor, book_id), new)
 
-        assert await _stored_pages(book_record, databases=fx_open_book.databases) == []
+        assert await _stored_pages(book_id, databases=fx_open_book.databases) == []
 
     async def test_refuses_more_pages_than_the_limit(
         self,
@@ -2008,9 +1992,9 @@ class TestAddMany:
         too_many = [_placeholder('x')] * (fx_service().MAX_PAGES_PER_BATCH + 1)
 
         with pytest.raises(ConflictError):
-            await fx_service().add_many(fx_open_book(fx_actor, book.book_record.id), too_many)
+            await fx_service().add_many(fx_open_book(fx_actor, book.book_id), too_many)
 
-        stored = await _stored_pages(book.book_record, stranger.book_record, databases=fx_open_book.databases)
+        stored = await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases)
         assert len(stored) == len(book.pages) + len(stranger.pages)
 
     async def test_a_thousand_pages_are_one_transaction(
@@ -2031,10 +2015,9 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
         labels = [str(number) for number in range(fx_service().MAX_PAGES_PER_BATCH)]
 
-        await fx_service().add_many(fx_open_book(fx_actor, book_record.id), [_placeholder(label) for label in labels])
+        await fx_service().add_many(fx_open_book(fx_actor, book_id), [_placeholder(label) for label in labels])
 
-        assert await _labels_in_book_order(book_record, databases=fx_open_book.databases) == labels
+        assert await _labels_in_book_order(book_id, databases=fx_open_book.databases) == labels

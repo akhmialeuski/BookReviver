@@ -22,6 +22,7 @@ from tests.helpers.builders import (
     make_source,
     make_step_values,
     new_account_id,
+    new_book_id,
 )
 from tests.helpers.seeding import store_book
 
@@ -83,12 +84,12 @@ class TestBookRecordRow:
         """
         book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, make_page(), owner=fx_owner_id, databases=fx_databases())
+        book_id = await store_book(uow, book_record, make_page(), owner=fx_owner_id, databases=fx_databases())
 
         renamed = evolve(book_record, details=evolve(book_record.details, title='Renamed'))
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(renamed))
 
-        assert await fx_book_sessions.read(book_record.id, lambda session: count_rows(session, PageRow)) == 1
+        assert await fx_book_sessions.read(book_id, lambda session: count_rows(session, PageRow)) == 1
 
 
 class TestStepChangeRow:
@@ -114,21 +115,17 @@ class TestStepChangeRow:
         """
         book_record, deleted, kept = make_record(), make_page(order_key='a0'), make_page(order_key='b0')
         uow = fx_uow()
-        await store_book(uow, book_record, deleted, kept, owner=fx_owner_id, databases=fx_databases())
+        book_id = await store_book(uow, book_record, deleted, kept, owner=fx_owner_id, databases=fx_databases())
         values = make_step_values(scope=ValueScope.ODD)
         shared = PageHistoryEntry.of_values([deleted.id, kept.id], values, values, ChangeSource.USER)
         own = make_page_history_entry(page_id=deleted.id)
         await (
-            fx_databases()
-            .open(book_record.id)
-            .change(lambda repos, _book_record: repos.page_history.add_many([*shared, own]))
+            fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_history.add_many([*shared, own]))
         )
 
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.delete(deleted.id))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.delete(deleted.id))
 
-        ids = await fx_book_sessions.read(
-            book_record.id, lambda session: session.scalars(select(StepChangeRow.id)).all()
-        )
+        ids = await fx_book_sessions.read(book_id, lambda session: session.scalars(select(StepChangeRow.id)).all())
         assert ids == [shared[0].id]
 
 
@@ -169,7 +166,7 @@ class TestLibraryRow:
         :type fx_uow: UnitOfWorkFactory
         """
         owner_id = new_account_id()
-        entry = LibraryEntry(book_id=make_record().id, owner_id=owner_id, added_at=EPOCH)
+        entry = LibraryEntry(book_id=new_book_id(), owner_id=owner_id, added_at=EPOCH)
         with pytest.raises(NotFoundError, match=str(owner_id)):
             await fx_uow().change(lambda repos: repos.library.add(entry))
 
@@ -195,9 +192,10 @@ class TestSourceRow:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         first = make_source(name=FIRST_NAME)
-        await store_book(fx_uow(), book_record, owner=fx_owner_id, sources=[first], databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(), owner=fx_owner_id, sources=[first], databases=fx_databases()
+        )
         second = SourceMapper().to_row(evolve(make_source(name=SECOND_NAME), sha256=first.sha256))
 
         def add_and_flush(session: Session) -> None:
@@ -211,7 +209,7 @@ class TestSourceRow:
             session.flush()
 
         with pytest.raises(IntegrityError, match=SQLITE_UNIQUE_FAILED):
-            await fx_book_sessions.write(book_record.id, add_and_flush)
+            await fx_book_sessions.write(book_id, add_and_flush)
 
     async def test_files_no_import_took_in_may_repeat_the_digest_of_an_imported_source(
         self,
@@ -231,9 +229,10 @@ class TestSourceRow:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         imported = make_source(name=FIRST_NAME)
-        await store_book(fx_uow(), book_record, owner=fx_owner_id, sources=[imported], databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(), owner=fx_owner_id, sources=[imported], databases=fx_databases()
+        )
         unimported = [
             evolve(
                 make_source(name=SECOND_NAME),
@@ -253,7 +252,7 @@ class TestSourceRow:
             """
             session.add_all(SourceMapper().to_row(source) for source in unimported)
 
-        await fx_book_sessions.write(book_record.id, add_sources)
+        await fx_book_sessions.write(book_id, add_sources)
 
-        stored = await fx_book_sessions.read(book_record.id, lambda session: count_rows(session, SourceRow))
+        stored = await fx_book_sessions.read(book_id, lambda session: count_rows(session, SourceRow))
         assert stored == 1 + len(UNIMPORTED_STATUSES)

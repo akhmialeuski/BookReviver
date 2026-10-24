@@ -41,11 +41,12 @@ async def _store_version(
     :returns: The identifiers of the book, its page and the version of the page.
     :rtype: tuple[BookId, PageId, PageVersionId]
     """
-    book_record = make_record()
     page = make_page()
     version = make_page_version(page_id=page.id)
-    await store_book(uow_factory(), book_record, page, owner=await new_owner(), versions=[version], databases=databases)
-    return book_record.id, page.id, version.id
+    book_id = await store_book(
+        uow_factory(), make_record(), page, owner=await new_owner(), versions=[version], databases=databases
+    )
+    return book_id, page.id, version.id
 
 
 class TestResultMarkColumns:

@@ -126,9 +126,8 @@ class TestRequestSpan:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}')
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}')
         (span,) = fx_tracer.named(SpanName.HTTP_REQUEST)
         expect(response.status_code == status.HTTP_200_OK)
         expect(span.attributes[SpanAttribute.ROUTE] == BOOK_TEMPLATE)

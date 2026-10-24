@@ -112,11 +112,10 @@ class Actor:
 class BookRecord:
     """One book being digitised: its description and the settings of the work on it.
 
-    The record knows nothing of accounts, so a book moves between instances of the application as it is. The account
-    that owns it is a :class:`LibraryEntry` of the library. The files the book was assembled from are its sources,
-    which the record does not name.
+    The record knows nothing of accounts or of the identifier of its book, so a book moves between instances of the
+    application as it is. The identifier and the account that owns the book are a :class:`LibraryEntry` of the
+    library. The files the book was assembled from are its sources, which the record does not name.
 
-    :ivar id: Identifier of the book.
     :ivar details: Bibliographic description of the book.
     :ivar image_policy: How the ``full`` images of the book's scans and page versions are stored.
     :ivar created_at: When the book was created.
@@ -125,7 +124,6 @@ class BookRecord:
 
     DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
 
-    id: BookId
     details: BookDetails
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     created_at: datetime
@@ -155,6 +153,7 @@ class LibraryEntry:
 class BookOverview:
     """A book as shown in a list, with its size counted when read.
 
+    :ivar book_id: Identifier of the book in the library, which its record does not hold.
     :ivar book_record: The record of the listed book.
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
@@ -166,6 +165,7 @@ class BookOverview:
                     None before it has.
     """
 
+    book_id: BookId
     book_record: BookRecord
     page_count: int = field(default=0, validator=validators.ge(0))
     source_count: int = field(default=0, validator=validators.ge(0))

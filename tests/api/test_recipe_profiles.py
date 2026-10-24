@@ -26,7 +26,8 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, RecipeProfile
+    from bookreviver.domain.entities import Actor, RecipeProfile
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import UnitOfWork
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
@@ -71,17 +72,17 @@ def _default_path(profile_id: object) -> str:
     return f'{PROFILES_PATH}/{profile_id}/default'
 
 
-async def _text_recipe(client: httpx.AsyncClient, book_record: BookRecord) -> RecipeSchema:
+async def _text_recipe(client: httpx.AsyncClient, book_id: BookId) -> RecipeSchema:
     """Read the recipe of text pages of the geometry stage of a book, which a book creates when it is first asked.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :returns: The recipe.
     :rtype: RecipeSchema
     """
-    listed = await client.get(f'{BOOKS_PATH}/{book_record.id}/stages/geometry/recipes')
+    listed = await client.get(f'{BOOKS_PATH}/{book_id}/stages/geometry/recipes')
     return next(
         recipe
         for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS])
@@ -120,30 +121,30 @@ def _body(name: str = PROFILE_NAME) -> dict[str, object]:
     }
 
 
-def _link_path(book_record: BookRecord, recipe_id: object) -> str:
+def _link_path(book_id: BookId, recipe_id: object) -> str:
     """Return the path that records the profile a recipe of the geometry stage was made from.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param recipe_id: Identifier of the recipe.
     :type recipe_id: object
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{BOOKS_PATH}/{book_record.id}/stages/geometry/recipes/{recipe_id}/profile'
+    return f'{BOOKS_PATH}/{book_id}/stages/geometry/recipes/{recipe_id}/profile'
 
 
-def _apply_path(book_record: BookRecord, profile_id: object) -> str:
+def _apply_path(book_id: BookId, profile_id: object) -> str:
     """Return the path that applies a profile to a book.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param profile_id: Identifier of the profile.
     :type profile_id: object
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{BOOKS_PATH}/{book_record.id}/recipe-profiles/{profile_id}/apply'
+    return f'{BOOKS_PATH}/{book_id}/recipe-profiles/{profile_id}/apply'
 
 
 @pytest.fixture
@@ -157,7 +158,7 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookRecord:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookId:
     """Commit a book of the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
@@ -167,11 +168,10 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
-    :rtype: BookRecord
+    :rtype: BookId
     """
-    book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-    return book_record
+    book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+    return book_id
 
 
 async def _store(database: SqlDatabase, uow: UnitOfWork, profile: RecipeProfile) -> RecipeProfile:
@@ -257,7 +257,7 @@ class TestProfiles:
         assert_expectations()
 
     async def test_a_profile_of_another_account_is_a_404_problem(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_book: BookId
     ) -> None:
         """Verify another account's profile is not listed and cannot be changed or applied.
 
@@ -268,7 +268,7 @@ class TestProfiles:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         foreign = await _store(
             fx_database, fx_uow(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
@@ -296,14 +296,14 @@ class TestApplyProfile:
     """Tests for applying a profile to a book."""
 
     async def test_apply_puts_the_steps_of_the_profile_into_the_recipe_of_the_kind(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify the answer is 201 with the recipe of the kind, whose steps are the profile's, and no other changes.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         before = await _text_recipe(fx_client, fx_book)
@@ -318,14 +318,14 @@ class TestApplyProfile:
         assert_expectations()
 
     async def test_apply_needs_the_kind_and_knows_no_activation_or_pages(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify a body without the kind of page, with one that is not a kind, or with the fields of the old body is refused.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         bodies = [{}, {'kind': 'plates'}, {'kind': 'text', 'activate': True, 'page_ids': []}]
@@ -342,7 +342,7 @@ class TestApplyProfile:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_book: BookRecord,
+        fx_book: BookId,
     ) -> None:
         """Verify the steps that can run are applied and the processor that cannot is listed.
 
@@ -355,7 +355,7 @@ class TestApplyProfile:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         profile = await _store(
             fx_database,
@@ -391,9 +391,10 @@ class TestApplyProfile:
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.put(_default_path(profile.id))
-        fresh = make_record(title='Fresh')
-        await store_book(fx_uow(), fresh, owner=fx_actor.account_id, databases=fx_databases())
-        recipe = await _text_recipe(fx_client, fresh)
+        fresh_id = await store_book(
+            fx_uow(), make_record(title='Fresh'), owner=fx_actor.account_id, databases=fx_databases()
+        )
+        recipe = await _text_recipe(fx_client, fresh_id)
         expect((recipe.profile_id, recipe.steps) == (profile.id, profile.steps))
         assert_expectations()
 
@@ -461,14 +462,14 @@ class TestLinkRecipeToProfile:
     """Tests for the profile a recipe of a book is made from."""
 
     async def test_an_applied_profile_is_the_profile_of_the_recipe_it_made(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify the answer of applying, and the recipe read after it, name the profile.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         applied = AppliedProfileSchema.model_validate_json(
@@ -480,26 +481,26 @@ class TestLinkRecipeToProfile:
         assert_expectations()
 
     async def test_a_recipe_made_from_no_profile_answers_null(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify the built-in recipe of a book names no profile.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         assert (await _text_recipe(fx_client, fx_book)).profile_id is None
 
     async def test_put_links_a_recipe_to_a_profile_and_null_unlinks_it(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify PUT records the profile without changing the steps, and a null profile clears it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         before = await _text_recipe(fx_client, fx_book)
@@ -514,14 +515,14 @@ class TestLinkRecipeToProfile:
         assert_expectations()
 
     async def test_a_profile_of_another_stage_is_a_422_problem(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify a recipe cannot be linked to a profile of another stage.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         cleanup = {
             NAME_FIELD: OTHER_NAME,
@@ -534,14 +535,14 @@ class TestLinkRecipeToProfile:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_deleting_a_profile_clears_the_link_of_its_recipes(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify a recipe made from a profile is still answered after the profile is deleted, with no profile.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.post(_apply_path(fx_book, profile.id), json={'kind': 'text'})
@@ -576,7 +577,7 @@ class TestLibrary:
         fx_client: httpx.AsyncClient,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_book: BookRecord,
+        fx_book: BookId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify applying a profile to two books makes the listing say two, and a profile never applied says none.
@@ -588,14 +589,15 @@ class TestLibrary:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         used = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME))
-        other = make_record(title='Another book')
-        await store_book(fx_uow(), other, owner=fx_actor.account_id, databases=fx_databases())
+        other = await store_book(
+            fx_uow(), make_record(title='Another book'), owner=fx_actor.account_id, databases=fx_databases()
+        )
         for book in (fx_book, other, fx_book):
             await fx_client.post(_apply_path(book, used.id), json={'kind': 'text'})
         listed = await fx_client.get(PROFILES_PATH)

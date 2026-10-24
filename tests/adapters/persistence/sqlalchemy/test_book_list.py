@@ -58,11 +58,10 @@ async def _store_books(
     :type databases: BookDatabases
     """
     for minutes in range(count):
-        book_record = make_record(minutes=minutes)
         page = make_page()
-        await store_book(uow, book_record, page, owner=owner_id, databases=databases)
-        await databases.open(book_record.id).change(partial(_add_stage_record, page_id=page.id))
-        board.put(make_job(book_id=book_record.id, minutes=minutes))
+        book_id = await store_book(uow, make_record(minutes=minutes), page, owner=owner_id, databases=databases)
+        await databases.open(book_id).change(partial(_add_stage_record, page_id=page.id))
+        board.put(make_job(book_id=book_id, minutes=minutes))
 
 
 def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page_id: PageId) -> None:

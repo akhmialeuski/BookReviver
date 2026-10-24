@@ -162,7 +162,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         """
         repositories = SqlAlchemyBookRepositories(session)
         written = WrittenParts(session)
-        done = work(repositories, repositories.book_record.get(self._book_id))
+        done = work(repositories, repositories.book_record.get())
         repositories.groups.prune()
         session.flush()
         if not written.parts:

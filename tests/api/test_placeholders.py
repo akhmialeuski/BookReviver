@@ -26,8 +26,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Scan
+    from bookreviver.domain.entities import Actor, Scan
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
     from tests.helpers.storage import SharedBookFileStores
@@ -45,13 +46,13 @@ SCAN_SIZE_PX: tuple[int, int] = (120, 160)
 class Book(NamedTuple):
     """A book of the signed-in account: one page cut from a scan, a placeholder, and a second scan no page shows.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar shown: The page the import made of the first scan.
     :ivar placeholder: The placeholder after it.
     :ivar spare: A cut scan of another source that no page shows.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     shown: BookPage
     placeholder: BookPage
     spare: Scan
@@ -59,7 +60,7 @@ class Book(NamedTuple):
     @property
     def pages_path(self) -> str:
         """The path of the book's pages."""
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages'
+        return f'{BOOKS_PATH}/{self.book_id}/pages'
 
     @property
     def batch_path(self) -> str:
@@ -95,7 +96,6 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     first, second = make_source(name='a.pdf'), make_source(name='b.jpg')
     scans = [
         evolve(
@@ -109,9 +109,9 @@ async def fx_book(
     shown = make_page(order_key='a0', scan=scans[0])
     placeholder = evolve(make_page(order_key='a1'), kind=PageKind.COVER, notes='Missing')
     base = BaseVersions.split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
-    await store_book(
+    book_id = await store_book(
         fx_uow(),
-        book_record,
+        make_record(),
         shown,
         placeholder,
         owner=fx_actor.account_id,
@@ -122,11 +122,9 @@ async def fx_book(
     )
     keys = BookKeys()
     for scan in scans:
-        async with fx_file_stores.assets(book_record.id).writable(
-            keys.scan_rendition(scan, Rendition.FULL_JPEG)
-        ) as path:
+        async with fx_file_stores.assets(book_id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(_jpeg())
-    return Book(book_record=book_record, shown=shown, placeholder=placeholder, spare=scans[1])
+    return Book(book_id=book_id, shown=shown, placeholder=placeholder, spare=scans[1])
 
 
 async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageSchema:
@@ -193,7 +191,7 @@ class TestCreatePage:
         body = {'origin': 'blank', 'kind': 'endpaper', 'after_page_id': str(fx_book.shown.id)}
 
         response = await fx_client.post(fx_book.pages_path, json=body)
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         created = PageSchema.model_validate_json(response.content)
         leaf = await _page(fx_client, fx_book, created.id)
@@ -226,12 +224,9 @@ class TestCreatePage:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
-        response = await fx_client.post(
-            f'{BOOKS_PATH}/{book_record.id}/pages', json={'origin': 'blank', 'kind': 'blank'}
-        )
+        response = await fx_client.post(f'{BOOKS_PATH}/{book_id}/pages', json={'origin': 'blank', 'kind': 'blank'})
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
@@ -252,7 +247,7 @@ class TestCreatePage:
         body = {'origin': 'blank', 'kind': 'blank', 'width_px': 50, 'height_px': 70, 'dpi': 200}
 
         response = await fx_client.post(fx_book.pages_path, json=body)
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         leaf = await _page(fx_client, fx_book, PageSchema.model_validate_json(response.content).id)
         assert leaf.images is not None
@@ -321,14 +316,15 @@ class TestCreatePage:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        stranger = make_record()
-        await commit_record(fx_database, fx_uow(), stranger, owner=new_account_id(), databases=fx_databases())
+        stranger_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
 
         unknown = await fx_client.post(
             fx_book.pages_path, json={'origin': 'placeholder', 'kind': 'text', 'after_page_id': str(uuid4())}
         )
         foreign = await fx_client.post(
-            f'{BOOKS_PATH}/{stranger.id}/pages', json={'origin': 'placeholder', 'kind': 'text'}
+            f'{BOOKS_PATH}/{stranger_id}/pages', json={'origin': 'placeholder', 'kind': 'text'}
         )
 
         expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
@@ -447,7 +443,7 @@ class TestDeletePage:
         response = await fx_client.delete(f'{fx_book.pages_path}/{fx_book.shown.id}')
 
         again = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
-        kept = await fx_databases().open(fx_book.book_record.id).read(lambda repos: repos.scans.list_by_ids([scan_id]))
+        kept = await fx_databases().open(fx_book.book_id).read(lambda repos: repos.scans.list_by_ids([scan_id]))
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(again.status_code == status.HTTP_404_NOT_FOUND)
         expect([scan.id for scan in kept] == [scan_id])
@@ -484,7 +480,7 @@ class TestAttachScan:
         response = await fx_client.put(
             f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan', json={'scan_id': str(fx_book.spare.id)}
         )
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         bound = PageSchema.model_validate_json(response.content)
         ready = await _page(fx_client, fx_book, fx_book.placeholder.id)
@@ -516,7 +512,7 @@ class TestAttachScan:
 
         refused = await fx_client.put(path, json=body)
         taken = await fx_client.put(path, json={**body, 'take_over': True})
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         gone = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
         expect(refused.status_code == status.HTTP_409_CONFLICT)
@@ -587,11 +583,10 @@ class TestAttachScan:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        other = make_record()
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         await store_book(
-            fx_uow(), other, owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
+            fx_uow(), make_record(), owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
         )
         path = f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan'
 

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
@@ -56,17 +57,17 @@ SCAN: BlankFill = BlankFill.SCAN
 class Book(NamedTuple):
     """A book of the signed-in account: a page of text and two blank pages, each cut from a scan.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The three pages in book order.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[BookPage]
 
     @property
     def pages_path(self) -> str:
         """The path of the book's pages."""
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages'
+        return f'{BOOKS_PATH}/{self.book_id}/pages'
 
     @property
     def fill_path(self) -> str:
@@ -112,7 +113,6 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     source = make_source()
     kinds = [PageKind.TEXT, PageKind.BLANK, PageKind.BLANK]
     scans = [
@@ -133,9 +133,9 @@ async def fx_book(
         BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
-    await store_book(
+    book_id = await store_book(
         fx_uow(),
-        book_record,
+        make_record(),
         *pages,
         owner=fx_actor.account_id,
         sources=[source],
@@ -155,20 +155,16 @@ async def fx_book(
         for page, version in zip(pages, versions, strict=True):
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
-    await fx_databases().open(book_record.id).change(save_heads)
+    await fx_databases().open(book_id).change(save_heads)
     keys = BookKeys()
     for scan in scans:
-        async with fx_file_stores.assets(book_record.id).writable(
-            keys.scan_rendition(scan, Rendition.FULL_JPEG)
-        ) as path:
+        async with fx_file_stores.assets(book_id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(_jpeg())
     for version in versions:
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with fx_file_stores.assets(book_record.id).writable(
-                keys.version_rendition(version, rendition)
-            ) as path:
+            async with fx_file_stores.assets(book_id).writable(keys.version_rendition(version, rendition)) as path:
                 path.write_bytes(_jpeg())
-    return Book(book_record=book_record, pages=pages)
+    return Book(book_id=book_id, pages=pages)
 
 
 async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema:
@@ -204,7 +200,7 @@ class TestFillBlankPages:
         before = await _page(fx_client, fx_book, 1)
 
         response = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         leaf = await _page(fx_client, fx_book, 1)
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
@@ -216,7 +212,7 @@ class TestFillBlankPages:
         expect((await fx_client.get(leaf.images.full)).status_code == status.HTTP_200_OK)
 
         back = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: SCAN})
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         shown = await _page(fx_client, fx_book, 1)
         expect(back.status_code == status.HTTP_204_NO_CONTENT)
@@ -237,9 +233,9 @@ class TestFillBlankPages:
         :type fx_book: Book
         """
         await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
-        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/jobs?size=50')
+        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/jobs?size=50')
         jobs = Page[JobSchema].model_validate_json(listed.content).items
         expect((JobKind.PREPARE_PAGES, JobState.SUCCEEDED) in {(job.kind, job.state) for job in jobs})
         expect((JobKind.DETECT_CONTENT, JobState.SUCCEEDED) in {(job.kind, job.state) for job in jobs})
@@ -258,7 +254,7 @@ class TestFillBlankPages:
         :type fx_book: Book
         """
         response = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1, 2), FILL_FIELD: PAPER})
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         pages = [await _page(fx_client, fx_book, index) for index in range(3)]
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
@@ -342,7 +338,7 @@ class TestFillBlankPages:
         :type fx_book: Book
         """
         await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
-        await fx_idle(fx_book.book_record.id)
+        await fx_idle(fx_book.book_id)
 
         response = await fx_client.patch(f'{fx_book.pages_path}/{fx_book.pages[1].id}', json={'kind': 'text'})
 

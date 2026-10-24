@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -24,28 +25,28 @@ GROUP_FIELD: str = 'group_label'
 GROUP: str = 'Engravings'
 
 
-def _pages_path(book_record: BookRecord) -> str:
+def _pages_path(book_id: BookId) -> str:
     """Return the path of the pages of a book.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :returns: The path of the read of its pages.
     :rtype: str
     """
-    return f'{BOOKS_PATH}/{book_record.id}/pages'
+    return f'{BOOKS_PATH}/{book_id}/pages'
 
 
-def _page_path(book_record: BookRecord, page: Page) -> str:
+def _page_path(book_id: BookId, page: Page) -> str:
     """Return the path of one page of a book.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :param page: The page.
     :type page: Page
     :returns: The path of the page.
     :rtype: str
     """
-    return f'{_pages_path(book_record)}/{page.id}'
+    return f'{_pages_path(book_id)}/{page.id}'
 
 
 class TestConditionalRead:
@@ -70,13 +71,13 @@ class TestConditionalRead:
         :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
 
-        first = await fx_client.get(_pages_path(book_record))
+        first = await fx_client.get(_pages_path(book_id))
         tag = first.headers[ETAG_HEADER]
-        repeated = await fx_client.get(_pages_path(book_record), headers={IF_NONE_MATCH_HEADER: tag})
-        await fx_client.patch(_page_path(book_record, page), json={GROUP_FIELD: GROUP})
-        changed = await fx_client.get(_pages_path(book_record), headers={IF_NONE_MATCH_HEADER: tag})
+        repeated = await fx_client.get(_pages_path(book_id), headers={IF_NONE_MATCH_HEADER: tag})
+        await fx_client.patch(_page_path(book_id, page), json={GROUP_FIELD: GROUP})
+        changed = await fx_client.get(_pages_path(book_id), headers={IF_NONE_MATCH_HEADER: tag})
 
         expect(first.status_code == status.HTTP_200_OK and tag.startswith('W/"'))
         expect(first.headers[CACHE_CONTROL_HEADER] == REVALIDATE)
@@ -105,10 +106,10 @@ class TestConditionalRead:
         :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
-        tag = (await fx_client.get(_pages_path(book_record))).headers[ETAG_HEADER]
+        book_id = await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        tag = (await fx_client.get(_pages_path(book_id))).headers[ETAG_HEADER]
 
-        response = await fx_client.get(_page_path(book_record, page), headers={IF_NONE_MATCH_HEADER: tag})
+        response = await fx_client.get(_page_path(book_id, page), headers={IF_NONE_MATCH_HEADER: tag})
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -130,10 +131,11 @@ class TestConditionalRead:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
 
-        response = await fx_client.get(_pages_path(book_record), headers={IF_NONE_MATCH_HEADER: '*'})
+        response = await fx_client.get(_pages_path(book_id), headers={IF_NONE_MATCH_HEADER: '*'})
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -155,9 +157,8 @@ class TestConditionalRead:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/place')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}/place')
 
         assert ETAG_HEADER not in response.headers

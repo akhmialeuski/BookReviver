@@ -47,10 +47,9 @@ async def _store_book(
     :returns: The book and its pages in book order.
     :rtype: tuple[BookId, list[Page]]
     """
-    book_record = make_record()
     pages = [make_page(order_key=f'a{index}') for index in range(THREE_PAGES)]
-    await store_book(uow_factory(), book_record, *pages, owner=await new_owner(), databases=databases)
-    return book_record.id, pages
+    book_id = await store_book(uow_factory(), make_record(), *pages, owner=await new_owner(), databases=databases)
+    return book_id, pages
 
 
 class TestPaginationSectionRepository:
@@ -93,14 +92,15 @@ class TestPaginationSectionRepository:
         :type fx_databases: BookDatabasesFactory
         """
         book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
-        other = make_record()
         foreign_page = make_page()
-        await store_book(fx_uow(), other, foreign_page, owner=await fx_new_owner(), databases=fx_databases())
+        other_id = await store_book(
+            fx_uow(), make_record(), foreign_page, owner=await fx_new_owner(), databases=fx_databases()
+        )
         own = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(own))
         await (
             fx_databases()
-            .open(other.id)
+            .open(other_id)
             .change(lambda repos, _book_record: repos.pagination_sections.add(make_section(page=foreign_page)))
         )
         listed = await fx_databases().open(book_id).read(lambda repos: repos.pagination_sections.list_all())

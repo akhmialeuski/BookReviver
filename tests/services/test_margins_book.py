@@ -22,7 +22,7 @@ from tests.helpers.samples import PAPER, png_bytes, text_page
 from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
+    from bookreviver.domain.entities import Actor, Page, PageVersion
     from bookreviver.domain.ids import BookId
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
@@ -72,7 +72,7 @@ def sheet(index: int) -> Image.Image:
     return sheet_of_paper
 
 
-async def seed_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
+async def seed_book(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page]]:
     """Seed a book of the sheets, shown whole by the page split, with Margins as the one step of the Geometry recipe.
 
     :param kit: What the processing services of the test share.
@@ -80,13 +80,13 @@ async def seed_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
     :returns: The actor, the book and the pages in book order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
-    actor, book_record = await kit.seed_record()
+    actor, book_id = await kit.seed_book()
     for index in range(len(BLOCKS)):
-        await kit.seed_scan_page(book_record, order_key=f'a{index}', image=png_bytes(sheet(index)))
-    await use_recipe(kit, actor, book_record, Stage.PAGE_SPLIT, SPLIT_NONE)
-    await run_stage(kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
-    await use_recipe(kit, actor, book_record, Stage.GEOMETRY, NORMALIZE)
-    return actor, book_record, await book_of(book_record, databases=kit.databases)
+        await kit.seed_scan_page(book_id, order_key=f'a{index}', image=png_bytes(sheet(index)))
+    await use_recipe(kit, actor, book_id, Stage.PAGE_SPLIT, SPLIT_NONE)
+    await run_stage(kit, actor, book_id, StageRun(stage=Stage.PAGE_SPLIT))
+    await use_recipe(kit, actor, book_id, Stage.GEOMETRY, NORMALIZE)
+    return actor, book_id, await book_of(book_id, databases=kit.databases)
 
 
 async def margins_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersion:
@@ -126,12 +126,12 @@ class TestOnePageSizeForTheBook:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        versions = [await margins_of(fx_cv_kit, book_record.id, page) for page in pages]
+        actor, book_id, pages = await seed_book(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        versions = [await margins_of(fx_cv_kit, book_id, page) for page in pages]
         sizes = {size_of(version) for version in versions}
         largest = Rect.from_data(versions[LARGEST].data[VersionData.CONTENT_BOX])
-        params = (await fx_cv_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).steps[0].params
+        params = (await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)).steps[0].params
         width, height = next(iter(sizes))
         expect(len(sizes) == 1)
         # The margins of a book that is not measured are the ones the step starts with, in millimetres of a block that is
@@ -158,10 +158,10 @@ class TestOnePageSizeForTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
+        actor, book_id, pages = await seed_book(fx_cv_kit)
         fx_cv_kit.tracer.finished.clear()
         job = await fx_cv_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_cv_kit.work_queue()
         tasks = len(pages) * TASKS_PER_PAGE
@@ -175,10 +175,10 @@ class TestOnePageSizeForTheBook:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        actor, book_id, pages = await seed_book(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         for index, page in enumerate(pages):
-            box = Rect.from_data((await margins_of(fx_cv_kit, book_record.id, page)).data[VersionData.CONTENT_BOX])
+            box = Rect.from_data((await margins_of(fx_cv_kit, book_id, page)).data[VersionData.CONTENT_BOX])
             (size_x, _), (place_x, place_y) = BLOCKS[index]
             expect(abs(box.left - place_x) <= BOX_TOLERANCE_PX and abs(box.top - place_y) <= BOX_TOLERANCE_PX)
             # The text page the block was cut from is narrower than the sheet, and the block narrower than that page
@@ -195,17 +195,17 @@ class TestOnePageSizeForTheBook:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        before = size_of(await margins_of(fx_cv_kit, book_record.id, pages[CHANGED]))
-        key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
+        actor, book_id, pages = await seed_book(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        before = size_of(await margins_of(fx_cv_kit, book_id, pages[CHANGED]))
+        key = await fx_cv_kit.edit_key(book_id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            fx_open_book(actor, book_id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, page_ids=(pages[CHANGED].id,)))
-        changed = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, page_ids=(pages[CHANGED].id,)))
+        changed = await margins_of(fx_cv_kit, book_id, pages[CHANGED])
         expect(size_of(changed) == before)
-        expect(size_of(changed) == size_of(await margins_of(fx_cv_kit, book_record.id, pages[LARGEST])))
+        expect(size_of(changed) == size_of(await margins_of(fx_cv_kit, book_id, pages[LARGEST])))
         assert_expectations()
 
 
@@ -222,20 +222,20 @@ class TestWhatTheUserSetsOnAPage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
-        key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
+        actor, book_id, pages = await seed_book(fx_cv_kit)
+        key = await fx_cv_kit.edit_key(book_id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            fx_open_book(actor, book_id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
-        await PageValues(fx_cv_kit, actor, book_record.id).set(key, NormalizeParam.MARGIN_TOP.value, MARGIN_TOP_BY_HAND)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        changed = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])
-        other = await margins_of(fx_cv_kit, book_record.id, pages[LARGEST])
+        await PageValues(fx_cv_kit, actor, book_id).set(key, NormalizeParam.MARGIN_TOP.value, MARGIN_TOP_BY_HAND)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        changed = await margins_of(fx_cv_kit, book_id, pages[CHANGED])
+        other = await margins_of(fx_cv_kit, book_id, pages[LARGEST])
         expect(Rect.from_data(changed.data[VersionData.CONTENT_BOX]) == Rect(**MANUAL_BOX.to_data()))
         expect(changed.params[NormalizeParam.MARGIN_TOP] == MARGIN_TOP_BY_HAND)
         expect(other.params[NormalizeParam.MARGIN_TOP] != MARGIN_TOP_BY_HAND)
         expect(size_of(changed) == size_of(other))
-        expect(await fx_cv_kit.edits().list(fx_open_book(actor, book_record.id), pages[CHANGED].id, Stage.GEOMETRY))
+        expect(await fx_cv_kit.edits().list(fx_open_book(actor, book_id), pages[CHANGED].id, Stage.GEOMETRY))
         assert_expectations()
 
     async def test_a_small_box_of_the_user_leaves_the_pages_of_the_book_of_one_size(
@@ -248,13 +248,13 @@ class TestWhatTheUserSetsOnAPage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
-        key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
+        actor, book_id, pages = await seed_book(fx_cv_kit)
+        key = await fx_cv_kit.edit_key(book_id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            fx_open_book(actor, book_id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        versions = [await margins_of(fx_cv_kit, book_record.id, page) for page in pages]
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        versions = [await margins_of(fx_cv_kit, book_id, page) for page in pages]
         largest = Rect.from_data(versions[LARGEST].data[VersionData.CONTENT_BOX])
         expect(len({size_of(version) for version in versions}) == 1)
         expect(size_of(versions[CHANGED])[0] > largest.width)
@@ -273,15 +273,15 @@ class TestWhatTheUserSetsOnAPage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages = await seed_book(fx_cv_kit)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        before = size_of(await margins_of(fx_cv_kit, book_record.id, pages[LARGEST]))
-        key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
+        actor, book_id, pages = await seed_book(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        before = size_of(await margins_of(fx_cv_kit, book_id, pages[LARGEST]))
+        key = await fx_cv_kit.edit_key(book_id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
+            fx_open_book(actor, book_id), key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
         )
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        sizes = [size_of(await margins_of(fx_cv_kit, book_record.id, page)) for page in pages]
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        sizes = [size_of(await margins_of(fx_cv_kit, book_id, page)) for page in pages]
         expect(len(set(sizes)) == 1, f'The sizes of the pages are {sizes}')
         expect(sizes[LARGEST][0] > before[0], f'The book was {before} before the box, and is {sizes[LARGEST]} after')
         assert_expectations()
@@ -291,7 +291,7 @@ class TestMarginsAfterSelectContent:
     """Tests for Margins with Select content before it, which leaves the page as it is, run as a stage runs them."""
 
     @staticmethod
-    async def seed_two_steps(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
+    async def seed_two_steps(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page]]:
         """Seed the book of the sheets with Select content and Margins as the two steps of the Geometry recipe.
 
         :param kit: What the processing services of the test share.
@@ -299,10 +299,10 @@ class TestMarginsAfterSelectContent:
         :returns: The actor, the book and the pages in book order.
         :rtype: tuple[Actor, BookRecord, list[Page]]
         """
-        actor, book_record, pages = await seed_book(kit)
+        actor, book_id, pages = await seed_book(kit)
         draft = RecipeDraft(steps=[Step(processor_key=CROP), Step(processor_key=NORMALIZE)])
-        await kit.edit_recipe(actor, book_record, Stage.GEOMETRY, draft)
-        return actor, book_record, pages
+        await kit.edit_recipe(actor, book_id, Stage.GEOMETRY, draft)
+        return actor, book_id, pages
 
     async def test_a_step_before_margins_does_not_take_the_size_of_the_book(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify the size by the book is laid over Margins alone, so the step before it runs and the pages share a size.
@@ -312,9 +312,9 @@ class TestMarginsAfterSelectContent:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        versions = [await margins_of(fx_cv_kit, book_record.id, page) for page in pages]
+        actor, book_id, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        versions = [await margins_of(fx_cv_kit, book_id, page) for page in pages]
         expect(all(version.processor.key == NORMALIZE for version in versions))
         expect(len({size_of(version) for version in versions}) == 1)
         assert_expectations()
@@ -329,12 +329,12 @@ class TestMarginsAfterSelectContent:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        actor, book_id, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         for index, page in enumerate(pages):
-            margins = await margins_of(fx_cv_kit, book_record.id, page)
+            margins = await margins_of(fx_cv_kit, book_id, page)
             assert margins.input_id is not None
-            select = await fx_cv_kit.stored_version(book_record.id, margins.input_id)
+            select = await fx_cv_kit.stored_version(book_id, margins.input_id)
             frame = Rect.from_data(select.data[VersionData.FRAME])
             box = Rect.from_data(margins.data[VersionData.CONTENT_BOX])
             (size_x, _), (place_x, place_y) = BLOCKS[index]
@@ -344,7 +344,7 @@ class TestMarginsAfterSelectContent:
             expect(abs(box.left - place_x) <= BOX_TOLERANCE_PX and abs(box.top - place_y) <= BOX_TOLERANCE_PX)
             expect(box.width <= size_x)
             expect(size_of(margins) != SHEET_SIZE_PX)
-        expect(len({size_of(await margins_of(fx_cv_kit, book_record.id, page)) for page in pages}) == 1)
+        expect(len({size_of(await margins_of(fx_cv_kit, book_id, page)) for page in pages}) == 1)
         assert_expectations()
 
     async def test_the_frame_the_user_gave_to_select_content_is_the_box_margins_places(
@@ -357,15 +357,15 @@ class TestMarginsAfterSelectContent:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
-        key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, CROP)
+        actor, book_id, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
+        key = await fx_cv_kit.edit_key(book_id, pages[CHANGED], Stage.GEOMETRY, CROP)
         await fx_cv_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None
+            fx_open_book(actor, book_id), key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None
         )
-        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        margins = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])
+        await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        margins = await margins_of(fx_cv_kit, book_id, pages[CHANGED])
         assert margins.input_id is not None
-        select = await fx_cv_kit.stored_version(book_record.id, margins.input_id)
+        select = await fx_cv_kit.stored_version(book_id, margins.input_id)
         box = Rect.from_data(margins.data[VersionData.CONTENT_BOX])
         expect(Rect.from_data(select.data[VersionData.FRAME]) == HAND_FRAME)
         expect(abs(box.left - HAND_FRAME.left) <= 1 and abs(box.top - HAND_FRAME.top) <= 1)

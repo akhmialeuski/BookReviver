@@ -42,6 +42,7 @@ from tests.helpers.builders import (
     make_section,
     make_source,
     make_step_values,
+    new_book_id,
 )
 
 if TYPE_CHECKING:
@@ -131,7 +132,7 @@ class ChangeKind(NamedTuple):
         :rtype: T
         """
         if self.of_book:
-            return await stores.databases.open(book.book_record.id).change(lambda repos, _book_record: work(repos))
+            return await stores.databases.open(book.book_id).change(lambda repos, _book_record: work(repos))
         return await stores.uow.change(work)
 
     async def read[T](self, stores: Stores, book: Book, work: Callable[[Any], T]) -> T:
@@ -147,7 +148,7 @@ class ChangeKind(NamedTuple):
         :rtype: T
         """
         if self.of_book:
-            return await stores.databases.open(book.book_record.id).read(work)
+            return await stores.databases.open(book.book_id).read(work)
         return await stores.uow.read(work)
 
     def lock_of(self, stores: Stores, book: Book) -> BookDatabase | UnitOfWork:
@@ -161,7 +162,7 @@ class ChangeKind(NamedTuple):
                   catalogue.
         :rtype: BookDatabase | UnitOfWork
         """
-        return stores.databases.open(book.book_record.id) if self.of_book else stores.uow
+        return stores.databases.open(book.book_id) if self.of_book else stores.uow
 
     def rows(self, book: Book, number: int) -> tuple[Any, Any]:
         """Build two rows of two repositories of the store, which differ from those of any other number.
@@ -364,13 +365,13 @@ async def fx_book_rows(fx_databases: BookDatabasesFactory, fx_book: Book) -> dic
         repos.recipes.add(recipe)
         repos.book_places.save(place)
 
-    await fx_databases().open(book_record.id).change(add_rows)
+    await fx_databases().open(fx_book.book_id).change(add_rows)
     return {
         'book_record': Row(
             book_record,
             evolve(book_record, updated_at=book_record.updated_at + ONE_MINUTE),
             make_record(title='Another'),
-            book_record.id,
+            fx_book.book_id,
         ),
         'sources': Row(
             source,
@@ -440,7 +441,7 @@ async def fx_rows(fx_uow: UnitOfWorkFactory, fx_book: Book, fx_book_rows: dict[s
     """
     owner_id = fx_book.owner_id
     profile = make_recipe_profile(account_id=owner_id)
-    entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_record.id))
+    entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_id))
     await fx_uow().change(lambda repos: repos.recipe_profiles.add(profile))
     return {
         **fx_book_rows,
@@ -570,9 +571,9 @@ class TestBookLifecycle:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        created = await fx_uow().create_book(book_record)
-        read = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
+        book_id, book_record = new_book_id(), make_record()
+        created = await fx_uow().create_book(book_id, book_record)
+        read = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
         expect(created == book_record)
         expect(read == book_record)
         assert_expectations()
@@ -587,12 +588,12 @@ class TestBookLifecycle:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record(title='First')
-        await fx_uow().create_book(book_record)
+        book_id, book_record = new_book_id(), make_record(title='First')
+        await fx_uow().create_book(book_id, book_record)
         duplicate = evolve(book_record, details=evolve(book_record.details, title='Second'))
-        with pytest.raises(ConflictError, match=str(book_record.id)):
-            await fx_uow().create_book(duplicate)
-        stored = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
+        with pytest.raises(ConflictError, match=str(book_id)):
+            await fx_uow().create_book(book_id, duplicate)
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
         assert stored == book_record
 
     async def test_deleted_book_answers_not_found_and_other_books_stay(
@@ -605,27 +606,27 @@ class TestBookLifecycle:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        doomed, kept = make_record(), make_record()
+        doomed_id, kept_id = new_book_id(), new_book_id()
 
-        async def book_with_a_page(book_record: BookRecord) -> None:
+        async def book_with_a_page(book_id: BookId) -> None:
             """Make a book and store one page in it.
 
-            :param book_record: The record of the book.
-            :type book_record: BookRecord
+            :param book_id: The identifier of the book.
+            :type book_id: BookId
             """
-            await fx_uow().create_book(book_record)
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(make_page()))
+            await fx_uow().create_book(book_id, make_record())
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(make_page()))
 
-        for book_record in (doomed, kept):
-            await book_with_a_page(book_record)
+        for book_id in (doomed_id, kept_id):
+            await book_with_a_page(book_id)
 
-        await fx_uow().delete_book(doomed.id)
+        await fx_uow().delete_book(doomed_id)
 
-        with pytest.raises(NotFoundError, match=str(doomed.id)):
-            await fx_databases().open(doomed.id).read(lambda repos: repos.book_record.get(doomed.id))
-        with pytest.raises(NotFoundError, match=str(doomed.id)):
-            await fx_databases().open(doomed.id).change(lambda _repos, _book_record: None)
-        remaining = await fx_databases().open(kept.id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
+        with pytest.raises(NotFoundError, match=str(doomed_id)):
+            await fx_databases().open(doomed_id).read(lambda repos: repos.book_record.get())
+        with pytest.raises(NotFoundError, match=str(doomed_id)):
+            await fx_databases().open(doomed_id).change(lambda _repos, _book_record: None)
+        remaining = await fx_databases().open(kept_id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
         assert remaining.total == 1
 
     async def test_deleting_a_book_again_or_one_never_stored_does_nothing(
@@ -638,15 +639,15 @@ class TestBookLifecycle:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await fx_uow().create_book(book_record)
-        await fx_uow().delete_book(book_record.id)
+        book_id = new_book_id()
+        await fx_uow().create_book(book_id, make_record())
+        await fx_uow().delete_book(book_id)
 
-        await fx_uow().delete_book(book_record.id)
-        await fx_uow().delete_book(make_record().id)
+        await fx_uow().delete_book(book_id)
+        await fx_uow().delete_book(new_book_id())
 
-        with pytest.raises(NotFoundError, match=str(book_record.id)):
-            await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
+        with pytest.raises(NotFoundError, match=str(book_id)):
+            await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
 
     async def test_a_deleted_book_can_be_created_again(
         self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
@@ -658,14 +659,14 @@ class TestBookLifecycle:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await fx_uow().create_book(book_record)
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.pages.add(make_page()))
-        await fx_uow().delete_book(book_record.id)
+        book_id, book_record = new_book_id(), make_record()
+        await fx_uow().create_book(book_id, book_record)
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(make_page()))
+        await fx_uow().delete_book(book_id)
 
-        await fx_uow().create_book(book_record)
+        await fx_uow().create_book(book_id, book_record)
 
-        pages = await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
+        pages = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
         assert pages.total == 0
 
 
@@ -680,8 +681,8 @@ class TestRead:
         :param fx_book: Stored book whose library entry is read.
         :type fx_book: Book
         """
-        entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_record.id))
-        assert (entry.book_id, entry.owner_id) == (fx_book.book_record.id, fx_book.owner_id)
+        entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_id))
+        assert (entry.book_id, entry.owner_id) == (fx_book.book_id, fx_book.owner_id)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_read_sees_every_write_of_a_committed_change_and_none_of_a_rolled_back_one(
@@ -778,8 +779,8 @@ class TestChangeWait:
         """
         holder, impatient = fx_stores(), fx_stores(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with hold_book_in_thread(holder.databases.open(fx_book.book_record.id)):
-            await impatient.databases.open(fx_other_book.book_record.id).change(
+        async with hold_book_in_thread(holder.databases.open(fx_book.book_id)):
+            await impatient.databases.open(fx_other_book.book_id).change(
                 lambda _repos, _book_record: ran.append(OTHER_BOOK)
             )
             await impatient.uow.change(lambda _repos: ran.append(CATALOGUE))
@@ -800,9 +801,7 @@ class TestChangeWait:
         holder, impatient = fx_stores(), fx_stores(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
         async with hold_book_in_thread(holder.uow):
-            await impatient.databases.open(fx_book.book_record.id).change(
-                lambda _repos, _book_record: ran.append(OTHER_BOOK)
-            )
+            await impatient.databases.open(fx_book.book_id).change(lambda _repos, _book_record: ran.append(OTHER_BOOK))
             ran_while_held = list(ran)
         assert ran_while_held == [OTHER_BOOK]
 

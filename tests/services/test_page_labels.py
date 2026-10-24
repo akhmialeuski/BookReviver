@@ -52,7 +52,7 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 ]
 
 
-async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabases) -> tuple[BookRecord, list[Page]]:
+async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabases) -> tuple[BookId, list[Page]]:
     """Commit a book of seven pages of the kinds in ``LAYOUT``, each labelled by hand with a stale number.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
@@ -64,7 +64,6 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabase
     :returns: The book and its pages in book order.
     :rtype: tuple[BookRecord, list[Page]]
     """
-    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(
@@ -75,8 +74,8 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabase
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
-    await store_book(uow, book_record, *pages, owner=owner.account_id, databases=databases)
-    return book_record, pages
+    book_id = await store_book(uow, make_record(), *pages, owner=owner.account_id, databases=databases)
+    return book_id, pages
 
 
 async def _stored(book_id: BookId, *, databases: BookDatabases) -> dict[PageId, Page]:
@@ -154,17 +153,17 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, pages = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         fx_clock.moment = LATER
         fx_book_changes.published.clear()
 
         updated = await fx_service().update(
-            fx_open_book(fx_actor, book_record.id),
+            fx_open_book(fx_actor, book_id),
             pages[2].id,
             PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
 
-        stored = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.pages.get(pages[2].id))
+        stored = await fx_open_book.databases.open(book_id).read(lambda repos: repos.pages.get(pages[2].id))
         expect(
             (stored.manual_label, stored.kind, stored.included, stored.notes)
             == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
@@ -198,11 +197,11 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         await fx_service().update(
-            fx_open_book(fx_actor, book_record.id),
+            fx_open_book(fx_actor, book_id),
             pages[2].id,
             PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
@@ -227,11 +226,11 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
 
-        await fx_service().update(fx_open_book(fx_actor, book_record.id), pages[3].id, PageChanges(label=''))
+        await fx_service().update(fx_open_book(fx_actor, book_id), pages[3].id, PageChanges(label=''))
 
-        stored = (await _stored(book_record.id, databases=fx_open_book.databases))[pages[3].id]
+        stored = (await _stored(book_id, databases=fx_open_book.databases))[pages[3].id]
         assert evolve(stored, manual_label=STALE_LABEL, updated_at=EPOCH) == pages[3]
         assert stored.manual_label is None
 
@@ -256,19 +255,17 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         strangers_account = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, strangers_account.account_id)
         _, strangers_pages = await _commit_book(fx_uow(), strangers_account, databases=fx_open_book.databases)
         other = make_page(order_key='z0')
 
         with pytest.raises(NotFoundError):
-            await fx_service().update(fx_open_book(fx_actor, book_record.id), other.id, PageChanges(label='1'))
+            await fx_service().update(fx_open_book(fx_actor, book_id), other.id, PageChanges(label='1'))
         with pytest.raises(NotFoundError):
-            await fx_service().update(
-                fx_open_book(fx_actor, book_record.id), strangers_pages[0].id, PageChanges(label='1')
-            )
-        stored = await _stored(book_record.id, databases=fx_open_book.databases)
+            await fx_service().update(fx_open_book(fx_actor, book_id), strangers_pages[0].id, PageChanges(label='1'))
+        stored = await _stored(book_id, databases=fx_open_book.databases)
         assert [stored[page.id].manual_label for page in pages] == [STALE_LABEL] * len(pages)
 
 
@@ -297,7 +294,7 @@ class TestConcurrentWrites:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         moved = [pages[0].id, pages[1].id]
         anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
         seen_by_job: list[PageId] = []
@@ -315,14 +312,14 @@ class TestConcurrentWrites:
 
         mover = fx_service()
         # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
-        async with anyio.create_task_group() as group, hold_book_in_thread(fx_open_book.databases.open(book_record.id)):
-            group.start_soon(mover.move_group, fx_open_book(fx_actor, book_record.id), moved, anchor)
+        async with anyio.create_task_group() as group, hold_book_in_thread(fx_open_book.databases.open(book_id)):
+            group.start_soon(mover.move_group, fx_open_book(fx_actor, book_id), moved, anchor)
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(fx_open_book.databases.open(book_record.id).change, job_writes_content)
+            group.start_soon(fx_open_book.databases.open(book_id).change, job_writes_content)
             await anyio.wait_all_tasks_blocked()
             expect(not seen_by_job)
 
-        stored = await _stored(book_record.id, databases=fx_open_book.databases)
+        stored = await _stored(book_id, databases=fx_open_book.databases)
         order = sorted(stored.values(), key=lambda page: page.order_key)
         expected = [pages[2].id, pages[3].id, *moved, pages[4].id]
         expect([page.id for page in order][:5] == expected)
@@ -355,24 +352,24 @@ class TestConcurrentWrites:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, pages = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         ids = [page.id for page in pages]
         fx_page_writes.start()
 
         # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
-        async with anyio.create_task_group() as group, hold_book_in_thread(fx_open_book.databases.open(book_record.id)):
+        async with anyio.create_task_group() as group, hold_book_in_thread(fx_open_book.databases.open(book_id)):
             group.start_soon(
                 fx_service().move,
-                fx_open_book(fx_actor, book_record.id),
+                fx_open_book(fx_actor, book_id),
                 ids[0],
                 PageAnchor(page_id=ids[3], side=Side.AFTER),
             )
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(write, fx_service(), fx_actor, book_record.id, ids, fx_open_book)
+            group.start_soon(write, fx_service(), fx_actor, book_id, ids, fx_open_book)
             await anyio.wait_all_tasks_blocked()
             expect(fx_page_writes.page_ids == set())
 
-        after = await _stored(book_record.id, databases=fx_open_book.databases)
+        after = await _stored(book_id, databases=fx_open_book.databases)
         expect(after[ids[0]].order_key != pages[0].order_key)
         # The third page is the one both use cases of the parameters write: its row is changed or gone
         expect(after.get(ids[2]) != pages[2])

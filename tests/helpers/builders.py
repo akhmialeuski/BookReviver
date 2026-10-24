@@ -162,23 +162,27 @@ def new_account_id() -> AccountId:
     return AccountId(uuid4())
 
 
+def new_book_id() -> BookId:
+    """Return a fresh book identifier.
+
+    :returns: Random identifier of a book that exists nowhere else.
+    :rtype: BookId
+    """
+    return BookId(uuid4())
+
+
 def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
-    """Build a book updated ``minutes`` after the epoch.
+    """Build the record of a book updated ``minutes`` after the epoch.
 
     :param title: Title of the book.
     :type title: str
     :param minutes: Minutes after ``EPOCH`` the book was created and last updated.
     :type minutes: int
-    :returns: A book with a fresh identifier and no source.
+    :returns: The record of a book with no source.
     :rtype: BookRecord
     """
     moment = EPOCH + timedelta(minutes=minutes)
-    return BookRecord(
-        id=BookId(uuid4()),
-        details=BookDetails(title=title),
-        created_at=moment,
-        updated_at=moment,
-    )
+    return BookRecord(details=BookDetails(title=title), created_at=moment, updated_at=moment)
 
 
 @frozen

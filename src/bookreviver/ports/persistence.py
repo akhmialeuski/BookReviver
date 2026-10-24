@@ -24,7 +24,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
-    BookRecord,
     LibraryEntry,
     Page,
     PageStage,
@@ -56,6 +55,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import (
         BookOverview,
         BookPlace,
+        BookRecord,
         PageHistoryEntry,
     )
     from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
@@ -224,17 +224,49 @@ class LibraryRepository(Repository[LibraryEntry, BookId]):
         """
 
 
-class BookRecordRepository(Repository[BookRecord, BookId]):
-    """The record of a book, the one row its store has."""
+class BookRecordRepository(ABC):
+    """The record of the book of the store, the one record the store has, which names no identifier of the book."""
 
     @abstractmethod
-    def overview(self, book_record: BookRecord) -> BookOverview:
-        """Return the record of a book read earlier together with the counts of the book.
+    def get(self) -> BookRecord:
+        """Return the record of the book.
 
-        :param book_record: Record of the book to count.
+        :returns: The stored record.
+        :rtype: BookRecord
+        :raises NotFoundError: If the store holds no record yet.
+        """
+
+    @abstractmethod
+    def add(self, book_record: BookRecord) -> BookRecord:
+        """Store the record of a book whose store holds none yet, and return it as stored.
+
+        :param book_record: The record to store.
         :type book_record: BookRecord
+        :returns: The record as stored.
+        :rtype: BookRecord
+        :raises ConflictError: If the store holds a record already.
+        """
+
+    @abstractmethod
+    def update(self, book_record: BookRecord) -> BookRecord:
+        """Replace the stored record of the book and return it as stored.
+
+        :param book_record: The record with its new state.
+        :type book_record: BookRecord
+        :returns: The record as stored.
+        :rtype: BookRecord
+        :raises NotFoundError: If the store holds no record, or the new cover is not a page of the book.
+        """
+
+    @abstractmethod
+    def overview(self, book_id: BookId) -> BookOverview:
+        """Return the record of the book together with the counts of the book.
+
+        :param book_id: Identifier the library gives the book, which the overview carries and the store does not hold.
+        :type book_id: BookId
         :returns: The record of the book with the counts of its included pages, sources and scans.
         :rtype: BookOverview
+        :raises NotFoundError: If the store holds no record yet.
         """
 
 
@@ -1001,9 +1033,11 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def create_book(self, book_record: BookRecord) -> BookRecord:
+    async def create_book(self, book_id: BookId, book_record: BookRecord) -> BookRecord:
         """Make the store of a new book, holding its record and nothing else yet.
 
+        :param book_id: Identifier of the new book, which names its store and is not written into it.
+        :type book_id: BookId
         :param book_record: The record of the new book.
         :type book_record: BookRecord
         :returns: The record of the book as stored.
@@ -1023,7 +1057,7 @@ class UnitOfWork(ABC):
 
     @abstractmethod
     async def adopt_book(self, book_id: BookId) -> BookRecord:
-        """Take as a new book the store an archive placed for it, and give its record the identifier of the new book.
+        """Take as a new book the store an archive placed for it, whose record names no book and is kept as it is.
 
         The store is brought to the release of this code first, as any book is when it is opened.
 
@@ -1033,7 +1067,7 @@ class UnitOfWork(ABC):
         :rtype: BookRecord
         :raises NotFoundError: If no store was placed for the book.
         :raises BookTooNewError: If the store is at a revision this code does not ship.
-        :raises InvalidArchiveError: If the store does not hold exactly one record of a book.
+        :raises InvalidArchiveError: If the store holds no record of a book.
         """
 
 

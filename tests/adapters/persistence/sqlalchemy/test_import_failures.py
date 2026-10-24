@@ -58,18 +58,17 @@ class TestFailedImportOnSqlAlchemy:
         rig = fx_import_rig()
         samples = tmp_path / 'samples'
         samples.mkdir()
-        book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_open_book.databases)
+        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
         job = await rig.service(uow=uow).start_import(
-            open_for(Actor(account_id=fx_owner_id), book_record.id, databases=rig.databases, files=rig.files),
+            open_for(Actor(account_id=fx_owner_id), book_id, databases=rig.databases, files=rig.files),
             [pdf_upload(samples, 'a.pdf', pages=PAGES)],
         )
         rig.files.fail_on_promote = OSError('disk full')
 
         await rig.fakes.board.run_queued()
 
-        sources, unimported, scans, pages = await fx_open_book.databases.open(book_record.id).read(
+        sources, unimported, scans, pages = await fx_open_book.databases.open(book_id).read(
             lambda repos: (
                 repos.sources.list_all(),
                 repos.sources.list_unimported(),

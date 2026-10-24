@@ -22,6 +22,7 @@ from attrs import asdict
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
+    BOOK_RECORD_ID,
     BookPlaceRow,
     BookRecordRow,
     GroupValuesRow,
@@ -230,7 +231,6 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
             notes=row.notes,
         )
         return BookRecord(
-            id=BookId(row.id),
             details=details,
             image_policy=row.image_policy,
             created_at=row.created_at,
@@ -248,7 +248,7 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
         """
         details = entity.details
         return BookRecordRow(
-            id=entity.id,
+            id=BOOK_RECORD_ID,
             title=details.title,
             subtitle=details.subtitle,
             parallel_titles=list(details.parallel_titles),

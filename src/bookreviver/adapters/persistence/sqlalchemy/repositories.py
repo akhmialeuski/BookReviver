@@ -19,11 +19,11 @@ from attrs import evolve
 from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import contains_eager
 
+from bookreviver.adapters.persistence.sqlalchemy.book_record import SqlAlchemyBookRecordRepository
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
-    BookRecordMapper,
     GroupValuesMapper,
     LibraryEntryMapper,
     PageHistoryMapper,
@@ -40,7 +40,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
 )
 from bookreviver.adapters.persistence.sqlalchemy.rows import (
     BookPlaceRows,
-    BookRecordRows,
     GroupValuesRows,
     LibraryRows,
     PageHistoryRows,
@@ -59,7 +58,6 @@ from bookreviver.adapters.persistence.sqlalchemy.rows import (
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     EMPTY_TEXT,
-    BookRecordRow,
     GroupValuesRow,
     PageHistoryRow,
     PageRow,
@@ -74,8 +72,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     StepValuesRow,
 )
 from bookreviver.domain.entities import (
-    BookOverview,
-    BookRecord,
     LibraryEntry,
     Page,
     PageStage,
@@ -89,7 +85,6 @@ from bookreviver.domain.entities import (
 )
 from bookreviver.domain.enums import (
     ContentType,
-    PageKind,
     PageOrigin,
     RecipeKind,
     ResultMark,
@@ -119,7 +114,6 @@ from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
-    BookRecordRepository,
     BookRepositories,
     CatalogueRepositories,
     KeyedRepository,
@@ -143,7 +137,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from advanced_alchemy.base import ModelProtocol
-    from sqlalchemy import ColumnElement, CursorResult, ScalarSelect
+    from sqlalchemy import ColumnElement, CursorResult
     from sqlalchemy.orm import InstrumentedAttribute, Session
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
@@ -311,63 +305,6 @@ class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, BookId, Lib
         :rtype: Sequence[LibraryEntry]
         """
         return [self._mapper.to_entity(row) for row in self._rows.get_many(order_by=LibraryRow.book_id.asc())]
-
-
-class SqlAlchemyBookRecordRepository(SqlAlchemyRepository[BookRecord, BookId, BookRecordRow], BookRecordRepository):
-    """The record of the book of the file, with the counts and the cover of the book.
-
-    The counts are scalar subqueries, so one statement returns every count.
-    """
-
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``projects`` table.
-
-        :param session: Session of the unit of work.
-        :type session: Session
-        """
-        super().__init__(rows=BookRecordRows(session=session), mapper=BookRecordMapper())
-
-    @override
-    def overview(self, book_record: BookRecord) -> BookOverview:
-        """Count the included pages, the sources and the scans of the book in one statement, and find its cover.
-
-        The cover is the page of the kind ``cover`` that comes first in the book, else the first page of the book, and a
-        book without pages has none.
-
-        :param book_record: Record of the book to count.
-        :type book_record: BookRecord
-        :returns: The record of the book with its counts and its cover.
-        :rtype: BookOverview
-        """
-        pages, sources, scans, with_image = self._rows.session.execute(select(*self._book_counts())).one()
-        cover = select(PageRow.id).order_by(PageRow.kind != PageKind.COVER, PageRow.order_key).limit(1)
-        cover_id = self._rows.session.scalar(cover)
-        return BookOverview(
-            book_record=book_record,
-            page_count=pages,
-            source_count=sources,
-            scan_count=scans,
-            image_page_count=with_image,
-            cover_page_id=None if cover_id is None else PageId(cover_id),
-        )
-
-    @staticmethod
-    def _book_counts() -> tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]:
-        """Return the scalar subqueries counting the included pages, the imported sources and the scans of the book.
-
-        :returns: The count of included pages, of sources, of scans and of pages with an image, in this order.
-        :rtype: tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]
-        """
-        pages, sources, scans, with_image = (
-            select(func.count()).select_from(table).where(*conditions).scalar_subquery()
-            for table, conditions in (
-                (PageRow, (PageRow.included.is_(True),)),
-                (SourceRow, (SourceRow.status == SourceStatus.IMPORTED,)),
-                (ScanRow, ()),
-                (PageRow, (PageRow.origin != PageOrigin.PLACEHOLDER,)),
-            )
-        )
-        return pages, sources, scans, with_image
 
 
 class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRow], SourceRepository):

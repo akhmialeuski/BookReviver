@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
@@ -29,11 +30,11 @@ GROUP: str = 'Index'
 class Book(NamedTuple):
     """A book of four pages that all went through the geometry and the cleanup stage.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The pages in book order.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[Page]
 
 
@@ -61,7 +62,7 @@ async def _move(service: PageService, actor: Actor, book: Book, opener: BookOpen
     :type opener: BookOpener
     """
     await service.move(
-        opener(actor, book.book_record.id),
+        opener(actor, book.book_id),
         book.pages[0].id,
         PageAnchor(page_id=book.pages[2].id, side=Side.AFTER),
     )
@@ -80,7 +81,7 @@ async def _move_group(service: PageService, actor: Actor, book: Book, opener: Bo
     :type opener: BookOpener
     """
     anchor = PageAnchor(page_id=book.pages[3].id, side=Side.AFTER)
-    await service.move_group(opener(actor, book.book_record.id), [book.pages[1].id, book.pages[2].id], anchor)
+    await service.move_group(opener(actor, book.book_id), [book.pages[1].id, book.pages[2].id], anchor)
 
 
 async def _delete(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
@@ -95,7 +96,7 @@ async def _delete(service: PageService, actor: Actor, book: Book, opener: BookOp
     :param opener: Opens the books of the test with their databases and their files.
     :type opener: BookOpener
     """
-    await service.delete(opener(actor, book.book_record.id), book.pages[0].id)
+    await service.delete(opener(actor, book.book_id), book.pages[0].id)
 
 
 async def _insert(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
@@ -115,7 +116,7 @@ async def _insert(service: PageService, actor: Actor, book: Book, opener: BookOp
         kind=PageKind.TEXT,
         anchor=PageAnchor(page_id=book.pages[1].id, side=Side.BEFORE),
     )
-    await service.add(opener(actor, book.book_record.id), new_page)
+    await service.add(opener(actor, book.book_id), new_page)
 
 
 REORDERINGS: dict[str, Reordering] = {
@@ -142,9 +143,8 @@ async def _commit_book(
     :returns: The book.
     :rtype: Book
     """
-    book_record = make_record()
     pages = [make_page(order_key=f'a{number}') for number in range(PAGE_COUNT)]
-    await store_book(uow, book_record, *pages, owner=actor.account_id, databases=databases)
+    book_id = await store_book(uow, make_record(), *pages, owner=actor.account_id, databases=databases)
 
     def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save a record for every checked stage of every page, and the value of the part of the pages when given.
@@ -163,8 +163,8 @@ async def _commit_book(
             values = make_step_values(scope=scope, group_label=group_label)
             repos.step_values.save(evolve(values, stage=stage))
 
-    await databases.open(book_record.id).change(save_records)
-    return Book(book_record=book_record, pages=pages)
+    await databases.open(book_id).change(save_records)
+    return Book(book_id=book_id, pages=pages)
 
 
 async def _stale(book: Book, *, databases: BookDatabases) -> set[tuple[int, Stage]]:
@@ -178,9 +178,7 @@ async def _stale(book: Book, *, databases: BookDatabases) -> set[tuple[int, Stag
     :rtype: set[tuple[int, Stage]]
     """
     index = {page.id: place for place, page in enumerate(book.pages)}
-    records = await databases.open(book.book_record.id).read(
-        lambda repos: repos.page_stages.list_for_pages(list(index))
-    )
+    records = await databases.open(book.book_id).read(lambda repos: repos.page_stages.list_for_pages(list(index)))
     return {(index[record.page_id], record.stage) for record in records if record.state is StageState.STALE}
 
 

@@ -45,6 +45,7 @@ from tests.helpers.builders import (
     make_record,
     make_step_values,
     new_account_id,
+    new_book_id,
 )
 from tests.helpers.seeding import store_book
 
@@ -144,10 +145,9 @@ async def _store_page(
     :returns: The identifiers of the book and its page.
     :rtype: tuple[BookId, PageId]
     """
-    book_record = make_record()
     page = make_page()
-    await store_book(uow_factory(), book_record, page, owner=await new_owner(), databases=databases)
-    return book_record.id, page.id
+    book_id = await store_book(uow_factory(), make_record(), page, owner=await new_owner(), databases=databases)
+    return book_id, page.id
 
 
 def _blank_page(order_key: str) -> Page:
@@ -230,13 +230,12 @@ class TestRecipeRepository:
         :type fx_databases: BookDatabasesFactory
         """
         uow = fx_uow()
-        book_record = make_record()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         first = make_recipe(kind=RecipeKind.BLANK)
         second = make_recipe(kind=RecipeKind.BLANK, minutes=1)
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.recipes.add(first))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(first))
         with pytest.raises(ConflictError):
-            await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.recipes.add(second))
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(second))
 
     async def test_every_kind_and_other_stages_may_be_added_beside_a_recipe(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -251,18 +250,15 @@ class TestRecipeRepository:
         :type fx_databases: BookDatabasesFactory
         """
         uow = fx_uow()
-        book_record = make_record()
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         recipes = [make_recipe(kind=kind, minutes=index) for index, kind in enumerate(RecipeKind)]
         other_stage = make_recipe(stage=Stage.CLEANUP)
         await (
             fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .change(lambda repos, _book_record: repos.recipes.add_many([*reversed(recipes), other_stage]))
         )
-        listed = (
-            await fx_databases().open(book_record.id).read(lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
-        )
+        listed = await fx_databases().open(book_id).read(lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
         assert [recipe.id for recipe in listed] == [recipe.id for recipe in recipes]
 
     async def test_list_for_book_returns_the_recipes_of_each_stage_in_pipeline_order(
@@ -278,21 +274,21 @@ class TestRecipeRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record, other = make_record(), make_record()
         cleanup = make_recipe(stage=Stage.CLEANUP)
         geometry = make_recipe()
         picture = make_recipe(kind=RecipeKind.BW_PICTURE, minutes=1)
         elsewhere = make_recipe()
         uow = fx_uow()
-        for owned in (book_record, other):
-            await store_book(uow, owned, owner=owner_id, databases=fx_databases())
+        book_id, other_id = [
+            await store_book(uow, make_record(), owner=owner_id, databases=fx_databases()) for _ in range(2)
+        ]
         await (
             fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .change(lambda repos, _book_record: repos.recipes.add_many([cleanup, picture, geometry]))
         )
-        await fx_databases().open(other.id).change(lambda repos, _book_record: repos.recipes.add(elsewhere))
-        listed = await fx_databases().open(book_record.id).read(lambda repos: repos.recipes.list_all())
+        await fx_databases().open(other_id).change(lambda repos, _book_record: repos.recipes.add(elsewhere))
+        listed = await fx_databases().open(book_id).read(lambda repos: repos.recipes.list_all())
         assert [recipe.id for recipe in listed] == [geometry.id, picture.id, cleanup.id]
 
     async def test_steps_survive_the_store(
@@ -308,13 +304,12 @@ class TestRecipeRepository:
         :type fx_databases: BookDatabasesFactory
         """
         uow = fx_uow()
-        book_record = make_record()
         plain = make_recipe()
         other = Step(processor_key='geometry.other', params={}, enabled=False)
         recipe = evolve(plain, steps=(*plain.steps, other, evolve(plain.steps[0], step_id=StepId(uuid4()))))
-        await store_book(uow, book_record, owner=await fx_new_owner(), databases=fx_databases())
-        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.recipes.add(recipe))
-        assert await fx_databases().open(book_record.id).read(lambda repos: repos.recipes.get(recipe.id)) == recipe
+        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
+        assert await fx_databases().open(book_id).read(lambda repos: repos.recipes.get(recipe.id)) == recipe
 
     async def test_recipe_of_a_missing_book_is_not_found(self, fx_databases: BookDatabasesFactory) -> None:
         """Reject a recipe of a book that is not stored, which has no file to hold it.
@@ -324,7 +319,7 @@ class TestRecipeRepository:
         """
         recipe = make_recipe()
         with pytest.raises(NotFoundError):
-            await fx_databases().open(make_record().id).change(lambda repos, _book_record: repos.recipes.add(recipe))
+            await fx_databases().open(new_book_id()).change(lambda repos, _book_record: repos.recipes.add(recipe))
 
     async def test_deleting_a_recipe_leaves_its_pages_without_it(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
@@ -549,22 +544,17 @@ class TestPageStageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         pages = [make_page(order_key=f'a{index}') for index in range(3)]
         first, second, other = (page.id for page in pages)
         uow = fx_uow()
-        await store_book(uow, book_record, *pages, owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(uow, make_record(), *pages, owner=await fx_new_owner(), databases=fx_databases())
         records = [
             make_page_stage(page_id=page.id, stage=stage)
             for page in pages
             for stage in (Stage.GEOMETRY, Stage.PAGE_SPLIT)
         ]
-        await fx_databases().open(book_record.id).change(partial(_save_records, records=records))
-        found = (
-            await fx_databases()
-            .open(book_record.id)
-            .read(lambda repos: repos.page_stages.list_for_pages([first, second]))
-        )
+        await fx_databases().open(book_id).change(partial(_save_records, records=records))
+        found = await fx_databases().open(book_id).read(lambda repos: repos.page_stages.list_for_pages([first, second]))
         by_page = {page_id: [r.stage for r in found if r.page_id == page_id] for page_id in (first, second, other)}
         assert by_page == {
             first: [Stage.PAGE_SPLIT, Stage.GEOMETRY],
@@ -749,15 +739,16 @@ class TestPageStageRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record, other = make_record(), make_record()
         uow = fx_uow()
         marked, stale, failed = (_blank_page(f'a{number}') for number in range(3))
         placeholder = make_page(order_key='b0')
         elsewhere = _blank_page('a0')
-        await store_book(uow, book_record, marked, stale, failed, placeholder, owner=owner_id, databases=fx_databases())
-        await store_book(uow, other, elsewhere, owner=owner_id, databases=fx_databases())
-        marked_head = await _add_marked_head(book_record.id, marked, databases=fx_databases())
-        failed_head = await _add_marked_head(book_record.id, failed, databases=fx_databases())
+        book_id = await store_book(
+            uow, make_record(), marked, stale, failed, placeholder, owner=owner_id, databases=fx_databases()
+        )
+        other_id = await store_book(uow, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
+        marked_head = await _add_marked_head(book_id, marked, databases=fx_databases())
+        failed_head = await _add_marked_head(book_id, failed, databases=fx_databases())
         records = [
             make_page_stage(page_id=marked.id, head_version_id=marked_head),
             make_page_stage(page_id=stale.id, state=StageState.STALE),
@@ -765,13 +756,13 @@ class TestPageStageRepository:
             make_page_stage(page_id=placeholder.id),
             make_page_stage(page_id=marked.id, stage=Stage.CLEANUP),
         ]
-        await fx_databases().open(book_record.id).change(partial(_save_records, records=records))
+        await fx_databases().open(book_id).change(partial(_save_records, records=records))
         await (
             fx_databases()
-            .open(other.id)
+            .open(other_id)
             .change(lambda repos, _book_record: repos.page_stages.save(make_page_stage(page_id=elsewhere.id)))
         )
-        tallies = await fx_databases().open(book_record.id).read(lambda repos: repos.page_stages.tally())
+        tallies = await fx_databases().open(book_id).read(lambda repos: repos.page_stages.tally())
         counts = {(tally.stage, tally.fresh, tally.stale, tally.failed, tally.review, tally.check) for tally in tallies}
         assert counts == {(Stage.GEOMETRY, 1, 1, 1, 1, 3), (Stage.CLEANUP, 1, 0, 0, 0, 0)}
 
@@ -787,17 +778,18 @@ class TestPageStageRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         uow = fx_uow()
         both, clean = (_blank_page(f'a{number}') for number in range(2))
-        await store_book(uow, book_record, both, clean, owner=await fx_new_owner(), databases=fx_databases())
-        head_id = await _add_marked_head(book_record.id, both, databases=fx_databases())
+        book_id = await store_book(
+            uow, make_record(), both, clean, owner=await fx_new_owner(), databases=fx_databases()
+        )
+        head_id = await _add_marked_head(book_id, both, databases=fx_databases())
         records = [
             make_page_stage(page_id=both.id, head_version_id=head_id, state=StageState.STALE),
             make_page_stage(page_id=clean.id),
         ]
-        await fx_databases().open(book_record.id).change(partial(_save_records, records=records))
-        [tally] = await fx_databases().open(book_record.id).read(lambda repos: repos.page_stages.tally())
+        await fx_databases().open(book_id).change(partial(_save_records, records=records))
+        [tally] = await fx_databases().open(book_id).read(lambda repos: repos.page_stages.tally())
         assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
 
     async def test_step_tally_counts_the_pages_stopped_at_each_step(
@@ -815,15 +807,14 @@ class TestPageStageRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        book_record, other = make_record(), make_record()
         uow = fx_uow()
         first, second, whole, failed = (_blank_page(f'a{number}') for number in range(4))
         placeholder = make_page(order_key='b1')
         elsewhere = _blank_page('a1')
-        await store_book(
-            uow, book_record, first, second, whole, failed, placeholder, owner=owner_id, databases=fx_databases()
+        book_id = await store_book(
+            uow, make_record(), first, second, whole, failed, placeholder, owner=owner_id, databases=fx_databases()
         )
-        await store_book(uow, other, elsewhere, owner=owner_id, databases=fx_databases())
+        other_id = await store_book(uow, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
         stopped = [
             evolve(make_page_stage(page_id=page.id, state=state), through_step=through_step)
             for page, through_step, state in (
@@ -835,13 +826,13 @@ class TestPageStageRepository:
             )
         ]
         elsewhere_stopped = evolve(make_page_stage(page_id=elsewhere.id), through_step=0)
-        await fx_databases().open(book_record.id).change(partial(_save_records, records=stopped))
+        await fx_databases().open(book_id).change(partial(_save_records, records=stopped))
         await (
-            fx_databases().open(other.id).change(lambda repos, _book_record: repos.page_stages.save(elsewhere_stopped))
+            fx_databases().open(other_id).change(lambda repos, _book_record: repos.page_stages.save(elsewhere_stopped))
         )
         [tally], steps = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: (repos.page_stages.tally(), repos.page_stages.step_tally()))
         )
         assert steps == [StepTally(stage=Stage.GEOMETRY, through_step=0, pages=2)]
@@ -1388,9 +1379,7 @@ class TestStepValuesRepository:
         """
         values = make_step_values()
         with pytest.raises(NotFoundError):
-            await (
-                fx_databases().open(make_record().id).change(lambda repos, _book_record: repos.step_values.save(values))
-            )
+            await fx_databases().open(new_book_id()).change(lambda repos, _book_record: repos.step_values.save(values))
 
     async def test_deleting_the_book_deletes_its_values(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory

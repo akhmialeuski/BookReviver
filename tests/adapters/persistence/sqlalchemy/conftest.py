@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import BookRecord, Job
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.entities import Job
+    from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.persistence import BookDatabases, UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener
@@ -324,7 +324,7 @@ async def fx_book(
     fx_traced_uow: Callable[..., UnitOfWork],
     fx_traced_databases: Callable[..., BookDatabases],
     fx_tracer: AskingTracer,
-) -> BookRecord:
+) -> BookId:
     """Commit an account and a book of it, which a ``Book.change`` block needs to find.
 
     The blocks that store the book are spans too, which are not what a test looks at, so they are forgotten.
@@ -338,14 +338,13 @@ async def fx_book(
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
     :returns: The book.
-    :rtype: BookRecord
+    :rtype: BookId
     """
-    book_record = make_record()
-    await store_book(
+    book_id = await store_book(
         fx_traced_uow(),
-        book_record,
+        make_record(),
         owner=await commit_account(fx_traced_database),
         databases=fx_traced_databases(),
     )
     fx_tracer.finished.clear()
-    return book_record
+    return book_id

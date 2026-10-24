@@ -53,14 +53,14 @@ class TestPreviewBudget:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_cv_kit.seed_record()
-        page, _ = await fx_cv_kit.seed_scan_page(book_record)
+        actor, book_id = await fx_cv_kit.seed_book()
+        page, _ = await fx_cv_kit.seed_scan_page(book_id)
         scan = turned(text_page(PAGE_WIDTH_PX, PAGE_HEIGHT_PX), SKEW_DEGREES)
-        await fx_cv_kit.seed_base_version(book_record.id, page, image=png_bytes(scan))
+        await fx_cv_kit.seed_base_version(book_id, page, image=png_bytes(scan))
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=DESKEW_KEY),), step_index=0
         )
-        job = await fx_cv_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+        job = await fx_cv_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         # The application opens this span around the entry point of every job in app.jobs.job_runner, which the runner
         # of the kit does not do, so it is opened here with the same name and attributes
         job_attributes = {SpanAttribute.JOB_KIND: JobKind.PREVIEW_STEP, SpanAttribute.JOB_ID: str(job.id)}

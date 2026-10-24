@@ -72,10 +72,10 @@ class SeededPage:
         :returns: The seeded page.
         :rtype: Self
         """
-        _, book_record = await kit.seed_record()
-        page, _ = await kit.seed_scan_page(book_record, order_key='a0')
-        await kit.seed_base_version(book_record.id, page)
-        return cls(kit, book_record.id, page)
+        _, book_id = await kit.seed_book()
+        page, _ = await kit.seed_scan_page(book_id, order_key='a0')
+        await kit.seed_base_version(book_id, page)
+        return cls(kit, book_id, page)
 
     async def result(
         self,

@@ -16,8 +16,16 @@ from bookreviver.api.schemas.types import CONTRIBUTORS_MAX_LENGTH, HEIGHT_CM_MAX
 from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography, PageKind
 from bookreviver.domain.values import BookDetails, Contributor
 from tests.conftest import TEST_BASE_URL
-from tests.helpers.builders import FULL_DETAILS, make_page, make_record, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_record, store_book
+from tests.helpers.builders import (
+    FULL_DETAILS,
+    make_page,
+    make_record,
+    make_scan,
+    make_source,
+    new_account_id,
+    new_book_id,
+)
+from tests.helpers.seeding import commit_account, commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -213,9 +221,12 @@ class TestListBooks:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        books = [make_record(minutes=minutes) for minutes in range(BOOK_COUNT)]
-        for book_record in books:
-            await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        books = [
+            await store_book(
+                fx_uow(), make_record(minutes=minutes), owner=fx_actor.account_id, databases=fx_databases()
+            )
+            for minutes in range(BOOK_COUNT)
+        ]
         await commit_record(
             fx_database, fx_uow(), make_record(minutes=BOOK_COUNT), owner=new_account_id(), databases=fx_databases()
         )
@@ -223,7 +234,7 @@ class TestListBooks:
         first = await _list_books(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE})
         second = await _list_books(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE, PAGE_NUMBER_PARAM: 2})
 
-        newest_first = [book_record.id for book_record in reversed(books)]
+        newest_first = list(reversed(books))
         expect([item.id for item in first.items] == newest_first[:PAGE_SIZE])
         expect([item.id for item in second.items] == newest_first[PAGE_SIZE:])
         expect((first.total, first.pages) == (BOOK_COUNT, 2))
@@ -247,14 +258,13 @@ class TestListBooks:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(2)]
         # The second scan is a spread whose page has not been made yet, so the book has one page
         page = make_page(scan=scans[0])
         await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             page,
             owner=fx_actor.account_id,
             sources=[source],
@@ -395,16 +405,17 @@ class TestGetBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
+        book_id = new_book_id()
         if stored is InvisibleBook.OTHER_ACCOUNT:
-            await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
+            owner = await commit_account(fx_database)
+            await store_book(fx_uow(), make_record(), owner=owner, databases=fx_databases(), book_id=book_id)
         elif stored is InvisibleBook.UNLISTED:
-            await fx_uow().create_book(book_record)
+            await fx_uow().create_book(book_id, make_record())
 
-        response = await fx_client.get(_book_path(book_record.id))
+        response = await fx_client.get(_book_path(book_id))
 
         expect(response.status_code == status.HTTP_404_NOT_FOUND)
-        expect(str(book_record.id) not in response.text)
+        expect(str(book_id) not in response.text)
         assert_expectations()
 
     async def test_malformed_identifier_is_a_problem(self, fx_client: httpx.AsyncClient) -> None:
@@ -439,15 +450,16 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record(title=TITLE)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(title=TITLE), owner=fx_actor.account_id, databases=fx_databases()
+        )
 
-        response = await fx_client.patch(_book_path(book_record.id), json={PUBLISHER_FIELD: ' Press '})
+        response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: ' Press '})
 
         updated = BookSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_200_OK)
         expect((updated.details.title, updated.details.publisher) == (TITLE, 'Press'))
-        expect((await _get_book(fx_client, book_record.id)).details == updated.details)
+        expect((await _get_book(fx_client, book_id)).details == updated.details)
         assert_expectations()
 
     async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
@@ -468,11 +480,15 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = attrs.evolve(make_record(), details=FULL_DETAILS)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(),
+            attrs.evolve(make_record(), details=FULL_DETAILS),
+            owner=fx_actor.account_id,
+            databases=fx_databases(),
+        )
 
         response = await fx_client.patch(
-            _book_path(book_record.id),
+            _book_path(book_id),
             json={CONTRIBUTORS_FIELD: [AUTHOR], IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': VALID_ISBN}]},
         )
 
@@ -507,11 +523,15 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = attrs.evolve(make_record(), details=FULL_DETAILS)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(),
+            attrs.evolve(make_record(), details=FULL_DETAILS),
+            owner=fx_actor.account_id,
+            databases=fx_databases(),
+        )
 
         response = await fx_client.patch(
-            _book_path(book_record.id),
+            _book_path(book_id),
             json={
                 CONTRIBUTORS_FIELD: None,
                 HEIGHT_FIELD: None,
@@ -548,11 +568,12 @@ class TestUpdateBook:
         """
         author = (Contributor(name=AUTHOR['name'], role=ContributorRole.AUTHOR),)
         details = BookDetails(title=TITLE, contributors=author, notes=NOTES, orthography=Orthography.PRE_REFORM)
-        book_record = attrs.evolve(make_record(), details=details)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), attrs.evolve(make_record(), details=details), owner=fx_actor.account_id, databases=fx_databases()
+        )
 
         response = await fx_client.patch(
-            _book_path(book_record.id),
+            _book_path(book_id),
             content=json.dumps({CONTRIBUTORS_FIELD: None, ORTHOGRAPHY_FIELD: None}),
             headers={CONTENT_TYPE_HEADER: MERGE_PATCH_MEDIA_TYPE},
         )
@@ -581,13 +602,10 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
-        set_response = await fx_client.patch(
-            _book_path(book_record.id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS}
-        )
-        cleared_response = await fx_client.patch(_book_path(book_record.id), json={IMAGE_POLICY_FIELD: None})
+        set_response = await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS})
+        cleared_response = await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: None})
 
         was, now = (BookSchema.model_validate_json(response.content) for response in (set_response, cleared_response))
         expect(was.image_policy == ImagePolicy.LOSSLESS)
@@ -612,14 +630,15 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         title = make_page(order_key='a0', kind=PageKind.TITLE)
         cover = make_page(order_key='a1', kind=PageKind.COVER)
-        await store_book(fx_uow(), book_record, title, cover, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(), title, cover, owner=fx_actor.account_id, databases=fx_databases()
+        )
 
-        chosen = await fx_client.patch(_book_path(book_record.id), json={COVER_FIELD: str(title.id)})
+        chosen = await fx_client.patch(_book_path(book_id), json={COVER_FIELD: str(title.id)})
 
-        expect((await _get_book(fx_client, book_record.id)).cover_page_id == cover.id)
+        expect((await _get_book(fx_client, book_id)).cover_page_id == cover.id)
         expect(chosen.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         assert_expectations()
 
@@ -645,15 +664,16 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record(title=TITLE)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_uow(), make_record(title=TITLE), owner=fx_actor.account_id, databases=fx_databases()
+        )
 
-        response = await fx_client.patch(_book_path(book_record.id), json=case.body)
+        response = await fx_client.patch(_book_path(book_id), json=case.body)
 
         expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(case.field in response.text)
-        expect((await _get_book(fx_client, book_record.id)).details.title == TITLE)
+        expect((await _get_book(fx_client, book_id)).details.title == TITLE)
         assert_expectations()
 
     async def test_another_accounts_book_is_not_found(
@@ -674,10 +694,11 @@ class TestUpdateBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
 
-        response = await fx_client.patch(_book_path(book_record.id), json={PUBLISHER_FIELD: 'Press'})
+        response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: 'Press'})
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -706,16 +727,15 @@ class TestDeleteBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
-        await fx_files.store(book_record.id, page)
+        book_id = await store_book(fx_uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_databases())
+        await fx_files.store(book_id, page)
 
-        response = await fx_client.delete(_book_path(book_record.id))
+        response = await fx_client.delete(_book_path(book_id))
 
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
-        expect((await fx_client.get(_book_path(book_record.id))).status_code == status.HTTP_404_NOT_FOUND)
-        expect(fx_files.gone(book_record.id))
+        expect((await fx_client.get(_book_path(book_id))).status_code == status.HTTP_404_NOT_FOUND)
+        expect(fx_files.gone(book_id))
         assert_expectations()
 
     async def test_another_accounts_book_is_not_found_and_kept(
@@ -739,12 +759,13 @@ class TestDeleteBook:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id(), databases=fx_databases())
-        await fx_files.store(book_record.id, page)
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
+        await fx_files.store(book_id, page)
 
-        response = await fx_client.delete(_book_path(book_record.id))
+        response = await fx_client.delete(_book_path(book_id))
 
         expect(response.status_code == status.HTTP_404_NOT_FOUND)
         expect(fx_files.kept(page))
@@ -775,12 +796,13 @@ class TestArchive:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record(title=ARCHIVED_TITLE)
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
-        await fx_files.store(book_record.id, page)
+        book_id = await store_book(
+            fx_uow(), make_record(title=ARCHIVED_TITLE), page, owner=fx_actor.account_id, databases=fx_databases()
+        )
+        await fx_files.store(book_id, page)
 
-        exported = await fx_client.get(f'{_book_path(book_record.id)}{ARCHIVE_SUFFIX}')
+        exported = await fx_client.get(f'{_book_path(book_id)}{ARCHIVE_SUFFIX}')
         imported = await fx_client.post(
             f'{BOOKS_PATH}{ARCHIVE_SUFFIX}', files={ARCHIVE_FIELD: (ARCHIVE_NAME, exported.content, ZIP_MEDIA_TYPE)}
         )
@@ -791,7 +813,7 @@ class TestArchive:
         expect(quote(ARCHIVED_TITLE, safe='') in exported.headers[DISPOSITION_HEADER])
         expect(imported.status_code == status.HTTP_201_CREATED)
         expect(imported.headers[LOCATION_HEADER] == f'{TEST_BASE_URL}{_book_path(copy.id)}')
-        expect(copy.id != book_record.id and copy.details.title == ARCHIVED_TITLE)
+        expect(copy.id != book_id and copy.details.title == ARCHIVED_TITLE)
         expect(fx_files.kept(page, book_id=copy.id))
         assert_expectations()
 
@@ -828,9 +850,10 @@ class TestArchive:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
 
-        response = await fx_client.get(f'{_book_path(book_record.id)}{ARCHIVE_SUFFIX}')
+        response = await fx_client.get(f'{_book_path(book_id)}{ARCHIVE_SUFFIX}')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
