@@ -21,6 +21,7 @@ import logging
 import threading
 from collections import deque
 from contextlib import suppress
+from datetime import UTC, datetime
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any, Self, override
 from uuid import uuid4
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookId, JobId
-    from bookreviver.ports.runtime import Clock, EventPublisher
+    from bookreviver.ports.runtime import EventPublisher
 
 # What the application supplies to run a job: it does the tasks of the job, reports through the control after each,
 # and returns how the job ended, or lets ``JobCancelledError`` pass when the control raised it
@@ -67,15 +68,12 @@ class BookJobs:
 class JobLedger:
     """The jobs of every book and the rules by which they change, safe to read from any thread."""
 
-    def __init__(self, *, clock: Clock, kept_ended: int) -> None:
+    def __init__(self, *, kept_ended: int) -> None:
         """Start with no jobs.
 
-        :param clock: Clock stamping the start and the end of a job.
-        :type clock: Clock
         :param kept_ended: Most ended jobs held for each book, the latest ones.
         :type kept_ended: int
         """
-        self._clock = clock
         self._kept_ended = kept_ended
         self._books: dict[BookId, BookJobs] = {}
         self._lock = threading.Lock()
@@ -110,7 +108,7 @@ class JobLedger:
             if not book.queue:
                 book.serving = False
                 return None
-            job = evolve(book.jobs[book.queue.popleft()], state=JobState.RUNNING, started_at=self._clock.now())
+            job = evolve(book.jobs[book.queue.popleft()], state=JobState.RUNNING, started_at=datetime.now(UTC))
             book.jobs[job.id] = job
             book.changes += 1
             return job
@@ -184,7 +182,7 @@ class JobLedger:
                 raise JobFinishedError
             if job.state is JobState.QUEUED:
                 book.queue.remove(job_id)
-            cancelled = evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now())
+            cancelled = evolve(job, state=JobState.CANCELLED, finished_at=datetime.now(UTC))
             book.jobs[job_id] = cancelled
             book.changes += 1
             self._forget_oldest_ended(book)
@@ -206,7 +204,7 @@ class JobLedger:
             book, job = self._locate(job_id)
             if job.state.is_final:
                 return job, False
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             if end is None:
                 final = evolve(job, state=JobState.CANCELLED, finished_at=moment)
             elif end.state is JobState.SUCCEEDED:
@@ -336,21 +334,19 @@ class InMemoryJobBoard(JobBoard):
     find half-done and run again.
     """
 
-    def __init__(self, *, runner: JobRunner, publisher: EventPublisher, clock: Clock, kept_ended: int) -> None:
+    def __init__(self, *, runner: JobRunner, publisher: EventPublisher, kept_ended: int) -> None:
         """Build a board with no jobs.
 
         :param runner: What runs a job, supplied by the application.
         :type runner: JobRunner
         :param publisher: Publisher of the events the browser follows.
         :type publisher: EventPublisher
-        :param clock: Clock stamping the jobs.
-        :type clock: Clock
         :param kept_ended: Most ended jobs held for each book, the latest ones.
         :type kept_ended: int
         """
         self._runner = runner
         self._publisher = publisher
-        self._ledger = JobLedger(clock=clock, kept_ended=kept_ended)
+        self._ledger = JobLedger(kept_ended=kept_ended)
         self._tasks: set[asyncio.Task[None]] = set()
         self._process = uuid4().hex
 

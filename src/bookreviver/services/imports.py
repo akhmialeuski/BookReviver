@@ -32,6 +32,7 @@ written through the imaging and asset ports.
 """
 
 import logging
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -80,7 +81,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock, JobBoard, JobControl
+    from bookreviver.ports.runtime import JobBoard, JobControl
     from bookreviver.ports.storage import IncomingFile
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
@@ -131,13 +132,11 @@ class ImportImaging:
 class ImportRuntime:
     """What an import reports through and is bounded by.
 
-    :ivar clock: Clock stamping jobs and what they create.
     :ivar order_keys: Builder of the order keys of the new pages.
     :ivar limits: Bounds of an upload and of an import.
     :ivar board: Board the import job is put on.
     """
 
-    clock: Clock
     order_keys: OrderKeys
     limits: ImportLimits
     board: JobBoard
@@ -184,7 +183,7 @@ class ImportRun:
         :type book: Book
         :param imaging: The inspector, the rasterizer, the tiler and the runner of processors.
         :type imaging: ImportImaging
-        :param runtime: The clock, the order keys and the limits.
+        :param runtime: The order keys and the limits.
         :type runtime: ImportRuntime
         """
         job = running.job
@@ -202,7 +201,6 @@ class ImportRun:
         self._labels = PageLabels()
         self._base_versions = BaseVersions(tiler=imaging.tiler)
         self._order_keys = runtime.order_keys
-        self._clock = runtime.clock
         self._limits = runtime.limits
         self._keys = BookKeys()
         self._handled: set[str] = set()
@@ -225,7 +223,7 @@ class ImportRun:
         A file whose suffix names a type the application accepts keeps that type, and any other has none.
         """
         names = [name for name in self._files if name not in self._handled]
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         rows = [
             Source(
                 id=SourceId(uuid4()),
@@ -298,7 +296,7 @@ class ImportRun:
             except UnsupportedSourceError as error:
                 await self._reject(uploaded.names, RejectionReason.UNREADABLE, str(error), uploaded=uploaded)
                 return
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         source = Source(
             id=SourceId(uuid4()),
             kind=uploaded.kind,
@@ -406,7 +404,7 @@ class ImportRun:
         """
         details = book_record.details.fill_from(suggestion)
         if details != book_record.details:
-            repos.book_record.update(evolve(book_record, details=details, updated_at=self._clock.now()))
+            repos.book_record.update(evolve(book_record, details=details, updated_at=datetime.now(UTC)))
 
     async def _cut_scans(self) -> None:
         """Cut the images of every scan of the book that has none, a few at a time, in the order of the book.
@@ -500,7 +498,7 @@ class ImportRun:
             image=of_scan(full),
         )
         for page in pages:
-            version = BaseVersions.split_none(page=page, scan=ready, state=VersionState.READY, moment=self._clock.now())
+            version = BaseVersions.split_none(page=page, scan=ready, state=VersionState.READY, moment=datetime.now(UTC))
             async with self._runner.execute(self.book, run) as result:
                 versions.append(
                     await self._runner.store(
@@ -576,7 +574,7 @@ class ImportRun:
             status=SourceStatus.REJECTED,
             rejection=reason,
             detail=detail,
-            imported_at=self._clock.now(),
+            imported_at=datetime.now(UTC),
         )
         await self.book.change(lambda repos, _book_record: repos.sources.add(source))
         self._handled.update(names)
@@ -613,7 +611,7 @@ class ImportService:
         :type books: BooksService
         :param imaging: The inspector, the rasterizer and the tiler.
         :type imaging: ImportImaging
-        :param runtime: The clock, the order keys, the limits and the board.
+        :param runtime: The order keys, the limits and the board.
         :type runtime: ImportRuntime
         :param parts: The recipes and the job starter, with which the split of the new pages is queued.
         :type parts: ProcessingParts
@@ -624,7 +622,6 @@ class ImportService:
         self._board = runtime.board
         self._recipes = parts.recipes
         self._starter = parts.starter
-        self._clock = runtime.clock
         self._limits = runtime.limits
 
     async def authorize_upload(self, book: Book) -> None:
@@ -687,7 +684,7 @@ class ImportService:
                     book_id=book.id,
                     kind=JobKind.IMPORT_SOURCE,
                     request=ImportRequest(files=staged),
-                    created_at=self._clock.now(),
+                    created_at=datetime.now(UTC),
                 )
             )
         except BaseException:

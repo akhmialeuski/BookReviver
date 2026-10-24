@@ -23,8 +23,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import EPOCH, make_job, make_record, make_scan, make_source
-from tests.helpers.clock import FixedClock
+from tests.helpers.builders import make_job, make_record, make_scan, make_source
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -108,7 +107,7 @@ def fx_board() -> FakeJobBoard:
     :returns: A fake board with no job.
     :rtype: FakeJobBoard
     """
-    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=FixedClock(EPOCH))
+    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
 
 
 @pytest.fixture

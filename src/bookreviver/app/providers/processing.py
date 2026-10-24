@@ -23,7 +23,7 @@ from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
-from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
+from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
@@ -133,15 +133,11 @@ class ProcessingProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def processing_runtime(
-        self, publisher: EventPublisher, clock: Clock, board: JobBoard, tracer: Tracer
-    ) -> ProcessingRuntime:
+    def processing_runtime(self, publisher: EventPublisher, board: JobBoard, tracer: Tracer) -> ProcessingRuntime:
         """Gather what a processing use case reports through.
 
         :param publisher: Publisher of the application's event bus.
         :type publisher: EventPublisher
-        :param clock: Clock of the application.
-        :type clock: Clock
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param tracer: Tracer of the application.
@@ -149,7 +145,7 @@ class ProcessingProvider(Provider):
         :returns: The runtime.
         :rtype: ProcessingRuntime
         """
-        return ProcessingRuntime(publisher=publisher, clock=clock, board=board, tracer=tracer)
+        return ProcessingRuntime(publisher=publisher, board=board, tracer=tracer)
 
     @provide(scope=Scope.APP)
     def step_runner(self, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler) -> StepRunner:
@@ -235,7 +231,7 @@ class ProcessingProvider(Provider):
         :type runner: StepRunner
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
-        :param runtime: The publisher, the clock, the board and the tracer.
+        :param runtime: The publisher, the board and the tracer.
         :type runtime: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys

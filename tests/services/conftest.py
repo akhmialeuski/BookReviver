@@ -116,7 +116,7 @@ def fx_board(
         service = make_page_service(fx_open_book, (fx_events, fx_clock, board))
         return await service.prepare_images(job, control)
 
-    board = FakeJobBoard(runner=run, publisher=fx_events, clock=fx_clock)
+    board = FakeJobBoard(runner=run, publisher=fx_events)
     return board
 
 

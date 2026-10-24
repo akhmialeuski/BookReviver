@@ -76,7 +76,7 @@ def _service(uow: UnitOfWork, stores: SharedBookDirectories, *, databases: Locat
     :rtype: BooksService
     """
     clock = FixedClock(NOW)
-    board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=clock)
+    board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
     stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
     return BooksService(uow=uow, databases=databases, directories=stores, tools=BookTools(stages=stages, clock=clock))
 

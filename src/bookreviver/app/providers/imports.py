@@ -5,7 +5,7 @@ container closes. It is built with the runner of ``app/jobs.py``, which knows th
 services from, so the provider is the one place where the board and its runner meet.
 
 The import service is built once per request or job from three parts that keep no state of their own and so live as
-long as the application: the stores, the imaging ports, and the publisher, clock, order keys and limits. The limits
+long as the application: the stores, the imaging ports, and the publisher, order keys and limits. The limits
 come from the settings, and the IIIF root from the mount point of the IIIF routes, which only ``api`` knows. The
 import entry in ``app/jobs.py`` and the upload route resolve the same service.
 """
@@ -20,7 +20,7 @@ from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
+from bookreviver.ports.runtime import EventPublisher, EventStream, JobBoard
 from bookreviver.services.books import BooksService
 from bookreviver.services.imports import (
     ImportImaging,
@@ -38,7 +38,7 @@ class ImportsProvider(Provider):
 
     @provide(scope=Scope.APP)
     async def job_board(
-        self, settings: Settings, container: AsyncContainer, publisher: EventPublisher, clock: Clock
+        self, settings: Settings, container: AsyncContainer, publisher: EventPublisher
     ) -> AsyncIterator[JobBoard]:
         """Open the job board, and close it, which cancels the jobs running, when the application closes the container.
 
@@ -48,8 +48,6 @@ class ImportsProvider(Provider):
         :type container: AsyncContainer
         :param publisher: Publisher of the application's event bus.
         :type publisher: EventPublisher
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: Iterator yielding the open board and closing it afterwards.
         :rtype: AsyncIterator[JobBoard]
         """
@@ -60,7 +58,6 @@ class ImportsProvider(Provider):
                 InMemoryJobBoard(
                     runner=job_runner(container),
                     publisher=publisher,
-                    clock=clock,
                     kept_ended=settings.jobs.kept_ended,
                 )
             )
@@ -120,7 +117,7 @@ class ImportsProvider(Provider):
     ) -> ImportRuntime:
         """Gather what an import reports through and is bounded by.
 
-        :param processing: The clock and the job board of the application.
+        :param processing: The job board of the application.
         :type processing: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
@@ -130,7 +127,6 @@ class ImportsProvider(Provider):
         :rtype: ImportRuntime
         """
         return ImportRuntime(
-            clock=processing.clock,
             order_keys=order_keys,
             limits=limits,
             board=processing.board,
@@ -150,7 +146,7 @@ class ImportsProvider(Provider):
         :type books: BooksService
         :param imaging: The imaging ports of the application.
         :type imaging: ImportImaging
-        :param runtime: The publisher, clock, order keys and limits of the application.
+        :param runtime: The publisher, order keys and limits of the application.
         :type runtime: ImportRuntime
         :param parts: The recipes and the job starter, with which the split of the imported pages is queued.
         :type parts: ProcessingParts

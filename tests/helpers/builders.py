@@ -256,7 +256,7 @@ def make_book_tools() -> BookTools:
     :rtype: BookTools
     """
     clock = FixedClock(EPOCH)
-    board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE), clock=clock)
+    board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE))
     return BookTools(
         stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
         clock=clock,

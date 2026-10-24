@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
-    from tests.helpers.clock import FixedClock
     from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -75,17 +74,15 @@ class SourceStoreFailingOnce(LocalSourceStore):
 
 
 @pytest.fixture
-def fx_import_board(fx_events: RecordingEventBus, fx_clock: FixedClock) -> FakeJobBoard:
+def fx_import_board(fx_events: RecordingEventBus) -> FakeJobBoard:
     """Build a job board that holds the jobs a test puts on it, and runs them to their end when the test says so.
 
     :param fx_events: Recording event bus of the test.
     :type fx_events: RecordingEventBus
-    :param fx_clock: Clock stopped at the epoch.
-    :type fx_clock: FixedClock
     :returns: Board the source service reads the jobs of a book from.
     :rtype: FakeJobBoard
     """
-    return FakeJobBoard(runner=ScriptedRunner(), publisher=fx_events, clock=fx_clock)
+    return FakeJobBoard(runner=ScriptedRunner(), publisher=fx_events)
 
 
 def _service(board: FakeJobBoard) -> SourceService:

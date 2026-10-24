@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
+    from bookreviver.ports.runtime import EventPublisher, JobBoard
     from bookreviver.ports.tracing import Tracer
     from bookreviver.services.recipes import DefaultRecipes
 
@@ -57,13 +57,11 @@ class ProcessingRuntime:
     """What a processing use case reports through.
 
     :ivar publisher: Publisher of the events the browser follows.
-    :ivar clock: Clock stamping recipes, versions and jobs.
     :ivar board: Board holding the jobs of every book and running them.
     :ivar tracer: Tracer the runs of stages are timed with.
     """
 
     publisher: EventPublisher
-    clock: Clock
     board: JobBoard
     tracer: Tracer
 

@@ -582,9 +582,7 @@ class ImportRig:
             uow,
             FakeCatalogue(self.processors),
             self.defaults,
-            ProcessingRuntime(
-                publisher=self.fakes.events, clock=self.fakes.clock, board=self.fakes.board, tracer=NullTracer()
-            ),
+            ProcessingRuntime(publisher=self.fakes.events, board=self.fakes.board, tracer=NullTracer()),
             ProcessingConfig(
                 preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
                 preview_long_side_px=PREVIEW_LONG_SIDE_PX,
@@ -596,7 +594,6 @@ class ImportRig:
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),
             runtime=ImportRuntime(
-                clock=self.fakes.clock,
                 order_keys=FractionalOrderKeys(),
                 limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
                 board=self.fakes.board,

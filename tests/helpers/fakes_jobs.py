@@ -120,7 +120,7 @@ class JobFakes:
     board: FakeJobBoard = field(
         init=False,
         default=Factory(
-            lambda self: FakeJobBoard(runner=self.runner or self.scripted, publisher=self.events, clock=self.clock),
+            lambda self: FakeJobBoard(runner=self.runner or self.scripted, publisher=self.events),
             takes_self=True,
         ),
     )

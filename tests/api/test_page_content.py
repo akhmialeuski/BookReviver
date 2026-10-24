@@ -14,8 +14,7 @@ from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobState, PageKind
 from bookreviver.domain.values import ContentDetection
-from tests.helpers.builders import EPOCH, make_job, make_page, make_record, new_account_id
-from tests.helpers.clock import FixedClock
+from tests.helpers.builders import make_job, make_page, make_record, new_account_id
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -78,7 +77,7 @@ def fx_board() -> FakeJobBoard:
     :returns: A fake board with no job.
     :rtype: FakeJobBoard
     """
-    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=FixedClock(EPOCH))
+    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
 
 
 @pytest.fixture

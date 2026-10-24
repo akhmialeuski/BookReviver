@@ -155,7 +155,7 @@ class ProcessingKit:
         self.files = stores.files
         self.events = RecordingEventBus()
         self.clock = FixedClock(EPOCH)
-        self.board = FakeJobBoard(runner=self._run_job, publisher=self.events, clock=self.clock)
+        self.board = FakeJobBoard(runner=self._run_job, publisher=self.events)
         self.fake = FakeProcessor()
         self.cleanup = CleanupProcessor()
         self.writer = FakeRenditionWriter()
@@ -176,7 +176,7 @@ class ProcessingKit:
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, board=self.board, tracer=self.tracer)
+        runtime = ProcessingRuntime(publisher=self.events, board=self.board, tracer=self.tracer)
         config = ProcessingConfig(
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,

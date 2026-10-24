@@ -14,8 +14,6 @@ import anyio
 from attrs import frozen
 
 from bookreviver.adapters.jobs.board import InMemoryJobBoard
-from tests.helpers.builders import EPOCH
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -62,13 +60,12 @@ async def open_board_under_test(adapter: BoardAdapter, *, kept_ended: int = 20) 
     """
     runner = ScriptedRunner()
     events = RecordingEventBus()
-    clock = FixedClock(EPOCH)
     match adapter:
         case BoardAdapter.IN_MEMORY:
-            async with InMemoryJobBoard(runner=runner, publisher=events, clock=clock, kept_ended=kept_ended) as board:
+            async with InMemoryJobBoard(runner=runner, publisher=events, kept_ended=kept_ended) as board:
                 yield BoardUnderTest(board=board, runner=runner, events=events, start=lambda: None)
         case BoardAdapter.FAKE:
-            fake = FakeJobBoard(runner=runner, publisher=events, clock=clock, kept_ended=kept_ended)
+            fake = FakeJobBoard(runner=runner, publisher=events, kept_ended=kept_ended)
             async with anyio.create_task_group() as group:
 
                 def start() -> None:

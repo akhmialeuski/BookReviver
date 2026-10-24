@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.jobs.board import JobRunner
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.runtime import Clock, EventPublisher
+    from bookreviver.ports.runtime import EventPublisher
 
 DEFAULT_KEPT_ENDED: int = 20
 
@@ -28,21 +28,17 @@ class FakeJobBoard(InMemoryJobBoard):
     :ivar put_jobs: Every job put on the board, in the order it was put, whatever became of it.
     """
 
-    def __init__(
-        self, *, runner: JobRunner, publisher: EventPublisher, clock: Clock, kept_ended: int = DEFAULT_KEPT_ENDED
-    ) -> None:
+    def __init__(self, *, runner: JobRunner, publisher: EventPublisher, kept_ended: int = DEFAULT_KEPT_ENDED) -> None:
         """Build a board with no jobs, which starts none by itself.
 
         :param runner: What runs a job when a test lets the queues run.
         :type runner: JobRunner
         :param publisher: Publisher of the events the running jobs announce.
         :type publisher: EventPublisher
-        :param clock: Clock stamping the jobs.
-        :type clock: Clock
         :param kept_ended: Most ended jobs held for each book.
         :type kept_ended: int
         """
-        super().__init__(runner=runner, publisher=publisher, clock=clock, kept_ended=kept_ended)
+        super().__init__(runner=runner, publisher=publisher, kept_ended=kept_ended)
         self.put_jobs: list[Job] = []
         self._being_run: set[BookId] = set()
 
