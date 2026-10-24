@@ -482,10 +482,11 @@ class TestStartDetection:
         :type fx_probe_kit: ProbeKitFactory
         """
         kit, _ = fx_probe_kit([])
-        _, book_id, _ = await book_of(kit, [PageKind.TEXT])
+        actor, book_id, _ = await book_of(kit, [PageKind.TEXT])
+        book = open_for(actor, book_id, databases=kit.databases, files=kit.files)
 
-        pages_of(kit).detect_new_pages(book_id)
-        pages_of(kit).detect_new_pages(book_id)
+        pages_of(kit).detect_new_pages(book)
+        pages_of(kit).detect_new_pages(book)
 
         [job] = kit.board.put_jobs
         expect(job.kind is JobKind.DETECT_CONTENT)

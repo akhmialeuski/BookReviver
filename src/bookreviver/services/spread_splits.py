@@ -149,7 +149,7 @@ class SpreadSplit:
         :type book: Book
         :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
-        :param runtime: The runner, the catalogue, the publisher and the order keys.
+        :param runtime: The runner, the processors and the order keys.
         :type runtime: StageRuntime
         :param records: Writer of the stage records.
         :type records: StageRecords
@@ -158,7 +158,6 @@ class SpreadSplit:
         self._book_record = book_record
         self._runner = runtime.runner
         self._processors = runtime.processors
-        self._publisher = runtime.publisher
         self._order_keys = runtime.order_keys
         self._records = records
         self._labels = PageLabels()
@@ -592,4 +591,4 @@ class SpreadSplit:
         """
         for version, earlier in zip(made, basis.stored, strict=False):
             if earlier is None or earlier.state is not VersionState.READY:
-                await self._publisher.publish(PageVersionReady(book_id=self._book.id, version=version))
+                await self._book.events.publish(PageVersionReady(version=version))

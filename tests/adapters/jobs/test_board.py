@@ -28,7 +28,7 @@ class TestInMemoryJobBoard:
         """Verify the browser is told of the job when it is queued, when it runs, as it goes, and when it ends."""
         job = make_job(book_id=BOOK)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
-            under_test.board.put(job)
+            under_test.jobs(job.book_id).put(job)
             await anyio.wait_all_tasks_blocked()
         announced = [event.job for event in under_test.events.published if isinstance(event, JobChanged)]
         expect(announced[0].state is JobState.QUEUED)
@@ -44,9 +44,9 @@ class TestInMemoryJobBoard:
         job = make_job(book_id=BOOK)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
             under_test.runner.hold(job)
-            under_test.board.put(job)
+            under_test.jobs(job.book_id).put(job)
             await anyio.wait_all_tasks_blocked()
-            await under_test.board.cancel(job.id)
+            await under_test.jobs(job.book_id).cancel(job.id)
             states = [event.job.state for event in under_test.events.published if isinstance(event, JobChanged)]
             log_after_cancel = list(under_test.runner.log)
         expect(states[-1] is JobState.CANCELLED)
@@ -56,11 +56,11 @@ class TestInMemoryJobBoard:
         """Verify a job put on a book whose queue has run dry is run, which takes a new task for the book."""
         first, later = make_job(book_id=BOOK, minutes=0), make_job(book_id=BOOK, minutes=1)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
-            under_test.board.put(first)
+            under_test.jobs(first.book_id).put(first)
             await anyio.wait_all_tasks_blocked()
-            under_test.board.put(later)
+            under_test.jobs(later.book_id).put(later)
             await anyio.wait_all_tasks_blocked()
-            state = under_test.board.get(later.id).state
+            state = under_test.jobs(later.book_id).get(later.id).state
         expect(state is JobState.SUCCEEDED)
         expect(under_test.runner.begun() == [first.id, later.id])
 
@@ -69,7 +69,7 @@ class TestInMemoryJobBoard:
         job = make_job(book_id=BOOK)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
             under_test.runner.hold(job)
-            under_test.board.put(job)
+            under_test.jobs(job.book_id).put(job)
             await anyio.wait_all_tasks_blocked()
             begun = under_test.runner.begun()
         expect(begun == [job.id])

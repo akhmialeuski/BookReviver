@@ -93,7 +93,7 @@ class ProcessingJobs:
         :param books: Books service of the job, which opens the book the job runs on, whose blocks hold the work as it
                       goes.
         :type books: BooksService
-        :param runtime: The runner, the catalogue, the publisher and the size of a preview.
+        :param runtime: The runner, the processors and the size of a preview.
         :type runtime: StageRuntime
         :param parts: The recipes, the stage records and the job starter over the catalogue database.
         :type parts: ProcessingParts
@@ -122,16 +122,17 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            outcomes = await self._run_pages(job, control)
+            book = await self._books.open(job.book_id)
+            outcomes = await self._run_pages(book, job, control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         done, failed = outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED)
         if failed and not done:
             return JobEnd(state=JobState.FAILED, error=NO_PAGE_PROCESSED)
         # The collection is put behind this job, so the book is never free between the two
-        self._starter.queue_collection(job.book_id)
+        self._starter.queue_collection(book)
         if done and job.stage is Stage.PAGE_SPLIT:
-            self._pages.detect_new_pages(job.book_id)
+            self._pages.detect_new_pages(book)
         return JobEnd(state=JobState.SUCCEEDED)
 
     async def preview_step(self, job: Job, control: JobControl) -> JobEnd:
@@ -233,9 +234,11 @@ class ProcessingJobs:
             return JobEnd(state=JobState.FAILED, error=NO_CONTENT_DETECTED)
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def _run_pages(self, job: Job, control: JobControl) -> list[RunOutcome]:
+    async def _run_pages(self, book: Book, job: Job, control: JobControl) -> list[RunOutcome]:
         """Run the recipe of a ``run-stage`` job over its pages, a task for each step of each page.
 
+        :param book: The open book the job runs on.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through.
@@ -246,7 +249,6 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         run = StageRun.from_map(job.params)
-        book = await self._books.open(job.book_id)
         book_record = await book.read(lambda repos: repos.book_record.get())
         plan = RunPlan(recipes=self._recipes, book=book, run=run)
         pages = await plan.pages()
@@ -401,7 +403,7 @@ class ProcessingJobs:
 
         stored, current = await book.change(mark)
         if stored:
-            await self._runtime.publisher.publish(PageVersionReady(book_id=book.id, version=cut_version))
+            await book.events.publish(PageVersionReady(version=cut_version))
         elif current is None:
             await book.assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
 

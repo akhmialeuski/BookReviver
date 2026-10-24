@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId, PageId
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
-    from bookreviver.ports.runtime import JobBoard
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
+    from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 
@@ -38,14 +38,19 @@ BOOKS: int = WINDOWS[-1]
 
 
 async def _store_books(
-    catalogue: CatalogueDatabase, board: JobBoard, owner_id: AccountId, count: int, *, databases: LocatedBookDatabases
+    catalogue: CatalogueDatabase,
+    board: FakeJobBoard,
+    owner_id: AccountId,
+    count: int,
+    *,
+    databases: LocatedBookDatabases,
 ) -> None:
     """Store books that each have a page in a stage and a job on the board, so every progress query returns rows.
 
     :param catalogue: Catalogue database over the catalogue and the books of the test.
     :type catalogue: CatalogueDatabase
     :param board: Board of the jobs, which holds them in memory and so sends no statement.
-    :type board: JobBoard
+    :type board: FakeJobBoard
     :param owner_id: Committed account owning the books.
     :type owner_id: AccountId
     :param count: Number of books to store.
@@ -73,7 +78,7 @@ def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page
     repos.page_stages.add(make_page_stage(page_id=page_id))
 
 
-async def _statements_of_list(stores: BookOpener, board: JobBoard, owner_id: AccountId, window: int) -> int:
+async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: int) -> int:
     """List the owner's books as the list route does and count the statements every engine sends for their overviews.
 
     The window of the owner's books is read from the catalogue first, as the access dependency reads it, and the
@@ -81,8 +86,6 @@ async def _statements_of_list(stores: BookOpener, board: JobBoard, owner_id: Acc
 
     :param stores: Opens the catalogue databases and the databases of the books of the test.
     :type stores: BookOpener
-    :param board: Board of the jobs of the books.
-    :type board: JobBoard
     :param owner_id: Account whose books are listed.
     :type owner_id: AccountId
     :param window: How many books the window holds.
@@ -92,7 +95,7 @@ async def _statements_of_list(stores: BookOpener, board: JobBoard, owner_id: Acc
     """
     catalogue = stores.catalogue()
     service = BooksService(catalogue=catalogue, databases=stores.databases, directories=stores.files)
-    stages = StageSummaries(processors=FakeCatalogue([]), board=board)
+    stages = StageSummaries(processors=FakeCatalogue([]))
     request = SliceRequest(limit=window)
     entries = await catalogue.read(lambda repos: repos.library.list_for_owner(owner_id, request))
     opened = [service.book(entry) for entry in entries.items]
@@ -126,9 +129,9 @@ class TestBookList:
         """
         board = JobFakes().board
         await _store_books(fx_open_book.catalogue(), board, fx_owner_id, BOOKS, databases=fx_open_book.databases)
-        await _statements_of_list(fx_open_book, board, fx_owner_id, BOOKS)
+        await _statements_of_list(fx_open_book, fx_owner_id, BOOKS)
 
-        counts = {window: await _statements_of_list(fx_open_book, board, fx_owner_id, window) for window in WINDOWS}
+        counts = {window: await _statements_of_list(fx_open_book, fx_owner_id, window) for window in WINDOWS}
 
         one, two, five = (counts[window] for window in WINDOWS)
         assert (two - one) * (BOOKS - 1) == five - one

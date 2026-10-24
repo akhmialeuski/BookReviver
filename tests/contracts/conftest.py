@@ -74,7 +74,7 @@ def fx_order_keys(request: pytest.FixtureRequest) -> OrderKeys:
 
 @pytest.fixture(params=list(BoardAdapter), ids=str)
 def fx_board_adapter(request: pytest.FixtureRequest) -> BoardAdapter:
-    """Return each adapter of the JobBoard port in turn.
+    """Return each adapter of the BookJobs port in turn.
 
     :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
     :type request: pytest.FixtureRequest

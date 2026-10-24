@@ -28,10 +28,7 @@ from tests.helpers.builders import (
     new_book_id,
     open_for,
 )
-from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.fakes_jobs import RecordingEventBus
-from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_record, store_book
 from tests.helpers.storage import BookFiles, SharedBookDirectories, SharedDirectory
 
@@ -59,13 +56,12 @@ MASK_CONTENT: bytes = b'mask of the edit'
 
 
 def _stages() -> StageSummaries:
-    """Build the stage sums over a catalogue with no processors and a board with no jobs.
+    """Build the stage sums over a catalogue with no processors, for books whose queues hold no jobs.
 
     :returns: The stage summaries.
     :rtype: StageSummaries
     """
-    board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
-    return StageSummaries(processors=FakeCatalogue([]), board=board)
+    return StageSummaries(processors=FakeCatalogue([]))
 
 
 def _service(

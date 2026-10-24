@@ -14,6 +14,7 @@ from bookreviver.api.auth import current_actor
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
+from bookreviver.ports.runtime import BookJobs
 from tests.helpers.builders import BookOpener, new_account_id
 from tests.helpers.database import (
     LocatedBookDatabases,
@@ -22,13 +23,15 @@ from tests.helpers.database import (
     create_schema_template,
     database_file,
 )
+from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
+from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_account
 from tests.helpers.storage import SharedBookDirectories
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Iterator, Sequence
     from pathlib import Path
     from typing import Any
 
@@ -104,13 +107,47 @@ def fx_settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def fx_book_changes() -> RecordingEventBus:
-    """Record the changes of the books that the test announces, apart from the events of the services.
+def fx_book_parts() -> Iterator[RecordingEventBus]:
+    """Register the event bus and a job board that run nothing as the parts every book of the test opens.
 
-    :returns: The bus every catalogue database of the test publishes to.
+    A book opens its event channel and its job queue by the name of its directory, so every test has both registered.
+    A test that builds a job board of its own registers that one in place of this board, and the registrations before
+    the test are given back after it.
+
+    :returns: The recording bus that is the event channel of every book of the test.
+    :rtype: Iterator[RecordingEventBus]
+    """
+    previous_jobs = BookJobs.register(None)
+    with RecordingEventBus().installed() as bus:
+        BookJobs.register(FakeJobBoard(runner=ScriptedRunner()).open)
+        try:
+            yield bus
+        finally:
+            BookJobs.register(previous_jobs)
+
+
+@pytest.fixture
+def fx_events(fx_book_parts: RecordingEventBus) -> RecordingEventBus:
+    """Return the recording event bus of the test, which records every event of every book.
+
+    :param fx_book_parts: The bus registered for the test.
+    :type fx_book_parts: RecordingEventBus
+    :returns: The bus every service, job and book database of the test publishes to.
     :rtype: RecordingEventBus
     """
-    return RecordingEventBus()
+    return fx_book_parts
+
+
+@pytest.fixture
+def fx_book_changes(fx_book_parts: RecordingEventBus) -> RecordingEventBus:
+    """Return the bus the changes of the books that the test announces are recorded on.
+
+    :param fx_book_parts: The bus registered for the test.
+    :type fx_book_parts: RecordingEventBus
+    :returns: The bus every book database of the test publishes to, which is the bus of the services too.
+    :rtype: RecordingEventBus
+    """
+    return fx_book_parts
 
 
 @pytest.fixture
@@ -242,7 +279,7 @@ def fx_databases(
     fx_books: BookRegistry,
     fx_directories: SharedBookDirectories,
     fx_settings: Settings,
-    fx_book_changes: RecordingEventBus,
+    fx_book_parts: RecordingEventBus,
 ) -> BookDatabasesFactory:
     """Return a function opening a new opener of the databases of the books of the test, as a request would get.
 
@@ -252,11 +289,13 @@ def fx_databases(
     :type fx_directories: SharedBookDirectories
     :param fx_settings: Settings of the test, whose job limit is the wait of an opener made with none.
     :type fx_settings: Settings
-    :param fx_book_changes: Where the book databases announce the committed changes of the books.
-    :type fx_book_changes: RecordingEventBus
+    :param fx_book_parts: The bus and the job board registered as the parts of the books the test opens, which an opener
+                          reaches the event channel of a book through.
+    :type fx_book_parts: RecordingEventBus
     :returns: Function opening the databases of ``fx_books``.
     :rtype: BookDatabasesFactory
     """
+    del fx_book_parts
 
     def open_databases(*, wait_seconds: float | None = None) -> LocatedBookDatabases:
         """Open the databases of the books of the test.
@@ -267,9 +306,7 @@ def fx_databases(
         :rtype: LocatedBookDatabases
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return LocatedBookDatabases(
-            fx_books, directories=fx_directories, publisher=fx_book_changes, wait_seconds=seconds
-        )
+        return LocatedBookDatabases(fx_books, directories=fx_directories, wait_seconds=seconds)
 
     return open_databases
 
@@ -313,16 +350,22 @@ def fx_social_clients() -> Sequence[BaseOAuth2[Any]] | None:
 
 
 @pytest.fixture
-def fx_shared_database(fx_database: SqlDatabase, fx_books: BookRegistry) -> SharedDatabaseProvider:
+def fx_shared_database(
+    fx_database: SqlDatabase, fx_books: BookRegistry, fx_book_parts: RecordingEventBus
+) -> SharedDatabaseProvider:
     """Hand the application the catalogue and the books of the test in place of its own.
 
     :param fx_database: Catalogue of the test.
     :type fx_database: SqlDatabase
     :param fx_books: Registry of the books of the test.
     :type fx_books: BookRegistry
+    :param fx_book_parts: The bus and the job board registered as the parts of the books the application or the
+                          container opens, which a running application registers its own over.
+    :type fx_book_parts: RecordingEventBus
     :returns: The provider overriding the catalogue and the registry of the books of the application.
     :rtype: SharedDatabaseProvider
     """
+    del fx_book_parts
     return SharedDatabaseProvider(fx_database, fx_books)
 
 

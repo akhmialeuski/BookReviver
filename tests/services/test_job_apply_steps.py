@@ -19,7 +19,7 @@ from bookreviver.domain.values import StageRun
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
-from tests.helpers.processing import change_versions, stored_job
+from tests.helpers.processing import change_versions, open_book, stored_job
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -132,7 +132,7 @@ class TestCutTiles:
         :type kept: tuple[VersionState, bool] | None
         """
         _, book_id, untiled = await untiled_version(fx_kit)
-        job = await fx_kit.parts().starter.enqueue_tiles(book_id, [untiled.id])
+        job = await fx_kit.parts().starter.enqueue_tiles(await open_book(fx_kit, book_id), [untiled.id])
         assert job is not None
         cut = StepRunner.cut_tiles
 

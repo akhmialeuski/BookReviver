@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import PageVersion, Scan
+    from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
@@ -90,6 +91,7 @@ class Rig:
         self.book = Book(
             book_id,
             new_account_id(),
+            directory_of(book_id),
             database=Mock(spec=BookDatabase),
             directory=files.directory(directory_of(book_id)),
         )
@@ -145,14 +147,17 @@ class Rig:
 
 
 @pytest.fixture
-def fx_rig(fx_directories: SharedBookDirectories) -> Rig:
+def fx_rig(fx_directories: SharedBookDirectories, fx_book_parts: RecordingEventBus) -> Rig:
     """Build the rig over the test's stores of the books.
 
     :param fx_directories: Opens the source store and the asset store of a book of the test.
     :type fx_directories: SharedBookDirectories
+    :param fx_book_parts: The bus and the job board registered as the parts of the books, which the book of the rig opens.
+    :type fx_book_parts: RecordingEventBus
     :returns: The rig.
     :rtype: Rig
     """
+    del fx_book_parts
     return Rig(fx_directories)
 
 

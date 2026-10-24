@@ -176,7 +176,7 @@ class ProcessingService:
             affected = (await self._plan(book, run).impact()).affected
             if affected:
                 raise ConflictError(NEEDS_CONFIRMATION.format(mode=run.mode.label, pages=affected))
-        return await self._starter.enqueue(book.id, JobKind.RUN_STAGE, run.to_map())
+        return await self._starter.enqueue(book, JobKind.RUN_STAGE, run.to_map())
 
     def _plan(self, book: Book, run: StageRun) -> RunPlan:
         """Plan a run over the book.
@@ -202,7 +202,7 @@ class ProcessingService:
                                versions that are measured or the recipe.
         """
         await self._recipes.recipes(book, Stage.GEOMETRY)
-        return await self._starter.enqueue(book.id, JobKind.MEASURE_BOOK, {})
+        return await self._starter.enqueue(book, JobKind.MEASURE_BOOK, {})
 
     async def start_preview(self, book: Book, preview: StepPreview) -> Job:
         """Record a job that previews the steps of a form on a page, and queue it.
@@ -226,7 +226,7 @@ class ProcessingService:
             steps=self._recipes.check(preview.stage, preview.steps, order=OrderMode.FREE),
             step_index=preview.step_index,
         )
-        return await self._starter.enqueue(book.id, JobKind.PREVIEW_STEP, checked.to_map())
+        return await self._starter.enqueue(book, JobKind.PREVIEW_STEP, checked.to_map())
 
     async def page_stages(self, book: Book, page_id: PageId, request: SliceRequest) -> Slice[PageStage]:
         """List the current version and the state of every stage a page has been through, in pipeline order.
@@ -286,7 +286,7 @@ class ProcessingService:
                                running, which may be reading or deleting the versions the choice depends on.
         """
         await book.read(lambda repos: self._choosable(repos, repos.pages.get(page_id), stage, version_id))
-        if await self._starter.free_of_previews(book.id):
+        if await self._starter.free_of_previews(book):
             raise ConflictError(BOOK_BUSY)
         key = PageStageKey(page_id, stage)
 
@@ -312,7 +312,7 @@ class ProcessingService:
 
         version, record = await book.change(work)
         if version.renditions is not None and not version.tiles_ready:
-            await self._starter.enqueue_tiles(book.id, [version_id])
+            await self._starter.enqueue_tiles(book, [version_id])
         return record
 
     async def versions(
@@ -427,7 +427,7 @@ class ProcessingService:
             raise ConflictError(NO_IMAGE.format(version_id=version_id))
         if version.state is not VersionState.READY or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=NOT_READY))
-        return await self._starter.enqueue(book.id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
+        return await self._starter.enqueue(book, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
 
     async def collection_report(self, book: Book) -> CollectionReport:
         """Count the versions a collection would delete now and the size of their files, which it changes nothing of.
@@ -463,7 +463,7 @@ class ProcessingService:
         :rtype: Job
         :raises ConflictError: If a run, a measure of the book or a tile cutting of the book is queued or running.
         """
-        if (job := await self._starter.enqueue_collection(book.id)) is None:
+        if (job := await self._starter.enqueue_collection(book)) is None:
             raise ConflictError(BOOK_BUSY)
         return job
 

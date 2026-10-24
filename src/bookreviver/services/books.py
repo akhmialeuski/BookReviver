@@ -26,6 +26,7 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
+from bookreviver.ports.runtime import BookEvents
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
@@ -92,11 +93,14 @@ class BooksService:
         :rtype: Book
         """
         directory = self._directories.directory(entry.directory)
+        events = BookEvents.open(entry.directory)
         return Book(
             entry.book_id,
             entry.owner_id,
-            database=self._databases.open(entry.book_id, directory.database),
+            entry.directory,
+            database=self._databases.open(entry.book_id, directory.database, events),
             directory=directory,
+            events=events,
         )
 
     async def open(self, book_id: BookId) -> Book:

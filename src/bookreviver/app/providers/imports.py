@@ -2,10 +2,12 @@
 
 The board is an application-scoped generator, so it is built when first needed and its tasks are cancelled when the
 container closes. It is built with the runner of ``app/jobs.py``, which knows the container the jobs resolve their
-services from, so the provider is the one place where the board and its runner meet.
+services from, so the provider is the one place where the board and its runner meet. The board is also where a book
+opens its job queue, so building it registers the board as the implementation of ``BookJobs``, which ``prepare_start``
+does before the first request.
 
 The import service is built once per request or job from three parts that keep no state of their own and so live as
-long as the application: the stores, the imaging ports, and the publisher, order keys and limits. The limits
+long as the application: the stores, the imaging ports, and the order keys and limits. The limits
 come from the settings, and the IIIF root from the mount point of the IIIF routes, which only ``api`` knows. The
 import entry in ``app/jobs.py`` and the upload route resolve the same service.
 """
@@ -20,7 +22,7 @@ from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.runtime import EventPublisher, EventStream, JobBoard
+from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.books import BooksService
 from bookreviver.services.imports import (
     ImportImaging,
@@ -29,7 +31,7 @@ from bookreviver.services.imports import (
     ImportService,
 )
 from bookreviver.services.jobs import JobService
-from bookreviver.services.processing_parts import ProcessingParts, ProcessingRuntime
+from bookreviver.services.processing_parts import ProcessingParts
 from bookreviver.services.steps import StepRunner
 
 
@@ -37,45 +39,41 @@ class ImportsProvider(Provider):
     """Builds the job board once per application, and the import and job services per request or job."""
 
     @provide(scope=Scope.APP)
-    async def job_board(
-        self, settings: Settings, container: AsyncContainer, publisher: EventPublisher
-    ) -> AsyncIterator[JobBoard]:
-        """Open the job board, and close it, which cancels the jobs running, when the application closes the container.
+    async def job_board(self, settings: Settings, container: AsyncContainer) -> AsyncIterator[InMemoryJobBoard]:
+        """Open the job board and register it as the way a book opens its job queue.
+
+        The board is closed, which cancels the jobs running, and the registration is given back when the application
+        closes the container.
 
         :param settings: Application settings, of which ``jobs.kept_ended`` is read.
         :type settings: Settings
         :param container: Application container, which opens a request scope for every job.
         :type container: AsyncContainer
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
         :returns: Iterator yielding the open board and closing it afterwards.
-        :rtype: AsyncIterator[JobBoard]
+        :rtype: AsyncIterator[InMemoryJobBoard]
         """
         # An exit stack rather than `async with` around the yield: dishka drives this generator (ASYNC119)
         stack = AsyncExitStack()
         try:
-            yield await stack.enter_async_context(
-                InMemoryJobBoard(
-                    runner=job_runner(container),
-                    publisher=publisher,
-                    kept_ended=settings.jobs.kept_ended,
-                )
+            board = await stack.enter_async_context(
+                InMemoryJobBoard(runner=job_runner(container), kept_ended=settings.jobs.kept_ended)
             )
+            previous = BookJobs.register(board.open)
+            try:
+                yield board
+            finally:
+                BookJobs.register(previous)
         finally:
             await stack.aclose()
 
     @provide(scope=Scope.REQUEST)
-    def job_service(self, board: JobBoard, stream: EventStream) -> JobService:
+    def job_service(self) -> JobService:
         """Build the job service of the request or job.
 
-        :param board: Board holding the jobs of every book.
-        :type board: JobBoard
-        :param stream: Stream of the application's event bus.
-        :type stream: EventStream
         :returns: The job service.
         :rtype: JobService
         """
-        return JobService(board=board, stream=stream)
+        return JobService()
 
     @provide(scope=Scope.APP)
     def import_limits(self, settings: Settings) -> ImportLimits:
@@ -112,13 +110,9 @@ class ImportsProvider(Provider):
         return ImportImaging(inspector=inspector, rasterizer=rasterizer, tiler=tiler, runner=runner)
 
     @provide(scope=Scope.APP)
-    def import_runtime(
-        self, processing: ProcessingRuntime, order_keys: OrderKeys, limits: ImportLimits
-    ) -> ImportRuntime:
-        """Gather what an import reports through and is bounded by.
+    def import_runtime(self, order_keys: OrderKeys, limits: ImportLimits) -> ImportRuntime:
+        """Gather what an import orders by and is bounded by.
 
-        :param processing: The job board of the application.
-        :type processing: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
         :param limits: Bounds of an upload and of an import.
@@ -126,11 +120,7 @@ class ImportsProvider(Provider):
         :returns: The runtime of an import.
         :rtype: ImportRuntime
         """
-        return ImportRuntime(
-            order_keys=order_keys,
-            limits=limits,
-            board=processing.board,
-        )
+        return ImportRuntime(order_keys=order_keys, limits=limits)
 
     @provide(scope=Scope.REQUEST)
     def import_service(
@@ -146,7 +136,7 @@ class ImportsProvider(Provider):
         :type books: BooksService
         :param imaging: The imaging ports of the application.
         :type imaging: ImportImaging
-        :param runtime: The publisher, order keys and limits of the application.
+        :param runtime: The order keys and limits of the application.
         :type runtime: ImportRuntime
         :param parts: The recipes and the job starter, with which the split of the imported pages is queued.
         :type parts: ProcessingParts

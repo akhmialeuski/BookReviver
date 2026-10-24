@@ -24,7 +24,6 @@ from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
-from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
@@ -35,7 +34,7 @@ from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.pages import PageService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes
@@ -136,21 +135,6 @@ class ProcessingProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def processing_runtime(self, publisher: EventPublisher, board: JobBoard, tracer: Tracer) -> ProcessingRuntime:
-        """Gather what a processing use case reports through.
-
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
-        :param board: Board holding the jobs of every book.
-        :type board: JobBoard
-        :param tracer: Tracer of the application.
-        :type tracer: Tracer
-        :returns: The runtime.
-        :rtype: ProcessingRuntime
-        """
-        return ProcessingRuntime(publisher=publisher, board=board, tracer=tracer)
-
-    @provide(scope=Scope.APP)
     def step_runner(self, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler) -> StepRunner:
         """Build the runner of processors over the imaging ports.
 
@@ -170,7 +154,6 @@ class ProcessingProvider(Provider):
         self,
         processors: ProcessorCatalog,
         defaults: DefaultRecipes,
-        runtime: ProcessingRuntime,
         config: ProcessingConfig,
     ) -> ProcessingParts:
         """Build the parts the processing use cases share in the request or job.
@@ -179,14 +162,12 @@ class ProcessingProvider(Provider):
         :type processors: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param runtime: The publisher and the board.
-        :type runtime: ProcessingRuntime
         :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        return ProcessingParts.build(processors, defaults, runtime, config)
+        return ProcessingParts.build(processors, defaults, config)
 
     @provide(scope=Scope.REQUEST)
     def processing_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:
@@ -223,7 +204,7 @@ class ProcessingProvider(Provider):
         self,
         runner: StepRunner,
         processors: ProcessorCatalog,
-        runtime: ProcessingRuntime,
+        tracer: Tracer,
         order_keys: OrderKeys,
         config: ProcessingConfig,
     ) -> StageRuntime:
@@ -233,8 +214,8 @@ class ProcessingProvider(Provider):
         :type runner: StepRunner
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param runtime: The publisher, the board and the tracer.
-        :type runtime: ProcessingRuntime
+        :param tracer: Tracer of the application.
+        :type tracer: Tracer
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
         :param config: The retention period and the size of a preview.
@@ -245,10 +226,9 @@ class ProcessingProvider(Provider):
         return StageRuntime(
             runner=runner,
             processors=processors,
-            publisher=runtime.publisher,
             order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
-            tracer=runtime.tracer,
+            tracer=tracer,
         )
 
     @provide(scope=Scope.REQUEST)

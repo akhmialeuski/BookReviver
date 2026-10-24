@@ -10,16 +10,18 @@ from uuid import uuid4
 
 import pytest
 
+from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState, Stage
 from bookreviver.domain.ids import BookId, PageId, PageVersionId
 from bookreviver.domain.values import ContentDetection, StageRun, Step, StepPreview, TileCut, VersionCollection
-from tests.helpers.builders import EPOCH
+from tests.helpers.builders import EPOCH, new_account_id, open_for
 from tests.helpers.processing import ProcessingKit, stored_job
 from tests.helpers.processors import FakeContentProbe, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.values import MetadataMap
+    from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
 
 pytestmark = pytest.mark.anyio
@@ -45,6 +47,17 @@ MISSING_BOOK_JOBS: list[tuple[JobKind, MetadataMap]] = [
 MISSING_BOOK_IDS: list[str] = [kind for kind, _ in MISSING_BOOK_JOBS]
 
 
+def missing_book(kit: ProcessingKit) -> Book:
+    """Open a book the library does not list, which the starter queues jobs of like any other.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :returns: The book of a fresh identifier.
+    :rtype: Book
+    """
+    return open_for(Actor(account_id=new_account_id()), BookId(uuid4()), databases=kit.databases, files=kit.files)
+
+
 class TestJobsOfAMissingBook:
     """Tests for the end of each job whose book is not in the library."""
 
@@ -58,7 +71,7 @@ class TestJobsOfAMissingBook:
         :type job: tuple[JobKind, MetadataMap]
         """
         kind, params = job
-        queued = await fx_kit.parts().starter.enqueue(BookId(uuid4()), kind, params)
+        queued = await fx_kit.parts().starter.enqueue(missing_book(fx_kit), kind, params)
 
         await fx_kit.work_queue()
 
@@ -77,7 +90,9 @@ class TestJobsOfAMissingBook:
         :type fx_open_book: BookOpener
         """
         kit = ProcessingKit(fx_database, fx_open_book, processors=[FakeContentProbe([])])
-        queued = await kit.parts().starter.enqueue(BookId(uuid4()), JobKind.DETECT_CONTENT, ContentDetection().to_map())
+        queued = await kit.parts().starter.enqueue(
+            missing_book(kit), JobKind.DETECT_CONTENT, ContentDetection().to_map()
+        )
 
         await kit.work_queue()
 
@@ -90,7 +105,7 @@ class TestJobsOfAMissingBook:
         :type fx_kit: ProcessingKit
         """
         queued = await fx_kit.parts().starter.enqueue(
-            BookId(uuid4()), JobKind.DETECT_CONTENT, ContentDetection().to_map()
+            missing_book(fx_kit), JobKind.DETECT_CONTENT, ContentDetection().to_map()
         )
 
         await fx_kit.work_queue()

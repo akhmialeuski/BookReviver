@@ -15,6 +15,7 @@ from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
+from bookreviver.ports.runtime import BookEvents
 from bookreviver.ports.storage import BookDirectories
 from tests.helpers.builders import directory_of, make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
@@ -71,7 +72,7 @@ async def _stored(container: AsyncContainer, book_id: BookId) -> bool:
         try:
             await (
                 (await scope.get(BookDatabases))
-                .open(book_id, directory.database)
+                .open(book_id, directory.database, BookEvents.open(directory_of(book_id)))
                 .read(lambda repos: repos.book_record.get())
             )
         except NotFoundError:

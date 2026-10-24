@@ -16,16 +16,17 @@ the sums and rows of its stages, is read by ``StageSummaries`` through ``read``.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from attrs import evolve, field, frozen
+from attrs import Factory, evolve, field, frozen
 
 from bookreviver.domain.entities import BookRecord
 from bookreviver.domain.values import ArchivedBook
+from bookreviver.ports.runtime import BookEvents, BookJobs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.domain.changes import BookChanges
-    from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabase, BookRepositories
     from bookreviver.ports.storage import AssetStore, BookDirectory, SourceStore
@@ -37,16 +38,28 @@ class Book:
 
     :ivar id: Identifier of the book in the library.
     :ivar owner_id: The account that owns the book.
+    :ivar dir_name: The name of the directory of the book, by which the parts of the book are opened.
     :ivar database: The database of the book, which runs the transactions of the book. It is no part of what makes two
                     books equal.
     :ivar directory: The directory of the book, which holds its files and its database file, no part of what makes two
                      books equal.
+    :ivar events: The event channel of the book, which every object of the book shares and which is no part of what
+                  makes two books equal.
+    :ivar jobs: The queue of the jobs of the book, which every object of the book shares and which is no part of what
+                makes two books equal.
     """
 
     id: BookId
     owner_id: AccountId
+    dir_name: BookDirectoryName
     database: BookDatabase = field(eq=False, repr=False)
     directory: BookDirectory = field(eq=False, repr=False)
+    events: BookEvents = field(
+        default=Factory(lambda self: BookEvents.open(self.dir_name), takes_self=True), eq=False, repr=False
+    )
+    jobs: BookJobs = field(
+        default=Factory(lambda self: BookJobs.open(self.dir_name), takes_self=True), eq=False, repr=False
+    )
 
     @property
     def sources(self) -> SourceStore:

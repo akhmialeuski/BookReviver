@@ -24,7 +24,6 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAl
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.app.settings import Settings
 from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase, ChangeWaitSeconds
-from bookreviver.ports.runtime import EventPublisher
 from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -142,22 +141,18 @@ class DatabaseProvider(Provider):
     catalogue_database_port = alias(source=SqlAlchemyCatalogueDatabase, provides=CatalogueDatabase)
 
     @provide(scope=Scope.REQUEST)
-    def book_databases(
-        self, books: BookRegistry, publisher: EventPublisher, wait_seconds: ChangeWaitSeconds
-    ) -> SqlAlchemyBookDatabases:
+    def book_databases(self, books: BookRegistry, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyBookDatabases:
         """Build the opener of the books of a request or job, which keeps no state but the wait limit of its scope.
 
         It holds no session or connection, so it needs no closing.
 
         :param books: The registry of the databases of the books.
         :type books: BookRegistry
-        :param publisher: Where a committed change of a book is announced.
-        :type publisher: EventPublisher
         :param wait_seconds: How long a change of a book waits for a writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
         :returns: The opener of the databases of the books.
         :rtype: SqlAlchemyBookDatabases
         """
-        return SqlAlchemyBookDatabases(books, publisher=publisher, wait_seconds=wait_seconds)
+        return SqlAlchemyBookDatabases(books, wait_seconds=wait_seconds)
 
     book_databases_port = alias(source=SqlAlchemyBookDatabases, provides=BookDatabases)

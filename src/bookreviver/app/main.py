@@ -10,6 +10,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
+from bookreviver.adapters.events.broadcast import EventChannels
+from bookreviver.adapters.jobs.board import InMemoryJobBoard
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
@@ -46,7 +48,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     opened here: a database the migrations were not applied to stops the start instead of failing a request. The pool of
     processes that run the steps is started too, so every process has built its catalogue before the first request and
     the first preview does not wait for it. The file of default recipes is read here too, so a file that does not fit
-    stops the start.
+    stops the start. The event channels and the job board are built here as well, which registers them as the way a
+    book opens its event channel and its job queue, so every book opened afterwards finds them.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
     left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
@@ -61,6 +64,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     :raises RuntimeError: When the database is not at the head revision of the migrations.
     """
     await container.get(SqlDatabase)
+    await container.get(EventChannels)
+    await container.get(InMemoryJobBoard)
     await container.get(StepExecutor)
     await container.get(DefaultRecipes)
     await (await container.get(BookDirectories)).discard_all_staged()

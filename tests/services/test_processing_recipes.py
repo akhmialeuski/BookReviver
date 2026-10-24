@@ -562,7 +562,7 @@ class TestStartRun:
         actor, book_id = await fx_kit.seed_book()
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         starter = fx_kit.parts().starter
-        expect(await starter.enqueue_collection(book_id) is None)
+        expect(await starter.enqueue_collection(await open_book(fx_kit, book_id)) is None)
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE])
         assert_expectations()
 

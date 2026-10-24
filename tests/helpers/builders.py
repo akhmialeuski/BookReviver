@@ -67,6 +67,7 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
+from bookreviver.ports.runtime import BookEvents
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
@@ -231,26 +232,28 @@ def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: 
     :returns: The open book.
     :rtype: Book
     """
-    directory = files.directory(directory_of(book_id))
+    dir_name = directory_of(book_id)
+    directory = files.directory(dir_name)
+    events = BookEvents.open(dir_name)
     return Book(
         book_id,
         actor.account_id,
-        database=databases.open(book_id, directory.database),
+        dir_name,
+        database=databases.open(book_id, directory.database, events),
         directory=directory,
+        events=events,
     )
 
 
-def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:
+def make_book_change(*, version: int = 1) -> BookChanged:
     """Build a committed change of the description of a book, which a test publishes as any event of the book.
 
-    :param book_id: The book.
-    :type book_id: BookId
     :param version: The version of the book after the change.
     :type version: int
     :returns: The change.
     :rtype: BookChanged
     """
-    return BookChanged(book_id=book_id, version=version, resources=frozenset({BookResource.RECORD}))
+    return BookChanged(version=version, resources=frozenset({BookResource.RECORD}))
 
 
 def make_page(

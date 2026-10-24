@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -60,13 +61,15 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-def fx_fakes() -> JobFakes:
+def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
     """Build the adapters the application runs on besides its database.
 
+    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
+    :type fx_book_parts: RecordingEventBus
     :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
-    return JobFakes()
+    return JobFakes(events=fx_book_parts)
 
 
 @pytest.fixture

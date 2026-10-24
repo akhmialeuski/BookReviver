@@ -2800,15 +2800,13 @@ class TestStartImportConcurrently:
 
 
 @pytest.fixture
-def fx_sources(fx_rig: ImportRig) -> SourceService:
-    """Build the service of the sources over the database, the stores and the board of the rig.
+def fx_sources() -> SourceService:
+    """Build the service of the sources of a new request.
 
-    :param fx_rig: Adapters of the import.
-    :type fx_rig: ImportRig
     :returns: The source service of a new request.
     :rtype: SourceService
     """
-    return SourceService(board=fx_rig.fakes.board)
+    return SourceService()
 
 
 @pytest.fixture

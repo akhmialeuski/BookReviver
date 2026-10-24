@@ -13,6 +13,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
+from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.sources import SourceService
 from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
 from tests.helpers.builders import BookOpener, make_job, make_record, make_source
@@ -74,40 +75,29 @@ class SourceStoreFailingOnce(LocalSourceStore):
 
 
 @pytest.fixture
-def fx_import_board(fx_events: RecordingEventBus) -> FakeJobBoard:
+def fx_import_board(fx_book_parts: RecordingEventBus) -> FakeJobBoard:
     """Build a job board that holds the jobs a test puts on it, and runs them to their end when the test says so.
 
-    :param fx_events: Recording event bus of the test.
-    :type fx_events: RecordingEventBus
-    :returns: Board the source service reads the jobs of a book from.
+    :param fx_book_parts: The bus and the job board registered as the parts of the books, which this board is
+                          registered over and which are given back after the test.
+    :type fx_book_parts: RecordingEventBus
+    :returns: Board the books of the test open their job queues on.
     :rtype: FakeJobBoard
     """
-    return FakeJobBoard(runner=ScriptedRunner(), publisher=fx_events)
-
-
-def _service(board: FakeJobBoard) -> SourceService:
-    """Build the source service for one request, over a catalogue database and the stores and the board of the test.
-
-    :param board: Board the service reads the jobs of a book from.
-    :type board: FakeJobBoard
-    :returns: The service.
-    :rtype: SourceService
-    """
-    return SourceService(board=board)
+    del fx_book_parts
+    board = FakeJobBoard(runner=ScriptedRunner())
+    BookJobs.register(board.open)
+    return board
 
 
 @pytest.fixture
-def fx_service(
-    fx_import_board: FakeJobBoard,
-) -> Callable[[], SourceService]:
+def fx_service() -> Callable[[], SourceService]:
     """Return a function building the service for one request.
 
-    :param fx_import_board: Board the service reads the jobs of a book from.
-    :type fx_import_board: FakeJobBoard
-    :returns: Function building a service over a new catalogue database.
+    :returns: Function building a service.
     :rtype: Callable[[], SourceService]
     """
-    return lambda: _service(fx_import_board)
+    return SourceService
 
 
 @pytest.fixture

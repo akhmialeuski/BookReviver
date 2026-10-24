@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.app.settings import Settings
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -62,13 +63,15 @@ class Uploads:
 
 
 @pytest.fixture
-def fx_fakes() -> JobFakes:
+def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
     """Build the adapters the application runs on, with an empty database and a board that runs nothing.
 
+    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
+    :type fx_book_parts: RecordingEventBus
     :returns: Fakes with nothing stored and no job on the board.
     :rtype: JobFakes
     """
-    return JobFakes()
+    return JobFakes(events=fx_book_parts)
 
 
 @pytest.fixture

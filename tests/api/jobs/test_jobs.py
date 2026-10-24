@@ -15,6 +15,7 @@ from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import JobEnd, StageRun
 from tests.helpers.builders import (
+    directory_of,
     make_book_change,
     make_job,
     make_page_version,
@@ -293,7 +294,7 @@ class TestStreamBookEvents:
             # Change things only once the stream has subscribed, which happens before the endpoint runs
             await fx_fakes.events.subscribed.wait()
             await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
-            await fx_fakes.events.publish(make_book_change(book_id=book_id))
+            await fx_fakes.events.open(directory_of(book_id)).publish(make_book_change())
 
         expect((reader.status, reader.content_type.split(';')[0]) == (HTTPStatus.OK, EVENT_STREAM_TYPE))
         expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.BOOK_CHANGED])
@@ -467,7 +468,7 @@ class TestStreamBookEvents:
         async with anyio.create_task_group() as group:
             group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id))
             await fx_fakes.events.subscribed.wait()
-            await fx_fakes.events.publish(PageVersionReady(book_id=book_id, version=version))
+            await fx_fakes.events.open(directory_of(book_id)).publish(PageVersionReady(version=version))
 
         assert reader.events == [
             StreamedEvent(

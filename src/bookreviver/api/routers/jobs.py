@@ -159,16 +159,16 @@ async def stream_book_events(
         yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=reset)
     async for event in events:
         match event:
-            case BookChanged(book_id=changed_id, version=changed_version, resources=resources):
+            case BookChanged(version=changed_version, resources=resources):
                 yield ServerSentEvent(
                     event=EventName.BOOK_CHANGED,
                     id=str(changed_version),
-                    data=BookChangedSchema(book_id=changed_id, version=changed_version, resources=sorted(resources)),
+                    data=BookChangedSchema(book_id=book.id, version=changed_version, resources=sorted(resources)),
                 )
             case JobChanged(job=job):
                 yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.model_validate(job))
-            case PageVersionReady(book_id=ready_id, version=version):
+            case PageVersionReady(version=version):
                 yield ServerSentEvent(
                     event=EventName.PAGE_VERSION_READY,
-                    data=PageVersionReadySchema(book_id=ready_id, page_id=version.page_id, version_id=version.id),
+                    data=PageVersionReadySchema(book_id=book.id, page_id=version.page_id, version_id=version.id),
                 )

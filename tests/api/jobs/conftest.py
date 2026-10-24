@@ -11,15 +11,19 @@ if TYPE_CHECKING:
 
     from dishka import Provider
 
+    from tests.helpers.fakes_jobs import RecordingEventBus
+
 
 @pytest.fixture
-def fx_fakes() -> JobFakes:
+def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
     """Build the adapters the application of a job API test runs on.
 
+    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
+    :type fx_book_parts: RecordingEventBus
     :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
-    return JobFakes()
+    return JobFakes(events=fx_book_parts)
 
 
 @pytest.fixture

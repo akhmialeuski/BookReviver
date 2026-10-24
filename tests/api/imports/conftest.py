@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 
 @pytest.fixture
@@ -35,14 +36,18 @@ def fx_events() -> JobEndBus:
 
 
 @pytest.fixture
-def fx_fakes(fx_events: JobEndBus) -> JobFakes:
+def fx_fakes(fx_events: JobEndBus, fx_book_parts: RecordingEventBus) -> JobFakes:
     """Build the adapters the application runs on.
 
     :param fx_events: Event bus of the application.
     :type fx_events: JobEndBus
+    :param fx_book_parts: The bus and the job board registered as the parts of the books, which the board of the fakes
+                          is registered over, and which are given back after the test.
+    :type fx_book_parts: RecordingEventBus
     :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
+    del fx_book_parts
     return JobFakes(events=fx_events)
 
 

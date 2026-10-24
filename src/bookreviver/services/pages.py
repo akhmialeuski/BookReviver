@@ -91,11 +91,11 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import BookRecord, PageVersion
-    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId
+    from bookreviver.domain.ids import PageVersionId, ScanId, SourceId
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import EventPublisher, JobBoard, JobControl
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
@@ -125,20 +125,6 @@ logger = logging.getLogger(__name__)
 
 
 @frozen(kw_only=True)
-class PageRuntime:
-    """What a page use case reports through and orders by.
-
-    :ivar publisher: Publisher of the events the browser follows.
-    :ivar order_keys: Builder of the order keys of moved and new pages.
-    :ivar board: Board the ``prepare-pages`` and ``detect-content`` jobs are put on.
-    """
-
-    publisher: EventPublisher
-    order_keys: OrderKeys
-    board: JobBoard
-
-
-@frozen(kw_only=True)
 class PageImaging:
     """What writes the images of base versions.
 
@@ -164,21 +150,19 @@ class PageService:
     PAPER_RADIUS: ClassVar[int] = 10
     PAPER_PAGES: ClassVar[int] = 6
 
-    def __init__(self, *, books: BooksService, runtime: PageRuntime, imaging: PageImaging) -> None:
+    def __init__(self, *, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
 
         :param books: Books service of the request or job, which opens the book a job runs on and the books of the
                       library the passes of the start go over.
         :type books: BooksService
-        :param runtime: The publisher, the order keys and the job board.
-        :type runtime: PageRuntime
+        :param order_keys: Builder of the order keys of moved and new pages.
+        :type order_keys: OrderKeys
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         """
         self._books = books
-        self._order_keys = runtime.order_keys
-        self._publisher = runtime.publisher
-        self._board = runtime.board
+        self._order_keys = order_keys
         self._base_versions = imaging.base_versions
         self._runner = imaging.runner
         self._records = StageRecords()
@@ -314,19 +298,19 @@ class PageService:
 
         await book.read(check)
         detection = ContentDetection(page_ids=None if page_ids is None else tuple(page_ids))
-        if (job := self._enqueue(book.id, JobKind.DETECT_CONTENT, detection.to_map())) is None:
+        if (job := self._enqueue(book, JobKind.DETECT_CONTENT, detection.to_map())) is None:
             raise ConflictError(DETECTION_RUNNING)
         return job
 
-    def detect_new_pages(self, book_id: BookId) -> None:
+    def detect_new_pages(self, book: Book) -> None:
         """Queue the detection of the content of the pages that have none, which a job asks for when images are made.
 
         Nothing is queued while a detection of the book is queued or running, which goes over the pages it finds.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         """
-        self._enqueue(book_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
+        self._enqueue(book, JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
     async def add(self, book: Book, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
@@ -375,7 +359,7 @@ class PageService:
 
         overview = await book.change(work)
         if blank:
-            self._enqueue(book.id, JobKind.PREPARE_PAGES)
+            self._enqueue(book, JobKind.PREPARE_PAGES)
         return overview
 
     async def add_many(self, book: Book, new_pages: Sequence[NewPage]) -> list[PageOverview]:
@@ -439,7 +423,7 @@ class PageService:
 
         overviews = await book.change(work)
         if any(new_page.origin is NewPageOrigin.BLANK for new_page in new_pages):
-            self._enqueue(book.id, JobKind.PREPARE_PAGES)
+            self._enqueue(book, JobKind.PREPARE_PAGES)
         return overviews
 
     def _batch_leaf_size(self, repos: BookRepositories, new_pages: Sequence[NewPage]) -> PageSize | None:
@@ -565,7 +549,7 @@ class PageService:
 
         # The job is queued in a ``change`` of its own, so after the transaction that wrote the leaves
         if await book.change(work):
-            self._enqueue(book.id, JobKind.PREPARE_PAGES)
+            self._enqueue(book, JobKind.PREPARE_PAGES)
 
     async def remake_outdated_leaves(self) -> None:
         """Make again the leaves whose version of ``pages.blank`` was replaced, by the path that made them.
@@ -765,7 +749,7 @@ class PageService:
 
         overview, taken = await book.change(work)
         await self._discard_files(book, taken)
-        self._enqueue(book.id, JobKind.PREPARE_PAGES)
+        self._enqueue(book, JobKind.PREPARE_PAGES)
         return overview
 
     async def prepare_images(self, job: Job, control: JobControl) -> JobEnd:
@@ -798,7 +782,7 @@ class PageService:
             await control.task_done()
         await self._follow_up(book, job)
         if versions:
-            self.detect_new_pages(job.book_id)
+            self.detect_new_pages(book)
         if failed:
             return JobEnd(state=JobState.FAILED, error=PAGES_FAILED.format(count=failed))
         return JobEnd(state=JobState.SUCCEEDED)
@@ -1090,7 +1074,7 @@ class PageService:
             await book.assets.delete_prefix(keys.page(page.id))
 
     def _enqueue(
-        self, book_id: BookId, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
+        self, book: Book, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
     ) -> Job | None:
         """Put a ``prepare-pages`` or ``detect-content`` job on the board, unless one of its kind is active.
 
@@ -1100,8 +1084,8 @@ class PageService:
         running when a version is stored may have read its versions before it, which is why the job looks again when it
         ends, in ``_follow_up``.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
         :type kind: JobKind
         :param params: What the job was asked to do, in the form its value class writes, or None for a job without.
@@ -1111,11 +1095,10 @@ class PageService:
         :returns: The job as the board holds it, queued, or None when a job of the kind is queued or running already.
         :rtype: Job | None
         """
-        active = self._board.jobs(book_id, active=True)
-        if any(active_job.kind is kind and active_job.id != after for active_job in active):
+        if any(active_job.kind is kind and active_job.id != after for active_job in book.jobs.active()):
             return None
-        job = Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params or {}, created_at=datetime.now(UTC))
-        return self._board.put(job)
+        job = Job(id=JobId(uuid4()), book_id=book.id, kind=kind, params=params or {}, created_at=datetime.now(UTC))
+        return book.jobs.put(job)
 
     async def _follow_up(self, book: Book, job: Job) -> None:
         """Queue another job when a version was committed while the job that is ending was running.
@@ -1132,7 +1115,7 @@ class PageService:
         """
         waiting = await book.read(lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS))
         if any(version.state is VersionState.PENDING for version in waiting):
-            self._enqueue(job.book_id, JobKind.PREPARE_PAGES, after=job.id)
+            self._enqueue(book, JobKind.PREPARE_PAGES, after=job.id)
 
     def _median_size(self, repos: BookRepositories) -> PageSize:
         """Return the size of a blank leaf that stands level with the pages of the book.
@@ -1315,7 +1298,7 @@ class PageService:
         elif outdated:
             await book.assets.delete_prefix(BookKeys().version_directory(version))
         elif current:
-            await self._publisher.publish(PageVersionReady(book_id=book.id, version=version))
+            await book.events.publish(PageVersionReady(version=version))
         return not (gone or outdated)
 
     @staticmethod

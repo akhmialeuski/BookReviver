@@ -32,24 +32,19 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import JobBoard
     from bookreviver.services.book import Book
 
 
 class StageSummaries:
     """Sums the stages of books over their pages, from the records of the page stages."""
 
-    def __init__(self, *, processors: ProcessorCatalog, board: JobBoard) -> None:
+    def __init__(self, *, processors: ProcessorCatalog) -> None:
         """Work over the ports of one request.
 
         :param processors: The processors the application can run, which say which stages are available.
         :type processors: ProcessorCatalog
-        :param board: Board holding the jobs of every book, which tells the stages that are running. Its reads are safe
-                      from the worker thread of a read transaction, which is where this class is called.
-        :type board: JobBoard
         """
         self._processors = processors
-        self._board = board
 
     async def overview(self, book: Book) -> BookOverview:
         """Return a book with its counts and progress.
@@ -73,8 +68,7 @@ class StageSummaries:
             """
             overview = repos.book_record.overview(book.id)
             tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
-            jobs = self._board.jobs_of({overview.book_id}, active=True)
-            running = {job.stage for job in jobs if job.stage is not None}
+            running = {job.stage for job in book.jobs.active() if job.stage is not None}
             return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
 
         return await book.read(work)

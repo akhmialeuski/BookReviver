@@ -18,7 +18,7 @@ from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_record
 from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
-from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
+from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_account, store_book
 from tests.helpers.tracers import AskingTracer
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener
+    from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.storage import SharedBookDirectories
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
@@ -246,7 +247,7 @@ def fx_traced_catalogue(fx_traced_database: SqlDatabase) -> Callable[..., Catalo
 
 @pytest.fixture
 def fx_traced_databases(
-    fx_traced_books: BookRegistry, fx_directories: SharedBookDirectories
+    fx_traced_books: BookRegistry, fx_directories: SharedBookDirectories, fx_book_parts: RecordingEventBus
 ) -> Callable[..., LocatedBookDatabases]:
     """Give a function opening the databases of the traced books, with the limit it is told.
 
@@ -254,9 +255,12 @@ def fx_traced_databases(
     :type fx_traced_books: BookRegistry
     :param fx_directories: The directories of the books of the test, which hold their database files.
     :type fx_directories: SharedBookDirectories
+    :param fx_book_parts: The bus and the job board registered as the parts of the books the test opens.
+    :type fx_book_parts: RecordingEventBus
     :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
     :rtype: Callable[..., LocatedBookDatabases]
     """
+    del fx_book_parts
 
     def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> LocatedBookDatabases:
         """Open the databases of the traced books.
@@ -266,16 +270,14 @@ def fx_traced_databases(
         :returns: A new opener of the databases of the books.
         :rtype: LocatedBookDatabases
         """
-        return LocatedBookDatabases(
-            fx_traced_books, directories=fx_directories, publisher=RecordingEventBus(), wait_seconds=wait_seconds
-        )
+        return LocatedBookDatabases(fx_traced_books, directories=fx_directories, wait_seconds=wait_seconds)
 
     return open_databases
 
 
 @pytest.fixture
 def fx_impatient_databases(
-    fx_impatient_books: BookRegistry, fx_directories: SharedBookDirectories
+    fx_impatient_books: BookRegistry, fx_directories: SharedBookDirectories, fx_book_parts: RecordingEventBus
 ) -> Callable[..., LocatedBookDatabases]:
     """Give a function opening the databases of the impatient registry of the books, with the limit it is told.
 
@@ -283,9 +285,12 @@ def fx_impatient_databases(
     :type fx_impatient_books: BookRegistry
     :param fx_directories: The directories of the books of the test, which hold their database files.
     :type fx_directories: SharedBookDirectories
+    :param fx_book_parts: The bus and the job board registered as the parts of the books the test opens.
+    :type fx_book_parts: RecordingEventBus
     :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
     :rtype: Callable[..., LocatedBookDatabases]
     """
+    del fx_book_parts
 
     def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> LocatedBookDatabases:
         """Open the databases of the impatient books.
@@ -295,9 +300,7 @@ def fx_impatient_databases(
         :returns: A new opener of the databases of the books.
         :rtype: LocatedBookDatabases
         """
-        return LocatedBookDatabases(
-            fx_impatient_books, directories=fx_directories, publisher=RecordingEventBus(), wait_seconds=wait_seconds
-        )
+        return LocatedBookDatabases(fx_impatient_books, directories=fx_directories, wait_seconds=wait_seconds)
 
     return open_databases
 

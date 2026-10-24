@@ -16,7 +16,7 @@ from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobSta
 from bookreviver.domain.values import ContentDetection
 from tests.helpers.builders import make_job, make_page, make_record, new_account_id
 from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
+from tests.helpers.fakes_jobs import FakeBoardProvider
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_record, store_book
 
@@ -77,7 +77,7 @@ def fx_board() -> FakeJobBoard:
     :returns: A fake board with no job.
     :rtype: FakeJobBoard
     """
-    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
+    return FakeJobBoard(runner=ScriptedRunner())
 
 
 @pytest.fixture

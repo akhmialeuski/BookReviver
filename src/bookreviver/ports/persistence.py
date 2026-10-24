@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     )
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
+    from bookreviver.ports.runtime import BookEvents
 
 # How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
 DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0
@@ -1119,15 +1120,17 @@ class BookDatabases(ABC):
     """
 
     @abstractmethod
-    def open(self, book_id: BookId, path: Path) -> BookDatabase:
+    def open(self, book_id: BookId, path: Path, events: BookEvents) -> BookDatabase:
         """Return the database of a book, without touching the file.
 
         A file that does not exist is found on the first call of the returned database, which raises ``NotFoundError``.
 
-        :param book_id: Identifier of the book, which the changes of the book announce.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param path: The database file of the book.
         :type path: Path
+        :param events: The event channel of the book, which the changes of the book are announced to.
+        :type events: BookEvents
         :returns: The database of the book.
         :rtype: BookDatabase
         """

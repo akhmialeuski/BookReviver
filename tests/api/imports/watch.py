@@ -5,7 +5,7 @@ the job. It reads the jobs and the report through the routes a browser reads, an
 queued or running, which is also when the split of the new pages, which a successful import queues, is done.
 """
 
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any
 
 import anyio
 
@@ -36,18 +36,17 @@ class JobEndBus(RecordingEventBus):
     """
 
     def __init__(self) -> None:
-        """Start with no job ended."""
+        """Start with no job ended, announcing the end of a job after each event is delivered."""
         super().__init__()
         self.ended = anyio.Event()
+        self.after_publish = self._announce_end
 
-    @override
-    async def publish(self, event: DomainEvent) -> None:
-        """Record and deliver the event, and announce the end of a job when the event is one.
+    async def _announce_end(self, event: DomainEvent) -> None:
+        """Announce the end of a job when the event delivered is one.
 
-        :param event: Event to deliver, carrying the book it belongs to.
+        :param event: The event that was delivered.
         :type event: DomainEvent
         """
-        await super().publish(event)
         if isinstance(event, JobChanged) and event.job.state.is_final:
             ended, self.ended = self.ended, anyio.Event()
             ended.set()

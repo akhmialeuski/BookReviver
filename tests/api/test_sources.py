@@ -25,7 +25,7 @@ from bookreviver.domain.values import Renditions
 from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
 from tests.helpers.builders import make_job, make_record, make_scan, make_source
 from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
+from tests.helpers.fakes_jobs import FakeBoardProvider
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
 
@@ -107,7 +107,7 @@ def fx_board() -> FakeJobBoard:
     :returns: A fake board with no job.
     :rtype: FakeJobBoard
     """
-    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
+    return FakeJobBoard(runner=ScriptedRunner())
 
 
 @pytest.fixture

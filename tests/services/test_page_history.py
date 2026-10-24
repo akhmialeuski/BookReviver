@@ -27,6 +27,7 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step, TileCut
 from tests.helpers.builders import make_page_step_state, open_for
 from tests.helpers.page_batches import PageValues
+from tests.helpers.processing import open_book
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
 from tests.services.test_processing_versions import previewed, ran_geometry, ran_two_steps
@@ -990,7 +991,9 @@ class TestClear:
         key = await step_key(fx_kit, book_id, page)
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, book_id, key))
-        job = await fx_kit.parts().starter.enqueue(book_id, active, StageRun(stage=Stage.GEOMETRY).to_map())
+        job = await fx_kit.parts().starter.enqueue(
+            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY).to_map()
+        )
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
         kept = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_versions.find(version.id))
@@ -1011,7 +1014,7 @@ class TestClear:
         """
         actor, book_id, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, book_id, page)
-        preview = await fx_kit.parts().starter.enqueue(book_id, JobKind.PREVIEW_STEP, {})
+        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
         assert fx_kit.board.get(preview.id).state is JobState.QUEUED

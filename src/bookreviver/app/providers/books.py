@@ -6,12 +6,11 @@ from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
 from bookreviver.ports.processing import ProcessorCatalog
-from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.storage import BookDirectories
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
-from bookreviver.services.pages import PageImaging, PageRuntime, PageService
+from bookreviver.services.pages import PageImaging, PageService
 from bookreviver.services.pagination import PaginationService
 from bookreviver.services.places import PlaceService
 from bookreviver.services.sources import SourceService
@@ -25,28 +24,24 @@ class BooksProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    def stage_summaries(self, processors: ProcessorCatalog, board: JobBoard) -> StageSummaries:
+    def stage_summaries(self, processors: ProcessorCatalog) -> StageSummaries:
         """Build the sums of the stages of books, which read through the repositories their caller passes.
 
         :param processors: The processors of the application, which say which stages are available.
         :type processors: ProcessorCatalog
-        :param board: Board holding the jobs of every book, which tells the stages that are running.
-        :type board: JobBoard
         :returns: The stage summaries of the request.
         :rtype: StageSummaries
         """
-        return StageSummaries(processors=processors, board=board)
+        return StageSummaries(processors=processors)
 
     @provide
-    def freshness(self, board: JobBoard) -> BookFreshness:
+    def freshness(self) -> BookFreshness:
         """Build the freshness of the reads of the books of a request.
 
-        :param board: Board of the jobs of the books.
-        :type board: JobBoard
         :returns: The freshness of the reads of the books.
         :rtype: BookFreshness
         """
-        return BookFreshness(board=board)
+        return BookFreshness()
 
     @provide
     def books(
@@ -66,21 +61,6 @@ class BooksProvider(Provider):
         return BooksService(catalogue=catalogue, databases=databases, directories=directories)
 
     @provide(scope=Scope.APP)
-    def page_runtime(self, publisher: EventPublisher, order_keys: OrderKeys, board: JobBoard) -> PageRuntime:
-        """Gather what a page use case reports through and orders by.
-
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
-        :param order_keys: Order keys of the application.
-        :type order_keys: OrderKeys
-        :param board: Board holding the jobs of every book.
-        :type board: JobBoard
-        :returns: The runtime of the page service.
-        :rtype: PageRuntime
-        """
-        return PageRuntime(publisher=publisher, order_keys=order_keys, board=board)
-
-    @provide(scope=Scope.APP)
     def page_imaging(self, tiler: Tiler, runner: StepRunner) -> PageImaging:
         """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
 
@@ -95,19 +75,19 @@ class BooksProvider(Provider):
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide
-    def pages(self, books: BooksService, runtime: PageRuntime, imaging: PageImaging) -> PageService:
+    def pages(self, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> PageService:
         """Build the page service over the request's or job's books service.
 
         :param books: Books service of the current request or job, which opens the books a job runs on.
         :type books: BooksService
-        :param runtime: The publisher, order keys and job board of the application.
-        :type runtime: PageRuntime
+        :param order_keys: Order keys of the application.
+        :type order_keys: OrderKeys
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         :returns: The page service of the request or job.
         :rtype: PageService
         """
-        return PageService(books=books, runtime=runtime, imaging=imaging)
+        return PageService(books=books, order_keys=order_keys, imaging=imaging)
 
     @provide
     def pagination(self) -> PaginationService:
@@ -128,12 +108,10 @@ class BooksProvider(Provider):
         return PlaceService()
 
     @provide
-    def sources(self, board: JobBoard) -> SourceService:
+    def sources(self) -> SourceService:
         """Build the source service of the request.
 
-        :param board: Board holding the jobs of every book.
-        :type board: JobBoard
         :returns: The source service of the request.
         :rtype: SourceService
         """
-        return SourceService(board=board)
+        return SourceService()

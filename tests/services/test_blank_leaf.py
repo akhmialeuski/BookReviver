@@ -277,7 +277,7 @@ class LeafDesk:
             """
             return await self.service(renditions=renditions).prepare_images(queued, control)
 
-        board = FakeJobBoard(runner=run, publisher=self.events)
+        board = FakeJobBoard(runner=run)
         board.put(job)
         await board.run_queued()
         return board.get(job.id)

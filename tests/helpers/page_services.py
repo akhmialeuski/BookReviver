@@ -8,8 +8,9 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.plugins.blank import BlankPage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
+from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions
-from bookreviver.services.pages import PageImaging, PageRuntime, PageService
+from bookreviver.services.pages import PageImaging, PageService
 from bookreviver.services.steps import StepRunner
 from tests.helpers.books_service import make_books_service
 from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
@@ -20,8 +21,9 @@ if TYPE_CHECKING:
 
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.runtime import EventPublisher, JobBoard
     from tests.helpers.builders import BookOpener
+    from tests.helpers.fake_board import FakeJobBoard
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 # What the fake tiler writes, so a test can tell that a rendition of a version was cut
 PREVIEW_CONTENT: bytes = b'preview'
@@ -82,7 +84,7 @@ class FakeTiler(Tiler):
 
 def make_page_service(
     stores: BookOpener,
-    runtime: tuple[EventPublisher, JobBoard],
+    runtime: tuple[RecordingEventBus, FakeJobBoard],
     *,
     order_keys: OrderKeys | None = None,
     renditions: RenditionWriter | None = None,
@@ -91,8 +93,9 @@ def make_page_service(
 
     :param stores: Opens the catalogue database, the databases and the file stores of the service, over the test's own.
     :type stores: BookOpener
-    :param runtime: The publisher and the job board the service reports through.
-    :type runtime: tuple[EventPublisher, JobBoard]
+    :param runtime: The event bus and the job board the books of the service open their channel and their queues on,
+                    which are registered as the parts of a book.
+    :type runtime: tuple[RecordingEventBus, FakeJobBoard]
     :param order_keys: Order keys to build keys with, or None for the fractional-indexing adapter.
     :type order_keys: OrderKeys | None
     :param renditions: Writer of the files of a version, or None for one that copies the image and writes tokens.
@@ -101,11 +104,13 @@ def make_page_service(
               renditions write token files.
     :rtype: PageService
     """
-    publisher, board = runtime
+    events, board = runtime
+    BookEvents.register(events.open)
+    BookJobs.register(board.open)
     tiler = FakeTiler()
     return PageService(
         books=make_books_service(stores.catalogue(), databases=stores.databases, files=stores.files),
-        runtime=PageRuntime(publisher=publisher, order_keys=order_keys or FractionalOrderKeys(), board=board),
+        order_keys=order_keys or FractionalOrderKeys(),
         imaging=PageImaging(
             base_versions=BaseVersions(tiler=tiler),
             runner=StepRunner(

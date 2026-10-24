@@ -13,7 +13,14 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.jobs import JobService
-from tests.helpers.builders import make_book_change, make_job, make_record, new_account_id, new_book_id
+from tests.helpers.builders import (
+    directory_of,
+    make_book_change,
+    make_job,
+    make_record,
+    new_account_id,
+    new_book_id,
+)
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_record
 from tests.helpers.storage import upload
@@ -25,6 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.storage import SharedBookDirectories
 
 # The tests open books of the library with the databases of the test, whether or not they store any
@@ -37,25 +45,25 @@ UNKNOWN_JOB: JobId = JobId(new_account_id())
 
 
 @pytest.fixture
-def fx_fakes() -> JobFakes:
+def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
     """Build the adapters the job service runs on.
 
+    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
+    :type fx_book_parts: RecordingEventBus
     :returns: Fakes with a board with no job and nothing published.
     :rtype: JobFakes
     """
-    return JobFakes()
+    return JobFakes(events=fx_book_parts)
 
 
 @pytest.fixture
-def fx_job_service(fx_fakes: JobFakes) -> JobService:
-    """Build the job service of a request over the board and the event bus of the fakes.
+def fx_job_service() -> JobService:
+    """Build the job service of a request, whose books open the board and the event bus a test registered.
 
-    :param fx_fakes: Adapters of the service.
-    :type fx_fakes: JobFakes
     :returns: The job service.
     :rtype: JobService
     """
-    return JobService(board=fx_fakes.board, stream=fx_fakes.events)
+    return JobService()
 
 
 @pytest.fixture
@@ -372,8 +380,8 @@ class TestEvents:
         other_id = new_book_id()
         async with await fx_job_service.events(fx_open_book(fx_owner, fx_book)) as stream:
             # Published before anything reads the stream, as while the response headers are still being sent
-            await fx_fakes.events.publish(make_book_change(book_id=other_id))
-            await fx_fakes.events.publish(make_book_change(book_id=fx_book))
-            expect(await anext(stream) == make_book_change(book_id=fx_book))
+            await fx_fakes.events.open(directory_of(other_id)).publish(make_book_change(version=1))
+            await fx_fakes.events.open(directory_of(fx_book)).publish(make_book_change(version=2))
+            expect(await anext(stream) == make_book_change(version=2))
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()

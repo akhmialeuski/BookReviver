@@ -314,7 +314,7 @@ def _prepare_jobs(board: FakeJobBoard) -> list[Job]:
     return [board.get(job.id) for job in board.put_jobs if job.kind is JobKind.PREPARE_PAGES]
 
 
-def _board_that_runs(service: Callable[[], PageService], events: RecordingEventBus) -> FakeJobBoard:
+def _board_that_runs(service: Callable[[], PageService]) -> FakeJobBoard:
     """Build a board that runs a ``prepare-pages`` job through the page service a test built, and ends any other at once.
 
     The service puts its jobs on a board, and the board runs them through the service, so a test builds the service
@@ -322,8 +322,6 @@ def _board_that_runs(service: Callable[[], PageService], events: RecordingEventB
 
     :param service: Function building the page service that runs a job.
     :type service: Callable[[], PageService]
-    :param events: Bus the board announces its jobs to.
-    :type events: RecordingEventBus
     :returns: The board, which runs its queues when a test calls ``run_queued``.
     :rtype: FakeJobBoard
     """
@@ -342,7 +340,7 @@ def _board_that_runs(service: Callable[[], PageService], events: RecordingEventB
             return JobEnd(state=JobState.SUCCEEDED)
         return await service().prepare_images(job, control)
 
-    return FakeJobBoard(runner=run, publisher=events)
+    return FakeJobBoard(runner=run)
 
 
 class TestAddPlaceholder:
@@ -1255,7 +1253,7 @@ class TestPrepareImages:
                 renditions=flaky,
             )
 
-        board = _board_that_runs(service, fx_events)
+        board = _board_that_runs(service)
         book_id = await store_book(
             fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
@@ -1504,7 +1502,7 @@ class TestPrepareImagesWhileTheBookChanges:
         )
 
         # The board of the fixture holds the job of the two leaves, and it runs here through the service that deletes
-        runner_board = _board_that_runs(lambda: service, events)
+        runner_board = _board_that_runs(lambda: service)
         queued = runner_board.put(board.put_jobs[0])
         await runner_board.run_queued()
 
@@ -1559,7 +1557,7 @@ class TestPrepareImagesWhileTheBookChanges:
                 renditions=flaky,
             )
 
-        board = _board_that_runs(service, fx_events)
+        board = _board_that_runs(service)
         book_id = await store_book(
             fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
@@ -1628,7 +1626,7 @@ class TestPrepareImagesWhileTheBookChanges:
                 renditions=acting,
             )
 
-        board = _board_that_runs(job_service, fx_events)
+        board = _board_that_runs(job_service)
         book_id = await store_book(
             fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )

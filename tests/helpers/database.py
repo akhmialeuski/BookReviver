@@ -25,6 +25,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
+from bookreviver.ports.runtime import BookEvents
 from tests.helpers.builders import directory_of
 
 if TYPE_CHECKING:
@@ -38,7 +39,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import CatalogueDatabase
-    from bookreviver.ports.runtime import EventPublisher
     from bookreviver.ports.storage import BookDirectories
 
 NO_DATABASE_FILE: str = (
@@ -67,36 +67,38 @@ class LocatedBookDatabases(SqlAlchemyBookDatabases):
     :ivar directories: The directories of the books of the test, which hold their database files.
     """
 
-    def __init__(
-        self, books: BookRegistry, *, directories: BookDirectories, publisher: EventPublisher, wait_seconds: float
-    ) -> None:
+    def __init__(self, books: BookRegistry, *, directories: BookDirectories, wait_seconds: float) -> None:
         """Open the databases of the books of a test, whose files lie in ``directories``.
 
         :param books: The registry of the databases of the books of the test.
         :type books: BookRegistry
         :param directories: The directories of the books of the test.
         :type directories: BookDirectories
-        :param publisher: Where a committed change of a book is announced.
-        :type publisher: EventPublisher
         :param wait_seconds: How long a change waits for the writer of its book.
         :type wait_seconds: float
         """
-        super().__init__(books, publisher=publisher, wait_seconds=wait_seconds)
+        super().__init__(books, wait_seconds=wait_seconds)
         self.directories = directories
 
     @override
-    def open(self, book_id: BookId, path: Path | None = None) -> SqlAlchemyBookDatabase:
+    def open(
+        self, book_id: BookId, path: Path | None = None, events: BookEvents | None = None
+    ) -> SqlAlchemyBookDatabase:
         """Return the database of a book, from the file of its directory unless another path is given.
 
         :param book_id: Identifier of the book.
         :type book_id: BookId
         :param path: The database file of the book, or None for the one in the directory of the book.
         :type path: Path | None
+        :param events: The event channel of the book, or None for the channel registered for the directory of the book.
+        :type events: BookEvents | None
         :returns: The database of the book.
         :rtype: SqlAlchemyBookDatabase
         """
         return super().open(
-            book_id, self.directories.directory(directory_of(book_id)).database if path is None else path
+            book_id,
+            self.directories.directory(directory_of(book_id)).database if path is None else path,
+            BookEvents.open(directory_of(book_id)) if events is None else events,
         )
 
     async def create_book(self, book_id: BookId, book_record: BookRecord) -> None:

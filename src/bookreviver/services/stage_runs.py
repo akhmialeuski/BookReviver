@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import EventPublisher, JobControl
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.tracing import Span, Tracer
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
@@ -133,7 +133,6 @@ class StageRuntime:
 
     :ivar runner: Runner of processors and writer of their files.
     :ivar processors: The processors the application can run.
-    :ivar publisher: Publisher of the events the browser follows.
     :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
     :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
     :ivar tracer: Tracer the runs of pages and their steps are timed with.
@@ -141,7 +140,6 @@ class StageRuntime:
 
     runner: StepRunner
     processors: ProcessorCatalog
-    publisher: EventPublisher
     order_keys: OrderKeys
     preview_long_side_px: int
     tracer: Tracer
@@ -157,7 +155,7 @@ class StageWork:
         :type book: Book
         :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
-        :param runtime: The runner, the catalogue, the publisher and the size of a preview.
+        :param runtime: The runner, the processors and the size of a preview.
         :type runtime: StageRuntime
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl
@@ -167,7 +165,6 @@ class StageWork:
         self._control = control
         self._runner = runtime.runner
         self._processors = runtime.processors
-        self._publisher = runtime.publisher
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
         self._keys = BookKeys()
@@ -697,7 +694,7 @@ class StageWork:
             raise
         if made.state is VersionState.READY:
             span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
-            await self._publisher.publish(PageVersionReady(book_id=self._book.id, version=made))
+            await self._book.events.publish(PageVersionReady(version=made))
         return made
 
 
@@ -720,7 +717,7 @@ class RecipeRun(StageWork):
         :type book: Book
         :param book_record: Record of the book owning the pages.
         :type book_record: BookRecord
-        :param runtime: The runner, the catalogue, the publisher and the size of a preview.
+        :param runtime: The runner, the processors and the size of a preview.
         :type runtime: StageRuntime
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl

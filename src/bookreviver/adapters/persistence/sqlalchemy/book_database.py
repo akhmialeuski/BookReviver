@@ -1,9 +1,10 @@
 """Database of one book that runs the work of a use case whole in a worker thread, on one transaction of its file.
 
 A :class:`SqlAlchemyBookDatabase` holds the identifier of a book, the path of its file, the
-:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookRegistry` of the books and a wait limit, and nothing
-else, so it keeps no state between calls and coroutines may share one. Each call hands a synchronous function to the
-database of the book, which runs it in a thread of its own on a session of a transaction that the call opens and ends:
+:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookRegistry` of the books, the event channel of the book
+and a wait limit, and nothing else, so it keeps no state between calls and coroutines may share one. Each call hands a
+synchronous function to the database of the book, which runs it in a thread of its own on a session of a transaction
+that the call opens and ends:
 
 - ``read`` runs on a reader connection of the book. Every statement of the work sees one committed state of the file, a
   write of another transaction in the meantime stays invisible to it, and the transaction ends by rollback when the
@@ -52,7 +53,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import EventPublisher
+    from bookreviver.ports.runtime import BookEvents
 
 
 # Where SQLite keeps a database that lives in memory alone, as the copy of a book does
@@ -67,12 +68,12 @@ class SqlAlchemyBookDatabase(BookDatabase):
     :ivar _book_id: Identifier of the book.
     :ivar _path: The database file of the book.
     :ivar _books: The registry of the databases of the books.
-    :ivar _publisher: Where a committed change of the book is announced, with the new version of the book.
+    :ivar _events: The event channel of the book, where a committed change is announced with the new version.
     :ivar _wait_seconds: How long a change waits for the writer of the book before it gives up with ``BookBusyError``.
     """
 
     def __init__(
-        self, book_id: BookId, path: Path, books: BookRegistry, *, publisher: EventPublisher, wait_seconds: float
+        self, book_id: BookId, path: Path, books: BookRegistry, *, events: BookEvents, wait_seconds: float
     ) -> None:
         """Run the transactions of a book with the given wait limit for its writer.
 
@@ -82,8 +83,8 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :type path: Path
         :param books: The registry of the databases of the books, shared by every book database.
         :type books: BookRegistry
-        :param publisher: Where a committed change of the book is announced.
-        :type publisher: EventPublisher
+        :param events: The event channel of the book, where a committed change is announced.
+        :type events: BookEvents
         :param wait_seconds: How long a change waits for the writer of the book before it gives up with
                              ``BookBusyError``; :mod:`bookreviver.adapters.persistence.sqlalchemy.database` says what it
                              covers.
@@ -92,7 +93,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         self._book_id = book_id
         self._path = path
         self._books = books
-        self._publisher = publisher
+        self._events = events
         self._wait_seconds = wait_seconds
 
     @override
@@ -131,7 +132,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
             )
         # The change is announced once it committed, so no reader asks for the new version before it is there
         if changed is not None:
-            await self._publisher.publish(changed)
+            await self._events.publish(changed)
         return done
 
     @override
@@ -206,46 +207,42 @@ class SqlAlchemyBookDatabase(BookDatabase):
         parts = frozenset(written.parts)
         raise_version = update(BookRecordRow).values(version=BookRecordRow.version + 1).returning(BookRecordRow.version)
         raised = session.execute(raise_version)
-        return done, BookChanged(book_id=self._book_id, version=raised.scalar_one(), resources=parts)
+        return done, BookChanged(version=raised.scalar_one(), resources=parts)
 
 
 class SqlAlchemyBookDatabases(BookDatabases):
-    """Opens the database of a book over the registry of the books, with a wait limit and a publisher.
+    """Opens the database of a book over the registry of the books, with a wait limit.
 
     :ivar _books: The registry of the databases of the books.
-    :ivar _publisher: Where a committed change of a book is announced, with the new version of the book.
     :ivar _wait_seconds: How long a change waits for the writer of its book before it gives up with ``BookBusyError``.
     """
 
-    def __init__(self, books: BookRegistry, *, publisher: EventPublisher, wait_seconds: float) -> None:
+    def __init__(self, books: BookRegistry, *, wait_seconds: float) -> None:
         """Open the databases of the books with the given wait limit for a writer.
 
         :param books: The registry of the databases of the books, shared by every book database.
         :type books: BookRegistry
-        :param publisher: Where a committed change of a book is announced.
-        :type publisher: EventPublisher
         :param wait_seconds: How long a change waits for the writer of its book before it gives up with
                              ``BookBusyError``; a request waits less than a job.
         :type wait_seconds: float
         """
         self._books = books
-        self._publisher = publisher
         self._wait_seconds = wait_seconds
 
     @override
-    def open(self, book_id: BookId, path: Path) -> SqlAlchemyBookDatabase:
+    def open(self, book_id: BookId, path: Path, events: BookEvents) -> SqlAlchemyBookDatabase:
         """Return the database of a book, without touching its file.
 
         :param book_id: Identifier of the book.
         :type book_id: BookId
         :param path: The database file of the book.
         :type path: Path
+        :param events: The event channel of the book, where a committed change is announced.
+        :type events: BookEvents
         :returns: The database of the book.
         :rtype: SqlAlchemyBookDatabase
         """
-        return SqlAlchemyBookDatabase(
-            book_id, path, self._books, publisher=self._publisher, wait_seconds=self._wait_seconds
-        )
+        return SqlAlchemyBookDatabase(book_id, path, self._books, events=events, wait_seconds=self._wait_seconds)
 
     @override
     async def blank(self) -> Path:

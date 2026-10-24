@@ -1,12 +1,14 @@
-"""Waiting for the job board of the running application to finish the jobs of a book."""
+"""Waiting for the job queue of a book of the running application to finish its jobs."""
 
 from typing import TYPE_CHECKING
 
 import anyio
 
+from bookreviver.ports.runtime import BookEvents, BookJobs
+from tests.helpers.builders import directory_of
+
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.runtime import EventStream, JobBoard
 
 # Long enough for a slow machine, short enough to fail a test whose job never ends
 IDLE_TIMEOUT_SECONDS: float = 60
@@ -14,17 +16,6 @@ IDLE_TIMEOUT_SECONDS: float = 60
 
 class JobsIdle:
     """Waits until a book has no job queued or running, woken by the events the board publishes."""
-
-    def __init__(self, board: JobBoard, stream: EventStream) -> None:
-        """Watch the jobs of the board, and wait on the events of the same application.
-
-        :param board: Job board of the running application.
-        :type board: JobBoard
-        :param stream: Event stream of the running application, which the board publishes every change of a job to.
-        :type stream: EventStream
-        """
-        self._board = board
-        self._stream = stream
 
     async def __call__(self, book_id: BookId) -> None:
         """Return once the book has no job queued or running, which includes the jobs that a finished job queued.
@@ -37,7 +28,9 @@ class JobsIdle:
         :type book_id: BookId
         :raises TimeoutError: When a job is still queued or running after the timeout.
         """
+        dir_name = directory_of(book_id)
+        jobs = BookJobs.open(dir_name)
         with anyio.fail_after(IDLE_TIMEOUT_SECONDS):
-            async with self._stream.subscribe(book_id) as events:
-                while self._board.jobs(book_id, active=True):
+            async with BookEvents.open(dir_name).subscribe() as events:
+                while jobs.active():
                     await anext(events)

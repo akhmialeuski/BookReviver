@@ -436,7 +436,12 @@ class TestJobsQueuedTogether:
 
     @pytest.mark.parametrize('requests', [2, 5], ids=['two', 'five'])
     async def test_requests_asking_for_the_detection_together_queue_one_job(
-        self, requests: int, fx_service: Callable[[], PageService], fx_board: FakeJobBoard
+        self,
+        requests: int,
+        fx_service: Callable[[], PageService],
+        fx_board: FakeJobBoard,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the requests for the detection of one book put one job on the board and the others find it active.
 
@@ -448,10 +453,15 @@ class TestJobsQueuedTogether:
         :type fx_service: Callable[[], PageService]
         :param fx_board: Board that records the jobs put on it.
         :type fx_board: FakeJobBoard
+        :param fx_actor: Account that owns the book.
+        :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_id = new_book_id()
+        book = fx_open_book(fx_actor, book_id)
 
         for _ in range(requests):
-            fx_service().detect_new_pages(book_id)
+            fx_service().detect_new_pages(book)
 
         assert [job.kind for job in fx_board.put_jobs if job.book_id == book_id] == [JobKind.DETECT_CONTENT]

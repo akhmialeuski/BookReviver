@@ -70,26 +70,24 @@ def change_when_published(
     A use case that cancels a preview announces it before it opens its own block, so a change made then lands between
     the checks the use case made outside the block and the block that decides.
 
-    :param kit: The processing kit whose event bus is wrapped.
+    :param kit: The processing kit whose event bus runs the change after its first delivery.
     :type kit: ProcessingKit
     :param monkeypatch: Fixture that restores the bus when the test ends.
     :type monkeypatch: pytest.MonkeyPatch
     :param change: The change to make through a catalogue database of its own.
     :type change: Callable[[], Awaitable[None]]
     """
-    publish = kit.events.publish
     fired = False
 
-    async def published_before_the_change(event: DomainEvent) -> None:
-        """Publish the event as the wrapped bus does, then make the change on the first call.
+    async def change_once(_event: DomainEvent) -> None:
+        """Make the change after the first event was delivered, and nothing after later ones.
 
-        :param event: Event to deliver.
-        :type event: DomainEvent
+        :param _event: The event just delivered, which the change does not need.
+        :type _event: DomainEvent
         """
         nonlocal fired
-        await publish(event)
         if not fired:
             fired = True
             await change()
 
-    monkeypatch.setattr(kit.events, 'publish', published_before_the_change)
+    monkeypatch.setattr(kit.events, 'after_publish', change_once)

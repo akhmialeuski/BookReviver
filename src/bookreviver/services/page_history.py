@@ -165,7 +165,7 @@ class PageHistoryService:
         """
         # The step is checked before the previews are cancelled, so a request the change would refuse cancels nothing
         await book.read(lambda repos: self._recipes_with_step(repos, key))
-        if await self._starter.free_of_previews(book.id):
+        if await self._starter.free_of_previews(book):
             raise ConflictError(BOOK_BUSY)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[ClearedStep, Sequence[PageVersionId]]:
@@ -196,7 +196,7 @@ class PageHistoryService:
             return ClearedStep(changes=changes, versions=deleted), untiled
 
         cleared, untiled = await book.change(work)
-        await self._starter.enqueue_tiles(book.id, untiled)
+        await self._starter.enqueue_tiles(book, untiled)
         for version in cleared.versions:
             try:
                 await book.assets.delete_prefix(BookKeys().version_directory(version))

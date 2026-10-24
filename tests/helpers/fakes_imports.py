@@ -25,14 +25,13 @@ from bookreviver.adapters.imaging import (
 )
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.storage import LocalSourceStore
-from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
 from tests.helpers.books_service import make_books_service
@@ -476,7 +475,7 @@ class ImportRig:
             thumbnail_long_side_px=imaging.thumbnail_long_side_px,
             jpeg_quality=imaging.jpeg_quality,
         )
-        events = RecordingEventBus()
+        events = RecordingEventBus.current()
         # The board needs the service of the rig to run a job, and the rig needs the board, so the rig is found when a
         # job runs
         built: list[ImportRig] = []
@@ -556,7 +555,6 @@ class ImportRig:
         parts = ProcessingParts.build(
             FakeCatalogue(self.processors),
             self.defaults,
-            ProcessingRuntime(publisher=self.fakes.events, board=self.fakes.board, tracer=NullTracer()),
             ProcessingConfig(
                 preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
                 preview_long_side_px=PREVIEW_LONG_SIDE_PX,
@@ -570,7 +568,6 @@ class ImportRig:
             runtime=ImportRuntime(
                 order_keys=FractionalOrderKeys(),
                 limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
-                board=self.fakes.board,
             ),
             parts=parts,
         )

@@ -206,10 +206,7 @@ class TestBookVersion:
 
         after = await database.version()
         expect(after == before + 1)
-        expect(
-            fx_book_changes.published
-            == [BookChanged(book_id=book_id, version=after, resources=frozenset({BookResource.PAGES}))]
-        )
+        expect(fx_book_changes.published == [BookChanged(version=after, resources=frozenset({BookResource.PAGES}))])
         assert_expectations()
 
     async def test_a_change_that_writes_nothing_or_only_the_place_leaves_the_version(

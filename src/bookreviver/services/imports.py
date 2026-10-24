@@ -76,12 +76,11 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.enums import SourceKind
-    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import JobBoard, JobControl
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import IncomingFile
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
@@ -130,16 +129,14 @@ class ImportImaging:
 
 @frozen(kw_only=True)
 class ImportRuntime:
-    """What an import reports through and is bounded by.
+    """What an import orders by and is bounded by.
 
     :ivar order_keys: Builder of the order keys of the new pages.
     :ivar limits: Bounds of an upload and of an import.
-    :ivar board: Board the import job is put on.
     """
 
     order_keys: OrderKeys
     limits: ImportLimits
-    board: JobBoard
 
 
 @frozen(kw_only=True)
@@ -611,7 +608,7 @@ class ImportService:
         :type books: BooksService
         :param imaging: The inspector, the rasterizer and the tiler.
         :type imaging: ImportImaging
-        :param runtime: The order keys, the limits and the board.
+        :param runtime: The order keys and the limits.
         :type runtime: ImportRuntime
         :param parts: The recipes and the job starter, with which the split of the new pages is queued.
         :type parts: ProcessingParts
@@ -619,7 +616,6 @@ class ImportService:
         self._books = books
         self._imaging = imaging
         self._runtime = runtime
-        self._board = runtime.board
         self._recipes = parts.recipes
         self._starter = parts.starter
         self._limits = runtime.limits
@@ -634,19 +630,19 @@ class ImportService:
         :type book: Book
         :raises ConflictError: If the book already has an import queued or running.
         """
-        self._refuse_active_import(book.id)
+        self._refuse_active_import(book)
 
-    def _refuse_active_import(self, book_id: BookId) -> None:
+    def _refuse_active_import(self, book: Book) -> None:
         """Refuse a book that has an import queued or running.
 
         Only reads the board, so it is called for an early answer from ``authorize_upload``, and again right before
         the job is put, with no ``await`` in between, which gives the answer that holds.
 
-        :param book_id: Book to import into.
-        :type book_id: BookId
+        :param book: Book to import into.
+        :type book: Book
         :raises ConflictError: If the book already has an import queued or running.
         """
-        if any(job.kind in IMPORT_JOBS for job in self._board.jobs(book_id, active=True)):
+        if any(job.kind in IMPORT_JOBS for job in book.jobs.active()):
             raise ConflictError(IMPORT_ACTIVE)
 
     async def start_import(self, book: Book, files: Sequence[IncomingFile]) -> Job:
@@ -677,8 +673,8 @@ class ImportService:
         job_id = JobId(uuid4())
         staged = await book.sources.stage(job_id, files, max_bytes=self._limits.max_bytes)
         try:
-            self._refuse_active_import(book.id)
-            return self._board.put(
+            self._refuse_active_import(book)
+            return book.jobs.put(
                 Job(
                     id=job_id,
                     book_id=book.id,
@@ -752,7 +748,7 @@ class ImportService:
             )
             if pages:
                 await self._starter.enqueue(
-                    job.book_id, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)).to_map()
+                    run.book, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)).to_map()
                 )
         except DomainError:
             logger.warning('The split of the pages of import job %s was not queued', job.id, exc_info=True)

@@ -31,10 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import Scan, Source
-    from bookreviver.domain.ids import BookId, SourceId
+    from bookreviver.domain.ids import SourceId
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import JobBoard
     from bookreviver.services.book import Book
 
 SOURCE_IMPORTING: str = 'This book is importing files. Delete the source when the import has finished.'
@@ -55,14 +54,6 @@ def _window[ItemT](items: Sequence[ItemT], request: SliceRequest) -> Slice[ItemT
 
 class SourceService:
     """Sources and scans of the acting account's books, and the deletion of a source with its files."""
-
-    def __init__(self, *, board: JobBoard) -> None:
-        """Work over the ports of one request.
-
-        :param board: Board holding the jobs of every book, which tells whether the book imports.
-        :type board: JobBoard
-        """
-        self._board = board
 
     async def list(
         self,
@@ -108,17 +99,17 @@ class SourceService:
         :type book: Book
         :raises ConflictError: If the book has an import queued or running, which is writing the report.
         """
-        self._refuse_active_import(book.id)
+        self._refuse_active_import(book)
         await book.change(lambda repos, _book_record: repos.sources.delete_unimported())
 
-    def _refuse_active_import(self, book_id: BookId) -> None:
+    def _refuse_active_import(self, book: Book) -> None:
         """Refuse a book that has an import queued or running, which writes sources and their scans.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :raises ConflictError: If the book has an import queued or running.
         """
-        if any(job.kind in IMPORT_JOBS for job in self._board.jobs(book_id, active=True)):
+        if any(job.kind in IMPORT_JOBS for job in book.jobs.active()):
             raise ConflictError(SOURCE_IMPORTING)
 
     async def get(self, book: Book, source_id: SourceId) -> Source:
@@ -183,7 +174,7 @@ class SourceService:
         :raises ConflictError: If the book has an import queued or running.
         """
         await book.read(lambda repos: repos.sources.get(source_id))
-        self._refuse_active_import(book.id)
+        self._refuse_active_import(book)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await book.sources.delete_source(source_id)
         await book.assets.delete_prefix(BookKeys().source_scans(source_id))

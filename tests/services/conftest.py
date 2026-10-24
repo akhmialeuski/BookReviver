@@ -9,7 +9,6 @@ from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.pagination import PaginationService
 from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
 from tests.helpers.page_stage_writes import PageStageWrites
 from tests.helpers.page_writes import PageWrites
@@ -32,16 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-
-
-@pytest.fixture
-def fx_events() -> RecordingEventBus:
-    """Build an event bus that records everything published.
-
-    :returns: Bus serving as the publisher of every service of the test.
-    :rtype: RecordingEventBus
-    """
-    return RecordingEventBus()
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 
 @pytest.fixture
@@ -98,7 +88,7 @@ def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobB
         service = make_page_service(fx_open_book, (fx_events, board))
         return await service.prepare_images(job, control)
 
-    board = FakeJobBoard(runner=run, publisher=fx_events)
+    board = FakeJobBoard(runner=run)
     return board
 
 

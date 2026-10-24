@@ -5,14 +5,11 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.domain.changes import BookChanges
 from bookreviver.domain.enums import ImagePolicy
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import EVENT_QUEUE_SIZE, make_page, make_record, make_scan, make_source
-from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.builders import make_page, make_record, make_scan, make_source
 from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -26,13 +23,12 @@ PAGE_COUNT: int = 2
 
 
 def _stages() -> StageSummaries:
-    """Build the stage sums over a catalogue with no processors and a board with no jobs.
+    """Build the stage sums over a catalogue with no processors, for books whose queues hold no jobs.
 
     :returns: The stage summaries.
     :rtype: StageSummaries
     """
-    board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE))
-    return StageSummaries(processors=FakeCatalogue([]), board=board)
+    return StageSummaries(processors=FakeCatalogue([]))
 
 
 class TestOverview:

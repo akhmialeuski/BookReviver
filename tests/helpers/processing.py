@@ -31,12 +31,13 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, Slice, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
+from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
@@ -153,8 +154,9 @@ class ProcessingKit:
         self._new_catalogue = stores.catalogue
         self.databases = stores.databases
         self.files = stores.files
-        self.events = RecordingEventBus()
-        self.board = FakeJobBoard(runner=self._run_job, publisher=self.events)
+        self.events = RecordingEventBus.current()
+        self.board = FakeJobBoard(runner=self._run_job)
+        BookJobs.register(self.board.open)
         self.fake = FakeProcessor()
         self.cleanup = CleanupProcessor()
         self.writer = FakeRenditionWriter()
@@ -173,12 +175,11 @@ class ProcessingKit:
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        runtime = ProcessingRuntime(publisher=self.events, board=self.board, tracer=self.tracer)
         config = ProcessingConfig(
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
-        return ProcessingParts.build(self.processors, self._defaults, runtime, config)
+        return ProcessingParts.build(self.processors, self._defaults, config)
 
     def service(self) -> ProcessingService:
         """Build the processing service over a new catalogue database.
@@ -258,7 +259,7 @@ class ProcessingKit:
         :returns: The stage summaries, which offer the processors of the kit.
         :rtype: StageSummaries
         """
-        return StageSummaries(processors=self.processors, board=self.board)
+        return StageSummaries(processors=self.processors)
 
     def jobs(self) -> ProcessingJobs:
         """Build the work of the processing jobs over a new catalogue database.
@@ -270,7 +271,6 @@ class ProcessingKit:
         runtime = StageRuntime(
             runner=self._runner,
             processors=self.processors,
-            publisher=self.events,
             order_keys=FractionalOrderKeys(),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             tracer=self.tracer,

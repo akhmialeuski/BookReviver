@@ -13,17 +13,11 @@ from attrs import frozen
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, PageVersion
     from bookreviver.domain.enums import BookResource
-    from bookreviver.domain.ids import BookId
 
 
 @frozen(kw_only=True)
 class DomainEvent:
-    """Something that happened within one book.
-
-    :ivar book_id: Book the event belongs to, whose subscribers receive it.
-    """
-
-    book_id: BookId
+    """Something that happened within one book, delivered through the event channel of that book."""
 
 
 @frozen(kw_only=True)
