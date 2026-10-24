@@ -81,14 +81,14 @@ def fx_probe_kit(
 
 
 def pages_of(kit: ProcessingKit) -> PageService:
-    """Build the page service over a new unit of work and the board, the events and the clock of the kit.
+    """Build the page service over a new unit of work and the board, and the events of the kit.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :returns: The service.
     :rtype: PageService
     """
-    return make_page_service(kit.stores, (kit.events, kit.clock, kit.board))
+    return make_page_service(kit.stores, (kit.events, kit.board))
 
 
 async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookId, list[Page]]:

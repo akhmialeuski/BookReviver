@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
+    from bookreviver.ports.runtime import EventPublisher, JobBoard
     from tests.helpers.builders import BookOpener
 
 # What the fake tiler writes, so a test can tell that a rendition of a version was cut
@@ -82,7 +82,7 @@ class FakeTiler(Tiler):
 
 def make_page_service(
     stores: BookOpener,
-    runtime: tuple[EventPublisher, Clock, JobBoard],
+    runtime: tuple[EventPublisher, JobBoard],
     *,
     order_keys: OrderKeys | None = None,
     renditions: RenditionWriter | None = None,
@@ -91,8 +91,8 @@ def make_page_service(
 
     :param stores: Opens the unit of work, the databases and the file stores of the service, over the test's own.
     :type stores: BookOpener
-    :param runtime: The publisher, the clock and the job board the service reports through.
-    :type runtime: tuple[EventPublisher, Clock, JobBoard]
+    :param runtime: The publisher and the job board the service reports through.
+    :type runtime: tuple[EventPublisher, JobBoard]
     :param order_keys: Order keys to build keys with, or None for the fractional-indexing adapter.
     :type order_keys: OrderKeys | None
     :param renditions: Writer of the files of a version, or None for one that copies the image and writes tokens.
@@ -101,7 +101,7 @@ def make_page_service(
               renditions write token files.
     :rtype: PageService
     """
-    publisher, _clock, board = runtime
+    publisher, board = runtime
     tiler = FakeTiler()
     return PageService(
         books=make_books_service(stores.uow(), databases=stores.databases, files=stores.files),

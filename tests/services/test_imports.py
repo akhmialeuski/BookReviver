@@ -323,7 +323,7 @@ def _tuned(
             return JobEnd(state=JobState.SUCCEEDED)
         return await built[0].service(parallel_scans=parallel_scans).run_import(job, control)
 
-    fakes = JobFakes(events=rig.events, clock=rig.fakes.clock, runner=run)
+    fakes = JobFakes(events=rig.events, runner=run)
     tuned = evolve(
         rig,
         fakes=fakes,

@@ -1,6 +1,5 @@
 """Tests for the jobs that run a stage and preview a step: the cache of versions, the current version and staleness."""
 
-from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -39,7 +38,7 @@ from bookreviver.domain.values import (
     Step,
     StepPreview,
 )
-from tests.helpers.builders import EPOCH, make_job, make_page, open_for
+from tests.helpers.builders import make_job, make_page, open_for
 from tests.helpers.counting import CountingBookDatabase
 from tests.helpers.fake_processing import PREVIEW_TOKEN
 from tests.helpers.held_steps import steps_held
@@ -908,14 +907,13 @@ async def replace_the_input(_kit: ProcessingKit, seeded: SeededPage) -> None:
 
 
 async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
-    """Save the geometry recipe with another strength a moment later, as the form of the recipe does.
+    """Save the geometry recipe with another strength, as the form of the recipe does.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param seeded: The account and the record of the book owning the recipe.
     :type seeded: SeededPage
     """
-    kit.clock.moment = EPOCH + timedelta(hours=1)
     recipe = await kit.recipe_of(seeded.actor, seeded.book_id, Stage.GEOMETRY)
     draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: STRENGTH_BY_HAND})])
     await kit.service().save_recipe(

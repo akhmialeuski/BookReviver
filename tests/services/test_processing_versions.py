@@ -130,8 +130,8 @@ async def ran_two_steps(
     await run_stage(kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
     found = await kit.databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id))
     in_stage = [version for version in found if version.stage is Stage.GEOMETRY]
-    # The steps run within one tick of the clock, so the order is the one of the chain: each step reads the version of
-    # the step before it, and the first reads the image of an earlier stage
+    # The order is the one of the chain, not of the creation times: each step reads the version of the step before
+    # it, and the first reads the image of an earlier stage
     read = {version.input_id: version for version in in_stage}
     made: list[PageVersion] = []
     next_version = next((version for version in in_stage if version.input_id not in {v.id for v in in_stage}), None)

@@ -55,7 +55,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.clock import FixedClock
     from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.storage import SharedBookDirectories
@@ -354,7 +353,7 @@ class TestAddPlaceholder:
         fx_service: Callable[[], PageService],
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_open_book: BookOpener,
     ) -> None:
         """Verify a placeholder is a page with its fields and no version, after the last page.
@@ -365,12 +364,12 @@ class TestAddPlaceholder:
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        _, _, board = fx_runtime
+        _, board = fx_runtime
         book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label=THIRD_LABEL, notes=LOST_NOTES)
 
@@ -659,7 +658,7 @@ class TestAttachScan:
         self,
         fx_uow: UnitOfWorkFactory,
         fx_directories: SharedBookDirectories,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -673,8 +672,8 @@ class TestAttachScan:
         :type fx_uow: UnitOfWorkFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
-        :param fx_runtime: The recording bus, the clock and the job board the service reports through.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
@@ -1142,7 +1141,7 @@ class TestPrepareImages:
         self,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_storage_root: Path,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1152,8 +1151,8 @@ class TestPrepareImages:
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
         :param fx_open_book: Opens the books of the test with their databases.
@@ -1166,7 +1165,7 @@ class TestPrepareImages:
         service = make_page_service(fx_open_book, fx_runtime)
         await service.attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
-        await fx_runtime[2].run_queued()
+        await fx_runtime[1].run_queued()
 
         [version] = await _stored_versions(book.book_id, placeholder, databases=fx_open_book.databases)
         copy = book_directory(fx_storage_root, book.book_id) / BookKeys().version_rendition(
@@ -1210,7 +1209,7 @@ class TestPrepareImages:
 
         ready = [event.version.page_id for event in fx_events.published if isinstance(event, PageVersionReady)]
         [job] = _prepare_jobs(fx_board)
-        # The clock is stopped, so the two versions are told apart by their identifiers, which are hashes
+        # The two versions are told apart by their page identifiers, since their order is not fixed
         expect(sorted(ready) == sorted([first.page.id, second.page.id]))
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 2, 2))
         expect(job.finished_at is not None and job.error == '')
@@ -1223,7 +1222,6 @@ class TestPrepareImages:
         self,
         fx_actor: Actor,
         fx_events: RecordingEventBus,
-        fx_clock: FixedClock,
         fx_open_book: BookOpener,
     ) -> None:
         """Verify a version the maker failed on is stored as failed, the job ends failed, and a later job makes it.
@@ -1232,8 +1230,6 @@ class TestPrepareImages:
         :type fx_actor: Actor
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
-        :param fx_clock: Clock stopped at the epoch.
-        :type fx_clock: FixedClock
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -1247,7 +1243,7 @@ class TestPrepareImages:
             """
             return make_page_service(
                 fx_open_book,
-                (fx_events, fx_clock, board),
+                (fx_events, board),
                 renditions=flaky,
             )
 
@@ -1424,7 +1420,7 @@ class TestPrepareImagesWhileTheBookChanges:
     async def fx_leaves(
         self,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_storage_root: Path,
         fx_open_book: BookOpener,
     ) -> TwoLeaves:
@@ -1432,8 +1428,8 @@ class TestPrepareImagesWhileTheBookChanges:
 
         :param fx_actor: Account owning the book.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
         :param fx_open_book: Opens the books of the test with their databases.
@@ -1456,7 +1452,7 @@ class TestPrepareImagesWhileTheBookChanges:
     @pytest.mark.parametrize('victim', [WRITTEN_VICTIM, 'other'])
     async def test_a_page_deleted_while_the_job_runs_is_nothing_to_make_and_not_a_failure(
         self,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_leaves: TwoLeaves,
         victim: str,
         fx_open_book: BookOpener,
@@ -1466,8 +1462,8 @@ class TestPrepareImagesWhileTheBookChanges:
         The page is deleted and committed by another transaction while the first leaf is written. In one case it is
         the page being written, whose version is gone when the job stores it, and in the other the page that comes
         next, which is gone when the job reaches it.
-        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_leaves: The book and its two leaves.
         :type fx_leaves: TwoLeaves
         :param victim: Whether the page deleted is the one being written or the other one.
@@ -1475,7 +1471,7 @@ class TestPrepareImagesWhileTheBookChanges:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        events, _, board = fx_runtime
+        events, board = fx_runtime
         book_id, pages, root = fx_leaves
         deleted: list[PageId] = []
 
@@ -1524,7 +1520,6 @@ class TestPrepareImagesWhileTheBookChanges:
         self,
         fx_actor: Actor,
         fx_events: RecordingEventBus,
-        fx_clock: FixedClock,
         fx_open_book: BookOpener,
     ) -> None:
         """Verify an unexpected error stores the version as failed with its reason, ends the job failed, frees the book.
@@ -1535,8 +1530,6 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_actor: Actor
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
-        :param fx_clock: Clock stopped at the epoch.
-        :type fx_clock: FixedClock
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -1550,7 +1543,7 @@ class TestPrepareImagesWhileTheBookChanges:
             """
             return make_page_service(
                 fx_open_book,
-                (fx_events, fx_clock, board),
+                (fx_events, board),
                 renditions=flaky,
             )
 
@@ -1575,7 +1568,6 @@ class TestPrepareImagesWhileTheBookChanges:
         self,
         fx_actor: Actor,
         fx_events: RecordingEventBus,
-        fx_clock: FixedClock,
         fx_open_book: BookOpener,
     ) -> None:
         """Verify one job runs at a time, and the version committed meanwhile is not missed.
@@ -1587,8 +1579,6 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_actor: Actor
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
-        :param fx_clock: Clock stopped at the epoch.
-        :type fx_clock: FixedClock
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -1601,7 +1591,7 @@ class TestPrepareImagesWhileTheBookChanges:
             :returns: The page service of a new unit of work.
             :rtype: PageService
             """
-            return make_page_service(fx_open_book, (fx_events, fx_clock, board))
+            return make_page_service(fx_open_book, (fx_events, board))
 
         async def add_a_leaf(_: PageId) -> None:
             """Add a leaf in a request of its own, and note how many jobs are put afterwards.
@@ -1622,7 +1612,7 @@ class TestPrepareImagesWhileTheBookChanges:
             """
             return make_page_service(
                 fx_open_book,
-                (fx_events, fx_clock, board),
+                (fx_events, board),
                 renditions=acting,
             )
 
@@ -1778,7 +1768,7 @@ class TestAddMany:
     async def test_adds_the_whole_list_at_the_end_in_order_in_one_change_and_one_key_call(
         self,
         fx_directories: SharedBookDirectories,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
         fx_open_book: BookOpener,
@@ -1787,8 +1777,8 @@ class TestAddMany:
 
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
-        :param fx_runtime: The recording bus, the stopped clock and the job board.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
@@ -1817,7 +1807,7 @@ class TestAddMany:
         self,
         fx_uow: UnitOfWorkFactory,
         fx_directories: SharedBookDirectories,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1827,8 +1817,8 @@ class TestAddMany:
         :type fx_uow: UnitOfWorkFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
-        :param fx_runtime: The recording bus, the stopped clock and the job board.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.

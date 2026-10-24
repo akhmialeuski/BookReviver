@@ -13,6 +13,7 @@ description and settings, the sums and rows of its stages, its archive and its d
 book of a request works with besides its own database, so the books service hands the same tools to every book it opens.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from attrs import evolve, field, frozen
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails, SliceRequest
     from bookreviver.ports.persistence import BookDatabase, BookRepositories
-    from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, BookDirectory, SourceStore
     from bookreviver.services.stage_summaries import StageSummaries
 
@@ -40,11 +40,9 @@ class BookTools:
     """What every open book of a request works with besides its own database.
 
     :ivar stages: Sums of the stages of a book, which give the book its progress and its stage rows.
-    :ivar clock: Clock setting the time a book was created and last changed.
     """
 
     stages: StageSummaries
-    clock: Clock
 
 
 @frozen
@@ -152,7 +150,7 @@ class Book:
             :raises NotFoundError: If the new cover is not a page of the book.
             :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
             """
-            return repos.book_record.update(evolve(changes.apply_to(book_record), updated_at=self.tools.clock.now()))
+            return repos.book_record.update(evolve(changes.apply_to(book_record), updated_at=datetime.now(UTC)))
 
         await self.change(change)
         return await self.overview()
@@ -216,7 +214,7 @@ class Book:
         :type details: BookDetails
         :raises ConflictError: If the book is described already.
         """
-        moment = self.tools.clock.now()
+        moment = datetime.now(UTC)
         await self.database.create(BookRecord(details=details, created_at=moment, updated_at=moment))
 
     async def delete(self) -> None:

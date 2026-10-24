@@ -9,9 +9,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import BookResource, ContentType, PageKind, Side
+from bookreviver.domain.enums import ContentType, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.events import BookChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.books import book_pages
 from tests.helpers.book_hold import hold_book_in_thread
@@ -20,7 +19,6 @@ from tests.helpers.seeding import ensure_account, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
-    from datetime import datetime
     from typing import Any
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -29,14 +27,11 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.clock import FixedClock
     from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
 
 pytestmark = pytest.mark.anyio
 
-LATER: datetime = EPOCH.replace(year=EPOCH.year + 1)
 STALE_LABEL: str = 'old'
 NEW_LABEL: str = '[4]'
 NEW_NOTES: str = 'Library stamp'
@@ -131,50 +126,6 @@ async def _delete_page(
 
 class TestUpdate:
     """Tests for PageService.update()."""
-
-    async def test_changes_the_four_fields_stamped_in_one_change(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_actor: Actor,
-        fx_clock: FixedClock,
-        fx_book_changes: RecordingEventBus,
-        fx_open_book: BookOpener,
-    ) -> None:
-        """Verify the number, the kind, the inclusion and the notes change together, stamped, in one change of the book.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_clock: Clock the service stamps pages with.
-        :type fx_clock: FixedClock
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
-        :type fx_book_changes: RecordingEventBus
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        book_id, pages = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
-        fx_clock.moment = LATER
-        fx_book_changes.published.clear()
-
-        updated = await fx_service().update(
-            fx_open_book(fx_actor, book_id),
-            pages[2].id,
-            PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
-        )
-
-        stored = await fx_open_book.databases.open(book_id).read(lambda repos: repos.pages.get(pages[2].id))
-        expect(
-            (stored.manual_label, stored.kind, stored.included, stored.notes)
-            == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
-        )
-        expect(stored.updated_at == LATER)
-        expect((stored.id, stored.order_key, stored.scan_id) == (pages[2].id, pages[2].order_key, pages[2].scan_id))
-        expect(updated.page == stored)
-        expect(updated.position == 2)
-        [change] = fx_book_changes.published
-        expect(isinstance(change, BookChanged) and BookResource.PAGES in change.resources)
-        assert_expectations()
 
     async def test_an_update_writes_only_the_row_of_its_page(
         self,

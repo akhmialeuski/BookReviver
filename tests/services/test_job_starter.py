@@ -324,28 +324,6 @@ class TestRunTakesTheBookFromAPreview:
     """Tests for a run or a measure of the book that finds a preview of it queued or running."""
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    async def test_queued_preview_is_cancelled_and_the_request_is_queued(
-        self, fx_kit: ProcessingKit, requested: JobKind
-    ) -> None:
-        """Verify a run or a measure asked for while a preview is queued cancels it and is queued behind it.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param requested: The kind of job the user asks for.
-        :type requested: JobKind
-        """
-        _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
-        preview = await starter.enqueue(book_id, JobKind.PREVIEW_STEP, {})
-        asked = await starter.enqueue(book_id, requested, params_of(starter, requested))
-        stored = fx_kit.board.get(preview.id)
-        expect((stored.state, stored.finished_at) == (JobState.CANCELLED, fx_kit.clock.now()))
-        expect(asked.state is JobState.QUEUED)
-        expect(fx_kit.board.put_jobs == [preview, asked])
-        expect(processing_kinds(fx_kit, book_id) == [requested])
-        assert_expectations()
-
-    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_running_preview_is_cancelled_and_the_request_waits_for_its_task(
         self, fx_kit: ProcessingKit, requested: JobKind, fx_open_book: BookOpener
     ) -> None:

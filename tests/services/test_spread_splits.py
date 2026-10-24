@@ -4,7 +4,6 @@ The tests need OpenCV, and are skipped with the reason where the optional group 
 """
 
 import io
-from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock
@@ -23,7 +22,7 @@ from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, SliceRequest, StageRun, Step, StepPreview
-from tests.helpers.builders import EPOCH, make_page_stage, make_step_values, open_for
+from tests.helpers.builders import make_page_stage, make_step_values, open_for
 from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.processing import stored_job
 from tests.helpers.samples import png_bytes, spread
@@ -485,14 +484,13 @@ async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
 
 
 async def save_the_split_recipe(kit: ProcessingKit, book: SplitBook) -> None:
-    """Save the recipe of the page split again a moment later, as the form of the recipe does.
+    """Save the recipe of the page split again, as the form of the recipe does.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param book: The account and the record of the book owning the recipe.
     :type book: SplitBook
     """
-    kit.clock.moment = EPOCH + timedelta(hours=1)
     await use_recipe(kit, book.actor, book.book_id, Stage.PAGE_SPLIT, SPLIT_SPREAD)
 
 

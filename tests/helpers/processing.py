@@ -51,7 +51,6 @@ from tests.helpers.builders import (
     make_source,
     open_for,
 )
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import (
     IMAGE_SIZE_PX,
@@ -114,7 +113,6 @@ class ProcessingKit:
     :ivar databases: Opens the databases of the books of the test.
     :ivar files: Opens the source store and the asset store of a book of the test.
     :ivar events: Event bus recording what is published.
-    :ivar clock: Clock stopped at the epoch, which a test moves.
     :ivar board: Board the jobs are put on, which records them and runs them when a test calls ``work_queue``.
     :ivar fake: The fake geometry processor, which counts its runs and previews.
     :ivar cleanup: The fake cleanup processor.
@@ -154,7 +152,6 @@ class ProcessingKit:
         self.databases = stores.databases
         self.files = stores.files
         self.events = RecordingEventBus()
-        self.clock = FixedClock(EPOCH)
         self.board = FakeJobBoard(runner=self._run_job, publisher=self.events)
         self.fake = FakeProcessor()
         self.cleanup = CleanupProcessor()
@@ -311,7 +308,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageService
         """
-        return make_page_service(self.stores, (self.events, self.clock, self.board))
+        return make_page_service(self.stores, (self.events, self.board))
 
     def edits(self) -> EditService:
         """Build the edit service over a new unit of work.

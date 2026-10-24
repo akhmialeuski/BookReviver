@@ -1,8 +1,8 @@
-"""Runtime ports: background jobs, event delivery, mail and time.
+"""Runtime ports: background jobs, event delivery and mail.
 
 These are the parts of the environment a use case depends on without owning: where heavy work runs, how progress
-reaches the browser, how mail leaves the server, and what time it is. Each has an in-process adapter now and a
-networked one later, such as Redis pub/sub for events, selected in ``app``.
+reaches the browser, and how mail leaves the server. Each has an in-process adapter now and a networked one
+later, such as Redis pub/sub for events, selected in ``app``.
 """
 
 from abc import ABC, abstractmethod
@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Collection, Sequence
     from contextlib import AbstractAsyncContextManager
-    from datetime import datetime
 
     from bookreviver.domain.entities import Job
     from bookreviver.domain.events import DomainEvent
@@ -191,16 +190,4 @@ class Mailer(ABC):
 
         :param message: Recipient, subject and body of the message.
         :type message: MailMessage
-        """
-
-
-class Clock(ABC):
-    """The current time, replaceable in tests."""
-
-    @abstractmethod
-    def now(self) -> datetime:
-        """Return the current time with its time zone.
-
-        :returns: The current moment, time-zone aware.
-        :rtype: datetime
         """

@@ -1,7 +1,6 @@
 """Tests for the job that measures the book: the content boxes Margins placed, written into the normalize step."""
 
 import math
-from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -27,7 +26,7 @@ from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
 from bookreviver.services.book_measure import MEASURE_OUTDATED
-from tests.helpers.builders import EPOCH, make_page_stage, make_page_version, open_for
+from tests.helpers.builders import make_page_stage, make_page_version, open_for
 from tests.helpers.processing import stored_job
 
 if TYPE_CHECKING:
@@ -704,7 +703,6 @@ class TestMeasureApplyStep:
             nonlocal saved
             if not saved:
                 saved = True
-                fx_cv_kit.clock.moment = EPOCH + timedelta(hours=1)
                 await set_normalize_params(
                     fx_cv_kit, actor, book_id, {NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}, kind
                 )

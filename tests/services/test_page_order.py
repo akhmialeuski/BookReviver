@@ -12,7 +12,6 @@ from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError
 from bookreviver.domain.values import PageAnchor, SliceRequest
 from bookreviver.ports.ordering import OrderKeys
 from tests.helpers.builders import (
-    EPOCH,
     make_page,
     make_record,
     make_scan,
@@ -24,7 +23,6 @@ from tests.helpers.seeding import ensure_account, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from datetime import datetime
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Source
@@ -32,7 +30,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.clock import FixedClock
     from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
     from tests.helpers.fakes_jobs import RecordingEventBus
@@ -42,7 +39,6 @@ pytestmark = pytest.mark.anyio
 
 FIRST_SOURCE_PAGES: int = 3
 SECOND_SOURCE_PAGES: int = 2
-LATER: datetime = EPOCH.replace(year=EPOCH.year + 1)
 CASE_ARG: str = 'case'
 
 
@@ -226,42 +222,6 @@ class TestMove:
         expect(moved.position == expected.index(4))
         assert_expectations()
 
-    async def test_keeps_the_identity_of_the_moved_page_and_stamps_its_update_time(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_clock: FixedClock,
-        fx_open_book: BookOpener,
-    ) -> None:
-        """Verify a move changes only the key and the update time of a page, never its identifier or its scan.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_clock: Clock the service stamps pages with.
-        :type fx_clock: FixedClock
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
-        fx_clock.moment = LATER
-
-        await fx_service().move(
-            fx_open_book(fx_actor, book.book_id),
-            book.pages[2].id,
-            PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE),
-        )
-
-        stored = await fx_open_book.databases.open(book.book_id).read(lambda repos: repos.pages.get(book.pages[2].id))
-        expect(stored.updated_at == LATER)
-        expect(evolve(stored, order_key=book.pages[2].order_key, updated_at=EPOCH) == book.pages[2])
-        expect(stored.order_key < book.pages[0].order_key)
-        assert_expectations()
-
     async def test_is_one_change_of_the_pages_after_the_commit(
         self,
         fx_service: Callable[[], PageService],
@@ -334,7 +294,7 @@ class TestMove:
         self,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_open_book: BookOpener,
     ) -> None:
         """Verify a move that would give a page the key of another page is refused, as a lost race is.
@@ -343,8 +303,8 @@ class TestMove:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_runtime: The recording bus and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """

@@ -1,4 +1,4 @@
-"""Fixtures of the job API tests: the application runs on the job fakes' event bus, clock and board."""
+"""Fixtures of the job API tests: the application runs on the job fakes' event bus and board."""
 
 from typing import TYPE_CHECKING
 
@@ -24,7 +24,7 @@ def fx_fakes() -> JobFakes:
 
 @pytest.fixture
 def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
-    """Replace the application's event bus, clock and job board with ``fx_fakes``.
+    """Replace the application's event bus and job board with ``fx_fakes``.
 
     The board is the fake one, which runs a job only when a test calls ``run_queued``, so a job a test puts stays
     queued until it says otherwise.

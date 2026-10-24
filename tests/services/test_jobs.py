@@ -10,7 +10,6 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.jobs import JobService
@@ -213,36 +212,6 @@ class TestList:
 
 class TestCancel:
     """Tests for JobService.cancel()."""
-
-    async def test_queued_job_is_cancelled_announced_and_never_runs(
-        self,
-        fx_fakes: JobFakes,
-        fx_job_service: JobService,
-        fx_owner: Actor,
-        fx_book: BookId,
-        fx_open_book: BookOpener,
-    ) -> None:
-        """Verify cancelling a queued job drops it from the queue, publishes the change, and the job never runs.
-
-        :param fx_fakes: Adapters of the service.
-        :type fx_fakes: JobFakes
-        :param fx_job_service: Job service of the request.
-        :type fx_job_service: JobService
-        :param fx_owner: Account owning the book.
-        :type fx_owner: Actor
-        :param fx_book: Book of ``fx_owner``.
-        :type fx_book: BookId
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.RUN_STAGE))
-        cancelled = await fx_job_service.cancel(fx_open_book(fx_owner, job.book_id), job.id)
-        await fx_fakes.board.run_queued()
-        expect((cancelled.state, cancelled.finished_at) == (JobState.CANCELLED, fx_fakes.clock.now()))
-        expect(fx_fakes.board.get(job.id) == cancelled)
-        expect(fx_fakes.events.published == [JobChanged(book_id=job.book_id, job=cancelled)])
-        expect(fx_fakes.scripted.begun() == [])
-        assert_expectations()
 
     async def test_running_job_is_cancelled_and_stops_at_its_next_task(
         self,

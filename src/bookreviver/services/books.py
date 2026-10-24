@@ -17,6 +17,7 @@ and the use case that holds the book can repeat ``Book.delete`` to remove what i
 """
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -79,8 +80,7 @@ class BooksService:
         :type databases: BookDatabases
         :param directories: The directories of the books, which make, unpack and open the directory of a book.
         :type directories: BookDirectories
-        :param tools: What every book the service opens works with, whose clock also sets when a book joined the
-                      library.
+        :param tools: What every book the service opens works with.
         :type tools: BookTools
         """
         self._uow = uow
@@ -208,7 +208,7 @@ class BooksService:
             book_id=book_id,
             owner_id=owner.account_id,
             directory=BookDirectoryName(str(book_id)),
-            added_at=self._tools.clock.now(),
+            added_at=datetime.now(UTC),
         )
 
     async def delete(self, book: Book) -> None:

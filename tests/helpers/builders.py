@@ -70,7 +70,6 @@ from bookreviver.domain.ids import (
 )
 from bookreviver.services.book import Book, BookTools
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -252,15 +251,11 @@ def make_book_tools() -> BookTools:
 
     A test of the progress or the stages of a book builds its own, with the processors and the board it needs.
 
-    :returns: Stage sums over an empty catalogue and an empty board, and a clock stopped at ``EPOCH``.
+    :returns: Stage sums over an empty catalogue and an empty board.
     :rtype: BookTools
     """
-    clock = FixedClock(EPOCH)
     board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE))
-    return BookTools(
-        stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
-        clock=clock,
-    )
+    return BookTools(stages=StageSummaries(catalogue=FakeCatalogue([]), board=board))
 
 
 def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:

@@ -119,7 +119,7 @@ class BookChanges:
     def apply_to(self, book_record: BookRecord) -> BookRecord:
         """Return ``book_record`` with every given field replaced, its description checked like a new one.
 
-        The update time is left to the caller, which owns the clock.
+        The update time is left to the caller, which sets it with ``datetime.now(UTC)``.
 
         :param book_record: Current record of the book.
         :type book_record: BookRecord
@@ -163,7 +163,7 @@ class PageChanges:
     def apply_to(self, page: Page) -> Page:
         """Return ``page`` with every given field replaced.
 
-        The update time is left to the caller, which owns the clock.
+        The update time is left to the caller, which sets it with ``datetime.now(UTC)``.
 
         :param page: Current state of the page.
         :type page: Page

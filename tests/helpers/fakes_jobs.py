@@ -14,9 +14,8 @@ from dishka import AnyOf, Provider, Scope, provide
 
 from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.domain.events import BookChanged
-from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
-from tests.helpers.builders import EPOCH, EVENT_QUEUE_SIZE
-from tests.helpers.clock import FixedClock
+from bookreviver.ports.runtime import EventPublisher, EventStream, JobBoard
+from tests.helpers.builders import EVENT_QUEUE_SIZE
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 
@@ -100,13 +99,12 @@ class RecordingEventBus(InProcessEventBus):
 
 @frozen(kw_only=True)
 class JobFakes:
-    """The event bus, the clock and the job board a job test shares with the services and the application it builds.
+    """The event bus and the job board a job test shares with the services and the application it builds.
 
     The database is not part of the fakes, since the application of an API test runs on the database of the test,
     which a test reaches through ``fx_database`` and ``fx_uow``.
 
     :ivar events: Event bus serving both publishers and subscribers.
-    :ivar clock: Clock stopped at ``EPOCH``.
     :ivar scripted: Scripted runner a test can hold or make fail, which the board runs its jobs with unless ``runner``
                     is given.
     :ivar runner: What the fake board runs its jobs with instead of the scripted runner, or None.
@@ -114,7 +112,6 @@ class JobFakes:
     """
 
     events: RecordingEventBus = field(factory=RecordingEventBus)
-    clock: FixedClock = field(factory=lambda: FixedClock(EPOCH))
     scripted: ScriptedRunner = field(factory=ScriptedRunner)
     runner: JobRunner | None = None
     board: FakeJobBoard = field(
@@ -151,7 +148,7 @@ class FakeBoardProvider(Provider):
 
 
 class JobFakesProvider(Provider):
-    """Replaces the application's event bus and clock with the given fakes."""
+    """Replaces the application's event bus with the given fake."""
 
     scope = Scope.APP
 
@@ -172,12 +169,3 @@ class JobFakesProvider(Provider):
         :rtype: AnyOf[InProcessEventBus, EventPublisher, EventStream]
         """
         return self._fakes.events
-
-    @provide(override=True)
-    def clock(self) -> Clock:
-        """Return the fakes' stopped clock.
-
-        :returns: The fixed clock of the fakes.
-        :rtype: Clock
-        """
-        return self._fakes.clock

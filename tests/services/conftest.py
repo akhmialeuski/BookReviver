@@ -8,8 +8,6 @@ from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.pagination import PaginationService
-from tests.helpers.builders import EPOCH
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
@@ -47,16 +45,6 @@ def fx_events() -> RecordingEventBus:
 
 
 @pytest.fixture
-def fx_clock() -> FixedClock:
-    """Build a clock stopped at the epoch, which a test moves to tell a change from its absence.
-
-    :returns: Clock stamping what the services change.
-    :rtype: FixedClock
-    """
-    return FixedClock(EPOCH)
-
-
-@pytest.fixture
 def fx_page_stage_writes(monkeypatch: pytest.MonkeyPatch) -> PageStageWrites:
     """Build the record of the writes of the page stage repository, which a test starts after it has seeded.
 
@@ -81,11 +69,7 @@ def fx_page_writes(monkeypatch: pytest.MonkeyPatch) -> PageWrites:
 
 
 @pytest.fixture
-def fx_board(
-    fx_open_book: BookOpener,
-    fx_events: RecordingEventBus,
-    fx_clock: FixedClock,
-) -> FakeJobBoard:
+def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobBoard:
     """Build a job board that records what is put on it and runs it when a test says so.
 
     A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
@@ -95,8 +79,6 @@ def fx_board(
     :type fx_open_book: BookOpener
     :param fx_events: Recording event bus.
     :type fx_events: RecordingEventBus
-    :param fx_clock: Clock stopped at the epoch.
-    :type fx_clock: FixedClock
     :returns: Board the page service puts its jobs on.
     :rtype: FakeJobBoard
     """
@@ -113,7 +95,7 @@ def fx_board(
         """
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
-        service = make_page_service(fx_open_book, (fx_events, fx_clock, board))
+        service = make_page_service(fx_open_book, (fx_events, board))
         return await service.prepare_images(job, control)
 
     board = FakeJobBoard(runner=run, publisher=fx_events)
@@ -121,34 +103,30 @@ def fx_board(
 
 
 @pytest.fixture
-def fx_runtime(
-    fx_events: RecordingEventBus, fx_clock: FixedClock, fx_board: FakeJobBoard
-) -> tuple[RecordingEventBus, FixedClock, FakeJobBoard]:
-    """Gather what a page service reports through: the recording bus, the stopped clock and the job board.
+def fx_runtime(fx_events: RecordingEventBus, fx_board: FakeJobBoard) -> tuple[RecordingEventBus, FakeJobBoard]:
+    """Gather what a page service reports through: the recording bus and the job board.
 
     :param fx_events: Recording event bus.
     :type fx_events: RecordingEventBus
-    :param fx_clock: Clock stopped at the epoch.
-    :type fx_clock: FixedClock
     :param fx_board: Board that records its jobs.
     :type fx_board: FakeJobBoard
-    :returns: The publisher, the clock and the board, as ``make_page_service`` takes them.
-    :rtype: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+    :returns: The publisher and the board, as ``make_page_service`` takes them.
+    :rtype: tuple[RecordingEventBus, FakeJobBoard]
     """
-    return fx_events, fx_clock, fx_board
+    return fx_events, fx_board
 
 
 @pytest.fixture
 def fx_service(
     fx_open_book: BookOpener,
-    fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+    fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
 ) -> Callable[[], PageService]:
     """Return a function building the page service for one request or job.
 
     :param fx_open_book: Opens the units of work and the databases of the books of the test.
     :type fx_open_book: BookOpener
-    :param fx_runtime: The recording bus, the stopped clock and the job board the service reports through.
-    :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+    :param fx_runtime: The recording bus and the job board the service reports through.
+    :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """

@@ -126,7 +126,7 @@ class TestSqlDatabase:
         """Verify a book updated with a new title keeps the ``updated_at`` the domain gave it, and no other.
 
         advanced-alchemy's touch listener, on by default, replaces an ``updated_at`` the flush does not change with
-        the wall clock, which is not the ``Clock`` of the domain.
+        the current time, which is not the time the domain gave it.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory

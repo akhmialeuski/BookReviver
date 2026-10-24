@@ -1,6 +1,5 @@
 """Tests for the mark and the comment of a result."""
 
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,7 +12,6 @@ from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import RecipeDraft, ResultNote, StageRun, Step
 from bookreviver.services.result_marks import ResultMarksService
-from tests.helpers.builders import EPOCH
 from tests.helpers.processors import STRENGTH_PARAMETER
 from tests.helpers.spreads import run_stage
 from tests.services.test_processing_versions import ran_geometry
@@ -25,7 +23,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 COMMENT: str = 'Too tight on the left.\nTry the other method.'
-LATER: timedelta = timedelta(minutes=5)
 PREVIEW_ID: PageVersionId = PageVersionId('abcdabcdabcdabcd')
 
 
@@ -75,7 +72,6 @@ class TestSet:
         await _marks().set(
             fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
         )
-        fx_kit.clock.moment = EPOCH + LATER
         await _marks().set(
             fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )

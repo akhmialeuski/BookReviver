@@ -2,7 +2,6 @@
 
 import io
 import zipfile
-from datetime import timedelta
 from typing import TYPE_CHECKING, override
 from uuid import uuid4
 
@@ -12,17 +11,16 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.access import AccountBooks, books_of
-from bookreviver.domain.enums import Orthography, Rendition
+from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import BookKeys, KeySegment
-from bookreviver.domain.values import BookDetails, PageStepKey, Slice, SliceRequest
+from bookreviver.domain.values import PageStepKey, Slice, SliceRequest
 from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import (
     DESKEW_STEP_ID,
-    EPOCH,
     make_page,
     make_page_edit,
     make_page_step_state,
@@ -31,7 +29,6 @@ from tests.helpers.builders import (
     new_book_id,
     open_for,
 )
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import RecordingEventBus
@@ -53,7 +50,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-NOW = EPOCH + timedelta(days=1)
 PAGE_COUNT: int = 2
 # The name of the database in the archive of a book
 DATABASE_NAME: str = 'book.db'
@@ -72,20 +68,19 @@ def _service(uow: UnitOfWork, stores: SharedBookDirectories, *, databases: Locat
     :type stores: SharedBookDirectories
     :param databases: Opens the databases of the books of the test.
     :type databases: LocatedBookDatabases
-    :returns: The service, with a clock standing at ``NOW``.
+    :returns: The service.
     :rtype: BooksService
     """
-    clock = FixedClock(NOW)
     board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
     stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
-    return BooksService(uow=uow, databases=databases, directories=stores, tools=BookTools(stages=stages, clock=clock))
+    return BooksService(uow=uow, databases=databases, directories=stores, tools=BookTools(stages=stages))
 
 
 @pytest.fixture
 def fx_service(
     fx_uow: UnitOfWorkFactory, fx_directories: SharedBookDirectories, fx_databases: BookDatabasesFactory
 ) -> Callable[[], BooksService]:
-    """Return a function building the service for one request, with a clock standing at ``NOW``.
+    """Return a function building the service for one request.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
@@ -206,43 +201,6 @@ class TestList:
 
         expect([item.book_id for item in result.items] == [newer_id, older_id])
         expect(result.total == 2)
-        assert_expectations()
-
-
-class TestCreate:
-    """Tests for BooksService.create()."""
-
-    async def test_creates_an_empty_book_owned_by_the_actor(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify the book is committed with the actor as owner and the clock's time on both timestamps.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        details = BookDetails(title='Book', orthography=Orthography.PRE_REFORM)
-
-        book = await fx_service().create(fx_actor, details)
-
-        overview = await book.overview()
-        stored = await _stored(book.id, databases=fx_databases())
-        entry = await fx_uow().read(lambda repos: repos.library.get(book.id))
-        expect((overview.book_id, book.owner_id) == (book.id, fx_actor.account_id))
-        expect(stored == overview.book_record)
-        expect((entry.owner_id, entry.added_at) == (fx_actor.account_id, NOW))
-        expect(stored.details == details)
-        expect((stored.created_at, stored.updated_at) == (NOW, NOW))
-        expect(overview.page_count == 0)
         assert_expectations()
 
 

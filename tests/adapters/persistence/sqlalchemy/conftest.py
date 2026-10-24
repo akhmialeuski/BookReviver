@@ -112,7 +112,7 @@ def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: 
                 return JobEnd(state=JobState.SUCCEEDED)
             return await built[0].service(parallel_scans=parallel_scans).run_import(job, control)
 
-        rig = evolve(base, fakes=JobFakes(events=base.events, clock=base.fakes.clock, runner=run))
+        rig = evolve(base, fakes=JobFakes(events=base.events, runner=run))
         built.append(rig)
         return rig
 

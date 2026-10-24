@@ -68,7 +68,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.clock import FixedClock
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
 
@@ -130,7 +129,7 @@ class LeafDesk:
         self,
         stores: BookOpener,
         actor: Actor,
-        runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        runtime: tuple[RecordingEventBus, FakeJobBoard],
         storage_root: Path,
     ) -> None:
         """Keep the parts a request is built from.
@@ -139,8 +138,8 @@ class LeafDesk:
         :type stores: BookOpener
         :param actor: Account the service acts for.
         :type actor: Actor
-        :param runtime: The recording bus, the stopped clock and the job board.
-        :type runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param runtime: The recording bus and the job board.
+        :type runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param storage_root: Directory the asset store keeps its files under.
         :type storage_root: Path
         """
@@ -150,7 +149,7 @@ class LeafDesk:
         self.storage_root = storage_root
         self.files = stores.files
         self.actor = actor
-        self.events, self._clock, self.board = runtime
+        self.events, self.board = runtime
         self._runtime = runtime
 
     def service(self, *, renditions: RenditionWriter | None = None) -> PageService:
@@ -361,7 +360,7 @@ class LeafDesk:
 def fx_desk(
     fx_open_book: BookOpener,
     fx_actor: Actor,
-    fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+    fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
     fx_storage_root: Path,
 ) -> LeafDesk:
     """Build the desk of a test over its database, its asset store and the account acting.
@@ -370,8 +369,8 @@ def fx_desk(
     :type fx_open_book: BookOpener
     :param fx_actor: Account the service acts for.
     :type fx_actor: Actor
-    :param fx_runtime: The recording bus, the stopped clock and the job board.
-    :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+    :param fx_runtime: The recording bus and the job board.
+    :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
     :param fx_storage_root: Storage root of the test.
     :type fx_storage_root: Path
     :returns: The desk.

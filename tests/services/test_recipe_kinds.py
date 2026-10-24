@@ -295,7 +295,7 @@ class TestRecipeOfAPage:
         recipes = await tune_recipes(fx_kit, actor, book_id)
         await run_all(fx_kit, actor, book_id)
         before = await record_of(book_id, page_id, databases=fx_open_book.databases)
-        pages = make_page_service(fx_kit.stores, (fx_kit.events, fx_kit.clock, fx_kit.board))
+        pages = make_page_service(fx_kit.stores, (fx_kit.events, fx_kit.board))
 
         await pages.update(fx_open_book(actor, book_id), page_id, PageChanges(content_type=ContentType.BW_PICTURE))
         stale = await record_of(book_id, page_id, databases=fx_open_book.databases)
@@ -320,7 +320,7 @@ class TestRecipeOfAPage:
         actor, book_id, (page_id,) = await seed_book(fx_kit, [PageKind.TEXT])
         recipes = await tune_recipes(fx_kit, actor, book_id)
         await run_all(fx_kit, actor, book_id)
-        pages = make_page_service(fx_kit.stores, (fx_kit.events, fx_kit.clock, fx_kit.board))
+        pages = make_page_service(fx_kit.stores, (fx_kit.events, fx_kit.board))
 
         await pages.update(fx_open_book(actor, book_id), page_id, PageChanges(kind=PageKind.BLANK))
         stale = await record_of(book_id, page_id, databases=fx_open_book.databases)

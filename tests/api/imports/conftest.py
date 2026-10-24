@@ -1,4 +1,4 @@
-"""Fixtures of the import API tests: the application runs on the job fakes' event bus and clock.
+"""Fixtures of the import API tests: the application runs on the job fakes' event bus.
 
 The stores, the imaging adapters and the job board are the application's own, so a test uploads real files and the
 import runs to the end in the background, as it does for a user.
@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.api.imports.watch import ImportWatch, JobEndBus
-from tests.helpers.builders import EPOCH, make_record
-from tests.helpers.fakes_imports import TickingClock
+from tests.helpers.builders import make_record
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
 from tests.helpers.seeding import store_book
 
@@ -37,19 +36,19 @@ def fx_events() -> JobEndBus:
 
 @pytest.fixture
 def fx_fakes(fx_events: JobEndBus) -> JobFakes:
-    """Build the adapters the application runs on, with a clock that gives every source its own import time.
+    """Build the adapters the application runs on.
 
     :param fx_events: Event bus of the application.
     :type fx_events: JobEndBus
     :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
-    return JobFakes(clock=TickingClock(EPOCH), events=fx_events)
+    return JobFakes(events=fx_events)
 
 
 @pytest.fixture
 def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
-    """Replace the application's event bus and clock with ``fx_fakes``, and keep its job board.
+    """Replace the application's event bus with ``fx_fakes``, and keep its job board.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes

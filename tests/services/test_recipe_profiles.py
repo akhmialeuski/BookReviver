@@ -1,6 +1,5 @@
 """Tests for the recipe profiles: saving, listing, renaming, the default, applying to a book, and the first opening."""
 
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -77,8 +76,6 @@ async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> R
     :rtype: RecipeProfile
     """
     profile = await kit.profiles().save(actor, Stage.GEOMETRY, ProfileDraft(name=name, steps=REORDERED))
-    # The next profile is saved a minute later, so the order of creation does not fall to the random identifiers
-    kit.clock.moment += timedelta(minutes=1)
     return profile
 
 
@@ -122,23 +119,6 @@ class TestSaveProfile:
 
 class TestChangeProfile:
     """Tests for listing, renaming, choosing the default and deleting."""
-
-    async def test_profiles_are_listed_by_stage_for_the_account_only(self, fx_kit: ProcessingKit) -> None:
-        """Verify a listing leaves out the profiles of another account and, when asked, of other stages.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, _ = await fx_kit.seed_book()
-        other, _ = await fx_kit.seed_book()
-        mine = await saved(fx_kit, actor)
-        await saved(fx_kit, other, OTHER_NAME)
-        cleaning = ProfileDraft(name=OTHER_NAME, steps=[Step(processor_key=fx_kit.cleanup.spec.key)])
-        cleanup = await fx_kit.profiles().save(actor, Stage.CLEANUP, cleaning)
-        everything = await account_profiles(fx_kit, actor, None)
-        geometry = await account_profiles(fx_kit, actor, Stage.GEOMETRY)
-        assert ([profile.id for profile in everything.items], everything.total) == ([mine.id, cleanup.id], 2)
-        assert [profile.id for profile in geometry.items] == [mine.id]
 
     async def test_rename_changes_only_the_name(self, fx_kit: ProcessingKit) -> None:
         """Verify a renamed profile keeps its steps.

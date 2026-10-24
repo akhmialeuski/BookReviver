@@ -36,8 +36,6 @@ from bookreviver.services.processing_parts import ProcessingConfig, ProcessingPa
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
 from tests.helpers.books_service import make_books_service
-from tests.helpers.builders import EPOCH
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.in_process_executor import InProcessStepExecutor
@@ -46,7 +44,6 @@ from tests.helpers.storage import SharedBookDirectories, upload
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
-    from datetime import datetime
     from pathlib import Path
 
     from fastapi import UploadFile
@@ -63,7 +60,6 @@ if TYPE_CHECKING:
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
 
-TICK: timedelta = timedelta(seconds=1)
 PAGE_WIDTH_PX: int = 200
 PAGE_HEIGHT_PX: int = 300
 GRAY_MODE: str = 'L'
@@ -188,27 +184,6 @@ def djvu_uploads(files: Sequence[Path]) -> list[UploadFile]:
 
 class WorkerCrashError(BaseException):
     """A worker that dies in the middle of a job, which the service must not catch since it cannot."""
-
-
-class TickingClock(FixedClock):
-    """A clock that moves a second forward every time it is read, so what an import creates has distinct times.
-
-    Sources are listed in the order of their import times, and a stopped clock would leave the order to their random
-    identifiers.
-
-    :ivar moment: The time the clock shows on its next reading.
-    """
-
-    @override
-    def now(self) -> datetime:
-        """Return the current time of the clock, then move it a second forward.
-
-        :returns: The moment the clock showed before it moved.
-        :rtype: datetime
-        """
-        moment = self.moment
-        self.moment += TICK
-        return moment
 
 
 class WatchedInspector(SourceInspector):
@@ -446,7 +421,7 @@ class ImportRig:
     :ivar database: The SQL database of the test, which stores the account of the actor.
     :ivar new_uow: Function opening a unit of work over ``database``, as a new request or job would get.
     :ivar databases: Opens the databases of the books of the test.
-    :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
+    :ivar fakes: The recording event bus and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``.
     :ivar files: The local directories of the books, whose promotion of a source can crash.
@@ -522,7 +497,7 @@ class ImportRig:
             database=database,
             new_uow=stores.uow,
             databases=stores.databases,
-            fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
+            fakes=JobFakes(events=events, runner=run),
             events=events,
             files=CrashingBookDirectories(root=root),
             inspector=WatchedInspector(reader),

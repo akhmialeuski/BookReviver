@@ -6,7 +6,7 @@ from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
-from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
+from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.storage import BookDirectories
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book import BookTools
@@ -50,17 +50,15 @@ class BooksProvider(Provider):
         return BookFreshness(board=board)
 
     @provide
-    def book_tools(self, stages: StageSummaries, clock: Clock) -> BookTools:
+    def book_tools(self, stages: StageSummaries) -> BookTools:
         """Gather what every book a request opens works with besides its own database and directory.
 
         :param stages: Sums of the stages of books of the request.
         :type stages: StageSummaries
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The tools of the books of the request.
         :rtype: BookTools
         """
-        return BookTools(stages=stages, clock=clock)
+        return BookTools(stages=stages)
 
     @provide
     def books(

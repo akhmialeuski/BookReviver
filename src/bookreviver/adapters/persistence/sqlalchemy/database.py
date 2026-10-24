@@ -62,8 +62,8 @@ for the queue, so its parent is the span current where the caller asked, and end
 
 The configuration differs from advanced-alchemy's defaults in two places: sessions keep their objects usable after
 commit, because a route maps them to a response after the unit of work committed, and the listener that touches
-``updated_at`` on every flush is off, because the domain sets ``updated_at`` through its ``Clock`` and the listener
-would overwrite it with the wall clock. The options of autogenerate, such as comparing column types, are set in
+``updated_at`` on every flush is off, because the domain sets ``updated_at`` itself and the listener
+would overwrite it with the current time. The options of autogenerate, such as comparing column types, are set in
 ``migrations/env.py``, because advanced-alchemy 1.11.0 does not hand those of ``AlembicSyncConfig`` to Alembic.
 
 The schema of each kind of file is created and changed only by the revisions in its directory under ``migrations/``.
