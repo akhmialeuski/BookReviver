@@ -24,12 +24,13 @@ from tests.helpers.processing import change_versions, stored_job
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
+    from bookreviver.domain.entities import Actor, Page, PageVersion
     from bookreviver.domain.enums import RunOutcome
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -40,7 +41,7 @@ UNTILED_VERSION_ID: PageVersionId = PageVersionId('8899aabbccddeeff')
 STEP_FAILURE: str = 'The step failed after the page was deleted.'
 
 
-async def untiled_version(kit: ProcessingKit) -> tuple[Actor, BookRecord, PageVersion]:
+async def untiled_version(kit: ProcessingKit) -> tuple[Actor, BookId, PageVersion]:
     """Seed a page with a ready version of the full scale whose tile pyramid is not cut.
 
     :param kit: What the processing services of the test share.
@@ -48,16 +49,16 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, BookRecord, PageVe
     :returns: The actor, the book and the version.
     :rtype: tuple[Actor, BookRecord, PageVersion]
     """
-    actor, book_record = await kit.seed_record()
-    page, _ = await kit.seed_scan_page(book_record)
-    base = await kit.seed_base_version(book_record.id, page)
+    actor, book_id = await kit.seed_book()
+    page, _ = await kit.seed_scan_page(book_id)
+    base = await kit.seed_base_version(book_id, page)
     untiled = evolve(base, id=UNTILED_VERSION_ID, tiles_ready=False)
-    await kit.databases.open(book_record.id).change(lambda repos, _book_record: repos.page_versions.add(untiled))
-    await kit.store_files(untiled, book_record.id)
-    return actor, book_record, untiled
+    await kit.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(untiled))
+    await kit.store_files(untiled, book_id)
+    return actor, book_id, untiled
 
 
-async def delete_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def delete_the_version(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Delete the version in a change of its own, as the removal of a page would.
 
     :param book_id: Book that holds the version.
@@ -65,12 +66,12 @@ async def delete_the_version(book_id: BookId, version: PageVersion, databases: B
     :param version: The version to delete.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(book_id, lambda versions: versions.delete(version.id), databases=databases)
 
 
-async def fail_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def fail_the_version(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Mark the version failed in a change of its own, as the collection of old versions would.
 
     :param book_id: Book that holds the version.
@@ -78,14 +79,14 @@ async def fail_the_version(book_id: BookId, version: PageVersion, databases: Boo
     :param version: The version to mark.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(
         book_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)), databases=databases
     )
 
 
-async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Mark the pyramid of the version cut in a change of its own, as the end of a run would.
 
     :param book_id: Book that holds the version.
@@ -93,7 +94,7 @@ async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databas
     :param version: The version to mark.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(
         book_id, lambda versions: versions.update(evolve(version, tiles_ready=True)), databases=databases
@@ -130,8 +131,8 @@ class TestCutTiles:
                      is gone.
         :type kept: tuple[VersionState, bool] | None
         """
-        _, book_record, untiled = await untiled_version(fx_kit)
-        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue_tiles(book_record.id, [untiled.id])
+        _, book_id, untiled = await untiled_version(fx_kit)
+        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue_tiles(book_id, [untiled.id])
         assert job is not None
         cut = StepRunner.cut_tiles
 
@@ -148,21 +149,21 @@ class TestCutTiles:
             :rtype: PageVersion
             """
             cut_version = await cut(self, book, version)
-            await change(book_record.id, version, fx_kit.databases)
+            await change(book_id, version, fx_kit.databases)
             return cut_version
 
         monkeypatch.setattr(StepRunner, 'cut_tiles', cut_then_change)
 
         await fx_kit.work_queue()
 
-        stored = await fx_kit.databases.open(book_record.id).read(lambda repos: repos.page_versions.find(untiled.id))
+        stored = await fx_kit.databases.open(book_id).read(lambda repos: repos.page_versions.find(untiled.id))
         expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
         expect((stored and (stored.state, stored.tiles_ready)) == kept)
         expect(not any(isinstance(event, PageVersionReady) for event in fx_kit.events.published))
         if stored is None:
             tiles = BookKeys().version_rendition(untiled, Rendition.TILES)
             with pytest.raises(NotFoundError):
-                async with fx_kit.files.assets(book_record.id).readable(tiles):
+                async with fx_kit.files.assets(book_id).readable(tiles):
                     pass
         assert_expectations()
 
@@ -185,7 +186,7 @@ class TestRunPage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await kit_with_page(fx_kit)
+        actor, book_id = await kit_with_page(fx_kit)
 
         async def delete_the_page_and_fail(
             _run: RecipeRun, page: Page, *_rest: object, **_options: object
@@ -204,14 +205,12 @@ class TestRunPage:
             :rtype: RunOutcome
             :raises ConflictError: Always.
             """
-            await fx_open_book.databases.open(book_record.id).change(
-                lambda repos, _book_record: repos.pages.delete(page.id)
-            )
+            await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(page.id))
             raise ConflictError(STEP_FAILURE)
 
         monkeypatch.setattr(RecipeRun, 'run', delete_the_page_and_fail)
         job = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
 
         await fx_kit.work_queue()
@@ -220,7 +219,7 @@ class TestRunPage:
         assert (stored.state, stored.error) == (JobState.FAILED, NO_PAGE_PROCESSED)
 
 
-async def kit_with_page(kit: ProcessingKit) -> tuple[Actor, BookRecord]:
+async def kit_with_page(kit: ProcessingKit) -> tuple[Actor, BookId]:
     """Seed a book with one scan page whose base version is stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
@@ -228,7 +227,7 @@ async def kit_with_page(kit: ProcessingKit) -> tuple[Actor, BookRecord]:
     :returns: The actor and the book.
     :rtype: tuple[Actor, BookRecord]
     """
-    actor, book_record = await kit.seed_record()
-    page, _ = await kit.seed_scan_page(book_record)
-    await kit.seed_base_version(book_record.id, page)
-    return actor, book_record
+    actor, book_id = await kit.seed_book()
+    page, _ = await kit.seed_scan_page(book_id)
+    await kit.seed_base_version(book_id, page)
+    return actor, book_id

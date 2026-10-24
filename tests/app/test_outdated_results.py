@@ -15,6 +15,7 @@ from tests.helpers.builders import (
     make_record,
     make_scan,
     make_source,
+    new_book_id,
 )
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
 from tests.helpers.processing import ProcessingFakesProvider
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, PageVersion, Scan, Source
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
@@ -39,6 +41,7 @@ OUTDATED_GEOMETRY = evolve(FakeProcessor.spec.ref, version='0')
 class Book(NamedTuple):
     """A book of one page whose geometry result was made by an older version of its processor.
 
+    :ivar book_id: The identifier the book is stored under.
     :ivar book_record: The record of the book.
     :ivar source: The source the page was cut from.
     :ivar scan: The scan of the source the page shows.
@@ -47,6 +50,7 @@ class Book(NamedTuple):
     :ivar records: The fresh records of the page split, with the base version, and of the geometry, with the other.
     """
 
+    book_id: BookId
     book_record: BookRecord
     source: Source
     scan: Scan
@@ -85,6 +89,7 @@ def fx_book() -> Book:
         state=VersionState.READY,
     )
     return Book(
+        book_id=new_book_id(),
         book_record=book_record,
         source=source,
         scan=scan,
@@ -121,6 +126,7 @@ async def fx_extra_providers(
         fx_book.book_record,
         fx_book.page,
         owner=fx_actor.account_id,
+        book_id=fx_book.book_id,
         sources=[fx_book.source],
         scans=[fx_book.scan],
         versions=fx_book.versions,
@@ -138,7 +144,7 @@ async def fx_extra_providers(
         for record in fx_book.records:
             repos.page_stages.save(record)
 
-    await fx_databases().open(fx_book.book_record.id).change(save_records)
+    await fx_databases().open(fx_book.book_id).change(save_records)
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 
@@ -163,7 +169,7 @@ class TestStart:
         """
         states = (
             await fx_databases()
-            .open(fx_book.book_record.id)
+            .open(fx_book.book_id)
             .read(
                 lambda repos: [
                     repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state

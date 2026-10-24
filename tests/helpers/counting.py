@@ -67,3 +67,17 @@ class CountingBookDatabase(BookDatabase):
         :rtype: bytes
         """
         return await self._inner.snapshot()
+
+    @override
+    async def create(self, book_record: BookRecord) -> None:
+        """Store the record of a new book on the wrapped book database.
+
+        :param book_record: The record of the book.
+        :type book_record: BookRecord
+        """
+        await self._inner.create(book_record)
+
+    @override
+    async def close(self) -> None:
+        """Close the wrapped book database for good."""
+        await self._inner.close()

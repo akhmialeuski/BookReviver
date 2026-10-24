@@ -16,9 +16,10 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, PageStage, Recipe
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.domain.ids import BookId
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.page_stage_writes import PageStageWrites
 
 pytestmark = pytest.mark.anyio
@@ -30,18 +31,18 @@ PAGE_ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 
 
 async def store_records(
-    book_record: BookRecord, recipe: Recipe, records: Sequence[PageStage], *, databases: BookDatabases
+    book_id: BookId, recipe: Recipe, records: Sequence[PageStage], *, databases: LocatedBookDatabases
 ) -> None:
     """Store a recipe and the stage records of the pages of a book that exists already.
 
-    :param book_record: Record of the book owning the pages the records belong to.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book owning the pages the records belong to.
+    :type book_id: BookId
     :param recipe: Recipe of the book, which the records may name.
     :type recipe: Recipe
     :param records: Records to store in one batch.
     :type records: Sequence[PageStage]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def seed(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -55,7 +56,7 @@ async def store_records(
         repos.recipes.add(recipe)
         repos.page_stages.save_many(records)
 
-    await databases.open(book_record.id).change(seed)
+    await databases.open(book_id).change(seed)
 
 
 class TestMarkRecipeStale:
@@ -79,10 +80,9 @@ class TestMarkRecipeStale:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         first, second, third = (make_page(order_key=key) for key in PAGE_ORDER_KEYS)
-        await commit_record(
-            fx_database, fx_uow(), book_record, first, second, third, owner=new_account_id(), databases=fx_databases()
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), first, second, third, owner=new_account_id(), databases=fx_databases()
         )
         recipe = make_recipe()
         fresh_first = make_page_stage(page_id=first.id, recipe_id=recipe.id)
@@ -91,19 +91,17 @@ class TestMarkRecipeStale:
         without_recipe = make_page_stage(page_id=first.id, stage=Stage.CLEANUP)
         records = StageRecords(clock=fx_clock)
         await store_records(
-            book_record, recipe, [fresh_first, fresh_second, failed, without_recipe], databases=fx_databases()
+            book_id, recipe, [fresh_first, fresh_second, failed, without_recipe], databases=fx_databases()
         )
         fx_clock.moment = CHANGED_AT
 
         await (
-            fx_databases()
-            .open(book_record.id)
-            .change(lambda repos, _book_record: records.mark_recipe_stale(repos, recipe.id))
+            fx_databases().open(book_id).change(lambda repos, _book_record: records.mark_recipe_stale(repos, recipe.id))
         )
 
         stored = (
             await fx_databases()
-            .open(book_record.id)
+            .open(book_id)
             .read(lambda repos: repos.page_stages.list_for_pages([first.id, second.id, third.id]))
         )
         stale = [
@@ -137,22 +135,19 @@ class TestMarkRecipeStale:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         pages = [make_page(order_key=key) for key in PAGE_ORDER_KEYS]
-        await commit_record(
-            fx_database, fx_uow(), book_record, *pages, owner=new_account_id(), databases=fx_databases()
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), *pages, owner=new_account_id(), databases=fx_databases()
         )
         recipe = make_recipe()
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
         records = StageRecords(clock=fx_clock)
-        await store_records(book_record, recipe, fresh, databases=fx_databases())
+        await store_records(book_id, recipe, fresh, databases=fx_databases())
         fx_clock.moment = CHANGED_AT
         fx_page_stage_writes.start()
 
         await (
-            fx_databases()
-            .open(book_record.id)
-            .change(lambda repos, _book_record: records.mark_recipe_stale(repos, recipe.id))
+            fx_databases().open(book_id).change(lambda repos, _book_record: records.mark_recipe_stale(repos, recipe.id))
         )
 
         [batch] = fx_page_stage_writes.batches

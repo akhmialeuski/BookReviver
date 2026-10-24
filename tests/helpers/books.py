@@ -17,7 +17,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion, Scan, Source
+    from bookreviver.domain.entities import Actor, Page, PageVersion, Scan, Source
+    from bookreviver.domain.ids import BookId
     from tests.helpers.builders import BookOpener
 
 SCANS_PER_SOURCE: int = 3
@@ -28,7 +29,7 @@ MAX_UPLOAD_BYTES: int = 1024
 class Book(NamedTuple):
     """A book with two sources, each with scans, and a page cut from a scan of the first source.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: The identifier of the book.
     :ivar first: The source that the tests delete.
     :ivar second: The source that has to stay.
     :ivar scans: The scans of the first source, then those of the second, each with its renditions ready.
@@ -36,7 +37,7 @@ class Book(NamedTuple):
     :ivar version: The base version of that page, with its renditions ready.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     first: Source
     second: Source
     scans: list[Scan]
@@ -59,7 +60,6 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     # Each source holds the scans made for it below, which is the number a read of the source counts
     first = evolve(make_source(name='part1.pdf'), scan_count=SCANS_PER_SOURCE)
     second = evolve(make_source(name='part2.pdf', minutes=1), scan_count=SCANS_PER_SOURCE)
@@ -72,10 +72,10 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
     page = make_page(scan=scans[0])
     version = evolve(make_page_version(page_id=page.id), renditions=ready)
     owner_id = new_account_id() if owner is None else owner.account_id
-    await commit_record(
+    book_id = await commit_record(
         database,
         stores.uow(),
-        book_record,
+        make_record(),
         page,
         owner=owner_id,
         sources=[first, second],
@@ -84,7 +84,7 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
         databases=stores.databases,
     )
     keys = BookKeys()
-    sources, assets = stores.files.sources(book_record.id), stores.files.assets(book_record.id)
+    sources, assets = stores.files.sources(book_id), stores.files.assets(book_id)
     for source in (first, second):
         job_id = JobId(uuid4())
         await sources.stage(job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
@@ -93,7 +93,7 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
     for key in [*images, keys.version_rendition(version, Rendition.FULL_JPEG)]:
         async with assets.writable(key) as path:
             path.write_bytes(IMAGE)
-    return Book(book_record=book_record, first=first, second=second, scans=scans, page=page, version=version)
+    return Book(book_id=book_id, first=first, second=second, scans=scans, page=page, version=version)
 
 
 def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
@@ -111,6 +111,6 @@ def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
     keys = BookKeys()
     scan = next(scan for scan in book.scans if scan.source_id == source.id)
     return (
-        (book_directory(root, book.book_record.id) / keys.source(source.id) / source.file_name).is_file(),
-        (book_directory(root, book.book_record.id) / keys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
+        (book_directory(root, book.book_id) / keys.source(source.id) / source.file_name).is_file(),
+        (book_directory(root, book.book_id) / keys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
     )

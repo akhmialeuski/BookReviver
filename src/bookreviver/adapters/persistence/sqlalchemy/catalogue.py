@@ -35,6 +35,7 @@ class LibraryRow(DefaultBase):
 
     :ivar book_id: The book, whose file lives in the directory of the book and is reached through no key.
     :ivar owner_id: Account owning the book, which is not deleted while it owns a book.
+    :ivar directory: Name of the directory of the book in the storage, which no other book shares.
     :ivar added_at: Time the book joined the library, which orders the owner's list of books.
     """
 
@@ -42,6 +43,7 @@ class LibraryRow(DefaultBase):
 
     book_id: Mapped[UUID] = mapped_column(BOOK_ID_COLUMN, primary_key=True)
     owner_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=RESTRICT), index=True)
+    directory: Mapped[str] = mapped_column(unique=True)
     added_at: Mapped[datetime]
 
 

@@ -104,6 +104,8 @@ IMPORTED_SOURCE: Final = text(f"status = '{SourceStatus.IMPORTED}'")
 FIRST_VERSION: Final = text('0')
 # The key of the one row of ``book_places``
 BOOK_PLACE_ID: Final = 1
+# The key of the one row of the record of a book, which names no book, so the file of a book is the same in any library
+BOOK_RECORD_ID: Final = 1
 # A manual label is a label, so the empty label is never one; null leaves the number to the sections
 MANUAL_LABEL_GIVEN: Final = "manual_label <> ''"
 # The label of a group names it, so the empty label is never one
@@ -144,7 +146,7 @@ class BookRecordRow(BookTable):
     list, because the items of a list have no identity, are always read and written with the record of the book, and the
     list of books shows only the title and the first author. The sources of the book are rows of their own table.
 
-    :ivar id: Identifier of the book, assigned by the domain.
+    :ivar id: Key of the one row, which a check holds at ``1``.
     :ivar title: Title of the book.
     :ivar subtitle: Words of the title page that explain the title.
     :ivar parallel_titles: Titles in other languages, as a JSON list of strings.
@@ -180,8 +182,9 @@ class BookRecordRow(BookTable):
     """
 
     __tablename__ = BOOK_RECORDS_TABLE
+    __table_args__ = (CheckConstraint(f'id = {BOOK_RECORD_ID}', name='one_book'),)
 
-    id: Mapped[UUID] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
     title: Mapped[str]
     subtitle: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     parallel_titles: Mapped[list[str]] = mapped_column(JSON, server_default=EMPTY_LIST)

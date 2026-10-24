@@ -1381,7 +1381,7 @@ class PageService:
             :raises ConflictError: If the scan to copy is deleted or not cut yet.
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
-            book_record = repos.book_record.get(book.id)
+            book_record = repos.book_record.get()
             keys = BookKeys()
             if version.processor == SPLIT_NONE:
                 if page.scan_id is None:

@@ -24,7 +24,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
-    BookRecord,
     LibraryEntry,
     Page,
     PageStage,
@@ -52,10 +51,12 @@ from bookreviver.domain.values import PageStageKey, PageStepKey
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
     from datetime import datetime
+    from pathlib import Path
 
     from bookreviver.domain.entities import (
         BookOverview,
         BookPlace,
+        BookRecord,
         PageHistoryEntry,
     )
     from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
@@ -224,17 +225,49 @@ class LibraryRepository(Repository[LibraryEntry, BookId]):
         """
 
 
-class BookRecordRepository(Repository[BookRecord, BookId]):
-    """The record of a book, the one row its store has."""
+class BookRecordRepository(ABC):
+    """The record of the book of the store, the one record the store has, which names no identifier of the book."""
 
     @abstractmethod
-    def overview(self, book_record: BookRecord) -> BookOverview:
-        """Return the record of a book read earlier together with the counts of the book.
+    def get(self) -> BookRecord:
+        """Return the record of the book.
 
-        :param book_record: Record of the book to count.
+        :returns: The stored record.
+        :rtype: BookRecord
+        :raises NotFoundError: If the store holds no record yet.
+        """
+
+    @abstractmethod
+    def add(self, book_record: BookRecord) -> BookRecord:
+        """Store the record of a book whose store holds none yet, and return it as stored.
+
+        :param book_record: The record to store.
         :type book_record: BookRecord
+        :returns: The record as stored.
+        :rtype: BookRecord
+        :raises ConflictError: If the store holds a record already.
+        """
+
+    @abstractmethod
+    def update(self, book_record: BookRecord) -> BookRecord:
+        """Replace the stored record of the book and return it as stored.
+
+        :param book_record: The record with its new state.
+        :type book_record: BookRecord
+        :returns: The record as stored.
+        :rtype: BookRecord
+        :raises NotFoundError: If the store holds no record, or the new cover is not a page of the book.
+        """
+
+    @abstractmethod
+    def overview(self, book_id: BookId) -> BookOverview:
+        """Return the record of the book together with the counts of the book.
+
+        :param book_id: Identifier the library gives the book, which the overview carries and the store does not hold.
+        :type book_id: BookId
         :returns: The record of the book with the counts of its included pages, sources and scans.
         :rtype: BookOverview
+        :raises NotFoundError: If the store holds no record yet.
         """
 
 
@@ -966,10 +999,8 @@ class UnitOfWork(ABC):
     A unit of work keeps no state between calls, so coroutines may share one and call it at once. Changes of one
     process that wait for the same store enter in the order they asked for it, so one that came early is never
     overtaken by one that came later, and each waits at most the wait limit of the unit of work before it gives up with
-    ``BookBusyError``. Changes of different stores never wait for each other.
-
-    The stores of the books are made, removed and adopted here too, and the transactions of one book are the work of
-    its ``BookDatabase``.
+    ``BookBusyError``. Changes of different stores never wait for each other. The transactions of one book are the
+    work of its ``BookDatabase``.
     """
 
     @abstractmethod
@@ -1000,50 +1031,6 @@ class UnitOfWork(ABC):
         :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
         """
 
-    @abstractmethod
-    async def create_book(self, book_record: BookRecord) -> BookRecord:
-        """Make the store of a new book, holding its record and nothing else yet.
-
-        :param book_record: The record of the new book.
-        :type book_record: BookRecord
-        :returns: The record of the book as stored.
-        :rtype: BookRecord
-        :raises ConflictError: If a book with this identifier is stored.
-        """
-
-    @abstractmethod
-    async def delete_book(self, book_id: BookId) -> None:
-        """Remove the store of a book with everything in it, once its changes in progress have ended.
-
-        A book that is not stored is left as it is, so a deletion broken off half way can run again.
-
-        :param book_id: Identifier of the book to remove.
-        :type book_id: BookId
-        """
-
-    @abstractmethod
-    async def adopt_book(self, book_id: BookId) -> BookRecord:
-        """Take as a new book the store an archive placed for it, and give its record the identifier of the new book.
-
-        The store is brought to the release of this code first, as any book is when it is opened.
-
-        :param book_id: Identifier of the new book, whose store the archive placed.
-        :type book_id: BookId
-        :returns: The record of the new book.
-        :rtype: BookRecord
-        :raises NotFoundError: If no store was placed for the book.
-        :raises BookTooNewError: If the store is at a revision this code does not ship.
-        :raises InvalidArchiveError: If the store does not hold exactly one record of a book.
-        """
-
-    @abstractmethod
-    async def stored_books(self) -> Collection[BookId]:
-        """Return the books that have a store, whether the library lists them or not.
-
-        :returns: The identifiers of the stored books.
-        :rtype: Collection[BookId]
-        """
-
 
 class BookDatabase(ABC):
     """Runs the work of a use case on the repositories of one transaction of one book, one transaction for each call.
@@ -1058,6 +1045,9 @@ class BookDatabase(ABC):
     process that wait for the same book enter in the order they asked for it, so one that came early is never overtaken
     by one that came later, and each waits at most the wait limit of the database before it gives up with
     ``BookBusyError``. Changes of different books never wait for each other.
+
+    A new book has a database with no record, which ``create`` stores, and ``close`` ends the use of the database before
+    its file is deleted.
     """
 
     @abstractmethod
@@ -1104,7 +1094,7 @@ class BookDatabase(ABC):
     async def snapshot(self) -> bytes:
         """Return a copy of the store of the book as one committed state of it, for the archive of the book.
 
-        The copy is the store in the form it keeps on disk, which :meth:`UnitOfWork.adopt_book` takes back in another
+        The copy is the store in the form it keeps on disk, which :meth:`BookDatabases.adopt` takes back in another
         instance.
 
         :returns: The copy of the store.
@@ -1113,18 +1103,63 @@ class BookDatabase(ABC):
         :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
         """
 
+    @abstractmethod
+    async def create(self, book_record: BookRecord) -> None:
+        """Store the record of a new book, whose database holds no record yet.
 
-class BookDatabases(ABC):
-    """Opens the database of a book by its identifier, so a use case runs the transactions of one book on it."""
+        :param book_record: The record of the book.
+        :type book_record: BookRecord
+        :raises NotFoundError: If the book is not stored.
+        :raises ConflictError: If the database holds a record already.
+        """
 
     @abstractmethod
-    def open(self, book_id: BookId) -> BookDatabase:
-        """Return the database of a book, without touching the book.
+    async def close(self) -> None:
+        """Wait for the transactions of the book in progress to end, then close the database for good.
 
-        A book that is not stored is found on the first call of the returned database, which raises ``NotFoundError``.
+        Every later call of the database, or of another database of the same book, raises ``NotFoundError``, so the
+        file can be deleted. A database already closed is left as it is, so a deletion broken off half way can run
+        again.
+        """
 
-        :param book_id: Identifier of the book.
+
+class BookDatabases(ABC):
+    """Opens the database of a book from its file, so a use case runs the transactions of one book on it.
+
+    The file of a book lies in the directory of the book, which the storage owns: it copies the blank file of a new
+    book, unpacks the file of an imported one and deletes it with the directory, and this port only reads and writes it.
+    """
+
+    @abstractmethod
+    def open(self, book_id: BookId, path: Path) -> BookDatabase:
+        """Return the database of a book, without touching the file.
+
+        A file that does not exist is found on the first call of the returned database, which raises ``NotFoundError``.
+
+        :param book_id: Identifier of the book, which the changes of the book announce.
         :type book_id: BookId
+        :param path: The database file of the book.
+        :type path: Path
         :returns: The database of the book.
         :rtype: BookDatabase
+        """
+
+    @abstractmethod
+    async def blank(self) -> Path:
+        """Return a database file of a book at the head revision with no rows, which a new book starts as a copy of.
+
+        :returns: The blank file, which nobody may change.
+        :rtype: Path
+        """
+
+    @abstractmethod
+    async def adopt(self, book_id: BookId, path: Path) -> None:
+        """Take as a new book the database file an archive placed, bringing it to the release of this code first.
+
+        :param book_id: Identifier of the new book.
+        :type book_id: BookId
+        :param path: The database file the archive placed.
+        :type path: Path
+        :raises BookTooNewError: If the file is at a revision this code does not ship.
+        :raises InvalidArchiveError: If the file is not a database of a book, or holds no record of a book.
         """

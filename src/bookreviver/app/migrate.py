@@ -26,6 +26,7 @@ from advanced_alchemy.utils.cli_tools import click, group
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.split import SharedDatabaseSplit
+from bookreviver.adapters.storage import LocalBookDirectories
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import Settings
 from bookreviver.domain.keys import KeySegment
@@ -89,12 +90,14 @@ def split_shared_database() -> None:
     settings = Settings()
     catalogue = open_catalogue(settings)
     books = BookRegistry(
-        settings.storage_root,
-        tracer=NullTracer(),
-        wait_seconds=settings.change_wait.job_seconds,
-        idle_seconds=settings.book_idle_seconds,
+        tracer=NullTracer(), wait_seconds=settings.change_wait.job_seconds, idle_seconds=settings.book_idle_seconds
     )
-    split = SharedDatabaseSplit(settings.data_dir.resolve() / SHARED_DATABASE, catalogue=catalogue, books=books)
+    split = SharedDatabaseSplit(
+        settings.data_dir.resolve() / SHARED_DATABASE,
+        catalogue=catalogue,
+        books=books,
+        directories=LocalBookDirectories(root=settings.storage_root),
+    )
 
     async def run() -> None:
         """Run the split and close the databases it opened."""

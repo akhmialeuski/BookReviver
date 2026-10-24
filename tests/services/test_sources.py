@@ -19,7 +19,7 @@ from tests.helpers.builders import BookOpener, make_job, make_record, make_sourc
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
-from tests.helpers.storage import SharedBookFileStores, book_directory
+from tests.helpers.storage import SharedBookDirectories, book_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,12 +27,12 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Source
-    from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.domain.ids import BookDirectoryName, BookId
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -47,15 +47,15 @@ class StoreFailedError(OSError):
 class SourceStoreFailingOnce(LocalSourceStore):
     """The local source store of one book, whose first source deletion fails before it removes anything."""
 
-    def __init__(self, *, root: Path, book_id: BookId) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName) -> None:
         """Keep the sources under ``root`` and fail the first deletion.
 
         :param root: Storage root shared with the asset store.
         :type root: Path
-        :param book_id: The book whose sources the store holds.
-        :type book_id: BookId
+        :param name: Name of the directory of the book whose sources the store holds.
+        :type name: BookDirectoryName
         """
-        super().__init__(root=root, book_id=book_id)
+        super().__init__(root=root, name=name)
         self._failed = False
 
     @override
@@ -124,17 +124,17 @@ def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookO
     :returns: The opener, whose books fail the first deletion of a source.
     :rtype: BookOpener
     """
-    stores = SharedBookFileStores(root=fx_storage_root, source_store=SourceStoreFailingOnce)
+    stores = SharedBookDirectories(root=fx_storage_root, source_store=SourceStoreFailingOnce)
     return BookOpener(uow=fx_open_book.uow, databases=fx_open_book.databases, files=stores)
 
 
-async def _record_unimported(book_id: BookId, *, databases: BookDatabases) -> tuple[Source, Source]:
+async def _record_unimported(book_id: BookId, *, databases: LocatedBookDatabases) -> tuple[Source, Source]:
     """Record a rejected and a skipped file of a book, after the sources made by ``commit_book``.
 
     :param book_id: Book the files were uploaded to.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The rejected file and the skipped file, in the order they were recorded.
     :rtype: tuple[Source, Source]
     """
@@ -179,7 +179,7 @@ async def fx_unimported(fx_book: Book, fx_databases: BookDatabasesFactory) -> tu
     :returns: The rejected file and the skipped file.
     :rtype: tuple[Source, Source]
     """
-    return await _record_unimported(fx_book.book_record.id, databases=fx_databases())
+    return await _record_unimported(fx_book.book_id, databases=fx_databases())
 
 
 @pytest.fixture
@@ -250,10 +250,8 @@ class TestList:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        everything = await fx_service().list(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
-        window = await fx_service().list(
-            fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest(offset=1, limit=1)
-        )
+        everything = await fx_service().list(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
+        window = await fx_service().list(fx_open_book(fx_actor, fx_book.book_id), SliceRequest(offset=1, limit=1))
 
         expect(everything.items == [fx_book.first, fx_book.second])
         expect((window.items, window.total) == ([fx_book.second], 2))
@@ -282,14 +280,14 @@ class TestList:
         """
         rejected, skipped = fx_unimported
 
-        imported = await fx_service().list(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
+        imported = await fx_service().list(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
         report = await fx_service().list(
-            fx_open_book(fx_actor, fx_book.book_record.id),
+            fx_open_book(fx_actor, fx_book.book_id),
             SliceRequest(),
             statuses=(SourceStatus.REJECTED, SourceStatus.SKIPPED),
         )
         everything = await fx_service().list(
-            fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest(), statuses=tuple(SourceStatus)
+            fx_open_book(fx_actor, fx_book.book_id), SliceRequest(), statuses=tuple(SourceStatus)
         )
 
         expect(imported.items == [fx_book.first, fx_book.second])
@@ -315,9 +313,7 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        assert (
-            await fx_service().get(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.second.id) == fx_book.second
-        )
+        assert await fx_service().get(fx_open_book(fx_actor, fx_book.book_id), fx_book.second.id) == fx_book.second
 
     async def test_source_of_another_book_of_the_actor_is_not_found(
         self,
@@ -340,11 +336,12 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        other = make_record()
-        await store_book(fx_uow(), other, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        other_id = await store_book(
+            fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_open_book(fx_actor, other.id), fx_book.first.id)
+            await fx_service().get(fx_open_book(fx_actor, other_id), fx_book.first.id)
 
     async def test_missing_source_and_a_source_of_another_book_are_not_found(
         self,
@@ -369,7 +366,7 @@ class TestGet:
         """
         for source_id in (SourceId(uuid4()), fx_strangers_book.first.id):
             with pytest.raises(NotFoundError):
-                await fx_service().get(fx_open_book(fx_actor, fx_book.book_record.id), source_id)
+                await fx_service().get(fx_open_book(fx_actor, fx_book.book_id), source_id)
 
 
 class TestScans:
@@ -389,7 +386,7 @@ class TestScans:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
+        scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
 
         expect(scans.items == fx_book.scans)
         expect(scans.total == len(fx_book.scans))
@@ -410,7 +407,7 @@ class TestScans:
         :type fx_open_book: BookOpener
         """
         window = await fx_service().scans(
-            fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest(offset=1, limit=1), source_id=fx_book.second.id
+            fx_open_book(fx_actor, fx_book.book_id), SliceRequest(offset=1, limit=1), source_id=fx_book.second.id
         )
 
         expect(window.items == [fx_book.scans[SCANS_PER_SOURCE + 1]])
@@ -438,11 +435,12 @@ class TestScans:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        other = make_record()
-        await store_book(fx_uow(), other, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        other_id = await store_book(
+            fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
 
         with pytest.raises(NotFoundError):
-            await fx_service().scans(fx_open_book(fx_actor, other.id), SliceRequest(), source_id=fx_book.first.id)
+            await fx_service().scans(fx_open_book(fx_actor, other_id), SliceRequest(), source_id=fx_book.first.id)
 
 
 class TestDelete:
@@ -469,15 +467,13 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        await fx_service().delete(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+        await fx_service().delete(fx_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
 
-        remaining = await fx_service().list(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
-        scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
+        remaining = await fx_service().list(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
+        scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
         image = BookKeys().version_rendition(fx_book.version, Rendition.FULL_JPEG)
-        page = await fx_open_book.databases.open(fx_book.book_record.id).read(
-            lambda repos: repos.pages.get(fx_book.page.id)
-        )
-        versions = await fx_open_book.databases.open(fx_book.book_record.id).read(
+        page = await fx_open_book.databases.open(fx_book.book_id).read(lambda repos: repos.pages.get(fx_book.page.id))
+        versions = await fx_open_book.databases.open(fx_book.book_id).read(
             lambda repos: repos.page_versions.list_for_page(fx_book.page.id)
         )
         expect(remaining.items == [fx_book.second])
@@ -486,7 +482,7 @@ class TestDelete:
         expect(on_disk(fx_storage_root, fx_book, fx_book.second) == (True, True))
         expect(page == evolve(fx_book.page, scan_id=None))
         expect(versions == [fx_book.version])
-        expect((book_directory(fx_storage_root, fx_book.book_record.id) / image).is_file())
+        expect((book_directory(fx_storage_root, fx_book.book_id) / image).is_file())
         assert_expectations()
 
     async def test_import_in_progress_is_a_conflict_and_removes_nothing(
@@ -512,12 +508,12 @@ class TestDelete:
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], OpenedBook]
         """
-        fx_import_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
 
         with pytest.raises(ConflictError):
-            await fx_service().delete(fx_open_own_book(fx_book.book_record.id), fx_book.first.id)
+            await fx_service().delete(fx_open_own_book(fx_book.book_id), fx_book.first.id)
 
-        expect(await fx_service().get(fx_open_own_book(fx_book.book_record.id), fx_book.first.id) == fx_book.first)
+        expect(await fx_service().get(fx_open_own_book(fx_book.book_id), fx_book.first.id) == fx_book.first)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (True, True))
         assert_expectations()
 
@@ -542,13 +538,13 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        fx_import_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
         await fx_import_board.run_queued()
 
-        await fx_service().delete(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+        await fx_service().delete(fx_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+            await fx_service().get(fx_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
 
     async def test_failed_deletion_keeps_the_source_and_a_repeat_finishes_it(
         self,
@@ -572,14 +568,14 @@ class TestDelete:
         :type fx_actor: Actor
         """
         with pytest.raises(StoreFailedError):
-            await fx_service().delete(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
-        kept = await fx_service().get(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
-        await fx_service().delete(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+            await fx_service().delete(fx_flaky_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
+        kept = await fx_service().get(fx_flaky_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
+        await fx_service().delete(fx_flaky_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
 
         expect(kept == fx_book.first)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+            await fx_service().get(fx_flaky_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
         assert_expectations()
 
 
@@ -610,12 +606,12 @@ class TestDeleteUnimported:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        await fx_service().delete_unimported(fx_open_book(fx_actor, fx_book.book_record.id))
+        await fx_service().delete_unimported(fx_open_book(fx_actor, fx_book.book_id))
 
         everything = await fx_service().list(
-            fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest(), statuses=tuple(SourceStatus)
+            fx_open_book(fx_actor, fx_book.book_id), SliceRequest(), statuses=tuple(SourceStatus)
         )
-        scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
+        scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
         expect(everything.items == [fx_book.first, fx_book.second])
         expect(scans.items == fx_book.scans)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (True, True))
@@ -642,13 +638,13 @@ class TestDeleteUnimported:
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], OpenedBook]
         """
-        fx_import_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
 
         with pytest.raises(ConflictError):
-            await fx_service().delete_unimported(fx_open_own_book(fx_book.book_record.id))
+            await fx_service().delete_unimported(fx_open_own_book(fx_book.book_id))
 
         report = await fx_service().list(
-            fx_open_own_book(fx_book.book_record.id),
+            fx_open_own_book(fx_book.book_id),
             SliceRequest(),
             statuses=(SourceStatus.REJECTED, SourceStatus.SKIPPED),
         )

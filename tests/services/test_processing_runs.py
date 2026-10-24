@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
 
@@ -79,7 +80,7 @@ SECOND_PAGE_KEY: str = 'a1'
 INTERRUPTED_BOOK_PAGES: int = 3
 
 
-async def prepared_page(kit: ProcessingKit, **book_options: ImagePolicy) -> tuple[Actor, BookRecord, Page]:
+async def prepared_page(kit: ProcessingKit, **book_options: ImagePolicy) -> tuple[Actor, BookId, Page]:
     """Seed a book with one scan page whose base version is stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
@@ -89,10 +90,10 @@ async def prepared_page(kit: ProcessingKit, **book_options: ImagePolicy) -> tupl
     :returns: The actor, the book and the page.
     :rtype: tuple[Actor, BookRecord, Page]
     """
-    actor, book_record = await kit.seed_record(**book_options)
-    page, _ = await kit.seed_scan_page(book_record)
-    await kit.seed_base_version(book_record.id, page)
-    return actor, book_record, page
+    actor, book_id = await kit.seed_book(**book_options)
+    page, _ = await kit.seed_scan_page(book_id)
+    await kit.seed_base_version(book_id, page)
+    return actor, book_id, page
 
 
 class TestRunStage:
@@ -104,14 +105,12 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        version = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        version = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         keys = BookKeys()
-        async with fx_kit.files.assets(book_record.id).readable(
-            keys.version_rendition(version, Rendition.FULL_JPEG)
-        ) as full:
+        async with fx_kit.files.assets(book_id).readable(keys.version_rendition(version, Rendition.FULL_JPEG)) as full:
             content = full.read_bytes()
         expect((version.state, version.scale) == (VersionState.READY, VersionScale.FULL))
         expect((version.renditions is not None and version.renditions.ready, version.tiles_ready) == (True, True))
@@ -128,9 +127,9 @@ class TestRunStage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _ = await prepared_page(fx_kit)
+        actor, book_id, _ = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
@@ -148,12 +147,12 @@ class TestRunStage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _ = await prepared_page(fx_kit)
-        second, _ = await fx_kit.seed_scan_page(book_record, order_key=SECOND_PAGE_KEY)
-        await fx_kit.seed_base_version(book_record.id, second)
-        await save_three_steps(fx_kit, actor, book_record)
+        actor, book_id, _ = await prepared_page(fx_kit)
+        second, _ = await fx_kit.seed_scan_page(book_id, order_key=SECOND_PAGE_KEY)
+        await fx_kit.seed_base_version(book_id, second)
+        await save_three_steps(fx_kit, actor, book_id)
         job = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
@@ -169,11 +168,11 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
-        await run_stage(fx_kit, actor, book_record, run)
-        await run_stage(fx_kit, actor, book_record, run)
-        versions = await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        await run_stage(fx_kit, actor, book_id, run)
+        await run_stage(fx_kit, actor, book_id, run)
+        versions = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         expect((fx_kit.fake.runs, versions.total) == (1, 1))
         assert_expectations()
 
@@ -187,10 +186,10 @@ class TestRunStage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _ = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        actor, book_id, _ = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         again = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, again.id)
@@ -210,19 +209,19 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        first = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        first = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, strong)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        second = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
-        replaced = await fx_kit.databases.open(book_record.id).read(lambda repos: repos.page_versions.find(first.id))
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, strong)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        second = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
+        replaced = await fx_kit.databases.open(book_id).read(lambda repos: repos.page_versions.find(first.id))
         back_draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY)])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, back_draft)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        back = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
-        total = (await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)).total
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, back_draft)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        back = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
+        total = (await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)).total
         expect((first.id != second.id, back.id == first.id, total) == (True, True, 1))
         expect(replaced is None)
         expect((fx_kit.fake.runs, second.data) == (3, {RAN_KEY: 2}))
@@ -234,9 +233,9 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        head = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        head = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         ready = [event.version.id for event in fx_kit.events.published if isinstance(event, PageVersionReady)]
         assert ready == [head.id]
 
@@ -248,20 +247,20 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        cleanup_before = await head_of(fx_kit, book_record.id, page, Stage.CLEANUP)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        cleanup_before = await head_of(fx_kit, book_id, page, Stage.CLEANUP)
         strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, strong)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        stale = await stage_of(book_record.id, page, Stage.CLEANUP, databases=fx_kit.databases)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, strong)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        stale = await stage_of(book_id, page, Stage.CLEANUP, databases=fx_kit.databases)
         expect((stale.state, stale.head_version_id) == (StageState.STALE, cleanup_before.id))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        cleanup_after = await head_of(fx_kit, book_record.id, page, Stage.CLEANUP)
-        fresh = await stage_of(book_record.id, page, Stage.CLEANUP, databases=fx_kit.databases)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        cleanup_after = await head_of(fx_kit, book_id, page, Stage.CLEANUP)
+        fresh = await stage_of(book_id, page, Stage.CLEANUP, databases=fx_kit.databases)
         expect((cleanup_after.id != cleanup_before.id, fresh.state) == (True, StageState.FRESH))
-        expect(cleanup_after.input_id == (await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)).id)
+        expect(cleanup_after.input_id == (await head_of(fx_kit, book_id, page, Stage.GEOMETRY)).id)
         assert_expectations()
 
     async def test_stale_earlier_stage_is_run_again_before_the_stage_after_it(self, fx_kit: ProcessingKit) -> None:
@@ -270,13 +269,13 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, strong)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        geometry = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        cleanup = await head_of(fx_kit, book_record.id, page, Stage.CLEANUP)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, strong)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        geometry = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        cleanup = await head_of(fx_kit, book_id, page, Stage.CLEANUP)
         expect(geometry.state is StageState.FRESH)
         expect(cleanup.input_id == geometry.head_version_id)
         assert_expectations()
@@ -289,16 +288,16 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        cleanup_before = await head_of(fx_kit, book_record.id, page, Stage.CLEANUP)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        cleanup_before = await head_of(fx_kit, book_id, page, Stage.CLEANUP)
         failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, failing)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        geometry = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        cleanup = await stage_of(book_record.id, page, Stage.CLEANUP, databases=fx_kit.databases)
-        versions = await stage_versions(book_record.id, page, Stage.CLEANUP, databases=fx_kit.databases)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, failing)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        geometry = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        cleanup = await stage_of(book_id, page, Stage.CLEANUP, databases=fx_kit.databases)
+        versions = await stage_versions(book_id, page, Stage.CLEANUP, databases=fx_kit.databases)
         expect((geometry.state, cleanup.state) == (StageState.FAILED, StageState.FAILED))
         expect((cleanup.head_version_id, versions.total) == (cleanup_before.id, 1))
         assert_expectations()
@@ -311,14 +310,14 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, _ = await fx_kit.seed_scan_page(book_record)
-        base = await fx_kit.seed_base_version(book_record.id, page)
+        actor, book_id = await fx_kit.seed_book()
+        page, _ = await fx_kit.seed_scan_page(book_id)
+        base = await fx_kit.seed_base_version(book_id, page)
         await seed_head(
-            book_record.id, PageStageKey(page.id, Stage.GEOMETRY), after=base, ready=False, databases=fx_kit.databases
+            book_id, PageStageKey(page.id, Stage.GEOMETRY), after=base, ready=False, databases=fx_kit.databases
         )
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        assert (await head_of(fx_kit, book_record.id, page, Stage.CLEANUP)).input_id == base.id
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        assert (await head_of(fx_kit, book_id, page, Stage.CLEANUP)).input_id == base.id
 
     async def test_failing_step_fails_its_version_and_stage_and_the_job_goes_on(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -330,18 +329,18 @@ class TestRunStage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, first = await prepared_page(fx_kit)
-        second, _ = await fx_kit.seed_scan_page(book_record, order_key=SECOND_PAGE_KEY)
-        await fx_kit.seed_base_version(book_record.id, second)
+        actor, book_id, first = await prepared_page(fx_kit)
+        second, _ = await fx_kit.seed_scan_page(book_id, order_key=SECOND_PAGE_KEY)
+        await fx_kit.seed_base_version(book_id, second)
         failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, failing)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, failing)
         job = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_kit.work_queue()
-        versions = await stage_versions(book_record.id, first, Stage.GEOMETRY, databases=fx_open_book.databases)
-        stage = await stage_of(book_record.id, first, Stage.GEOMETRY, databases=fx_open_book.databases)
-        other = await stage_of(book_record.id, second, Stage.GEOMETRY, databases=fx_open_book.databases)
+        versions = await stage_versions(book_id, first, Stage.GEOMETRY, databases=fx_open_book.databases)
+        stage = await stage_of(book_id, first, Stage.GEOMETRY, databases=fx_open_book.databases)
+        other = await stage_of(book_id, second, Stage.GEOMETRY, databases=fx_open_book.databases)
         stored = stored_job(fx_kit, job.id)
         expect(
             [(version.state, version.data) for version in versions.items]
@@ -357,16 +356,16 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        good = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
-        await fx_kit.databases.open(book_record.id).change(
+        actor, book_id, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        good = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
+        await fx_kit.databases.open(book_id).change(
             lambda repos, _book_record: repos.page_versions.update(
                 evolve(good, state=VersionState.FAILED, data={VersionData.ERROR: 'x'})
             ),
         )
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        again = await fx_kit.stored_version(book_record.id, good.id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        again = await fx_kit.stored_version(book_id, good.id)
         expect((again.state, again.data) == (VersionState.READY, {RAN_KEY: 1}))
         assert_expectations()
 
@@ -378,13 +377,11 @@ class TestRunStage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         placeholder = make_page()
-        await fx_open_book.databases.open(book_record.id).change(
-            lambda repos, _book_record: repos.pages.add(placeholder)
-        )
+        await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
         job = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
@@ -396,10 +393,10 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, scan = await fx_kit.seed_scan_page(book_record)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
-        version = await head_of(fx_kit, book_record.id, page, Stage.PAGE_SPLIT)
+        actor, book_id = await fx_kit.seed_book()
+        page, scan = await fx_kit.seed_scan_page(book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.PAGE_SPLIT))
+        version = await head_of(fx_kit, book_id, page, Stage.PAGE_SPLIT)
         expect((version.processor.key, version.input_id) == ('split.none', None))
         expect(version.data == {'width_px': scan.facts.width_px, 'height_px': scan.facts.height_px})
         assert_expectations()
@@ -421,9 +418,9 @@ class TestRunStage:
         :param expected: Format of ``full`` the policy asks for a gray page.
         :type expected: Rendition
         """
-        actor, book_record, page = await prepared_page(fx_kit, image_policy=policy)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        version = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        actor, book_id, page = await prepared_page(fx_kit, image_policy=policy)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        version = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         expect(fx_kit.writer.calls == [(expected, ColorMode.GRAY)])
         expect(version.renditions is not None and version.renditions.full is expected)
         assert_expectations()
@@ -434,15 +431,15 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         twice = RecipeDraft(
             steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})]
         )
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, twice)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        last = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, twice)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        last = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         assert last.input_id is not None
-        first = await fx_kit.stored_version(book_record.id, last.input_id)
+        first = await fx_kit.stored_version(book_id, last.input_id)
         assert (first.tiles_ready, last.tiles_ready) == (False, True)
 
     async def test_step_switched_off_is_not_run(self, fx_kit: ProcessingKit) -> None:
@@ -451,15 +448,15 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         steps = [
             Step(processor_key=FAKE_KEY),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 7}, enabled=False),
         ]
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, RecipeDraft(steps=steps))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        versions = await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        head = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        versions = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        head = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         expect((fx_kit.fake.runs, versions.total) == (1, 1))
         expect(head.params[STRENGTH_PARAMETER] == 1)
         assert_expectations()
@@ -474,9 +471,9 @@ class TestRunStage:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_kit.board.cancel(job.id)
         await fx_kit.work_queue()
@@ -484,7 +481,7 @@ class TestRunStage:
         expect(
             (
                 fx_kit.fake.runs,
-                await found_stage(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases),
+                await found_stage(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases),
             )
             == (0, None)
         )
@@ -496,25 +493,25 @@ class TestRunStage:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        _, book_record, _ = await prepared_page(fx_kit)
-        job = fx_kit.board.put(make_job(book_id=book_record.id, kind=JobKind.RUN_STAGE, params={'stage': 'nowhere'}))
+        _, book_id, _ = await prepared_page(fx_kit)
+        job = fx_kit.board.put(make_job(book_id=book_id, kind=JobKind.RUN_STAGE, params={'stage': 'nowhere'}))
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
         assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
 
 
-async def save_three_steps(kit: ProcessingKit, actor: Actor, book_record: BookRecord) -> None:
+async def save_three_steps(kit: ProcessingKit, actor: Actor, book_id: BookId) -> None:
     """Save a geometry recipe of three steps of the fake processor, which differ by their strength.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Record of the book to save the recipe in.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book to save the recipe in.
+    :type book_id: BookId
     """
     steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in range(1, 4)]
-    await kit.edit_recipe(actor, book_record, Stage.GEOMETRY, RecipeDraft(steps=steps))
+    await kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
 
 
 class TestRunThroughStep:
@@ -526,12 +523,12 @@ class TestRunThroughStep:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_record)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=1))
-        head = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        versions = await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=1))
+        head = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        versions = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         expect((fx_kit.fake.runs, versions.total) == (2, 2))
         expect(head.params[STRENGTH_PARAMETER] == 2)
         expect((record.through_step, record.state) == (1, StageState.FRESH))
@@ -546,14 +543,14 @@ class TestRunThroughStep:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_record)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, book_id)
         calls = []
         for through_step in (0, 1, None):
-            await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=through_step))
+            await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=through_step))
             calls.append(fx_kit.fake.runs)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        versions = await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        versions = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         expect(calls == [1, 2, 3])
         expect(versions.total == 3)
         expect(record.through_step is None)
@@ -565,14 +562,14 @@ class TestRunThroughStep:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         steps = [
             Step(processor_key=FAKE_KEY),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, enabled=False),
         ]
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, RecipeDraft(steps=steps))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=0))
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         assert record.through_step is None
 
     async def test_page_stopped_before_the_last_step_is_run_through_the_rest_before_the_next_stage(
@@ -583,15 +580,15 @@ class TestRunThroughStep:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_record)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=0))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.CLEANUP))
-        geometry = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        cleanup = await head_of(fx_kit, book_record.id, page, Stage.CLEANUP)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
+        geometry = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        cleanup = await head_of(fx_kit, book_id, page, Stage.CLEANUP)
         expect((geometry.through_step, geometry.state) == (None, StageState.FRESH))
         expect(cleanup.input_id == geometry.head_version_id)
-        expect((await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)).params[STRENGTH_PARAMETER] == 3)
+        expect((await head_of(fx_kit, book_id, page, Stage.GEOMETRY)).params[STRENGTH_PARAMETER] == 3)
         # The first geometry step is not computed twice, and the cleanup has a processor of its own
         expect(fx_kit.fake.runs == 3)
         assert_expectations()
@@ -606,18 +603,18 @@ class TestRunThroughStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_record)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=0))
-        first = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        first = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         edit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
         recipe = await fx_kit.parts(fx_kit.uow()).recipes.of_kind(
-            await open_book(fx_kit, book_record.id), Stage.GEOMETRY, RecipeKind.TEXT
+            await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT
         )
         key = PageStepKey(page.id, Stage.GEOMETRY, recipe.steps[-1].step_id)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, edit, None)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        last = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, edit, None)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        last = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         expect(last.edit_hash != '')
         expect(first.id not in {last.id, last.input_id})
         assert_expectations()
@@ -628,12 +625,12 @@ class TestRunThroughStep:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})]
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, RecipeDraft(steps=steps))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=0))
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, through_step=1))
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=1))
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         expect((record.state, record.through_step) == (StageState.FAILED, 0))
         assert_expectations()
 
@@ -650,11 +647,11 @@ class TestRunThroughStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _ = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_record)
+        actor, book_id, _ = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, book_id)
         run = StageRun(stage=Stage.GEOMETRY, through_step=through_step)
         with pytest.raises(ConflictError):
-            await fx_kit.service().start_run(fx_open_book(actor, book_record.id), Stage.GEOMETRY, run)
+            await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
         assert fx_kit.board.put_jobs == []
 
     async def test_run_through_a_step_with_every_step_up_to_it_off_is_refused(
@@ -667,12 +664,12 @@ class TestRunThroughStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _ = await prepared_page(fx_kit)
+        actor, book_id, _ = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY, enabled=False), Step(processor_key=FAKE_KEY)]
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
         with pytest.raises(ConflictError):
             await fx_kit.service().start_run(
-                fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, through_step=0)
+                fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, through_step=0)
             )
 
     async def test_run_through_a_step_is_stored_with_the_job_and_read_back(
@@ -685,10 +682,10 @@ class TestRunThroughStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, _ = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_record)
+        actor, book_id, _ = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, book_id)
         run = StageRun(stage=Stage.GEOMETRY, through_step=1)
-        job = await fx_kit.service().start_run(fx_open_book(actor, book_record.id), Stage.GEOMETRY, run)
+        job = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
         assert StageRun.from_map(job.params) == run
 
 
@@ -705,21 +702,21 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
-        await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+        await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         await fx_kit.work_queue()
-        versions = await fx_open_book.databases.open(book_record.id).read(
+        versions = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING),
         )
         [version] = versions.items
-        async with fx_kit.files.assets(book_record.id).readable(
+        async with fx_kit.files.assets(book_id).readable(
             BookKeys().version_rendition(version, Rendition.PREVIEW)
         ) as file:
             content = file.read_bytes()
-        record = await found_stage(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        record = await found_stage(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
         expect((version.state, fx_kit.fake.previews, fx_kit.fake.runs) == (VersionState.READY, 1, 0))
         expect(content == PREVIEW_TOKEN)
         expect(record is None)
@@ -735,12 +732,12 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
         for _ in range(2):
-            await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+            await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
             await fx_kit.work_queue()
         assert fx_kit.fake.previews == 1
 
@@ -754,12 +751,12 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         first = Step(processor_key=FAKE_KEY)
         for strength in (1, 2):
             steps = (first, Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength + 1}))
             preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
-            await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+            await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
             await fx_kit.work_queue()
         assert fx_kit.fake.previews == 3
 
@@ -773,13 +770,13 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         steps = (
             Step(processor_key=FAKE_KEY),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, enabled=False),
         )
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
-        job = await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+        job = await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
         expect((stored.state, fx_kit.fake.previews) == (JobState.SUCCEEDED, 1))
@@ -795,13 +792,13 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         steps = (
             Step(processor_key=FAKE_KEY, enabled=False),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}),
         )
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0)
-        job = await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+        job = await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
         expect((stored.state, fx_kit.fake.previews) == (JobState.FAILED, 0))
@@ -818,7 +815,7 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
         preview = StepPreview(
             page_id=page.id,
             stage=Stage.GEOMETRY,
@@ -826,7 +823,7 @@ class TestPreviewStep:
             step_index=0,
         )
         with pytest.raises(InvalidParametersError):
-            await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+            await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
 
     async def test_preview_of_a_page_without_an_image_fails_its_job(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -838,15 +835,13 @@ class TestPreviewStep:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         placeholder = make_page()
-        await fx_open_book.databases.open(book_record.id).change(
-            lambda repos, _book_record: repos.pages.add(placeholder)
-        )
+        await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
         preview = StepPreview(
             page_id=placeholder.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
-        job = await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+        job = await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
         assert (stored.state, stored.error) == (JobState.FAILED, 'The page has no image to preview a step on.')
@@ -856,12 +851,12 @@ class SeededPage(NamedTuple):
     """The account, the book and the page a change made while a job runs is made on.
 
     :ivar actor: Account owning the book.
-    :ivar book_record: The record of the book.
+    :ivar book_id: The identifier of the book.
     :ivar page: The page the job runs.
     """
 
     actor: Actor
-    book_record: BookRecord
+    book_id: BookId
     page: Page
 
 
@@ -873,9 +868,7 @@ async def delete_the_page(_kit: ProcessingKit, seeded: SeededPage) -> None:
     :param seeded: The record of the book and the page.
     :type seeded: SeededPage
     """
-    await _kit.databases.open(seeded.book_record.id).change(
-        lambda repos, _book_record: repos.pages.delete(seeded.page.id)
-    )
+    await _kit.databases.open(seeded.book_id).change(lambda repos, _book_record: repos.pages.delete(seeded.page.id))
 
 
 async def set_a_setting_by_hand(kit: ProcessingKit, seeded: SeededPage) -> None:
@@ -886,8 +879,8 @@ async def set_a_setting_by_hand(kit: ProcessingKit, seeded: SeededPage) -> None:
     :param seeded: The account, the record of the book and the page.
     :type seeded: SeededPage
     """
-    key = await kit.edit_key(seeded.book_record.id, seeded.page, Stage.GEOMETRY, FAKE_KEY)
-    await PageValues(kit, seeded.actor, seeded.book_record.id).set(key, STRENGTH_PARAMETER, STRENGTH_BY_HAND)
+    key = await kit.edit_key(seeded.book_id, seeded.page, Stage.GEOMETRY, FAKE_KEY)
+    await PageValues(kit, seeded.actor, seeded.book_id).set(key, STRENGTH_PARAMETER, STRENGTH_BY_HAND)
 
 
 async def replace_the_input(_kit: ProcessingKit, seeded: SeededPage) -> None:
@@ -913,7 +906,7 @@ async def replace_the_input(_kit: ProcessingKit, seeded: SeededPage) -> None:
         repos.page_versions.add(other)
         repos.page_stages.save(evolve(record, head_version_id=other.id))
 
-    await _kit.databases.open(seeded.book_record.id).change(replace)
+    await _kit.databases.open(seeded.book_id).change(replace)
 
 
 async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
@@ -925,10 +918,10 @@ async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
     :type seeded: SeededPage
     """
     kit.clock.moment = EPOCH + timedelta(hours=1)
-    recipe = await kit.recipe_of(seeded.actor, seeded.book_record, Stage.GEOMETRY)
+    recipe = await kit.recipe_of(seeded.actor, seeded.book_id, Stage.GEOMETRY)
     draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: STRENGTH_BY_HAND})])
     await kit.service().save_recipe(
-        open_for(seeded.actor, seeded.book_record.id, databases=kit.databases, files=kit.files),
+        open_for(seeded.actor, seeded.book_id, databases=kit.databases, files=kit.files),
         RecipeKey(Stage.GEOMETRY, recipe.id),
         draft,
     )
@@ -970,12 +963,12 @@ class TestRunApplyStep:
         """
         seeded = SeededPage(*await prepared_page(fx_kit))
         job = await fx_kit.service().start_run(
-            fx_open_book(seeded.actor, seeded.book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(seeded.actor, seeded.book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         change_while_writing(fx_kit, monkeypatch, partial(change, fx_kit, seeded))
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
-        record = await found_stage(seeded.book_record.id, seeded.page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        record = await found_stage(seeded.book_id, seeded.page, Stage.GEOMETRY, databases=fx_open_book.databases)
         expect((stored.state, stored.progress.total, stored.error) == (JobState.SUCCEEDED, 1, ''))
         expect(record is None)
         assert_expectations()
@@ -994,11 +987,11 @@ class TestRunApplyStep:
         """
         seeded = SeededPage(*await prepared_page(fx_kit))
         await fx_kit.service().start_run(
-            fx_open_book(seeded.actor, seeded.book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(seeded.actor, seeded.book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         change_while_writing(fx_kit, monkeypatch, partial(delete_the_page, fx_kit, seeded))
         await fx_kit.work_queue()
-        left = await fx_kit.files.assets(seeded.book_record.id).size_of(BookKeys().page(seeded.page.id))
+        left = await fx_kit.files.assets(seeded.book_id).size_of(BookKeys().page(seeded.page.id))
         assert left == 0
 
     async def test_a_mark_and_a_comment_put_on_the_version_while_it_ran_are_kept(
@@ -1011,26 +1004,26 @@ class TestRunApplyStep:
         :param monkeypatch: Fixture that restores the writer of renditions.
         :type monkeypatch: pytest.MonkeyPatch
         """
-        actor, book_record, page = await prepared_page(fx_kit)
+        actor, book_id, page = await prepared_page(fx_kit)
 
         async def mark_the_running_version() -> None:
             """Mark and comment the version of the stage that is being made, through a unit of work of its own."""
-            listed = await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+            listed = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
             [running] = [version for version in listed.items if version.state is VersionState.RUNNING]
-            await fx_kit.databases.open(book_record.id).change(
+            await fx_kit.databases.open(book_id).change(
                 lambda repos, _book_record: repos.page_versions.update(
                     evolve(running, mark=ResultMark.BAD, comment=COMMENT_BY_HAND)
                 ),
             )
 
         change_while_writing(fx_kit, monkeypatch, mark_the_running_version)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        head = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        head = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         expect((head.state, head.mark, head.comment) == (VersionState.READY, ResultMark.BAD, COMMENT_BY_HAND))
         assert_expectations()
 
 
-async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page], Job]:
+async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page], Job]:
     """Seed a book of three pages and cancel a run of its geometry stage while the step of the third page is under way.
 
     The step is let go after the cancel, so it finishes and stores its version, and the job stops at the boundary of
@@ -1041,20 +1034,20 @@ async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[
     :returns: The actor, the book, the pages in book order, and the job as it was cancelled.
     :rtype: tuple[Actor, BookRecord, list[Page], Job]
     """
-    actor, book_record = await kit.seed_record()
+    actor, book_id = await kit.seed_book()
     pages = []
     for number in range(INTERRUPTED_BOOK_PAGES):
-        page, _ = await kit.seed_scan_page(book_record, order_key=f'a{number}')
-        await kit.seed_base_version(book_record.id, page)
+        page, _ = await kit.seed_scan_page(book_id, order_key=f'a{number}')
+        await kit.seed_base_version(book_id, page)
         pages.append(page)
     job = await kit.service().start_run(
-        open_for(actor, book_record.id, databases=kit.databases, files=kit.files),
+        open_for(actor, book_id, databases=kit.databases, files=kit.files),
         Stage.GEOMETRY,
         StageRun(stage=Stage.GEOMETRY),
     )
     async with steps_held(kit, after=INTERRUPTED_BOOK_PAGES - 1):
         await kit.board.cancel(job.id)
-    return actor, book_record, pages, job
+    return actor, book_id, pages, job
 
 
 class TestCancelledRun:
@@ -1071,13 +1064,9 @@ class TestCancelledRun:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        _, book_record, pages, job = await interrupted_book(fx_kit)
-        records = [
-            await found_stage(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases) for page in pages
-        ]
-        versions = [
-            await stage_versions(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases) for page in pages
-        ]
+        _, book_id, pages, job = await interrupted_book(fx_kit)
+        records = [await found_stage(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases) for page in pages]
+        versions = [await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases) for page in pages]
         expect(stored_job(fx_kit, job.id).state is JobState.CANCELLED)
         expect(
             [None if record is None else record.state for record in records]
@@ -1108,12 +1097,10 @@ class TestRestart:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, pages, interrupted = await interrupted_book(fx_kit)
-        [left] = (
-            await stage_versions(book_record.id, pages[-1], Stage.GEOMETRY, databases=fx_open_book.databases)
-        ).items
+        actor, book_id, pages, interrupted = await interrupted_book(fx_kit)
+        [left] = (await stage_versions(book_id, pages[-1], Stage.GEOMETRY, databases=fx_open_book.databases)).items
         await change_versions(
-            book_record.id,
+            book_id,
             lambda versions: versions.update(
                 evolve(left, state=VersionState.RUNNING, renditions=None, tiles_ready=False)
             ),
@@ -1121,12 +1108,12 @@ class TestRestart:
         )
         restarted = ProcessingKit(fx_kit.database, fx_open_book)
         job = await restarted.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await restarted.work_queue()
         stored = stored_job(restarted, job.id)
-        made_again = await restarted.stored_version(book_record.id, left.id)
-        record = await found_stage(book_record.id, pages[-1], Stage.GEOMETRY, databases=fx_open_book.databases)
+        made_again = await restarted.stored_version(book_id, left.id)
+        record = await found_stage(book_id, pages[-1], Stage.GEOMETRY, databases=fx_open_book.databases)
         with pytest.raises(NotFoundError):
             restarted.board.get(interrupted.id)
         expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 1, 1))
@@ -1152,12 +1139,12 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared_page(fx_kit)
-        await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
-        database = CountingBookDatabase(fx_open_book.databases.open(book_record.id))
-        book = evolve(fx_open_book(actor, book_record.id), database=database)
+        actor, book_id, page = await prepared_page(fx_kit)
+        await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        database = CountingBookDatabase(fx_open_book.databases.open(book_id))
+        book = evolve(fx_open_book(actor, book_id), database=database)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
 
         job = await fx_kit.service().start_run(book, Stage.GEOMETRY, run)
 
-        assert (database.reads, job.book_id) == (1, book_record.id)
+        assert (database.reads, job.book_id) == (1, book_id)

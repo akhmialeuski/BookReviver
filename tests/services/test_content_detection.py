@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -91,7 +91,7 @@ def pages_of(kit: ProcessingKit) -> PageService:
     return make_page_service(kit.stores, (kit.events, kit.clock, kit.board))
 
 
-async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookRecord, list[Page]]:
+async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookId, list[Page]]:
     """Seed a book with a page of each kind, every one with its scan and a ready base version.
 
     :param kit: What the processing services of the test share.
@@ -101,17 +101,17 @@ async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, Boo
     :returns: The actor, the book and its pages.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
-    actor, book_record = await kit.seed_record()
+    actor, book_id = await kit.seed_book()
     pages: list[Page] = []
     for index, kind in enumerate(kinds):
-        page, _ = await kit.seed_scan_page(book_record, order_key=f'a{index}', kind=kind)
-        await kit.seed_base_version(book_record.id, page)
+        page, _ = await kit.seed_scan_page(book_id, order_key=f'a{index}', kind=kind)
+        await kit.seed_base_version(book_id, page)
         pages.append(page)
-    return actor, book_record, pages
+    return actor, book_id, pages
 
 
 async def keep(
-    book_id: BookId, page: Page, content_type: ContentType, *, by_hand: bool = False, databases: BookDatabases
+    book_id: BookId, page: Page, content_type: ContentType, *, by_hand: bool = False, databases: LocatedBookDatabases
 ) -> Page:
     """Write a content type into a stored page, as an earlier detection or the user would have.
 
@@ -124,7 +124,7 @@ async def keep(
     :param by_hand: Whether the user set it.
     :type by_hand: bool
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The page as stored.
     :rtype: Page
     """
@@ -135,15 +135,15 @@ async def keep(
     )
 
 
-async def geometry_records(book_record: BookRecord, pages: list[Page], *, databases: BookDatabases) -> None:
+async def geometry_records(book_id: BookId, pages: list[Page], *, databases: LocatedBookDatabases) -> None:
     """Store a fresh record of the Geometry stage for each of the pages.
 
-    :param book_record: Record of the book owning the pages.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book owning the pages.
+    :type book_id: BookId
     :param pages: Pages that have been through the Geometry stage.
     :type pages: list[Page]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -157,33 +157,31 @@ async def geometry_records(book_record: BookRecord, pages: list[Page], *, databa
         for page in pages:
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
 
-    await databases.open(book_record.id).change(save_records)
+    await databases.open(book_id).change(save_records)
 
 
-async def detect(
-    kit: ProcessingKit, actor: Actor, book_record: BookRecord, page_ids: list[PageId] | None = None
-) -> Job:
+async def detect(kit: ProcessingKit, actor: Actor, book_id: BookId, page_ids: list[PageId] | None = None) -> Job:
     """Ask for the detection and let the board run it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Record of the book whose pages are detected.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book whose pages are detected.
+    :type book_id: BookId
     :param page_ids: The pages to detect, or None for those that are not detected yet.
     :type page_ids: list[PageId] | None
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
     job = await pages_of(kit).start_detection(
-        open_for(actor, book_record.id, databases=kit.databases, files=kit.files), page_ids
+        open_for(actor, book_id, databases=kit.databases, files=kit.files), page_ids
     )
     await kit.work_queue()
     return stored_job(kit, job.id)
 
 
-async def stored(book_id: BookId, page: Page, *, databases: BookDatabases) -> Page:
+async def stored(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> Page:
     """Read a page as committed.
 
     :param book_id: Identifier of the book.
@@ -191,14 +189,14 @@ async def stored(book_id: BookId, page: Page, *, databases: BookDatabases) -> Pa
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The page as the database holds it now.
     :rtype: Page
     """
     return await databases.open(book_id).read(lambda repos: repos.pages.get(page.id))
 
 
-async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabases) -> StageState:
+async def geometry_state(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> StageState:
     """Read the state of the record of the Geometry stage of a page as committed.
 
     :param book_id: Identifier of the book.
@@ -206,7 +204,7 @@ async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabase
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The state of the record.
     :rtype: StageState
     """
@@ -229,11 +227,11 @@ class TestDetectionJob:
         :type fx_databases: BookDatabasesFactory
         """
         kit, probe = fx_probe_kit(list(ANSWERS))
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT, PageKind.TITLE])
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT, PageKind.TITLE])
 
-        job = await detect(kit, actor, book_record)
+        job = await detect(kit, actor, book_id)
 
-        found = [await stored(book_record.id, page, databases=fx_databases()) for page in pages]
+        found = [await stored(book_id, page, databases=fx_databases()) for page in pages]
         expect((job.kind, job.state) == (JobKind.DETECT_CONTENT, JobState.SUCCEEDED))
         expect((job.progress.done, job.progress.total) == (len(pages), len(pages)))
         expect([page.content_type for page in found] == list(ANSWERS))
@@ -254,25 +252,20 @@ class TestDetectionJob:
         """
         kit, probe = fx_probe_kit([ContentType.COLOR_PICTURE])
         kinds = [PageKind.TEXT, PageKind.TEXT, PageKind.TEXT, PageKind.COVER, PageKind.BLANK]
-        actor, book_record, pages = await book_of(kit, kinds)
-        found = await keep(book_record.id, pages[1], ContentType.TEXT, databases=fx_databases())
-        by_hand = await keep(book_record.id, pages[2], ContentType.BW_PICTURE, by_hand=True, databases=fx_databases())
+        actor, book_id, pages = await book_of(kit, kinds)
+        found = await keep(book_id, pages[1], ContentType.TEXT, databases=fx_databases())
+        by_hand = await keep(book_id, pages[2], ContentType.BW_PICTURE, by_hand=True, databases=fx_databases())
         await (
-            fx_databases()
-            .open(book_record.id)
-            .change(lambda repos, _book_record: repos.pages.add(make_page(order_key='a9')))
+            fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(make_page(order_key='a9')))
         )
 
-        await detect(kit, actor, book_record)
+        await detect(kit, actor, book_id)
 
+        expect((await stored(book_id, pages[0], databases=fx_databases())).content_type is ContentType.COLOR_PICTURE)
+        expect(await stored(book_id, pages[1], databases=fx_databases()) == found)
+        expect(await stored(book_id, pages[2], databases=fx_databases()) == by_hand)
         expect(
-            (await stored(book_record.id, pages[0], databases=fx_databases())).content_type is ContentType.COLOR_PICTURE
-        )
-        expect(await stored(book_record.id, pages[1], databases=fx_databases()) == found)
-        expect(await stored(book_record.id, pages[2], databases=fx_databases()) == by_hand)
-        expect(
-            [(await stored(book_record.id, page, databases=fx_databases())).content_type for page in pages[3:]]
-            == [None, None]
+            [(await stored(book_id, page, databases=fx_databases())).content_type for page in pages[3:]] == [None, None]
         )
         expect(probe.reads == 1)
         assert_expectations()
@@ -288,12 +281,12 @@ class TestDetectionJob:
         :type fx_databases: BookDatabasesFactory
         """
         kit, probe = fx_probe_kit([ContentType.TEXT, ContentType.BW_PICTURE])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT, PageKind.COVER, PageKind.TEXT])
-        await keep(book_record.id, pages[0], ContentType.COLOR_PICTURE, by_hand=True, databases=fx_databases())
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT, PageKind.COVER, PageKind.TEXT])
+        await keep(book_id, pages[0], ContentType.COLOR_PICTURE, by_hand=True, databases=fx_databases())
 
-        job = await detect(kit, actor, book_record, [pages[0].id, pages[1].id])
+        job = await detect(kit, actor, book_id, [pages[0].id, pages[1].id])
 
-        first, cover, other = [await stored(book_record.id, page, databases=fx_databases()) for page in pages]
+        first, cover, other = [await stored(book_id, page, databases=fx_databases()) for page in pages]
         expect(job.state is JobState.SUCCEEDED)
         expect((first.content_type, first.content_by_hand) == (ContentType.TEXT, False))
         expect((cover.content_type, cover.content_by_hand) == (ContentType.BW_PICTURE, False))
@@ -312,13 +305,13 @@ class TestDetectionJob:
         :type fx_databases: BookDatabasesFactory
         """
         kit, _ = fx_probe_kit([None, ContentType.BW_PICTURE])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
-        job = await detect(kit, actor, book_record)
+        job = await detect(kit, actor, book_id)
 
         expect(job.state is JobState.SUCCEEDED)
         expect(
-            [(await stored(book_record.id, page, databases=fx_databases())).content_type for page in pages]
+            [(await stored(book_id, page, databases=fx_databases())).content_type for page in pages]
             == [None, ContentType.BW_PICTURE]
         )
         assert_expectations()
@@ -330,9 +323,9 @@ class TestDetectionJob:
         :type fx_probe_kit: ProbeKitFactory
         """
         kit, _ = fx_probe_kit([None, None])
-        actor, book_record, _ = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
+        actor, book_id, _ = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
-        job = await detect(kit, actor, book_record)
+        job = await detect(kit, actor, book_id)
 
         expect(job.state is JobState.FAILED)
         expect('no page' in job.error)
@@ -351,12 +344,12 @@ class TestDetectionJob:
         :type fx_open_book: BookOpener
         """
         kit = ProcessingKit(fx_database, fx_open_book, processors=[SplitNone()])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
 
-        job = await detect(kit, actor, book_record)
+        job = await detect(kit, actor, book_id)
 
         expect(job.state is JobState.SUCCEEDED)
-        expect((await stored(book_record.id, pages[0], databases=kit.databases)).content_type is None)
+        expect((await stored(book_id, pages[0], databases=kit.databases)).content_type is None)
         assert_expectations()
 
     async def test_a_page_without_a_ready_image_is_left_for_the_next_job(
@@ -370,13 +363,13 @@ class TestDetectionJob:
         :type fx_databases: BookDatabasesFactory
         """
         kit, probe = fx_probe_kit([ContentType.TEXT])
-        actor, book_record, _ = await book_of(kit, [PageKind.TEXT])
-        waiting, _ = await kit.seed_scan_page(book_record, order_key='a5')
+        actor, book_id, _ = await book_of(kit, [PageKind.TEXT])
+        waiting, _ = await kit.seed_scan_page(book_id, order_key='a5')
 
-        job = await detect(kit, actor, book_record)
+        job = await detect(kit, actor, book_id)
 
         expect(job.state is JobState.SUCCEEDED)
-        expect((await stored(book_record.id, waiting, databases=fx_databases())).content_type is None)
+        expect((await stored(book_id, waiting, databases=fx_databases())).content_type is None)
         expect(probe.reads == 1)
         assert_expectations()
 
@@ -391,12 +384,12 @@ class TestDetectionJob:
         :type fx_databases: BookDatabasesFactory
         """
         kit, _ = fx_probe_kit([ContentType.BW_PICTURE, ContentType.TEXT])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
-        await geometry_records(book_record, pages, databases=fx_databases())
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
+        await geometry_records(book_id, pages, databases=fx_databases())
 
-        await detect(kit, actor, book_record)
+        await detect(kit, actor, book_id)
 
-        states = [await geometry_state(book_record.id, page, databases=fx_databases()) for page in pages]
+        states = [await geometry_state(book_id, page, databases=fx_databases()) for page in pages]
         assert states == [StageState.STALE, StageState.FRESH]
 
     async def test_a_job_that_was_cancelled_reads_nothing(
@@ -410,14 +403,14 @@ class TestDetectionJob:
         :type fx_open_book: BookOpener
         """
         kit, probe = fx_probe_kit([ContentType.TEXT])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
-        job = await pages_of(kit).start_detection(fx_open_book(actor, book_record.id), None)
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
+        job = await pages_of(kit).start_detection(fx_open_book(actor, book_id), None)
         await kit.board.cancel(job.id)
 
         await kit.work_queue()
 
         expect(probe.reads == 0)
-        expect((await stored(book_record.id, pages[0], databases=fx_open_book.databases)).content_type is None)
+        expect((await stored(book_id, pages[0], databases=fx_open_book.databases)).content_type is None)
         assert_expectations()
 
 
@@ -435,9 +428,9 @@ class TestStartDetection:
         :type fx_open_book: BookOpener
         """
         kit, _ = fx_probe_kit([])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
-        job = await pages_of(kit).start_detection(fx_open_book(actor, book_record.id), [pages[1].id])
+        job = await pages_of(kit).start_detection(fx_open_book(actor, book_id), [pages[1].id])
 
         expect((job.kind, job.state) == (JobKind.DETECT_CONTENT, JobState.QUEUED))
         expect(ContentDetection.from_map(job.params) == ContentDetection(page_ids=(pages[1].id,)))
@@ -455,10 +448,10 @@ class TestStartDetection:
         :type fx_open_book: BookOpener
         """
         kit, _ = fx_probe_kit([])
-        actor, book_record, _ = await book_of(kit, [PageKind.TEXT])
+        actor, book_id, _ = await book_of(kit, [PageKind.TEXT])
 
         with pytest.raises(NotFoundError):
-            await pages_of(kit).start_detection(fx_open_book(actor, book_record.id), [PageId(uuid4())])
+            await pages_of(kit).start_detection(fx_open_book(actor, book_id), [PageId(uuid4())])
 
         expect(not kit.board.put_jobs)
         assert_expectations()
@@ -474,11 +467,11 @@ class TestStartDetection:
         :type fx_open_book: BookOpener
         """
         kit, _ = fx_probe_kit([])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
-        await pages_of(kit).start_detection(fx_open_book(actor, book_record.id), None)
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
+        await pages_of(kit).start_detection(fx_open_book(actor, book_id), None)
 
         with pytest.raises(ConflictError, match='being detected'):
-            await pages_of(kit).start_detection(fx_open_book(actor, book_record.id), [pages[0].id])
+            await pages_of(kit).start_detection(fx_open_book(actor, book_id), [pages[0].id])
 
     async def test_the_detection_of_new_pages_is_queued_once_while_one_waits(
         self, fx_probe_kit: ProbeKitFactory
@@ -489,10 +482,10 @@ class TestStartDetection:
         :type fx_probe_kit: ProbeKitFactory
         """
         kit, _ = fx_probe_kit([])
-        _, book_record, _ = await book_of(kit, [PageKind.TEXT])
+        _, book_id, _ = await book_of(kit, [PageKind.TEXT])
 
-        pages_of(kit).detect_new_pages(book_record.id)
-        pages_of(kit).detect_new_pages(book_record.id)
+        pages_of(kit).detect_new_pages(book_id)
+        pages_of(kit).detect_new_pages(book_id)
 
         [job] = kit.board.put_jobs
         expect(job.kind is JobKind.DETECT_CONTENT)
@@ -514,16 +507,16 @@ class TestChangeOfContent:
         :type fx_open_book: BookOpener
         """
         kit, _ = fx_probe_kit([])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
-        await geometry_records(book_record, pages, databases=fx_open_book.databases)
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
+        await geometry_records(book_id, pages, databases=fx_open_book.databases)
 
         overview = await pages_of(kit).update(
-            fx_open_book(actor, book_record.id), pages[0].id, PageChanges(content_type=ContentType.COLOR_PICTURE)
+            fx_open_book(actor, book_id), pages[0].id, PageChanges(content_type=ContentType.COLOR_PICTURE)
         )
 
         expect((overview.page.content_type, overview.page.content_by_hand) == (ContentType.COLOR_PICTURE, True))
         expect(overview.page.content_source is ContentSource.HAND)
-        expect(await geometry_state(book_record.id, pages[0], databases=fx_open_book.databases) is StageState.STALE)
+        expect(await geometry_state(book_id, pages[0], databases=fx_open_book.databases) is StageState.STALE)
         assert_expectations()
 
     async def test_a_type_that_changes_nothing_for_the_steps_leaves_the_stages_up_to_date(
@@ -537,17 +530,17 @@ class TestChangeOfContent:
         :type fx_open_book: BookOpener
         """
         kit, _ = fx_probe_kit([])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
-        await geometry_records(book_record, pages, databases=fx_open_book.databases)
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
+        await geometry_records(book_id, pages, databases=fx_open_book.databases)
 
         await pages_of(kit).update(
-            fx_open_book(actor, book_record.id), pages[0].id, PageChanges(content_type=ContentType.TEXT)
+            fx_open_book(actor, book_id), pages[0].id, PageChanges(content_type=ContentType.TEXT)
         )
 
-        assert await geometry_state(book_record.id, pages[0], databases=fx_open_book.databases) is StageState.FRESH
+        assert await geometry_state(book_id, pages[0], databases=fx_open_book.databases) is StageState.FRESH
 
 
-async def delete_the_page(book_id: BookId, page: Page, databases: BookDatabases) -> None:
+async def delete_the_page(book_id: BookId, page: Page, databases: LocatedBookDatabases) -> None:
     """Delete a page in a change of its own, as a request of the user would while a job reads it.
 
     :param book_id: Identifier of the book.
@@ -555,12 +548,12 @@ async def delete_the_page(book_id: BookId, page: Page, databases: BookDatabases)
     :param page: Page to delete.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(page.id))
 
 
-async def set_the_type_by_hand(book_id: BookId, page: Page, databases: BookDatabases) -> None:
+async def set_the_type_by_hand(book_id: BookId, page: Page, databases: LocatedBookDatabases) -> None:
     """Set a content type by hand, as the user would while a job reads the page.
 
     :param book_id: Identifier of the book.
@@ -568,12 +561,12 @@ async def set_the_type_by_hand(book_id: BookId, page: Page, databases: BookDatab
     :param page: Page to change.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await keep(book_id, page, ContentType.BW_PICTURE, by_hand=True, databases=databases)
 
 
-async def detect_the_same_type(book_id: BookId, page: Page, databases: BookDatabases) -> None:
+async def detect_the_same_type(book_id: BookId, page: Page, databases: LocatedBookDatabases) -> None:
     """Store the type the probe is going to find, as another job that read the page first would.
 
     :param book_id: Identifier of the book.
@@ -581,7 +574,7 @@ async def detect_the_same_type(book_id: BookId, page: Page, databases: BookDatab
     :param page: Page to change.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await keep(book_id, page, ContentType.TEXT, databases=databases)
 
@@ -622,7 +615,7 @@ class TestApplyStep:
         :type kept_source: ContentSource | None
         """
         kit, _ = fx_probe_kit([ContentType.TEXT])
-        actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
+        actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
         probe = ContentDetector._probe
 
         async def probe_then_change(self: ContentDetector, book: Book, base: PageVersion) -> ContentType:
@@ -638,18 +631,18 @@ class TestApplyStep:
             :rtype: ContentType
             """
             found = await probe(self, book, base)
-            await change(book_record.id, pages[0], kit.databases)
+            await change(book_id, pages[0], kit.databases)
             return found
 
         monkeypatch.setattr(ContentDetector, '_probe', probe_then_change)
 
-        job = await detect(kit, actor, book_record)
+        job = await detect(kit, actor, book_id)
 
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
         if kept_type is None:
             with pytest.raises(NotFoundError):
-                await stored(book_record.id, pages[0], databases=kit.databases)
+                await stored(book_id, pages[0], databases=kit.databases)
         else:
-            after = await stored(book_record.id, pages[0], databases=kit.databases)
+            after = await stored(book_id, pages[0], databases=kit.databases)
             expect((after.content_type, after.content_source) == (kept_type, kept_source))
         assert_expectations()

@@ -28,8 +28,9 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -47,11 +48,11 @@ SAME_PAGE: str = str(uuid4())
 class Book(NamedTuple):
     """A book of three pages of the signed-in account: two of text, the second with a picture found on it, and a plate.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The pages in book order.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[BookPage]
 
     def page_path(self, index: int) -> str:
@@ -62,12 +63,12 @@ class Book(NamedTuple):
         :returns: The path of the page resource.
         :rtype: str
         """
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}'
+        return f'{BOOKS_PATH}/{self.book_id}/pages/{self.pages[index].id}'
 
     @property
     def detect_path(self) -> str:
         """The path of the detection of the content of pages."""
-        return f'{BOOKS_PATH}/{self.book_record.id}{DETECT_SUFFIX}'
+        return f'{BOOKS_PATH}/{self.book_id}{DETECT_SUFFIX}'
 
 
 @pytest.fixture
@@ -105,12 +106,11 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [evolve(make_page(order_key=key), kind=kind) for key, kind in zip(keys, LAYOUT, strict=True)]
     pages[1] = evolve(pages[1], content_type=FOUND)
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_databases())
-    return Book(book_record=book_record, pages=pages)
+    book_id = await store_book(fx_uow(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases())
+    return Book(book_id=book_id, pages=pages)
 
 
 async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema:
@@ -141,7 +141,7 @@ class TestPageContent:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pages')
+        response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/pages')
 
         pages = Page[PageSchema].model_validate_json(response.content).items
         expect(response.status_code == status.HTTP_200_OK)
@@ -247,7 +247,7 @@ class TestDetectContent:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        queued = fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.DETECT_CONTENT))
+        queued = fx_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.DETECT_CONTENT))
 
         response = await fx_client.post(fx_book.detect_path, json={})
 
@@ -297,12 +297,13 @@ class TestDetectContent:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        stranger = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id(), databases=fx_databases())
+        stranger_id = await commit_record(
+            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
 
         missing = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(uuid4())]})
-        foreign = await fx_client.post(f'{BOOKS_PATH}/{stranger.id}{DETECT_SUFFIX}', json={})
+        foreign = await fx_client.post(f'{BOOKS_PATH}/{stranger_id}{DETECT_SUFFIX}', json={})
         borrowed = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(page.id)]})
 
         expect(missing.status_code == status.HTTP_404_NOT_FOUND)

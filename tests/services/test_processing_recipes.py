@@ -29,9 +29,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, Recipe
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabase, BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookDatabase, BookRepositories
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -70,37 +71,35 @@ HOUGH: str = 'hough'
 PAGE_EDGES: str = 'page-edges'
 
 
-async def recipes_of(
-    kit: ProcessingKit, actor: Actor, book_record: BookRecord, stage: Stage
-) -> dict[RecipeKind, Recipe]:
+async def recipes_of(kit: ProcessingKit, actor: Actor, book_id: BookId, stage: Stage) -> dict[RecipeKind, Recipe]:
     """Read the recipes of a stage, by the kind of page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Record of the book whose recipes are read.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book whose recipes are read.
+    :type book_id: BookId
     :param stage: The stage.
     :type stage: Stage
     :returns: The recipe of each kind.
     :rtype: dict[RecipeKind, Recipe]
     """
     listed = await kit.service().recipes(
-        open_for(actor, book_record.id, databases=kit.databases, files=kit.files), stage, EVERYTHING
+        open_for(actor, book_id, databases=kit.databases, files=kit.files), stage, EVERYTHING
     )
     return {recipe.kind: recipe for recipe in listed.items}
 
 
-async def save_stage_records(book_record: BookRecord, *records: PageStage, databases: BookDatabases) -> None:
+async def save_stage_records(book_id: BookId, *records: PageStage, databases: LocatedBookDatabases) -> None:
     """Store records of the Geometry stage, as earlier runs of the pages would have.
 
-    :param book_record: Record of the book owning the pages of the records.
-    :type book_record: BookRecord
+    :param book_id: Identifier of the book owning the pages of the records.
+    :type book_id: BookId
     :param records: The records to store.
     :type records: PageStage
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def save(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -114,10 +113,10 @@ async def save_stage_records(book_record: BookRecord, *records: PageStage, datab
         for record in records:
             repos.page_stages.save(record)
 
-    await databases.open(book_record.id).change(save)
+    await databases.open(book_id).change(save)
 
 
-async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabases) -> StageState:
+async def geometry_state(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> StageState:
     """Read the state of the record of the Geometry stage of a page as committed.
 
     :param book_id: Identifier of the book.
@@ -125,7 +124,7 @@ async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabase
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The state of the record.
     :rtype: StageState
     """
@@ -144,8 +143,8 @@ class TestRecipes:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record = await fx_kit.seed_record()
-        recipes = await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY)
+        actor, book_id = await fx_kit.seed_book()
+        recipes = await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY)
         expect(list(recipes) == list(RecipeKind))
         expect(
             all(
@@ -167,8 +166,8 @@ class TestRecipes:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record = await fx_cv_kit.seed_record()
-        recipe = (await recipes_of(fx_cv_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = (await recipes_of(fx_cv_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         methods = {step.processor_key: step.params.get(METHOD_PARAMETER) for step in recipe.steps}
         expect([step.processor_key for step in recipe.steps] == list(GEOMETRY_STEPS))
         expect(all(step.enabled for step in recipe.steps))
@@ -184,8 +183,8 @@ class TestRecipes:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record = await fx_cv_kit.seed_record()
-        recipes = await recipes_of(fx_cv_kit, actor, book_record, Stage.GEOMETRY)
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipes = await recipes_of(fx_cv_kit, actor, book_id, Stage.GEOMETRY)
         methods = {
             kind: (
                 {step.processor_key: step.params.get(METHOD_PARAMETER) for step in recipe.steps}[DESKEW_KEY],
@@ -211,8 +210,8 @@ class TestRecipes:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, book_record = await fx_cv_kit.seed_record()
-        recipes = await recipes_of(fx_cv_kit, actor, book_record, Stage.CLEANUP)
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipes = await recipes_of(fx_cv_kit, actor, book_id, Stage.CLEANUP)
         text, picture = recipes[RecipeKind.TEXT], recipes[RecipeKind.BW_PICTURE]
         expect([step.processor_key for step in text.steps] == list(TEXT_CLEANUP_STEPS))
         expect(
@@ -233,17 +232,17 @@ class TestRecipes:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        _actor, book_record = await fx_cv_kit.seed_record()
+        _actor, book_id = await fx_cv_kit.seed_book()
         pages = []
         for index, kind in enumerate((PageKind.TEXT, PageKind.PLATE, PageKind.FRONTISPIECE)):
-            page, _ = await fx_cv_kit.seed_scan_page(book_record, order_key=f'a{index}', kind=kind)
+            page, _ = await fx_cv_kit.seed_scan_page(book_id, order_key=f'a{index}', kind=kind)
             pages.append(page)
         reader = fx_cv_kit.uow()
-        stored_pages = await fx_cv_kit.databases.open(book_record.id).read(
+        stored_pages = await fx_cv_kit.databases.open(book_id).read(
             lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
         picked = await fx_cv_kit.parts(reader).recipes.for_pages(
-            await open_book(fx_cv_kit, book_record.id), Stage.CLEANUP, stored_pages
+            await open_book(fx_cv_kit, book_id), Stage.CLEANUP, stored_pages
         )
         assert [picked[page.id].kind for page in pages] == [
             RecipeKind.TEXT,
@@ -257,9 +256,9 @@ class TestRecipes:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record = await fx_kit.seed_record()
-        first = await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY)
-        again = await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY)
+        actor, book_id = await fx_kit.seed_book()
+        first = await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY)
+        again = await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY)
         assert first == again
 
     @pytest.mark.parametrize(
@@ -292,14 +291,14 @@ class TestRecipes:
         :param listed: Parameters the list is expected to give.
         :type listed: dict[str, object]
         """
-        actor, book_record = await fx_kit.seed_record()
-        text = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
-        await fx_kit.databases.open(book_record.id).change(
+        actor, book_id = await fx_kit.seed_book()
+        text = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
+        await fx_kit.databases.open(book_id).change(
             lambda repos, _book_record: repos.recipes.update(
                 evolve(text, steps=(evolve(text.steps[0], params=stored),))
             ),
         )
-        again = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        again = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         assert [dict(step.params) for step in again.steps] == [listed]
 
     async def test_stage_without_a_recipe_by_default_is_not_found(
@@ -312,9 +311,9 @@ class TestRecipes:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         with pytest.raises(NotFoundError):
-            await fx_kit.service().recipes(fx_open_book(actor, book_record.id), Stage.IMPORT, EVERYTHING)
+            await fx_kit.service().recipes(fx_open_book(actor, book_id), Stage.IMPORT, EVERYTHING)
 
 
 class TestSaveRecipe:
@@ -330,11 +329,11 @@ class TestSaveRecipe:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        text = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        actor, book_id = await fx_kit.seed_book()
+        text = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 5})])
         saved = await fx_kit.service().save_recipe(
-            fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, text.id), draft
+            fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, text.id), draft
         )
         expect((saved.id, saved.kind) == (text.id, RecipeKind.TEXT))
         expect(dict(saved.steps[0].params) == {STRENGTH_PARAMETER: 5, FAILING_PARAMETER: False})
@@ -365,11 +364,11 @@ class TestSaveRecipe:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        text = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        actor, book_id = await fx_kit.seed_book()
+        text = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         with pytest.raises(InvalidParametersError, match=match):
             await fx_kit.service().save_recipe(
-                fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, text.id), RecipeDraft(steps=steps)
+                fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, text.id), RecipeDraft(steps=steps)
             )
 
     async def test_pages_the_recipe_processed_are_marked_stale_and_nothing_is_run(
@@ -382,18 +381,16 @@ class TestSaveRecipe:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, _ = await fx_kit.seed_scan_page(book_record)
-        await fx_kit.seed_base_version(book_record.id, page)
-        recipe = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        actor, book_id = await fx_kit.seed_book()
+        page, _ = await fx_kit.seed_scan_page(book_id)
+        await fx_kit.seed_base_version(book_id, page)
+        recipe = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         await save_stage_records(
-            book_record, make_page_stage(page_id=page.id, recipe_id=recipe.id), databases=fx_open_book.databases
+            book_id, make_page_stage(page_id=page.id, recipe_id=recipe.id), databases=fx_open_book.databases
         )
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.service().save_recipe(
-            fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), draft
-        )
-        expect(await geometry_state(book_record.id, page, databases=fx_open_book.databases) is StageState.STALE)
+        await fx_kit.service().save_recipe(fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, recipe.id), draft)
+        expect(await geometry_state(book_id, page, databases=fx_open_book.databases) is StageState.STALE)
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
 
@@ -407,23 +404,21 @@ class TestSaveRecipe:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        first, _ = await fx_kit.seed_scan_page(book_record, order_key='a0')
-        second, _ = await fx_kit.seed_scan_page(book_record, order_key='a1')
-        recipes = await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY)
+        actor, book_id = await fx_kit.seed_book()
+        first, _ = await fx_kit.seed_scan_page(book_id, order_key='a0')
+        second, _ = await fx_kit.seed_scan_page(book_id, order_key='a1')
+        recipes = await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY)
         await save_stage_records(
-            book_record,
+            book_id,
             make_page_stage(page_id=first.id, recipe_id=recipes[RecipeKind.TEXT].id),
             make_page_stage(page_id=second.id, recipe_id=recipes[RecipeKind.BW_PICTURE].id),
             databases=fx_open_book.databases,
         )
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         await fx_kit.service().save_recipe(
-            fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
+            fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
         )
-        states = [
-            await geometry_state(book_record.id, page, databases=fx_open_book.databases) for page in (first, second)
-        ]
+        states = [await geometry_state(book_id, page, databases=fx_open_book.databases) for page in (first, second)]
         assert states == [StageState.STALE, StageState.FRESH]
 
     async def test_switching_a_step_off_keeps_its_parameters_and_marks_the_pages_stale(
@@ -436,23 +431,23 @@ class TestSaveRecipe:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, _ = await fx_kit.seed_scan_page(book_record)
-        await fx_kit.seed_base_version(book_record.id, page)
-        recipe = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        actor, book_id = await fx_kit.seed_book()
+        page, _ = await fx_kit.seed_scan_page(book_id)
+        await fx_kit.seed_base_version(book_id, page)
+        recipe = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         await save_stage_records(
-            book_record, make_page_stage(page_id=page.id, recipe_id=recipe.id), databases=fx_open_book.databases
+            book_id, make_page_stage(page_id=page.id, recipe_id=recipe.id), databases=fx_open_book.databases
         )
         steps = [
             Step(processor_key=FAKE_KEY),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9}, enabled=False),
         ]
         await fx_kit.service().save_recipe(
-            fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
+            fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
         )
-        stored = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        stored = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         expect([(step.enabled, step.params[STRENGTH_PARAMETER]) for step in stored.steps] == [(True, 1), (False, 9)])
-        expect(await geometry_state(book_record.id, page, databases=fx_open_book.databases) is StageState.STALE)
+        expect(await geometry_state(book_id, page, databases=fx_open_book.databases) is StageState.STALE)
         assert_expectations()
 
     async def test_recipe_of_another_stage_is_not_found_and_stays_as_it_was(
@@ -465,15 +460,15 @@ class TestSaveRecipe:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        recipe = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
+        actor, book_id = await fx_kit.seed_book()
+        recipe = (await recipes_of(fx_kit, actor, book_id, Stage.GEOMETRY))[RecipeKind.TEXT]
         hijacked = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         with pytest.raises(NotFoundError):
             await fx_kit.service().save_recipe(
-                fx_open_book(actor, book_record.id), RecipeKey(Stage.CLEANUP, recipe.id), hijacked
+                fx_open_book(actor, book_id), RecipeKey(Stage.CLEANUP, recipe.id), hijacked
             )
         assert (
-            await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.recipes.get(recipe.id))
+            await fx_open_book.databases.open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
         ).steps == recipe.steps
 
 
@@ -490,10 +485,10 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, _ = await fx_kit.seed_scan_page(book_record)
+        actor, book_id = await fx_kit.seed_book()
+        page, _ = await fx_kit.seed_scan_page(book_id)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
-        job = await fx_kit.service().start_run(fx_open_book(actor, book_record.id), Stage.GEOMETRY, run)
+        job = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
         held = fx_kit.board.get(job.id)
         expect((held.kind, held.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
         expect(StageRun.from_map(held.params) == run)
@@ -510,14 +505,10 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-        )
+        actor, book_id = await fx_kit.seed_book()
+        await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_run(
-                fx_open_book(actor, book_record.id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP)
-            )
+            await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
 
     async def test_preview_and_collection_are_refused_while_a_run_is_active(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -529,18 +520,16 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        page, _ = await fx_kit.seed_scan_page(book_record)
-        await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-        )
+        actor, book_id = await fx_kit.seed_book()
+        page, _ = await fx_kit.seed_scan_page(book_id)
+        await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
+            await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_collection(fx_open_book(actor, book_record.id))
+            await fx_kit.service().start_collection(fx_open_book(actor, book_id))
 
     async def test_run_waits_while_a_collection_is_active(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -552,10 +541,10 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        collection = await fx_kit.service().start_collection(fx_open_book(actor, book_record.id))
+        actor, book_id = await fx_kit.seed_book()
+        collection = await fx_kit.service().start_collection(fx_open_book(actor, book_id))
         run = await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         expect(run.state is JobState.QUEUED)
         expect(fx_kit.board.put_jobs == [collection, run])
@@ -571,12 +560,10 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        await fx_kit.service().start_run(
-            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-        )
+        actor, book_id = await fx_kit.seed_book()
+        await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         starter = fx_kit.parts(fx_kit.uow()).starter
-        expect(await starter.enqueue_collection(book_record.id) is None)
+        expect(await starter.enqueue_collection(book_id) is None)
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE])
         assert_expectations()
 
@@ -588,10 +575,10 @@ class TestStartRun:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
-        run = StageRun(stage=Stage.GEOMETRY, page_ids=(PageId(book_record.id),))
+        actor, book_id = await fx_kit.seed_book()
+        run = StageRun(stage=Stage.GEOMETRY, page_ids=(PageId(book_id),))
         with pytest.raises(NotFoundError):
-            await fx_kit.service().start_run(fx_open_book(actor, book_record.id), Stage.GEOMETRY, run)
+            await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
 
 
 class ReadGate:
@@ -665,8 +652,8 @@ class TestDefaultRecipesInChanges:
         :param monkeypatch: Fixture that restores the units of work and the repository.
         :type monkeypatch: pytest.MonkeyPatch
         """
-        _, book_record = await fx_kit.seed_record()
-        books = [await open_book(fx_kit, book_record.id) for _ in range(TASKS)]
+        _, book_id = await fx_kit.seed_book()
+        books = [await open_book(fx_kit, book_id) for _ in range(TASKS)]
         gate = ReadGate(parties=TASKS)
         for book in books:
             gate.watch(book.database, monkeypatch)
@@ -700,9 +687,7 @@ class TestDefaultRecipesInChanges:
         async with anyio.create_task_group() as tasks:
             for book in books:
                 tasks.start_soon(ask, book)
-        stored = await fx_kit.databases.open(book_record.id).read(
-            lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY)
-        )
+        stored = await fx_kit.databases.open(book_id).read(lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
         expect(gate.reads == TASKS)
         expect(stored_sets == [len(RecipeKind)])
         expect(len(stored) == len(RecipeKind))

@@ -71,12 +71,11 @@ class TestPlaceService:
         :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
-        book_record = make_record()
-        await commit_record(
-            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
         places = _service(fx_clock)
-        assert await places.find(fx_open_book(actor, book_record.id)) is None
+        assert await places.find(fx_open_book(actor, book_id)) is None
 
     async def test_save_stores_the_place_with_the_time_of_the_write(
         self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_open_book: BookOpener
@@ -93,13 +92,12 @@ class TestPlaceService:
         :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
-        book_record = make_record()
-        await commit_record(
-            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
         new = _place()
-        saved = await _service(fx_clock).save(fx_open_book(actor, book_record.id), new)
-        found = await _service(fx_clock).find(fx_open_book(actor, book_record.id))
+        saved = await _service(fx_clock).save(fx_open_book(actor, book_id), new)
+        found = await _service(fx_clock).find(fx_open_book(actor, book_id))
         assert found == saved
         assert (found.updated_at, found.canvas, found.page_id) == (fx_clock.now(), new.canvas, new.page_id)
 
@@ -118,15 +116,14 @@ class TestPlaceService:
         :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
-        book_record = make_record()
-        await commit_record(
-            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
-        await _service(fx_clock).save(fx_open_book(actor, book_record.id), _place())
+        await _service(fx_clock).save(fx_open_book(actor, book_id), _place())
         fx_clock.moment += MOVE
         later = NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
-        await _service(fx_clock).save(fx_open_book(actor, book_record.id), later)
-        found = await _service(fx_clock).find(fx_open_book(actor, book_record.id))
+        await _service(fx_clock).save(fx_open_book(actor, book_id), later)
+        found = await _service(fx_clock).find(fx_open_book(actor, book_id))
         assert found is not None
         assert (found.mode, found.stage, found.canvas, found.updated_at) == (
             PlaceMode.READING,
@@ -150,17 +147,16 @@ class TestPlaceService:
         :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
-        book_record = make_record()
-        await commit_record(
-            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
         older_request = _service(fx_clock)
         newer_request = _service(fx_clock)
         fx_clock.moment += MOVE
         newer = await newer_request.save(
-            fx_open_book(actor, book_record.id), NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
+            fx_open_book(actor, book_id), NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
         )
         fx_clock.moment -= MOVE
-        answered = await older_request.save(fx_open_book(actor, book_record.id), _place())
-        found = await _service(fx_clock).find(fx_open_book(actor, book_record.id))
+        answered = await older_request.save(fx_open_book(actor, book_id), _place())
+        found = await _service(fx_clock).find(fx_open_book(actor, book_id))
         assert (answered, found) == (newer, newer)

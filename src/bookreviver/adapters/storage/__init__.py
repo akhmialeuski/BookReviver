@@ -1,5 +1,10 @@
-"""Storage adapters of the source and asset ports."""
+"""Storage adapters: the local directory tree of the books under the storage root."""
 
-from bookreviver.adapters.storage.local import LocalAssetStore, LocalBookArchive, LocalBookFileStores, LocalSourceStore
+from bookreviver.adapters.storage.local import (
+    LocalAssetStore,
+    LocalBookDirectories,
+    LocalBookDirectory,
+    LocalSourceStore,
+)
 
-__all__ = ['LocalAssetStore', 'LocalBookArchive', 'LocalBookFileStores', 'LocalSourceStore']
+__all__ = ['LocalAssetStore', 'LocalBookDirectories', 'LocalBookDirectory', 'LocalSourceStore']

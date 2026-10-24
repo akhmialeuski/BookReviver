@@ -21,10 +21,11 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, PageVersion
+    from bookreviver.domain.entities import Actor, PageVersion
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
-    from tests.helpers.storage import SharedBookFileStores
+    from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 
@@ -46,19 +47,19 @@ class Book(NamedTuple):
     placeholder without a version, and the page with the key ``a1`` is kept out of the book and has a base version
     whose images are not cut yet.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The pages in the order they were stored.
     :ivar versions: The base versions of the first and the last page.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[BookPage]
     versions: list[PageVersion]
 
     @property
     def path(self) -> str:
         """The path of the book's page manifest."""
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages'
+        return f'{BOOKS_PATH}/{self.book_id}/pages'
 
 
 @pytest.fixture
@@ -74,7 +75,6 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     source = make_source()
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
@@ -84,9 +84,9 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
         evolve(make_page_version(page_id=pages[0].id), renditions=Renditions(ready=True)),
         make_page_version(page_id=pages[2].id),
     ]
-    await store_book(
+    book_id = await store_book(
         fx_uow(),
-        book_record,
+        make_record(),
         *pages,
         owner=fx_actor.account_id,
         sources=[source],
@@ -94,7 +94,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
         versions=versions,
         databases=fx_databases(),
     )
-    return Book(book_record, pages, versions)
+    return Book(book_id, pages, versions)
 
 
 async def _list_pages(client: httpx.AsyncClient, path: str, **params: int) -> httpx.Response:
@@ -154,7 +154,7 @@ class TestListPages:
         assert_expectations()
 
     async def test_image_paths_have_no_scheme_or_host_and_lead_to_the_files(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_file_stores: SharedBookFileStores
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_directories: SharedBookDirectories
     ) -> None:
         """Verify every image address is a path of the IIIF route, and the thumbnail path serves the stored file.
 
@@ -162,12 +162,12 @@ class TestListPages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         """
         keys = BookKeys()
         version = fx_book.versions[0]
-        async with fx_file_stores.assets(fx_book.book_record.id).writable(
+        async with fx_directories.assets(fx_book.book_id).writable(
             keys.version_rendition(version, Rendition.THUMBNAIL)
         ) as path:
             path.write_bytes(THUMBNAIL_CONTENT)
@@ -177,9 +177,9 @@ class TestListPages:
         assert images is not None
         addresses = [images.full, images.preview, images.thumbnail, images.iiif_info]
         served = await fx_client.get(images.thumbnail)
-        expect(all(address.startswith(f'{IIIF_PATH}/{fx_book.book_record.id}/assets/') for address in addresses))
+        expect(all(address.startswith(f'{IIIF_PATH}/{fx_book.book_id}/assets/') for address in addresses))
         tiles = keys.version_rendition(version, Rendition.TILES)
-        expect(images.iiif_info == f'{IIIF_PATH}/{fx_book.book_record.id}/{tiles}/info.json')
+        expect(images.iiif_info == f'{IIIF_PATH}/{fx_book.book_id}/{tiles}/info.json')
         expect(served.content == THUMBNAIL_CONTENT)
         assert_expectations()
 
@@ -208,18 +208,22 @@ class TestListPages:
         :type fx_databases: BookDatabasesFactory
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
-        book_record = evolve(make_record(), image_policy=policy)
         page = make_page()
         version = evolve(make_page_version(page_id=page.id), renditions=Renditions(ready=True, full=full))
-        await store_book(
-            fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[version], databases=fx_databases()
+        book_id = await store_book(
+            fx_uow(),
+            evolve(make_record(), image_policy=policy),
+            page,
+            owner=fx_actor.account_id,
+            versions=[version],
+            databases=fx_databases(),
         )
 
-        response = await _list_pages(fx_client, f'{BOOKS_PATH}/{book_record.id}/pages')
+        response = await _list_pages(fx_client, f'{BOOKS_PATH}/{book_id}/pages')
 
         images = Page[PageSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        expected = f'{IIIF_PATH}/{book_record.id}/{BookKeys().version_rendition(version, full)}'
+        expected = f'{IIIF_PATH}/{book_id}/{BookKeys().version_rendition(version, full)}'
         assert images.full == expected
 
     async def test_pages_through_the_book_with_positions_of_the_whole_book(
@@ -278,12 +282,11 @@ class TestListPages:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await commit_record(
-            fx_database, fx_uow(), book_record, make_page(), owner=new_account_id(), databases=fx_databases()
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), make_page(), owner=new_account_id(), databases=fx_databases()
         )
 
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/pages')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}/pages')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -350,9 +353,8 @@ class TestGetPage:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        other = make_record()
         foreign = make_page()
-        await store_book(fx_uow(), other, foreign, owner=fx_actor.account_id, databases=fx_databases())
+        await store_book(fx_uow(), make_record(), foreign, owner=fx_actor.account_id, databases=fx_databases())
 
         responses = [await fx_client.get(f'{fx_book.path}/{page_id}') for page_id in (uuid4(), foreign.id)]
 
@@ -376,10 +378,11 @@ class TestGetPage:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id(), databases=fx_databases())
+        book_id = await commit_record(
+            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
 
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/pages/{page.id}')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}/pages/{page.id}')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND

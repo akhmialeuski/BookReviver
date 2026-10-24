@@ -1,17 +1,16 @@
 """Tests for the start of the application: it begins no job, and removes what no job or request can use any more."""
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalBookFileStores
+from bookreviver.adapters.storage import LocalBookDirectories
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId, JobId, SourceId
-from tests.helpers.builders import make_record
+from tests.helpers.builders import directory_of
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
-from tests.helpers.seeding import store_book
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -20,8 +19,6 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Actor, BookRecord
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -38,11 +35,11 @@ class Uploads:
     :ivar kept: The book and the source whose files an earlier import had promoted.
     """
 
-    def __init__(self, stores: LocalBookFileStores) -> None:
+    def __init__(self, stores: LocalBookDirectories) -> None:
         """Start with nothing on disk.
 
         :param stores: Opens the source store of a book over the storage root.
-        :type stores: LocalBookFileStores
+        :type stores: LocalBookDirectories
         """
         self.stores = stores
         self.interrupted: list[tuple[BookId, JobId]] = []
@@ -52,11 +49,15 @@ class Uploads:
         """Stage an upload in each of two books, and promote the files of a source in a third."""
         for _ in range(2):
             book_id, job_id = BookId(uuid4()), JobId(uuid4())
-            await self.stores.sources(book_id).stage(job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+            await self.stores.directory(directory_of(book_id)).sources.stage(
+                job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+            )
             self.interrupted.append((book_id, job_id))
         book_id, job_id, source_id = BookId(uuid4()), JobId(uuid4()), SourceId(uuid4())
-        await self.stores.sources(book_id).stage(job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-        await self.stores.sources(book_id).promote(job_id, source_id, names=[PROMOTED_NAME])
+        await self.stores.directory(directory_of(book_id)).sources.stage(
+            job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+        )
+        await self.stores.directory(directory_of(book_id)).sources.promote(job_id, source_id, names=[PROMOTED_NAME])
         self.kept = (book_id, source_id)
 
 
@@ -79,56 +80,23 @@ async def fx_uploads(fx_settings: Settings) -> Uploads:
     :returns: The uploads left on disk.
     :rtype: Uploads
     """
-    uploads = Uploads(LocalBookFileStores(root=fx_settings.storage_root))
+    uploads = Uploads(LocalBookDirectories(root=fx_settings.storage_root))
     await uploads.leave()
     return uploads
 
 
-class HalfWay(NamedTuple):
-    """The books a creation and a deletion left broken off half way.
-
-    :ivar created: A book that has a store and no entry in the library.
-    :ivar deleted: A book that has an entry in the library and no store.
-    """
-
-    created: BookRecord
-    deleted: BookRecord
-
-
 @pytest.fixture
-async def fx_half_way(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> HalfWay:
-    """Leave a creation and a deletion broken off half way before the application starts.
-
-    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
-    :param fx_actor: Account that owns the book of the deletion.
-    :type fx_actor: Actor
-    :param fx_databases: Function opening a new opener of the databases of the books of the test.
-    :type fx_databases: BookDatabasesFactory
-    :returns: The two books.
-    :rtype: HalfWay
-    """
-    created, deleted = make_record(), make_record()
-    await fx_uow().create_book(created)
-    await store_book(fx_uow(), deleted, owner=fx_actor.account_id, databases=fx_databases())
-    await fx_uow().delete_book(deleted.id)
-    return HalfWay(created=created, deleted=deleted)
-
-
-@pytest.fixture
-def fx_extra_providers(fx_fakes: JobFakes, fx_uploads: Uploads, fx_half_way: HalfWay) -> Sequence[Provider]:
-    """Give the application the fakes and the fake board, once the uploads and the broken books are in place.
+def fx_extra_providers(fx_fakes: JobFakes, fx_uploads: Uploads) -> Sequence[Provider]:
+    """Give the application the fakes and the fake board, once the uploads are in place.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
     :param fx_uploads: The uploads left on disk, which the fixture is ordered after.
     :type fx_uploads: Uploads
-    :param fx_half_way: The books left broken off half way, which the fixture is ordered after.
-    :type fx_half_way: HalfWay
     :returns: The providers of the fakes and of the board.
     :rtype: Sequence[Provider]
     """
-    del fx_uploads, fx_half_way
+    del fx_uploads
     return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
 
 
@@ -147,35 +115,16 @@ class TestStart:
         gone: list[bool] = []
         for book_id, job_id in fx_uploads.interrupted:
             try:
-                async with fx_uploads.stores.sources(book_id).staged_files(job_id):
+                async with fx_uploads.stores.directory(directory_of(book_id)).sources.staged_files(job_id):
                     gone.append(False)
             except NotFoundError:
                 gone.append(True)
         assert fx_uploads.kept is not None
         kept_book, kept_source = fx_uploads.kept
-        async with fx_uploads.stores.sources(kept_book).source_files(kept_source) as files:
+        async with fx_uploads.stores.directory(directory_of(kept_book)).sources.source_files(kept_source) as files:
             kept = [file.name for file in files]
         expect(gone == [True, True])
         expect(kept == [PROMOTED_NAME])
-        assert_expectations()
-
-    @pytest.mark.usefixtures('fx_app')
-    async def test_finishes_the_creation_and_the_deletion_that_were_broken_off(
-        self, fx_uow: UnitOfWorkFactory, fx_half_way: HalfWay
-    ) -> None:
-        """Verify the book without an entry loses its store, and the entry without a book loses its entry.
-
-        The running application is only started, and no request is made, so the sweep can only come from the start.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_half_way: The books left broken off half way before the start.
-        :type fx_half_way: HalfWay
-        """
-        stored = await fx_uow().stored_books()
-        entries = await fx_uow().read(lambda repos: repos.library.list_all())
-        expect(fx_half_way.created.id not in stored)
-        expect(fx_half_way.deleted.id not in {entry.book_id for entry in entries})
         assert_expectations()
 
     @pytest.mark.usefixtures('fx_app')

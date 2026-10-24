@@ -72,12 +72,13 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, RecipeProfile, Scan
     from bookreviver.domain.ids import BookId, JobId, PageVersionId
     from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, PageVersionRepository, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, PageVersionRepository, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
 
 IMAGE_CONTENT: bytes = b'image'
 PREVIEW_RETENTION_HOURS: int = 24
@@ -202,14 +203,14 @@ class ProcessingKit:
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
     async def recipe_of(
-        self, actor: Actor, book_record: BookRecord, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
+        self, actor: Actor, book_id: BookId, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
     ) -> Recipe:
         """Read the recipe of one kind of a stage of a book, which the first read creates with the others.
 
         :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Record of the book whose recipe is read.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book whose recipe is read.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page, text unless given.
@@ -218,7 +219,7 @@ class ProcessingKit:
         :rtype: Recipe
         """
         listed = await self.service().recipes(
-            open_for(actor, book_record.id, databases=self.databases, files=self.files),
+            open_for(actor, book_id, databases=self.databases, files=self.files),
             stage,
             SliceRequest(limit=len(RecipeKind)),
         )
@@ -227,7 +228,7 @@ class ProcessingKit:
     async def edit_recipe(
         self,
         actor: Actor,
-        book_record: BookRecord,
+        book_id: BookId,
         stage: Stage,
         draft: RecipeDraft,
         kind: RecipeKind = RecipeKind.TEXT,
@@ -236,8 +237,8 @@ class ProcessingKit:
 
         :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Record of the book whose recipe is changed.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book whose recipe is changed.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param draft: The new steps.
@@ -247,9 +248,9 @@ class ProcessingKit:
         :returns: The recipe as stored.
         :rtype: Recipe
         """
-        recipe = await self.recipe_of(actor, book_record, stage, kind)
+        recipe = await self.recipe_of(actor, book_id, stage, kind)
         return await self.service().save_recipe(
-            open_for(actor, book_record.id, databases=self.databases, files=self.files),
+            open_for(actor, book_id, databases=self.databases, files=self.files),
             RecipeKey(stage, recipe.id),
             draft,
         )
@@ -375,22 +376,23 @@ class ProcessingKit:
         """
         return self._new_uow()
 
-    async def seed_record(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookRecord]:
+    async def seed_book(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookId]:
         """Commit a new account and a book owned by it.
 
         :param image_policy: Image policy of the book.
         :type image_policy: ImagePolicy
-        :returns: The actor owning the book, and the record of the book.
-        :rtype: tuple[Actor, BookRecord]
+        :returns: The actor owning the book, and the identifier of the book.
+        :rtype: tuple[Actor, BookId]
         """
         owner = await commit_account(self.database)
-        book_record = evolve(make_record(), image_policy=image_policy)
-        await store_book(self.uow(), book_record, owner=owner, databases=self.databases)
-        return Actor(account_id=owner), book_record
+        book_id = await store_book(
+            self.uow(), evolve(make_record(), image_policy=image_policy), owner=owner, databases=self.databases
+        )
+        return Actor(account_id=owner), book_id
 
     async def seed_scan_page(
         self,
-        book_record: BookRecord,
+        book_id: BookId,
         *,
         order_key: str = 'a0',
         image: bytes = IMAGE_CONTENT,
@@ -398,8 +400,8 @@ class ProcessingKit:
     ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
-        :param book_record: Record of the book owning the page.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book owning the page.
+        :type book_id: BookId
         :param order_key: Order key of the page.
         :type order_key: str
         :param image: Content of the ``full`` and the preview image of the scan.
@@ -425,10 +427,10 @@ class ProcessingKit:
             repos.scans.add(scan)
             repos.pages.add(page)
 
-        await self.databases.open(book_record.id).change(add_scan_page)
+        await self.databases.open(book_id).change(add_scan_page)
         keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-            async with self.files.assets(book_record.id).writable(keys.scan_rendition(scan, rendition)) as target:
+            async with self.files.assets(book_id).writable(keys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
         return page, scan
 
@@ -547,7 +549,7 @@ async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
 
 
 async def change_versions(
-    book_id: BookId, work: Callable[[PageVersionRepository], object], *, databases: BookDatabases
+    book_id: BookId, work: Callable[[PageVersionRepository], object], *, databases: LocatedBookDatabases
 ) -> None:
     """Change the versions of a book in a change of its own, as another request would.
 
@@ -556,12 +558,14 @@ async def change_versions(
     :param work: What is done to the version repository of the change.
     :type work: Callable[[PageVersionRepository], object]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(lambda repos, _book_record: work(repos.page_versions))
 
 
-async def found_version(book_id: BookId, version_id: PageVersionId, *, databases: BookDatabases) -> PageVersion | None:
+async def found_version(
+    book_id: BookId, version_id: PageVersionId, *, databases: LocatedBookDatabases
+) -> PageVersion | None:
     """Read a version as committed, which is None for a version that the book does not hold.
 
     :param book_id: Book that is read.
@@ -569,14 +573,16 @@ async def found_version(book_id: BookId, version_id: PageVersionId, *, databases
     :param version_id: Identifier of the version.
     :type version_id: PageVersionId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The version, or None.
     :rtype: PageVersion | None
     """
     return await databases.open(book_id).read(lambda repos: repos.page_versions.find(version_id))
 
 
-async def found_stage(book_id: BookId, page: Page, stage: Stage, *, databases: BookDatabases) -> PageStage | None:
+async def found_stage(
+    book_id: BookId, page: Page, stage: Stage, *, databases: LocatedBookDatabases
+) -> PageStage | None:
     """Read the record of a stage of a page as committed, which is None for a stage that has not run on the page.
 
     :param book_id: Identifier of the book of the page.
@@ -586,7 +592,7 @@ async def found_stage(book_id: BookId, page: Page, stage: Stage, *, databases: B
     :param stage: The stage.
     :type stage: Stage
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The record, or None.
     :rtype: PageStage | None
     """
@@ -594,7 +600,7 @@ async def found_stage(book_id: BookId, page: Page, stage: Stage, *, databases: B
 
 
 async def stage_versions(
-    book_id: BookId, page: Page, stage: Stage | None, *, databases: BookDatabases
+    book_id: BookId, page: Page, stage: Stage | None, *, databases: LocatedBookDatabases
 ) -> Slice[PageVersion]:
     """Read the versions a page has made in a stage or in all, as committed, the earliest first.
 
@@ -605,7 +611,7 @@ async def stage_versions(
     :param stage: The stage, or None for every stage.
     :type stage: Stage | None
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The versions of every scale and mark, and their number.
     :rtype: Slice[PageVersion]
     """

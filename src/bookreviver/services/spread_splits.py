@@ -592,4 +592,4 @@ class SpreadSplit:
         """
         for version, earlier in zip(made, basis.stored, strict=False):
             if earlier is None or earlier.state is not VersionState.READY:
-                await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=version))
+                await self._publisher.publish(PageVersionReady(book_id=self._book.id, version=version))

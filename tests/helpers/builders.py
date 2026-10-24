@@ -2,14 +2,12 @@
 
 import hashlib
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from attrs import frozen
 
 from bookreviver.adapters.events.broadcast import InProcessEventBus
-from bookreviver.adapters.storage import LocalBookArchive
 from bookreviver.domain.entities import (
     BookPlace,
     BookRecord,
@@ -57,6 +55,7 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
+    BookDirectoryName,
     BookId,
     JobId,
     PageHistoryEntryId,
@@ -81,8 +80,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import BookDatabases
-    from bookreviver.ports.storage import BookFileStores
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.ports.storage import BookDirectories
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookDirectories
 from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
     BookDetails,
@@ -96,8 +96,6 @@ from bookreviver.domain.values import (
 )
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
-# A storage root no test reads, for the stores a test has to give and never uses
-UNUSED_ROOT: Path = Path('unused-storage-root')
 # Largest number of undelivered events each subscriber of a test's event bus keeps
 EVENT_QUEUE_SIZE: int = 16
 # A description with every field filled in, in the shape of a pre-reform Belarusian edition
@@ -162,23 +160,38 @@ def new_account_id() -> AccountId:
     return AccountId(uuid4())
 
 
+def new_book_id() -> BookId:
+    """Return a fresh book identifier.
+
+    :returns: Random identifier of a book that exists nowhere else.
+    :rtype: BookId
+    """
+    return BookId(uuid4())
+
+
+def directory_of(book_id: BookId) -> BookDirectoryName:
+    """Name the directory of a book of a test as the books service names a new one, by the text of its identifier.
+
+    :param book_id: The book.
+    :type book_id: BookId
+    :returns: The name of the directory of the book.
+    :rtype: BookDirectoryName
+    """
+    return BookDirectoryName(str(book_id))
+
+
 def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
-    """Build a book updated ``minutes`` after the epoch.
+    """Build the record of a book updated ``minutes`` after the epoch.
 
     :param title: Title of the book.
     :type title: str
     :param minutes: Minutes after ``EPOCH`` the book was created and last updated.
     :type minutes: int
-    :returns: A book with a fresh identifier and no source.
+    :returns: The record of a book with no source.
     :rtype: BookRecord
     """
     moment = EPOCH + timedelta(minutes=minutes)
-    return BookRecord(
-        id=BookId(uuid4()),
-        details=BookDetails(title=title),
-        created_at=moment,
-        updated_at=moment,
-    )
+    return BookRecord(details=BookDetails(title=title), created_at=moment, updated_at=moment)
 
 
 @frozen
@@ -190,12 +203,12 @@ class BookOpener:
 
     :ivar uow: Function opening a new unit of work over the catalogue and the books of the test.
     :ivar databases: Opens the databases of the books of the test.
-    :ivar files: Opens the source store and the asset store of a book of the test.
+    :ivar files: The directories of the books of the test, with their source stores and asset stores.
     """
 
     uow: UnitOfWorkFactory
-    databases: BookDatabases
-    files: BookFileStores
+    databases: LocatedBookDatabases
+    files: SharedBookDirectories
 
     def __call__(self, actor: Actor, book_id: BookId) -> Book:
         """Open a book for the actor, without reading the library.
@@ -210,26 +223,26 @@ class BookOpener:
         return open_for(actor, book_id, databases=self.databases, files=self.files)
 
 
-def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: BookFileStores) -> Book:
+def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: BookDirectories) -> Book:
     """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
 
     :param actor: Account the book is opened for, which the test made its owner.
     :type actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
-    :param databases: Opens the database of the book.
+    :param databases: Opens the database of the book from its file.
     :type databases: BookDatabases
-    :param files: Opens the source store and the asset store of the book.
-    :type files: BookFileStores
+    :param files: The directories of the books, which hold the directory of the book.
+    :type files: BookDirectories
     :returns: The open book, with the tools of ``make_book_tools``.
     :rtype: Book
     """
+    directory = files.directory(directory_of(book_id))
     return Book(
         book_id,
         actor.account_id,
-        database=databases.open(book_id),
-        sources=files.sources(book_id),
-        assets=files.assets(book_id),
+        database=databases.open(book_id, directory.database),
+        directory=directory,
         tools=make_book_tools(),
     )
 
@@ -239,8 +252,7 @@ def make_book_tools() -> BookTools:
 
     A test of the progress or the stages of a book builds its own, with the processors and the board it needs.
 
-    :returns: Stage sums over an empty catalogue and an empty board, a clock stopped at ``EPOCH``, and an archive over
-              a storage root no test reads.
+    :returns: Stage sums over an empty catalogue and an empty board, and a clock stopped at ``EPOCH``.
     :rtype: BookTools
     """
     clock = FixedClock(EPOCH)
@@ -248,7 +260,6 @@ def make_book_tools() -> BookTools:
     return BookTools(
         stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
         clock=clock,
-        archive=LocalBookArchive(root=UNUSED_ROOT),
     )
 
 

@@ -2,7 +2,8 @@
 
 Every entity is identified by a random UUID the domain assigns, except a page version. A version is identified by a
 hash of what produced it, so equal work gets the same identifier and finds its cached result, and that identifier is a
-string of hexadecimal digits.
+string of hexadecimal digits. The directory of a book is named by the library entry of the book, which keeps the name
+the storage made the directory under.
 """
 
 from typing import NewType
@@ -22,3 +23,4 @@ StepId = NewType('StepId', UUID)
 PageHistoryEntryId = NewType('PageHistoryEntryId', UUID)
 ChangeBatchId = NewType('ChangeBatchId', UUID)
 StorageKey = NewType('StorageKey', str)
+BookDirectoryName = NewType('BookDirectoryName', str)

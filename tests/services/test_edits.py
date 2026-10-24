@@ -19,7 +19,8 @@ from tests.helpers.spreads import run_stage, stage_of
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.ids import BookId
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
@@ -32,7 +33,7 @@ MASK_CONTENT: bytes = b'mask-bytes' * 1000
 MASK_NAME: str = 'mask.png'
 
 
-async def prepared(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page]:
+async def prepared(kit: ProcessingKit) -> tuple[Actor, BookId, Page]:
     """Seed a book with a scan page whose geometry stage has been run once, which an edit makes stale.
 
     :param kit: What the processing services of the test share.
@@ -40,11 +41,11 @@ async def prepared(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page]:
     :returns: The actor, the book and the page.
     :rtype: tuple[Actor, BookRecord, Page]
     """
-    actor, book_record = await kit.seed_record()
-    page, _ = await kit.seed_scan_page(book_record)
-    await kit.seed_base_version(book_record.id, page)
-    await run_stage(kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-    return actor, book_record, page
+    actor, book_id = await kit.seed_book()
+    page, _ = await kit.seed_scan_page(book_id)
+    await kit.seed_base_version(book_id, page)
+    await run_stage(kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+    return actor, book_id, page
 
 
 class TestSave:
@@ -60,12 +61,12 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
+        actor, book_id, page = await prepared(fx_kit)
         runs = fx_kit.fake.runs
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        stored = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
-        listed = await fx_kit.edits().list(fx_open_book(actor, book_record.id), page.id, Stage.GEOMETRY)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        stored = await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
+        listed = await fx_kit.edits().list(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
         expect(listed == [stored])
         expect(stored.edit_hash == stored.edit_hash.lower() and len(stored.edit_hash) == 16)
         expect(record.state is StageState.STALE)
@@ -82,8 +83,8 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
 
         async def rerun() -> str:
             """Run the geometry stage again and return the identifier of its current version.
@@ -91,15 +92,15 @@ class TestSave:
             :returns: The identifier of the version the stage record names.
             :rtype: str
             """
-            await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-            record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+            await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+            record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
             assert record.head_version_id is not None
             return record.head_version_id
 
         before = await rerun()
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
         edited = await rerun()
-        await fx_kit.edits().delete(fx_open_book(actor, book_record.id), key)
+        await fx_kit.edits().delete(fx_open_book(actor, book_id), key)
         back = await rerun()
         expect((before != edited, back == before) == (True, True))
         assert_expectations()
@@ -112,12 +113,12 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
         second = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=-2))
-        replaced = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, second, None)
-        assert await fx_kit.edits().list(fx_open_book(actor, book_record.id), page.id, Stage.GEOMETRY) == [replaced]
+        replaced = await fx_kit.edits().save(fx_open_book(actor, book_id), key, second, None)
+        assert await fx_kit.edits().list(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY) == [replaced]
 
     @pytest.mark.parametrize(
         ('key_stage', 'processor', 'edit', 'match'),
@@ -154,11 +155,11 @@ class TestSave:
         :param match: Text the error says.
         :type match: str
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, key_stage, processor)
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, key_stage, processor)
         with pytest.raises(InvalidParametersError, match=match):
             await fx_kit.edits().save(
-                open_for(actor, book_record.id, databases=fx_kit.databases, files=fx_kit.files), key, edit, None
+                open_for(actor, book_id, databases=fx_kit.databases, files=fx_kit.files), key, edit, None
             )
 
     async def test_edit_of_a_step_that_no_recipe_of_the_stage_has_is_not_found(
@@ -171,11 +172,11 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        geometry_key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
+        actor, book_id, page = await prepared(fx_kit)
+        geometry_key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
         for key in (PageStepKey(page.id, Stage.GEOMETRY, StepId(uuid4())), evolve(geometry_key, stage=Stage.CLEANUP)):
             with pytest.raises(NotFoundError):
-                await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
+                await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
 
     async def test_two_steps_of_one_processor_keep_their_own_edits(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -187,14 +188,14 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
+        actor, book_id, page = await prepared(fx_kit)
         first, second = Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)
         twice = RecipeDraft(steps=[first, second])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, twice)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, twice)
         key = PageStepKey(page.id, Stage.GEOMETRY, first.step_id)
-        saved = await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
-        listed = await fx_kit.edits().list(fx_open_book(actor, book_record.id), page.id, Stage.GEOMETRY)
-        found = await fx_open_book.databases.open(book_record.id).read(
+        saved = await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
+        listed = await fx_kit.edits().list(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY)
+        found = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_step_states.find(PageStepKey(page.id, Stage.GEOMETRY, second.step_id)),
         )
         expect(listed == [saved])
@@ -211,19 +212,19 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.CLEANUP, ERASER_KEY)
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
         stored = await fx_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
+            fx_open_book(actor, book_id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
         )
         assert stored.mask_key is not None
-        async with fx_kit.files.assets(book_record.id).readable(stored.mask_key) as mask:
+        async with fx_kit.files.assets(book_id).readable(stored.mask_key) as mask:
             content = mask.read_bytes()
         directory = BookKeys().page_edit(page.id, key.step_id, stored.edit_hash)
         expect(content == MASK_CONTENT)
         expect(stored.mask_key == f'{directory}/{Rendition.MASK}')
-        async with fx_kit.files.assets(book_record.id).readable(BookKeys().page_edits(page.id, key.step_id)) as folder:
+        async with fx_kit.files.assets(book_id).readable(BookKeys().page_edits(page.id, key.step_id)) as folder:
             expect(sorted(entry.name for entry in folder.iterdir()) == [stored.edit_hash])
         assert_expectations()
 
@@ -237,16 +238,16 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.CLEANUP, ERASER_KEY)
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.CLEANUP, ERASER_KEY)
         strokes = BrushStrokes(strokes=(Stroke(radius=9, points=(Point(x=3, y=4),)),))
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=strokes)
         stored = await fx_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
+            fx_open_book(actor, book_id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
         )
         other = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=BrushStrokes())
         changed = await fx_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, other, upload(MASK_NAME, content=MASK_CONTENT)
+            fx_open_book(actor, book_id), key, other, upload(MASK_NAME, content=MASK_CONTENT)
         )
         expect(stored.geometry == strokes)
         expect(stored.mask_key is not None)
@@ -263,14 +264,14 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.CLEANUP, ERASER_KEY)
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
         first = await fx_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
+            fx_open_book(actor, book_id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
         )
         second = await fx_kit.edits().save(
-            fx_open_book(actor, book_record.id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
+            fx_open_book(actor, book_id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
         )
         assert first.edit_hash == second.edit_hash
 
@@ -282,12 +283,12 @@ class TestSave:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        _, other_record = await fx_kit.seed_record()
+        actor, book_id, page = await prepared(fx_kit)
+        _, other_record = await fx_kit.seed_book()
         foreign, _ = await fx_kit.seed_scan_page(other_record)
-        key = evolve(await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY), page_id=foreign.id)
+        key = evolve(await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY), page_id=foreign.id)
         with pytest.raises(NotFoundError):
-            await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
+            await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
 
 
 class TestDelete:
@@ -303,18 +304,18 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY)
-        await fx_kit.edits().save(fx_open_book(actor, book_record.id), key, ROTATION, None)
-        await fx_open_book.databases.open(book_record.id).change(
+        actor, book_id, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
+        await fx_kit.edits().save(fx_open_book(actor, book_id), key, ROTATION, None)
+        await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.page_stages.save(make_page_stage(page_id=page.id))
         )
-        await fx_kit.edits().delete(fx_open_book(actor, book_record.id), key)
-        record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
-        expect(await fx_kit.edits().list(fx_open_book(actor, book_record.id), page.id, Stage.GEOMETRY) == [])
+        await fx_kit.edits().delete(fx_open_book(actor, book_id), key)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        expect(await fx_kit.edits().list(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY) == [])
         expect(record.state is StageState.STALE)
         with pytest.raises(NotFoundError):
-            await fx_kit.edits().delete(fx_open_book(actor, book_record.id), key)
+            await fx_kit.edits().delete(fx_open_book(actor, book_id), key)
         assert_expectations()
 
 

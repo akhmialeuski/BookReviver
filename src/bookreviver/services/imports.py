@@ -695,7 +695,7 @@ class ImportService:
             raise
 
     async def run_import(self, job: Job, control: JobControl) -> JobEnd:
-        """Run an import job the board took from its queue, and remove its upload however it ends.
+        """Run an import job the board took from its queue, and remove its upload however it ends while its book exists.
 
         The import is one task. A cancellation stores every file the run did not reach as a skipped source and goes
         on as ``JobCancelledError``. An import that took in at least one source succeeds and queues the split of its
@@ -712,7 +712,7 @@ class ImportService:
         try:
             book = await self._books.open(job.book_id)
         except NotFoundError as error:
-            await self._books.discard_upload(job.book_id, job.id)
+            # The deletion of the book removed the upload with its directory, and the start removes a later one
             return JobEnd(state=JobState.FAILED, error=str(error))
         run = ImportRun(
             running=RunningImport(job=job, control=control), book=book, imaging=self._imaging, runtime=self._runtime
