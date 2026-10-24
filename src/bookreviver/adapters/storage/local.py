@@ -570,10 +570,15 @@ class LocalBookDirectories(_LocalTree, BookDirectories):
         :raises ConflictError: If the directory holds a database already.
         """
         directory = self.directory(name)
+        target = anyio.Path(directory.database)
+        await target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            await anyio.to_thread.run_sync(_copy_new, blank, directory.database)
+            # The exclusive mode refuses a database that exists, which a check before the write could not
+            copy = await anyio.open_file(target, 'xb')
         except FileExistsError as error:
             raise ConflictError(name) from error
+        async with copy:
+            await copy.write(await anyio.Path(blank).read_bytes())
         return directory
 
     @override
@@ -642,20 +647,6 @@ class LocalBookDirectories(_LocalTree, BookDirectories):
             except BaseException:
                 shutil.rmtree(book, ignore_errors=True)
                 raise
-
-
-def _copy_new(blank: Path, target: Path) -> None:
-    """Copy the blank database file to the place of the database of a new book, refusing to replace one that exists.
-
-    :param blank: The blank file.
-    :type blank: Path
-    :param target: The place of the database of the new book.
-    :type target: Path
-    :raises FileExistsError: If a file exists at ``target``.
-    """
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with blank.open('rb') as source, target.open('xb') as copy:
-        shutil.copyfileobj(source, copy)
 
 
 def _list_files(directory: Path) -> dict[str, Path]:
