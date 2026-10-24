@@ -101,13 +101,11 @@ def make_page_service(
               renditions write token files.
     :rtype: PageService
     """
-    publisher, clock, board = runtime
+    publisher, _clock, board = runtime
     tiler = FakeTiler()
     return PageService(
         books=make_books_service(stores.uow(), databases=stores.databases, files=stores.files),
-        runtime=PageRuntime(
-            publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board
-        ),
+        runtime=PageRuntime(publisher=publisher, order_keys=order_keys or FractionalOrderKeys(), board=board),
         imaging=PageImaging(
             base_versions=BaseVersions(tiler=tiler),
             runner=StepRunner(

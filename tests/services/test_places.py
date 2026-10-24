@@ -25,15 +25,13 @@ pytestmark = pytest.mark.anyio
 MOVE: timedelta = timedelta(minutes=5)
 
 
-def _service(clock: FixedClock) -> PlaceService:
+def _service() -> PlaceService:
     """Build the place service for one request.
 
-    :param clock: Clock stamping the places.
-    :type clock: FixedClock
     :returns: The service over a new unit of work.
     :rtype: PlaceService
     """
-    return PlaceService(clock=clock)
+    return PlaceService()
 
 
 def _place(stage: Stage = Stage.GEOMETRY) -> NewBookPlace:
@@ -57,7 +55,7 @@ class TestPlaceService:
     """Tests for the place service."""
 
     async def test_a_book_not_worked_on_has_no_place(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_open_book: BookOpener
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_open_book: BookOpener
     ) -> None:
         """Verify the place of a new book is none.
 
@@ -65,8 +63,6 @@ class TestPlaceService:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_clock: Clock stopped at the epoch.
-        :type fx_clock: FixedClock
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -74,7 +70,7 @@ class TestPlaceService:
         book_id = await commit_record(
             fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
-        places = _service(fx_clock)
+        places = _service()
         assert await places.find(fx_open_book(actor, book_id)) is None
 
     async def test_save_stores_the_place_with_the_time_of_the_write(
@@ -96,8 +92,8 @@ class TestPlaceService:
             fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
         new = _place()
-        saved = await _service(fx_clock).save(fx_open_book(actor, book_id), new)
-        found = await _service(fx_clock).find(fx_open_book(actor, book_id))
+        saved = await _service().save(fx_open_book(actor, book_id), new)
+        found = await _service().find(fx_open_book(actor, book_id))
         assert found == saved
         assert (found.updated_at, found.canvas, found.page_id) == (fx_clock.now(), new.canvas, new.page_id)
 
@@ -119,11 +115,11 @@ class TestPlaceService:
         book_id = await commit_record(
             fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
-        await _service(fx_clock).save(fx_open_book(actor, book_id), _place())
+        await _service().save(fx_open_book(actor, book_id), _place())
         fx_clock.moment += MOVE
         later = NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
-        await _service(fx_clock).save(fx_open_book(actor, book_id), later)
-        found = await _service(fx_clock).find(fx_open_book(actor, book_id))
+        await _service().save(fx_open_book(actor, book_id), later)
+        found = await _service().find(fx_open_book(actor, book_id))
         assert found is not None
         assert (found.mode, found.stage, found.canvas, found.updated_at) == (
             PlaceMode.READING,
@@ -150,13 +146,13 @@ class TestPlaceService:
         book_id = await commit_record(
             fx_database, fx_uow(), make_record(), owner=actor.account_id, databases=fx_open_book.databases
         )
-        older_request = _service(fx_clock)
-        newer_request = _service(fx_clock)
+        older_request = _service()
+        newer_request = _service()
         fx_clock.moment += MOVE
         newer = await newer_request.save(
             fx_open_book(actor, book_id), NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
         )
         fx_clock.moment -= MOVE
         answered = await older_request.save(fx_open_book(actor, book_id), _place())
-        found = await _service(fx_clock).find(fx_open_book(actor, book_id))
+        found = await _service().find(fx_open_book(actor, book_id))
         assert (answered, found) == (newer, newer)

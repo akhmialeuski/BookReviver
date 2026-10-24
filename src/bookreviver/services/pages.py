@@ -42,6 +42,7 @@ record of the page, so the page split and the page order stage read like any oth
 
 import logging
 import statistics
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
@@ -87,7 +88,6 @@ from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
-    from datetime import datetime
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import BookRecord, PageVersion
@@ -95,7 +95,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard, JobControl
+    from bookreviver.ports.runtime import EventPublisher, JobBoard, JobControl
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
@@ -129,13 +129,11 @@ class PageRuntime:
     """What a page use case reports through and orders by.
 
     :ivar publisher: Publisher of the events the browser follows.
-    :ivar clock: Clock stamping the pages a use case changes.
     :ivar order_keys: Builder of the order keys of moved and new pages.
     :ivar board: Board the ``prepare-pages`` and ``detect-content`` jobs are put on.
     """
 
     publisher: EventPublisher
-    clock: Clock
     order_keys: OrderKeys
     board: JobBoard
 
@@ -172,7 +170,7 @@ class PageService:
         :param books: Books service of the request or job, which opens the book a job runs on and the books of the
                       library the passes of the start go over.
         :type books: BooksService
-        :param runtime: The publisher, the clock, the order keys and the job board.
+        :param runtime: The publisher, the order keys and the job board.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
@@ -180,7 +178,6 @@ class PageService:
         self._books = books
         self._order_keys = runtime.order_keys
         self._publisher = runtime.publisher
-        self._clock = runtime.clock
         self._board = runtime.board
         self._base_versions = imaging.base_versions
         self._runner = imaging.runner
@@ -272,7 +269,7 @@ class PageService:
             """
             before = repos.pages.get(page_id)
             page = changes.apply_to(before)
-            changed = repos.pages.update(evolve(page, updated_at=self._clock.now()))
+            changed = repos.pages.update(evolve(page, updated_at=datetime.now(UTC)))
             # A page that stops being blank gets its scan back in place of the leaf, so the leaf is no longer current
             if before.blank_fill is not BlankFill.SCAN and page.blank_fill is BlankFill.SCAN:
                 self._records.clear(repos, PageStageKey(page_id, Stage.PAGE_ORDER))
@@ -366,7 +363,7 @@ class PageService:
             """
             size = (new_page.size or self._leaf_size(repos)) if blank else None
             [key] = self._keys_at(repos, new_page.anchor, count=1)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             page = self._new_page(new_page, key, moment)
             with self._records.watching_sides(repos):
                 repos.pages.add(page)
@@ -419,7 +416,7 @@ class PageService:
                 return []
             median = self._batch_leaf_size(repos, new_pages)
             places = self._batch_places(new_pages)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             pages = self._placed_pages(repos, new_pages, places, moment)
             added = [pages[index] for index in range(len(new_pages))]
             with self._records.watching_sides(repos):
@@ -561,7 +558,7 @@ class PageService:
             if not changing:
                 return False
 
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             changed = [evolve(page, blank_fill=fill, updated_at=moment) for page in changing]
             repos.pages.update_many(changed)
             return self._stand_leaves(repos, book_record, changed)
@@ -633,7 +630,7 @@ class PageService:
         :rtype: bool
         :raises ConflictError: If a leaf is chosen and no page of the book has a recorded size to give it.
         """
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         leaves = any(page.blank_fill is not BlankFill.SCAN for page in pages)
         size = self._leaf_size(repos) if leaves else None
         full = book_record.image_policy.full_format(ColorMode.BILEVEL)
@@ -749,7 +746,7 @@ class PageService:
             with self._records.watching_sides(repos):
                 for page in taken:
                     repos.pages.delete(page.id)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             # The label the source printed on the scan becomes a manual label of a page its sections leave unnumbered
             shown = self._labels.numbering(repos, [placeholder]).labels[placeholder.id]
             page = evolve(
@@ -1018,7 +1015,7 @@ class PageService:
         :raises ConflictError: If the anchor is one of the pages, since the place is then not defined.
         """
         keys = self._keys_at(repos, anchor, count=len(pages), moving={page.id for page in pages})
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         return [evolve(page, order_key=key, updated_at=moment) for page, key in zip(pages, keys, strict=True)]
 
     def _keys_at(
@@ -1117,7 +1114,7 @@ class PageService:
         active = self._board.jobs(book_id, active=True)
         if any(active_job.kind is kind and active_job.id != after for active_job in active):
             return None
-        job = Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params or {}, created_at=self._clock.now())
+        job = Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params or {}, created_at=datetime.now(UTC))
         return self._board.put(job)
 
     async def _follow_up(self, book: Book, job: Job) -> None:

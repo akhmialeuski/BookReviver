@@ -11,6 +11,7 @@ numbered by it. The sections that started inside the range are replaced, and the
 manual labels, which the older numbering overwrote too.
 """
 
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -33,7 +34,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import PageNumbering, PaginationSectionDraft, SliceRequest
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
 
 NUMBERED_PAGES: str = 'Numbered pages'
@@ -76,13 +76,8 @@ class NumberingPlan:
 class PaginationService:
     """Lists, makes, changes and removes the pagination sections of the acting account's books."""
 
-    def __init__(self, *, clock: Clock) -> None:
-        """Work over the ports of one request.
-
-        :param clock: Clock stamping the sections and pages it writes.
-        :type clock: Clock
-        """
-        self._clock = clock
+    def __init__(self) -> None:
+        """Work over the ports of one request."""
         self._labels = PageLabels()
 
     async def sections(self, book: Book, request: SliceRequest) -> Slice[PaginationSection]:
@@ -126,7 +121,7 @@ class PaginationService:
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
         """
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         section = PaginationSection(
             id=PaginationSectionId(uuid4()),
             **asdict(draft, recurse=False),
@@ -189,7 +184,7 @@ class PaginationService:
             section = evolve(
                 repos.pagination_sections.get(section_id),
                 **asdict(draft, recurse=False),
-                updated_at=self._clock.now(),
+                updated_at=datetime.now(UTC),
             )
             repos.pages.get(section.first_page_id)
             self._require_no_clash(repos, section)
@@ -316,7 +311,7 @@ class PaginationService:
             page.id for page in pages[first : last + 1] if page.included and page.kind not in numbering.skip_kinds
         )
 
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         make = partial(PaginationSection, created_at=moment, updated_at=moment)
         added = [
             make(

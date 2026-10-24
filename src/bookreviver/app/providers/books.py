@@ -82,15 +82,11 @@ class BooksProvider(Provider):
         return BooksService(uow=uow, databases=databases, directories=directories, tools=tools)
 
     @provide(scope=Scope.APP)
-    def page_runtime(
-        self, publisher: EventPublisher, clock: Clock, order_keys: OrderKeys, board: JobBoard
-    ) -> PageRuntime:
+    def page_runtime(self, publisher: EventPublisher, order_keys: OrderKeys, board: JobBoard) -> PageRuntime:
         """Gather what a page use case reports through and orders by.
 
         :param publisher: Publisher of the application's event bus.
         :type publisher: EventPublisher
-        :param clock: Clock of the application.
-        :type clock: Clock
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
         :param board: Board holding the jobs of every book.
@@ -98,7 +94,7 @@ class BooksProvider(Provider):
         :returns: The runtime of the page service.
         :rtype: PageRuntime
         """
-        return PageRuntime(publisher=publisher, clock=clock, order_keys=order_keys, board=board)
+        return PageRuntime(publisher=publisher, order_keys=order_keys, board=board)
 
     @provide(scope=Scope.APP)
     def page_imaging(self, tiler: Tiler, runner: StepRunner) -> PageImaging:
@@ -120,7 +116,7 @@ class BooksProvider(Provider):
 
         :param books: Books service of the current request or job, which opens the books a job runs on.
         :type books: BooksService
-        :param runtime: The publisher, clock, order keys and job board of the application.
+        :param runtime: The publisher, order keys and job board of the application.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
@@ -130,26 +126,22 @@ class BooksProvider(Provider):
         return PageService(books=books, runtime=runtime, imaging=imaging)
 
     @provide
-    def pagination(self, clock: Clock) -> PaginationService:
+    def pagination(self) -> PaginationService:
         """Build the pagination service over the request's unit of work.
 
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The pagination service of the request.
         :rtype: PaginationService
         """
-        return PaginationService(clock=clock)
+        return PaginationService()
 
     @provide
-    def places(self, clock: Clock) -> PlaceService:
+    def places(self) -> PlaceService:
         """Build the place service over the request's unit of work.
 
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The place service of the request.
         :rtype: PlaceService
         """
-        return PlaceService(clock=clock)
+        return PlaceService()
 
     @provide
     def sources(self, board: JobBoard) -> SourceService:

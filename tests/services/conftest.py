@@ -156,15 +156,13 @@ def fx_service(
 
 
 @pytest.fixture
-def fx_pagination(fx_clock: FixedClock) -> Callable[[], PaginationService]:
+def fx_pagination() -> Callable[[], PaginationService]:
     """Return a function building the pagination service for one request.
 
-    :param fx_clock: Clock stopped at the epoch.
-    :type fx_clock: FixedClock
     :returns: Function building a service.
     :rtype: Callable[[], PaginationService]
     """
-    return lambda: PaginationService(clock=fx_clock)
+    return PaginationService
 
 
 @pytest.fixture

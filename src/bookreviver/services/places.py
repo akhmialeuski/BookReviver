@@ -5,6 +5,7 @@ reader's client writes the place after every move, so the write is one replaceme
 merged.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from attrs import asdict
@@ -13,20 +14,11 @@ from bookreviver.domain.entities import BookPlace
 
 if TYPE_CHECKING:
     from bookreviver.domain.values import NewBookPlace
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
 
 
 class PlaceService:
     """Reads and replaces the place the owner left a book at."""
-
-    def __init__(self, *, clock: Clock) -> None:
-        """Work over the ports of one request.
-
-        :param clock: Clock stamping the places.
-        :type clock: Clock
-        """
-        self._clock = clock
 
     async def find(self, book: Book) -> BookPlace | None:
         """Return the place the owner left the book at.
@@ -51,5 +43,5 @@ class PlaceService:
         :returns: The place as stored, which is a newer place of another request when that one was stamped later.
         :rtype: BookPlace
         """
-        stored = BookPlace(updated_at=self._clock.now(), **asdict(place, recurse=False))
+        stored = BookPlace(updated_at=datetime.now(UTC), **asdict(place, recurse=False))
         return await book.change(lambda repos, _book_record: repos.book_places.save(stored))
