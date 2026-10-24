@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bookreviver.app.plugins import EntryPointCatalog
-from bookreviver.domain.enums import WorkerPool
+from bookreviver.app.recipe_defaults import load_default_recipes
+from bookreviver.app.settings import ProcessingSettings
+from bookreviver.domain.enums import Stage, WorkerPool
 from bookreviver.domain.values import Step
 from bookreviver.services.recipe_order import RecipeOrder
-from bookreviver.services.recipes import DefaultRecipes
 from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
@@ -102,10 +103,11 @@ class TestOrderRules:
         :type fx_catalogue: EntryPointCatalog
         """
         order = RecipeOrder(fx_catalogue)
+        defaults = load_default_recipes(ProcessingSettings().recipes_file)
         marked = [
             f'{stage}: {kind}'
-            for stage, templates in DefaultRecipes.TEMPLATES.items()
-            for kind, template in templates.items()
+            for stage in Stage
+            for kind, template in defaults.for_stage(stage).items()
             if order.issues([Step(processor_key=key) for key in template.processor_keys])
         ]
         assert marked == []

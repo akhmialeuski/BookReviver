@@ -18,6 +18,7 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
 from bookreviver.app.plugins import EntryPointCatalogSource
+from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
@@ -110,13 +111,15 @@ class ProcessingProvider(Provider):
         return RecipeOrder(catalogue)
 
     @provide(scope=Scope.APP)
-    def default_recipes(self) -> DefaultRecipes:
-        """Give the recipes a stage starts with.
+    def default_recipes(self, settings: Settings) -> DefaultRecipes:
+        """Read the recipes a stage starts with from the file the settings name, once.
 
+        :param settings: Application settings, of which ``processing.recipes_file`` is read.
+        :type settings: Settings
         :returns: The default recipes.
         :rtype: DefaultRecipes
         """
-        return DefaultRecipes()
+        return load_default_recipes(settings.processing.recipes_file)
 
     @provide(scope=Scope.APP)
     def processing_config(self, settings: Settings) -> ProcessingConfig:

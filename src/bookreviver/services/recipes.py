@@ -19,21 +19,13 @@ they are called outside any work.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from attrs import evolve, field, frozen
 
 from bookreviver.domain.entities import Recipe
-from bookreviver.domain.enums import (
-    BinarizationMethod,
-    DeskewMethod,
-    DewarpMethod,
-    OrderMode,
-    OutputMode,
-    RecipeKind,
-    Stage,
-)
+from bookreviver.domain.enums import OrderMode, RecipeKind
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId
 from bookreviver.domain.values import RecipeDraft, Step
@@ -42,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository
@@ -54,14 +47,6 @@ ALL_STEPS_OFF: str = 'A recipe needs at least one step that is switched on.'
 WRONG_STAGE: str = 'The processor {key} belongs to the {actual} stage, not to the {expected} stage.'
 UNKNOWN_PROCESSOR: str = 'There is no processor {key}.'
 NO_RECIPE: str = 'The {stage} stage has no recipe, since no processor for it is installed.'
-# The steps of every geometry recipe a book starts with, which the recipes switch and tune differently
-GEOMETRY_STEPS: tuple[str, ...] = (
-    'geometry.perspective',
-    'geometry.deskew',
-    'geometry.dewarp',
-    'geometry.crop',
-    'geometry.normalize',
-)
 
 
 def find_step(recipes: RecipeRepository, key: PageStepKey) -> Step:
@@ -99,75 +84,16 @@ class RecipeTemplate:
     off: frozenset[str] = frozenset()
 
 
-# The steps of the Cleanup stage in the order they run: the page is made black and white first, so that what is left
-# of the dust is separate small spots, which are then removed, the strokes are made thinner or thicker, and the user's
-# eraser comes last
-BINARIZE_KEY: str = 'cleanup.binarize'
-DESPECKLE_KEY: str = 'cleanup.despeckle'
-THICKNESS_KEY: str = 'cleanup.thickness'
-ERASER_KEY: str = 'cleanup.eraser'
-# The parameters the templates of the stage set
-MODE_PARAM: str = 'mode'
-METHOD_PARAM: str = 'method'
-STRENGTH_PARAM: str = 'strength'
-
-# The recipes of a page of each kind. A page of text is followed along its lines, and a blank page is processed as one
-# of text, since a scan of a blank page has the paper and the specks of a page of text. A picture is not followed along
-# lines of text and keeps its tones.
-AUTOMATIC_SPLIT = RecipeTemplate(processor_keys=('split.auto',))
-TEXT_GEOMETRY = RecipeTemplate(
-    processor_keys=GEOMETRY_STEPS,
-    params={
-        'geometry.deskew': {'method': DeskewMethod.PROJECTION},
-        'geometry.dewarp': {'method': DewarpMethod.TEXT_LINES},
-    },
-)
-PICTURE_GEOMETRY = RecipeTemplate(
-    processor_keys=GEOMETRY_STEPS,
-    params={
-        'geometry.deskew': {'method': DeskewMethod.HOUGH},
-        'geometry.dewarp': {'method': DewarpMethod.PAGE_EDGES},
-    },
-)
-TEXT_CLEANUP = RecipeTemplate(
-    processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, THICKNESS_KEY, ERASER_KEY),
-    params={
-        BINARIZE_KEY: {MODE_PARAM: OutputMode.BW, METHOD_PARAM: BinarizationMethod.SAUVOLA},
-        DESPECKLE_KEY: {STRENGTH_PARAM: 2},
-    },
-)
-PICTURE_CLEANUP = RecipeTemplate(
-    processor_keys=(BINARIZE_KEY, ERASER_KEY),
-    params={BINARIZE_KEY: {MODE_PARAM: OutputMode.GRAY, METHOD_PARAM: BinarizationMethod.SAUVOLA}},
-)
-
-
 class DefaultRecipes:
     """The templates of the recipes each stage starts with, one for each kind of page."""
 
-    TEMPLATES: ClassVar[Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]]] = {
-        Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, AUTOMATIC_SPLIT),
-        Stage.GEOMETRY: {
-            RecipeKind.TEXT: TEXT_GEOMETRY,
-            RecipeKind.COLOR_PICTURE: PICTURE_GEOMETRY,
-            RecipeKind.BW_PICTURE: PICTURE_GEOMETRY,
-            RecipeKind.BLANK: TEXT_GEOMETRY,
-        },
-        Stage.CLEANUP: {
-            RecipeKind.TEXT: TEXT_CLEANUP,
-            RecipeKind.COLOR_PICTURE: PICTURE_CLEANUP,
-            RecipeKind.BW_PICTURE: PICTURE_CLEANUP,
-            RecipeKind.BLANK: TEXT_CLEANUP,
-        },
-    }
+    def __init__(self, templates: Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]]) -> None:
+        """Start from the given templates.
 
-    def __init__(self, templates: Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]] | None = None) -> None:
-        """Start from the given templates, or from the ones every book gets.
-
-        :param templates: Templates by stage and kind, or None for ``TEMPLATES``.
-        :type templates: Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]] | None
+        :param templates: Templates by stage and kind.
+        :type templates: Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]]
         """
-        self._templates = self.TEMPLATES if templates is None else templates
+        self._templates = templates
 
     def for_stage(self, stage: Stage) -> Mapping[RecipeKind, RecipeTemplate]:
         """Return the templates of a stage by the kind of page they are for.

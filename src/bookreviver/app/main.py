@@ -27,6 +27,7 @@ from bookreviver.ports.storage import BookDirectories
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
+from bookreviver.services.recipes import DefaultRecipes
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -44,7 +45,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     The container opens the database on first use, and opening it checks the schema revision, so the database is
     opened here: a database the migrations were not applied to stops the start instead of failing a request. The pool of
     processes that run the steps is started too, so every process has built its catalogue before the first request and
-    the first preview does not wait for it.
+    the first preview does not wait for it. The file of default recipes is read here too, so a file that does not fit
+    stops the start.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
     left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
@@ -60,6 +62,7 @@ async def prepare_start(container: AsyncContainer) -> None:
     """
     await container.get(SqlDatabase)
     await container.get(StepExecutor)
+    await container.get(DefaultRecipes)
     await (await container.get(BookDirectories)).discard_all_staged()
     async with container() as request:
         await (await request.get(OutdatedResults)).mark_stale()

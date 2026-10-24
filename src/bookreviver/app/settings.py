@@ -132,6 +132,8 @@ class ProcessingSettings(BaseModel):
     :ivar preview_step_processes: Processes of ``step_processes`` that run previews only, so a preview never waits
                                   behind the full runs of other books. The full runs get the rest, which is why it
                                   must be smaller than ``step_processes``.
+    :ivar recipes_file: JSON file of the recipes every stage of a new book starts with, the file packaged with the
+                        application by default. A file of your own replaces it as a whole.
     """
 
     worker_pools: frozenset[WorkerPool] = frozenset(WorkerPool)
@@ -139,6 +141,7 @@ class ProcessingSettings(BaseModel):
     models_dir: Path = Path('data/models')
     step_processes: PositiveInt = Field(default_factory=default_step_processes)
     preview_step_processes: PositiveInt = 1
+    recipes_file: Path = Path(__file__).with_name('recipes.json')
 
     # A literal mode: the pydantic plugin of mypy reads the mode only from a literal, even a Final constant fails it
     @model_validator(mode='after')

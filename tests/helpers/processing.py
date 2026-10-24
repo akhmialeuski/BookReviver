@@ -14,6 +14,8 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.access import books_of
+from bookreviver.app.recipe_defaults import load_default_recipes
+from bookreviver.app.settings import ProcessingSettings
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
     ImagePolicy,
@@ -93,7 +95,7 @@ DEFAULTS: DefaultRecipes = DefaultRecipes(
 )
 
 # The recipes of a kit with the OpenCV plugins, which are the ones the application starts with
-CV_DEFAULTS: DefaultRecipes = DefaultRecipes()
+CV_DEFAULTS: DefaultRecipes = load_default_recipes(ProcessingSettings().recipes_file)
 # The method of ``ProcessingJobs`` that runs each kind of job it does
 JOB_METHODS: dict[JobKind, str] = {
     JobKind.RUN_STAGE: 'run_stage',
