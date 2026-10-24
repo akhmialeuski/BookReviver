@@ -18,6 +18,7 @@ started.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from attrs import evolve
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
 
@@ -41,19 +41,16 @@ logger = logging.getLogger(__name__)
 class OutdatedResults:
     """Marks the fresh stage records of all books stale when a processor that made their result has a new version."""
 
-    def __init__(self, *, books: BooksService, catalogue: ProcessorCatalog, clock: Clock) -> None:
+    def __init__(self, *, books: BooksService, catalogue: ProcessorCatalog) -> None:
         """Work over the ports of one unit of work.
 
         :param books: Books service that opens each listed book, whose transactions read the records and mark them.
         :type books: BooksService
         :param catalogue: The processors the application can run, with the versions that are installed.
         :type catalogue: ProcessorCatalog
-        :param clock: Clock stamping the records that change.
-        :type clock: Clock
         """
         self._books = books
         self._catalogue = catalogue
-        self._clock = clock
 
     async def mark_stale(self) -> list[PageStage]:
         """Mark every fresh record whose result a replaced version of a processor made stale, one book at a time.
@@ -109,7 +106,7 @@ class OutdatedResults:
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> list[PageStage]:
             """Mark the records that are still fresh on the same version.

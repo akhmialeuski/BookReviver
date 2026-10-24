@@ -93,7 +93,7 @@ class ProcessingJobs:
         :param books: Books service of the job, which opens the book the job runs on, whose blocks hold the work as it
                       goes.
         :type books: BooksService
-        :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
+        :param runtime: The runner, the catalogue, the publisher and the size of a preview.
         :type runtime: StageRuntime
         :param parts: The recipes, the stage records and the job starter over the unit of work.
         :type parts: ProcessingParts
@@ -105,7 +105,6 @@ class ProcessingJobs:
         self._parts = parts
         self._recipes = parts.recipes
         self._records = parts.records
-        self._clock = parts.clock
         self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
         self._detector = ContentDetector(books=books, runtime=runtime, records=parts.records)
         self._starter = parts.starter

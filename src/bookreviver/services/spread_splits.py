@@ -31,6 +31,7 @@ after the transaction, which a preview waits for.
 
 import logging
 from contextlib import AsyncExitStack, suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -148,7 +149,7 @@ class SpreadSplit:
         :type book: Book
         :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
-        :param runtime: The runner, the catalogue, the publisher, the clock and the order keys.
+        :param runtime: The runner, the catalogue, the publisher and the order keys.
         :type runtime: StageRuntime
         :param records: Writer of the stage records.
         :type records: StageRecords
@@ -158,7 +159,6 @@ class SpreadSplit:
         self._runner = runtime.runner
         self._catalogue = runtime.catalogue
         self._publisher = runtime.publisher
-        self._clock = runtime.clock
         self._order_keys = runtime.order_keys
         self._records = records
         self._labels = PageLabels()
@@ -313,7 +313,7 @@ class SpreadSplit:
         with self._records.watching_sides(repos):
             for right in undoing.rights:
                 repos.pages.delete(right.id)
-        repos.pages.update(evolve(undoing.page, slot=Page.WHOLE_SCAN, updated_at=self._clock.now()))
+        repos.pages.update(evolve(undoing.page, slot=Page.WHOLE_SCAN, updated_at=datetime.now(UTC)))
 
     async def finish_unsplit(self, undoing: Unsplit) -> None:
         """Remove the files of the deleted pages, after the transaction of the caller ended.
@@ -340,12 +340,12 @@ class SpreadSplit:
         """
         if page.scan_id is None:
             raise ConflictError(NO_SCAN.format(page_id=page.id))
-        left = page if page.slot == Page.LEFT_HALF else evolve(page, slot=Page.LEFT_HALF, updated_at=self._clock.now())
+        left = page if page.slot == Page.LEFT_HALF else evolve(page, slot=Page.LEFT_HALF, updated_at=datetime.now(UTC))
         siblings = repos.pages.list_for_scan(page.scan_id)
         if (right := next((sibling for sibling in siblings if sibling.slot == Page.RIGHT_HALF), None)) is not None:
             return Halves(left=left, right=right, left_changes=left != page, right_is_new=False)
         upper = repos.pages.neighbour_key(left.order_key, Side.AFTER)
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         right = Page(
             id=PageId(uuid4()) if right_id is None else right_id,
             order_key=self._order_keys.between(lower=left.order_key, upper=upper),
@@ -385,7 +385,7 @@ class SpreadSplit:
             state=VersionState.RUNNING,
             scale=VersionScale.FULL,
             edit_hash=edit_hash,
-            created_at=self._clock.now(),
+            created_at=datetime.now(UTC),
         )
 
     async def _cached(self, stored: Sequence[PageVersion | None]) -> list[PageVersion] | None:

@@ -21,7 +21,7 @@ default profile of the owner lives in the catalogue, not in the book, so a calle
 before the transaction of the book and passes it in.
 """
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.recipe_order import RecipeOrder
 
@@ -193,7 +192,6 @@ class RecipeBook:
         uow: UnitOfWork,
         catalogue: ProcessorCatalog,
         defaults: DefaultRecipes,
-        clock: Clock,
         order: RecipeOrder,
     ) -> None:
         """Work over the ports of one request or job.
@@ -205,15 +203,12 @@ class RecipeBook:
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param clock: Clock stamping new recipes.
-        :type clock: Clock
         :param order: The check of the order of the steps.
         :type order: RecipeOrder
         """
         self._uow = uow
         self._catalogue = catalogue
         self._defaults = defaults
-        self._clock = clock
         self._order = order
 
     async def recipes(
@@ -297,7 +292,7 @@ class RecipeBook:
         """
         if found := self._stored(repos, stage):
             return found
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         steps, profile = self._starting_steps(stage, default)
         built = [
             Recipe(
@@ -436,7 +431,7 @@ class RecipeBook:
         changed = evolve(
             recipe,
             steps=self.check(recipe.stage, draft.steps, order=draft.order),
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
         repos.recipes.update(changed)
         return changed

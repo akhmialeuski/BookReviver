@@ -183,7 +183,7 @@ class ProcessingProvider(Provider):
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param runtime: The publisher, the clock and the board.
+        :param runtime: The publisher and the board.
         :type runtime: ProcessingRuntime
         :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
@@ -206,9 +206,7 @@ class ProcessingProvider(Provider):
         return ProcessingService(catalogue=catalogue, parts=parts)
 
     @provide(scope=Scope.REQUEST)
-    def recipe_profiles(
-        self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService, clock: Clock
-    ) -> RecipeProfiles:
+    def recipe_profiles(self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService) -> RecipeProfiles:
         """Build the service of the recipe profiles of a request.
 
         :param uow: Unit of work of the current request.
@@ -217,12 +215,10 @@ class ProcessingProvider(Provider):
         :type parts: ProcessingParts
         :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
         :type processing: ProcessingService
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The profiles service.
         :rtype: RecipeProfiles
         """
-        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=clock)
+        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing)
 
     @provide(scope=Scope.APP)
     def stage_runtime(
@@ -252,7 +248,6 @@ class ProcessingProvider(Provider):
             runner=runner,
             catalogue=catalogue,
             publisher=runtime.publisher,
-            clock=runtime.clock,
             order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
             tracer=runtime.tracer,
@@ -278,36 +273,30 @@ class ProcessingProvider(Provider):
         return ProcessingJobs(books=books, runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
-    def edit_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock) -> EditService:
+    def edit_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> EditService:
         """Build the edit service of a request.
 
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The edit service.
         :rtype: EditService
         """
-        return EditService(catalogue=catalogue, records=parts.records, clock=clock)
+        return EditService(catalogue=catalogue, records=parts.records)
 
     @provide(scope=Scope.REQUEST)
-    def page_settings_service(
-        self, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
-    ) -> PageSettingsService:
+    def page_settings_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> PageSettingsService:
         """Build the page settings service of a request.
 
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The page settings service.
         :rtype: PageSettingsService
         """
-        return PageSettingsService(catalogue=catalogue, records=parts.records, clock=clock)
+        return PageSettingsService(catalogue=catalogue, records=parts.records)
 
     @provide(scope=Scope.REQUEST)
     def run_impact_service(self, parts: ProcessingParts) -> RunImpactService:
@@ -332,17 +321,15 @@ class ProcessingProvider(Provider):
         return CarryOverService(records=parts.records)
 
     @provide(scope=Scope.REQUEST)
-    def page_history_service(self, parts: ProcessingParts, clock: Clock) -> PageHistoryService:
+    def page_history_service(self, parts: ProcessingParts) -> PageHistoryService:
         """Build the page history service of a request.
 
         :param parts: The parts the processing use cases share, of which the stage records and the job starter are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The page history service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(records=parts.records, starter=parts.starter, clock=clock)
+        return PageHistoryService(records=parts.records, starter=parts.starter)
 
     @provide(scope=Scope.REQUEST)
     def result_marks_service(self) -> ResultMarksService:
@@ -354,16 +341,14 @@ class ProcessingProvider(Provider):
         return ResultMarksService()
 
     @provide(scope=Scope.REQUEST)
-    def outdated_results(self, books: BooksService, catalogue: ProcessorCatalog, clock: Clock) -> OutdatedResults:
+    def outdated_results(self, books: BooksService, catalogue: ProcessorCatalog) -> OutdatedResults:
         """Build the finder of results that a replaced version of a processor made over the unit of work of the start.
 
         :param books: Books service of the start of the application, which opens each stored book.
         :type books: BooksService
         :param catalogue: The processors the application can run, with the versions that are installed.
         :type catalogue: ProcessorCatalog
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The outdated results service.
         :rtype: OutdatedResults
         """
-        return OutdatedResults(books=books, catalogue=catalogue, clock=clock)
+        return OutdatedResults(books=books, catalogue=catalogue)

@@ -20,6 +20,7 @@ the hash of the whole edit, and then copied to that key and the scratch removed,
 
 import hashlib
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -42,7 +43,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
@@ -70,7 +70,6 @@ class EditService:
         *,
         catalogue: ProcessorCatalog,
         records: StageRecords,
-        clock: Clock,
     ) -> None:
         """Work over the ports of one request.
 
@@ -78,12 +77,9 @@ class EditService:
         :type catalogue: ProcessorCatalog
         :param records: Writer of the stage records, which an edit marks stale.
         :type records: StageRecords
-        :param clock: Clock stamping the edits.
-        :type clock: Clock
         """
         self._catalogue = catalogue
         self._records = records
-        self._clock = clock
 
     async def save(self, book: Book, key: PageStepKey, edit: NewPageEdit, mask: IncomingFile | None) -> PageEdit:
         """Store the edit a step reads, replacing the one it read before, and mark the stage stale.
@@ -137,7 +133,7 @@ class EditService:
             geometry=edit.geometry,
             mask_key=mask_key,
             edit_hash=edit_hash,
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -219,7 +215,7 @@ class EditService:
             state = repos.page_step_states.find(key)
             if state is None or state.edit is None:
                 raise NotFoundError(key)
-            self._store(repos, state, evolve(state, edit=None, updated_at=self._clock.now()))
+            self._store(repos, state, evolve(state, edit=None, updated_at=datetime.now(UTC)))
             self._records.mark_stale(repos, key.page_id, key.stage)
 
         await book.change(work)

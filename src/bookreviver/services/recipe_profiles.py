@@ -19,6 +19,7 @@ be a profile the account holds without knowing it.
 """
 
 from collections import Counter
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import RecipeKind, Stage
     from bookreviver.domain.values import ProfileDraft
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.processing import ProcessingService
     from bookreviver.services.recipes import RecipeBook
@@ -77,7 +77,7 @@ class AppliedProfile:
 class RecipeProfiles:
     """Saves, copies, exchanges, renames, deletes and applies the recipe profiles it is given."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, processing: ProcessingService, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, processing: ProcessingService) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request. A use case that changes the profiles of the account runs in one
@@ -87,13 +87,10 @@ class RecipeProfiles:
         :type recipes: RecipeBook
         :param processing: The use cases that put the steps of a profile into a recipe of a book.
         :type processing: ProcessingService
-        :param clock: Clock stamping new and changed profiles.
-        :type clock: Clock
         """
         self._uow = uow
         self._recipes = recipes
         self._processing = processing
-        self._clock = clock
 
     async def library(self, profiles: Slice[RecipeProfile], books: Iterable[Book]) -> Slice[ListedProfile]:
         """Give each profile of a window the number of books that use it.
@@ -133,7 +130,7 @@ class RecipeProfiles:
             :raises NotFoundError: If the profile was deleted meanwhile.
             """
             current = repos.recipe_profiles.get(profile.id)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             return repos.recipe_profiles.add(
                 evolve(
                     current,
@@ -180,7 +177,7 @@ class RecipeProfiles:
                                         usual order.
         """
         steps = self._recipes.check(stage, draft.steps, order=draft.order)
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         profile = RecipeProfile(
             id=RecipeProfileId(uuid4()),
             account_id=owner.account_id,
@@ -229,7 +226,7 @@ class RecipeProfiles:
                     name=draft.name,
                     steps=self._recipes.check(current.stage, draft.steps, order=draft.order),
                     order=draft.order,
-                    updated_at=self._clock.now(),
+                    updated_at=datetime.now(UTC),
                 )
             )
 
@@ -298,7 +295,7 @@ class RecipeProfiles:
             :raises NotFoundError: If the profile was deleted meanwhile.
             """
             current = repos.recipe_profiles.get(profile.id)
-            return repos.recipe_profiles.update(evolve(current, name=name, updated_at=self._clock.now()))
+            return repos.recipe_profiles.update(evolve(current, name=name, updated_at=datetime.now(UTC)))
 
         return await self._uow.change(work)
 
@@ -329,7 +326,7 @@ class RecipeProfiles:
             current = repos.recipe_profiles.get(profile.id)
             if current.is_default is is_default:
                 return current
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             if is_default and (default := repos.recipe_profiles.find_default(current.account_id, current.stage)):
                 repos.recipe_profiles.update(evolve(default, is_default=False, updated_at=moment))
             return repos.recipe_profiles.update(evolve(current, is_default=is_default, updated_at=moment))

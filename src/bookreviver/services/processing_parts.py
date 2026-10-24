@@ -19,6 +19,7 @@ has returned, and the job put behind it starts only then.
 """
 
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -85,13 +86,12 @@ class JobStarter:
     def __init__(self, *, runtime: ProcessingRuntime, config: ProcessingConfig) -> None:
         """Start jobs through the board.
 
-        :param runtime: The publisher, the clock and the board.
+        :param runtime: The publisher and the board.
         :type runtime: ProcessingRuntime
         :param config: The retention period of a preview, which a collection is started with.
         :type config: ProcessingConfig
         """
         self._board = runtime.board
-        self._clock = runtime.clock
         self._config = config
 
     async def enqueue(self, book_id: BookId, kind: JobKind, params: MetadataMap) -> Job:
@@ -168,7 +168,7 @@ class JobStarter:
         :returns: The collection, whose moment is the retention of a preview before now.
         :rtype: VersionCollection
         """
-        return VersionCollection(previews_older_than=self._clock.now() - self._config.preview_retention)
+        return VersionCollection(previews_older_than=datetime.now(UTC) - self._config.preview_retention)
 
     async def enqueue_collection(self, book_id: BookId) -> Job | None:
         """Queue a collection of the book's old versions, unless the book is processing something.
@@ -267,7 +267,7 @@ class JobStarter:
         :returns: The job, queued as of now.
         :rtype: Job
         """
-        return Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params, created_at=self._clock.now())
+        return Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params, created_at=datetime.now(UTC))
 
 
 @frozen(kw_only=True)
@@ -277,13 +277,11 @@ class ProcessingParts:
     :ivar recipes: The recipes of the book and the check of their steps.
     :ivar records: Writer of the stage records.
     :ivar starter: Putter of new jobs on the board.
-    :ivar clock: Clock stamping what a use case writes, such as the changes a run makes to the pages.
     """
 
     recipes: RecipeBook
     records: StageRecords
     starter: JobStarter
-    clock: Clock
 
     @classmethod
     def build(
@@ -302,7 +300,7 @@ class ProcessingParts:
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param runtime: The publisher, the clock and the board.
+        :param runtime: The publisher and the board.
         :type runtime: ProcessingRuntime
         :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
@@ -310,10 +308,7 @@ class ProcessingParts:
         :rtype: ProcessingParts
         """
         return cls(
-            recipes=RecipeBook(
-                uow=uow, catalogue=catalogue, defaults=defaults, clock=runtime.clock, order=RecipeOrder(catalogue)
-            ),
+            recipes=RecipeBook(uow=uow, catalogue=catalogue, defaults=defaults, order=RecipeOrder(catalogue)),
             records=StageRecords(),
             starter=JobStarter(runtime=runtime, config=config),
-            clock=runtime.clock,
         )

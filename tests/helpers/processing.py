@@ -200,7 +200,7 @@ class ProcessingKit:
         uow = self.uow()
         parts = self.parts(uow)
         processing = ProcessingService(catalogue=self.catalogue, parts=parts)
-        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
+        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing)
 
     async def recipe_of(
         self, actor: Actor, book_id: BookId, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
@@ -274,7 +274,6 @@ class ProcessingKit:
             runner=self._runner,
             catalogue=self.catalogue,
             publisher=self.events,
-            clock=self.clock,
             order_keys=FractionalOrderKeys(),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             tracer=self.tracer,
@@ -323,7 +322,7 @@ class ProcessingKit:
         :rtype: EditService
         """
         uow = self.uow()
-        return EditService(catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock)
+        return EditService(catalogue=self.catalogue, records=self.parts(uow).records)
 
     def page_settings(self) -> PageSettingsService:
         """Build the page settings service over a new unit of work.
@@ -332,11 +331,7 @@ class ProcessingKit:
         :rtype: PageSettingsService
         """
         uow = self.uow()
-        return PageSettingsService(
-            catalogue=self.catalogue,
-            records=self.parts(uow).records,
-            clock=self.clock,
-        )
+        return PageSettingsService(catalogue=self.catalogue, records=self.parts(uow).records)
 
     def page_history(self) -> PageHistoryService:
         """Build the page history service over a new unit of work.
@@ -346,7 +341,7 @@ class ProcessingKit:
         """
         uow = self.uow()
         parts = self.parts(uow)
-        return PageHistoryService(records=parts.records, starter=parts.starter, clock=self.clock)
+        return PageHistoryService(records=parts.records, starter=parts.starter)
 
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.

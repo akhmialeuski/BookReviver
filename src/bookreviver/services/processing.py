@@ -73,7 +73,6 @@ class ProcessingService:
         self._recipes = parts.recipes
         self._records = parts.records
         self._starter = parts.starter
-        self._clock = parts.clock
 
     def processors(self) -> Sequence[ProcessorSpec]:
         """List what every processor of the catalogue says about itself.

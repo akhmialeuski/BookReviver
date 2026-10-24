@@ -161,7 +161,6 @@ async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
     return await OutdatedResults(
         books=make_books_service(uow, databases=kit.databases, files=kit.files),
         catalogue=kit.catalogue,
-        clock=kit.clock,
     ).mark_stale()
 
 
@@ -241,7 +240,6 @@ class TestMarkStale:
         marked = await OutdatedResults(
             books=make_books_service(uow, databases=fx_kit.databases, files=fx_kit.files),
             catalogue=fx_kit.catalogue,
-            clock=fx_kit.clock,
         ).mark_stale()
 
         stored = await fx_kit.databases.open(page.book_id).read(lambda repos: repos.page_stages.find(record.key))
@@ -399,7 +397,6 @@ class TestMarkStale:
         await OutdatedResults(
             books=make_books_service(uow, databases=fx_kit.databases, files=fx_kit.files),
             catalogue=fx_kit.catalogue,
-            clock=fx_kit.clock,
         ).mark_stale()
 
         assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}

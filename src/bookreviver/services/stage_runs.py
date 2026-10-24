@@ -31,6 +31,7 @@ of the page, so it passes every handler that records one.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, override
 
 from attrs import evolve, frozen
@@ -63,7 +64,6 @@ from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from datetime import datetime
 
     from bookreviver.domain.entities import BookRecord, PageEdit, PageStage, PageStepState, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobControl
+    from bookreviver.ports.runtime import EventPublisher, JobControl
     from bookreviver.ports.tracing import Span, Tracer
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
@@ -134,7 +134,6 @@ class StageRuntime:
     :ivar runner: Runner of processors and writer of their files.
     :ivar catalogue: The processors the application can run.
     :ivar publisher: Publisher of the events the browser follows.
-    :ivar clock: Clock stamping new versions.
     :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
     :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
     :ivar tracer: Tracer the runs of pages and their steps are timed with.
@@ -143,7 +142,6 @@ class StageRuntime:
     runner: StepRunner
     catalogue: ProcessorCatalog
     publisher: EventPublisher
-    clock: Clock
     order_keys: OrderKeys
     preview_long_side_px: int
     tracer: Tracer
@@ -159,7 +157,7 @@ class StageWork:
         :type book: Book
         :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
-        :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
+        :param runtime: The runner, the catalogue, the publisher and the size of a preview.
         :type runtime: StageRuntime
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl
@@ -170,7 +168,6 @@ class StageWork:
         self._runner = runtime.runner
         self._catalogue = runtime.catalogue
         self._publisher = runtime.publisher
-        self._clock = runtime.clock
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
         self._keys = BookKeys()
@@ -636,7 +633,7 @@ class StageWork:
                     state=VersionState.RUNNING,
                     scale=source.scale,
                     edit_hash=inputs.edit_hash,
-                    created_at=self._clock.now() if found is None else found.created_at,
+                    created_at=datetime.now(UTC) if found is None else found.created_at,
                     mark=None if found is None else found.mark,
                     comment='' if found is None else found.comment,
                 )
@@ -723,7 +720,7 @@ class RecipeRun(StageWork):
         :type book: Book
         :param book_record: Record of the book owning the pages.
         :type book_record: BookRecord
-        :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
+        :param runtime: The runner, the catalogue, the publisher and the size of a preview.
         :type runtime: StageRuntime
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl

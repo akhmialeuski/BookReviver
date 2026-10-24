@@ -14,6 +14,7 @@ A page that cannot be read fails for itself and the job goes on.
 """
 
 import logging
+from datetime import UTC, datetime
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
@@ -65,7 +66,7 @@ class ContentDetector:
 
         :param books: Books service of the job, which opens the book the job detects in once it has work to do.
         :type books: BooksService
-        :param runtime: The runner of the processor that finds the content of an image, and the clock.
+        :param runtime: The runner of the processor that finds the content of an image.
         :type runtime: StageRuntime
         :param records: Writer of the stage records, which marks the stages of a page stale.
         :type records: StageRecords
@@ -73,7 +74,6 @@ class ContentDetector:
         self._books = books
         self._runner = runtime.runner
         self._catalogue = runtime.catalogue
-        self._clock = runtime.clock
         self._records = records
 
     async def run(self, job: Job, control: JobControl) -> tuple[int, int]:
@@ -248,7 +248,7 @@ class ContentDetector:
                 return False
             if before.content_by_hand and not forced:
                 return False
-            after = evolve(before, content_type=content, content_by_hand=False, updated_at=self._clock.now())
+            after = evolve(before, content_type=content, content_by_hand=False, updated_at=datetime.now(UTC))
             if after == evolve(before, updated_at=after.updated_at):
                 return False
             repos.pages.update(after)

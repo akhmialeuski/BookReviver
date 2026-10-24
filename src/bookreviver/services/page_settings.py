@@ -19,6 +19,7 @@ parameters. A page that already takes the value from a stronger part is untouche
 stage picks the values up like the parameters of the recipe.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Self
 
 from attrs import evolve, frozen
@@ -39,7 +40,6 @@ from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from datetime import datetime
 
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.enums import RecipeKind, Stage
@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
@@ -201,19 +200,16 @@ class _Scene:
 class PageSettingsService:
     """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's books."""
 
-    def __init__(self, *, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, catalogue: ProcessorCatalog, records: StageRecords) -> None:
         """Work over the ports of one request.
 
         :param catalogue: The processors the application can run, which check the value of a field.
         :type catalogue: ProcessorCatalog
         :param records: Writer of the stage records, which a changed value marks stale.
         :type records: StageRecords
-        :param clock: Clock stamping the states, the values and the changes.
-        :type clock: Clock
         """
         self._catalogue = catalogue
         self._records = records
-        self._clock = clock
 
     async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageStepSettings]:
         """List the steps of one stage of a page that have values of the page or of a part of the pages.
@@ -302,7 +298,7 @@ class PageSettingsService:
             :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a
                                             page it reaches.
             """
-            scene = _Scene.load(repos, field, self._clock.now())
+            scene = _Scene.load(repos, field, datetime.now(UTC))
             name = field.name
             processor = self._catalogue.get(next(iter(scene.steps.values())).processor_key)
             if scene.holder is None:
@@ -356,7 +352,7 @@ class PageSettingsService:
                                    stage has the step, or none of the pages the target names has a value for the
                                    field.
             """
-            scene = _Scene.load(repos, field, self._clock.now())
+            scene = _Scene.load(repos, field, datetime.now(UTC))
             name = field.name
             if scene.holder is None:
                 own = {
