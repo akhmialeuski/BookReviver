@@ -1,7 +1,7 @@
 {
   "size": {
-    "src/bookreviver/adapters/persistence/sqlalchemy/mappers.py": 622,
-    "src/bookreviver/adapters/persistence/sqlalchemy/repositories.py": 960,
+    "src/bookreviver/adapters/persistence/sqlalchemy/mappers.py": 583,
+    "src/bookreviver/adapters/persistence/sqlalchemy/repositories.py": 823,
     "src/bookreviver/domain/enums.py": 685,
     "src/bookreviver/domain/values.py": 538,
     "src/bookreviver/services/imports.py::ImportRun._cut": 51,

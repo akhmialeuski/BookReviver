@@ -41,7 +41,7 @@ from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
 from bookreviver.domain.entities import PageHistoryEntry
 from bookreviver.domain.enums import BlockKind, ChangeSource, ValueScope
-from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId
+from bookreviver.domain.ids import BookId, ChangeBatchId, PageHistoryEntryId, PageId
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import (
     EPOCH,
@@ -53,6 +53,7 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     make_step_values,
+    new_book_id,
 )
 from tests.helpers.seeding import commit_account
 
@@ -63,7 +64,6 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.ids import BookId
 
 pytestmark = pytest.mark.anyio
 
@@ -100,6 +100,10 @@ BEFORE_CHANGES: str = '6ca3e79586aa'
 SECOND_ORDER_KEY: str = 'b0'
 # The revision before the one that names the stored files of a book from its own directory, and the key of a mesh
 BEFORE_RELATIVE_KEYS: str = 'ba87bba973f4'
+# The revision before the record of a book lost the identifier of the book
+BEFORE_RECORD_KEY: str = '54f16295b19a'
+# The revision of the catalogue before the library entry kept the directory of its book
+BEFORE_DIRECTORIES: str = '0734365bee74'
 MESH_KEY: str = 'assets/pages/page/geometry/geometry.dewarp/version/mesh.json'
 MESH_PATH: str = '$.mesh_key'
 # The fields the change of that test sets
@@ -126,6 +130,8 @@ RETYPE_A_COLUMN: str = """    with op.batch_alter_table({table!r}) as batch_op:
         batch_op.alter_column({column!r}, type_=sa.{new_type}())"""
 # Changes nothing, standing for a revision of a branch that the checked-out code does not ship
 NO_CHANGE: str = ''
+# The book whose directory holds the database of a book of a test, which a downgrade reads the identifier from
+BOOK_ID: BookId = BookId(UUID('0b00c000-0000-4000-8000-000000000001'))
 # The tables holding the rows of a book that the test writes
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (BookRecordRow, SourceRow, ScanRow, PageRow, PageVersionRow)
 
@@ -161,14 +167,16 @@ async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase
 
 @pytest.fixture
 async def fx_empty_book(tmp_path: Path) -> AsyncIterator[SqlDatabase]:
-    """Open the database of a book with no table, in the directory of the test.
+    """Open the database of a book with no table, in a directory of the test named by ``BOOK_ID``.
 
     :param tmp_path: Temporary directory of the test.
     :type tmp_path: Path
     :returns: Iterator yielding the database and disposing of its engine afterwards.
     :rtype: AsyncIterator[SqlDatabase]
     """
-    database = SqlDatabase(f'sqlite:///{tmp_path / "book.db"}', schema=Schema.BOOK, tracer=NullTracer())
+    directory = tmp_path / str(BOOK_ID)
+    directory.mkdir()
+    database = SqlDatabase(f'sqlite:///{directory / "book.db"}', schema=Schema.BOOK, tracer=NullTracer())
     yield database
     await database.dispose()
 
@@ -257,13 +265,11 @@ async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: s
     await to_thread.run_sync(command, *args)
 
 
-async def _commit_book(database: SqlDatabase) -> BookId:
+async def _commit_book(database: SqlDatabase) -> None:
     """Commit a book with a page cut from a scan, its source and the page's version.
 
     :param database: Migrated database of a book to commit into.
     :type database: SqlDatabase
-    :returns: Identifier of the book.
-    :rtype: BookId
     """
     book_record = make_record()
     source = make_source()
@@ -283,8 +289,7 @@ async def _commit_book(database: SqlDatabase) -> BookId:
         repos.pages.add(page)
         repos.page_versions.add(make_page_version(page_id=page.id))
 
-    await database.write(store, kind=BlockKind.BOOK, book=book_record.id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
-    return book_record.id
+    await database.write(store, kind=BlockKind.BOOK, book=None, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
 
 
 def _migrations_with_revision(database: SqlDatabase, target: Path, upgrade: str) -> AlembicCommands:
@@ -597,18 +602,18 @@ class TestBookKeyRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        book_id = await _commit_book(fx_empty_book)
+        await _commit_book(fx_empty_book)
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
             kind=BlockKind.BOOK,
-            book=book_id,
+            book=BOOK_ID,
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_BOOK_KEYS)
         with _session(fx_empty_book) as session:
             for table in BOOK_KEYED:
                 named = session.scalars(text(f'SELECT DISTINCT project_id FROM "{table}"')).all()
-                expect(named == [book_id.bytes], table)
+                expect(named == [BOOK_ID.bytes], table)
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
             for row_table in BOOK_TABLES:
@@ -623,11 +628,11 @@ class TestBookKeyRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        book_id = await _commit_book(fx_empty_book)
+        await _commit_book(fx_empty_book)
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
             kind=BlockKind.BOOK,
-            book=book_id,
+            book=BOOK_ID,
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         with _session(fx_empty_book) as session, pytest.raises(IntegrityError, match='CHECK constraint failed'):
@@ -660,14 +665,14 @@ class TestHistoryRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        book_id = await _commit_book(fx_empty_book)
+        await _commit_book(fx_empty_book)
         with _session(fx_empty_book) as session:
             page_id = PageId(session.scalars(select(PageRow.id)).one())
         entry = make_page_history_entry(page_id=page_id)
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).page_history.add(entry),
             kind=BlockKind.BOOK,
-            book=book_id,
+            book=BOOK_ID,
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_HISTORY)
@@ -692,7 +697,7 @@ class TestGroupsRevision:
         :rtype: PageId
         """
         await _migrate(database, database.migrations.upgrade, HEAD)
-        book_id = await _commit_book(database)
+        await _commit_book(database)
         with _session(database) as session:
             page_id = PageId(session.scalars(select(PageRow.id)).one())
 
@@ -711,7 +716,7 @@ class TestGroupsRevision:
                 evolve(make_page_history_entry(page_id=page_id), scope=ValueScope.GROUP, group_label=GROUP)
             )
 
-        await database.write(group, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
+        await database.write(group, kind=BlockKind.BOOK, book=BOOK_ID, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
         return page_id
 
     async def test_a_group_keeps_its_page_values_and_changes_both_ways(self, fx_empty_book: SqlDatabase) -> None:
@@ -773,7 +778,7 @@ class TestChangesRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        book_id = await _commit_book(fx_empty_book)
+        await _commit_book(fx_empty_book)
         second = make_page(order_key=SECOND_ORDER_KEY)
         with _session(fx_empty_book) as session:
             pages = sorted([PageId(session.scalars(select(PageRow.id)).one()), second.id])
@@ -793,7 +798,7 @@ class TestChangesRevision:
             repos.pages.add(second)
             repos.page_history.add_many([*change, *undo])
 
-        await fx_empty_book.write(record, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
+        await fx_empty_book.write(record, kind=BlockKind.BOOK, book=BOOK_ID, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_CHANGES)
         with _session(fx_empty_book) as session:
             rows = session.execute(text('SELECT id, page_id, undoes_id FROM page_history')).all()
@@ -826,7 +831,7 @@ class TestStoredKeysRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        book_id = await _commit_book(fx_empty_book)
+        await _commit_book(fx_empty_book)
         read_key = text('SELECT json_extract(transform, :path) FROM page_versions')
         with _session(fx_empty_book) as session:
             session.execute(
@@ -842,9 +847,62 @@ class TestStoredKeysRevision:
         with _session(fx_empty_book) as session:
             upgraded = session.scalars(read_key, {'path': MESH_PATH}).all()
 
-        expect(downgraded == [f'projects/{book_id}/{MESH_KEY}'])
+        expect(downgraded == [f'projects/{BOOK_ID}/{MESH_KEY}'])
         expect(upgraded == [MESH_KEY])
         assert_expectations()
+
+
+class TestRecordKeyRevision:
+    """Tests for the revision that keeps no identifier of the book in its own file."""
+
+    async def test_the_record_gets_the_book_of_its_directory_back_and_loses_it_again(
+        self, fx_empty_book: SqlDatabase
+    ) -> None:
+        """Verify the downgrade keys the record by the identifier its directory is named by, and the upgrade by 1.
+
+        :param fx_empty_book: Database of a book with no table, in the directory of ``BOOK_ID``.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        await _commit_book(fx_empty_book)
+        read_key = text('SELECT id FROM projects')
+
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_RECORD_KEY)
+        with _session(fx_empty_book) as session:
+            downgraded = session.scalars(read_key).all()
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            upgraded = session.scalars(read_key).all()
+
+        expect(downgraded == [BOOK_ID.bytes])
+        expect(upgraded == [1])
+        assert_expectations()
+
+
+class TestDirectoriesRevision:
+    """Tests for the revision of the catalogue that keeps the directory of each book in its library entry."""
+
+    async def test_an_entry_of_an_earlier_release_names_the_directory_by_the_identifier_of_its_book(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the upgrade gives an entry written before the revision the directory the earlier releases made.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_DIRECTORIES)
+        owner, book_id = await commit_account(fx_empty_catalogue), new_book_id()
+        with _session(fx_empty_catalogue) as session, session.begin():
+            session.execute(
+                text('INSERT INTO library (project_id, owner_id, added_at) VALUES (:book, :owner, :added)'),
+                {'book': book_id.bytes, 'owner': owner.bytes, 'added': EPOCH.isoformat()},
+            )
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, HEAD)
+
+        with _session(fx_empty_catalogue) as session:
+            directories = session.scalars(text('SELECT directory FROM library')).all()
+        assert directories == [str(book_id)]
 
 
 class TestEnv:

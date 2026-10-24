@@ -29,12 +29,13 @@ from bookreviver.services.steps import StepRun, StepRunner
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import (
     EPOCH,
+    directory_of,
     make_book_tools,
     make_page,
-    make_record,
     make_scan,
     make_source,
     new_account_id,
+    new_book_id,
 )
 from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
@@ -46,8 +47,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import PageVersion, Scan
-    from bookreviver.ports.storage import BookFileStores
-    from tests.helpers.storage import SharedBookFileStores
+    from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 
@@ -80,20 +80,19 @@ class Rig:
     :ivar version: The pending base version of a page shown from the scan.
     """
 
-    def __init__(self, files: BookFileStores) -> None:
+    def __init__(self, files: SharedBookDirectories) -> None:
         """Build the runner over the stores of a new book of the test.
 
         :param files: Opens the source store and the asset store of a book of the test.
-        :type files: BookFileStores
+        :type files: SharedBookDirectories
         """
         self.keys = BookKeys()
-        book_id = make_record().id
+        book_id = new_book_id()
         self.book = Book(
             book_id,
             new_account_id(),
             database=Mock(spec=BookDatabase),
-            sources=files.sources(book_id),
-            assets=files.assets(book_id),
+            directory=files.directory(directory_of(book_id)),
             tools=make_book_tools(),
         )
         self.assets = self.book.assets
@@ -148,15 +147,15 @@ class Rig:
 
 
 @pytest.fixture
-def fx_rig(fx_file_stores: SharedBookFileStores) -> Rig:
+def fx_rig(fx_directories: SharedBookDirectories) -> Rig:
     """Build the rig over the test's stores of the books.
 
-    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-    :type fx_file_stores: SharedBookFileStores
+    :param fx_directories: Opens the source store and the asset store of a book of the test.
+    :type fx_directories: SharedBookDirectories
     :returns: The rig.
     :rtype: Rig
     """
-    return Rig(fx_file_stores)
+    return Rig(fx_directories)
 
 
 class TestStore:

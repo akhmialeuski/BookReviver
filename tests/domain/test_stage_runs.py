@@ -4,9 +4,9 @@ import pytest
 
 from bookreviver.domain.enums import RunMode, Stage
 from bookreviver.domain.values import THROUGH_STEP_KEY, RunImpact, StageRun
-from tests.helpers.builders import make_record
+from tests.helpers.builders import new_book_id
 
-BOOK_ID = make_record().id
+BOOK_ID = new_book_id()
 THROUGH_THIRD_STEP: int = 2
 
 

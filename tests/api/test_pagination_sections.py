@@ -19,8 +19,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -36,17 +37,17 @@ PAGE_COUNT: int = 4
 class Book(NamedTuple):
     """A book of four pages of the signed-in account.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The pages in book order.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[BookPage]
 
     @property
     def sections_path(self) -> str:
         """The path of the pagination sections of the book."""
-        return f'{BOOKS_PATH}/{self.book_record.id}/pagination-sections'
+        return f'{BOOKS_PATH}/{self.book_id}/pagination-sections'
 
     def body(self, index: int, **fields: Any) -> dict[str, Any]:
         """Build the body of a section that starts at a page, in Arabic numerals unless given another rule.
@@ -74,11 +75,10 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
     pages = [make_page(order_key=key) for key in keys]
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_databases())
-    return Book(book_record=book_record, pages=pages)
+    book_id = await store_book(fx_uow(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases())
+    return Book(book_id=book_id, pages=pages)
 
 
 async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
@@ -91,7 +91,7 @@ async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
     :returns: The label of each page in the manifest.
     :rtype: list[str]
     """
-    response = await client.get(f'{BOOKS_PATH}/{book.book_record.id}/pages')
+    response = await client.get(f'{BOOKS_PATH}/{book.book_id}/pages')
     return [item.label for item in Page[PageSchema].model_validate_json(response.content).items]
 
 
@@ -236,15 +236,16 @@ class TestCreateSection:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        stranger = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id(), databases=fx_databases())
+        stranger_id = await commit_record(
+            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
 
         foreign_page = await fx_client.post(
             fx_book.sections_path, json={'first_page_id': str(page.id), 'style': 'arabic'}
         )
         foreign_record = await fx_client.post(
-            f'{BOOKS_PATH}/{stranger.id}/pagination-sections',
+            f'{BOOKS_PATH}/{stranger_id}/pagination-sections',
             json={'first_page_id': str(page.id), 'style': 'arabic'},
         )
 
@@ -292,10 +293,11 @@ class TestListSections:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        stranger = make_record()
-        await commit_record(fx_database, fx_uow(), stranger, owner=new_account_id(), databases=fx_databases())
+        stranger_id = await commit_record(
+            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
 
-        response = await fx_client.get(f'{BOOKS_PATH}/{stranger.id}/pagination-sections')
+        response = await fx_client.get(f'{BOOKS_PATH}/{stranger_id}/pagination-sections')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -369,7 +371,7 @@ class TestChangeSections:
         :type fx_book: Book
         """
         await fx_client.post(fx_book.sections_path, json=fx_book.body(0))
-        path = f'{BOOKS_PATH}/{fx_book.book_record.id}/pages/{fx_book.pages[1].id}'
+        path = f'{BOOKS_PATH}/{fx_book.book_id}/pages/{fx_book.pages[1].id}'
         computed = PageSchema.model_validate((await fx_client.get(path)).json())
 
         typed = PageSchema.model_validate((await fx_client.patch(path, json={'label': '2a'})).json())
@@ -389,7 +391,7 @@ class TestChangeSections:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        pages_path = f'{BOOKS_PATH}/{fx_book.book_record.id}/pages'
+        pages_path = f'{BOOKS_PATH}/{fx_book.book_id}/pages'
         flow = PaginationSectionSchema.model_validate_json(
             (await fx_client.post(fx_book.sections_path, json=fx_book.body(1))).content
         )
@@ -416,7 +418,7 @@ class TestChangeSections:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        pages_path = f'{BOOKS_PATH}/{fx_book.book_record.id}/pages'
+        pages_path = f'{BOOKS_PATH}/{fx_book.book_id}/pages'
         before = Page[PageSchema].model_validate_json((await fx_client.get(pages_path)).content)
         made = PaginationSectionSchema.model_validate_json(
             (await fx_client.post(fx_book.sections_path, json=fx_book.body(0))).content

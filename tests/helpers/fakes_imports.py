@@ -24,7 +24,7 @@ from bookreviver.adapters.imaging import (
     VipsTiler,
 )
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.storage import LocalBookFileStores, LocalSourceStore
+from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.domain.pagination import Pagination
@@ -42,7 +42,7 @@ from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
-from tests.helpers.storage import upload
+from tests.helpers.storage import SharedBookDirectories, upload
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -54,14 +54,14 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.ids import BookId, JobId, SourceId
+    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.recipes import DefaultRecipes
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
 
 TICK: timedelta = timedelta(seconds=1)
 PAGE_WIDTH_PX: int = 200
@@ -100,13 +100,13 @@ class StoredBook(NamedTuple):
         return [labels[page.id] for page in self.pages]
 
 
-async def stored_book(book_id: BookId, *, databases: BookDatabases) -> StoredBook:
+async def stored_book(book_id: BookId, *, databases: LocatedBookDatabases) -> StoredBook:
     """Read the sources, scans, pages and pagination sections of a book as committed.
 
     :param book_id: Book owning the rows.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The rows, read in one transaction.
     :rtype: StoredBook
     """
@@ -372,50 +372,49 @@ class WatchedTiler(Tiler):
         await self._inner.thumbnail(image, target)
 
 
-class CrashingBookFileStores(LocalBookFileStores):
-    """The local stores of the books, whose next promotion of a source in any book can crash the worker or fail.
+class CrashingBookDirectories(SharedBookDirectories):
+    """The local directories of the books, whose next promotion of a source in any book can crash the worker or fail.
 
     :ivar crash_on_promote: Whether the next ``promote`` raises ``WorkerCrashError``, once.
     :ivar fail_on_promote: Error the next ``promote`` raises, once, leaving the files staged as a refused one does.
     """
 
     def __init__(self, *, root: Path) -> None:
-        """Keep the files of the books under ``root``, with no fault asked for.
+        """Keep the directories of the books under ``root``, with no fault asked for.
 
-        :param root: Storage root of the stores.
+        :param root: Storage root of the directories.
         :type root: Path
         """
         super().__init__(root=root)
-        self._files_root = root
         self.crash_on_promote = False
         self.fail_on_promote: Exception | None = None
 
     @override
-    def sources(self, book_id: BookId) -> CrashingSourceStore:
-        """Return the source store of a book, which reads the faults of this opener.
+    def _new_sources(self, name: BookDirectoryName) -> CrashingSourceStore:
+        """Build the source store of a book, which reads the faults of these directories.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :returns: The source store of the book.
         :rtype: CrashingSourceStore
         """
-        return CrashingSourceStore(root=self._files_root, book_id=book_id, faults=self)
+        return CrashingSourceStore(root=self._files_root, name=name, faults=self)
 
 
 class CrashingSourceStore(LocalSourceStore):
     """The local source store of one book, whose next promotion can crash the worker or fail with an error."""
 
-    def __init__(self, *, root: Path, book_id: BookId, faults: CrashingBookFileStores) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName, faults: CrashingBookDirectories) -> None:
         """Keep the uploads and sources of one book under ``root``, failing as ``faults`` asks.
 
         :param root: Storage root of the stores.
         :type root: Path
-        :param book_id: The book.
-        :type book_id: BookId
-        :param faults: The opener that holds the faults a test asks for.
-        :type faults: CrashingBookFileStores
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :param faults: The directories that hold the faults a test asks for.
+        :type faults: CrashingBookDirectories
         """
-        super().__init__(root=root, book_id=book_id)
+        super().__init__(root=root, name=name)
         self._faults = faults
 
     @override
@@ -450,7 +449,7 @@ class ImportRig:
     :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``.
-    :ivar files: Opens the local stores of a book, whose promotion of a source can crash.
+    :ivar files: The local directories of the books, whose promotion of a source can crash.
     :ivar inspector: Real inspector, watched.
     :ivar rasterizer: Real rasterizer, watched.
     :ivar tiler: Real tiler, watched.
@@ -460,10 +459,10 @@ class ImportRig:
 
     database: SqlDatabase
     new_uow: UnitOfWorkFactory
-    databases: BookDatabases
+    databases: LocatedBookDatabases
     fakes: JobFakes
     events: RecordingEventBus
-    files: CrashingBookFileStores
+    files: CrashingBookDirectories
     inspector: WatchedInspector
     rasterizer: WatchedRasterizer
     tiler: WatchedTiler
@@ -525,7 +524,7 @@ class ImportRig:
             databases=stores.databases,
             fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
             events=events,
-            files=CrashingBookFileStores(root=root),
+            files=CrashingBookDirectories(root=root),
             inspector=WatchedInspector(reader),
             rasterizer=WatchedRasterizer(reader),
             tiler=WatchedTiler(tiler),

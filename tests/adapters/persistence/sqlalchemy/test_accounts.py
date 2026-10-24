@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
     from sqlalchemy.orm import Session
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.app.settings import Settings
     from tests.helpers.database import SharedDatabaseProvider
@@ -74,15 +73,13 @@ class CountingUnitOfWork(SqlAlchemyUnitOfWork):
     :ivar blocks: Number of such transactions opened so far.
     """
 
-    def __init__(self, database: SqlDatabase, books: BookRegistry) -> None:
-        """Run the transactions of ``database`` and ``books`` and start counting.
+    def __init__(self, database: SqlDatabase) -> None:
+        """Run the transactions of ``database`` and start counting.
 
         :param database: Catalogue of the test.
         :type database: SqlDatabase
-        :param books: Registry of the books of the test.
-        :type books: BookRegistry
         """
-        super().__init__(database, books)
+        super().__init__(database)
         self.blocks = 0
 
     @override
@@ -118,17 +115,15 @@ async def fx_container(
 
 
 @pytest.fixture
-def fx_counting_uow(fx_database: SqlDatabase, fx_books: BookRegistry) -> CountingUnitOfWork:
+def fx_counting_uow(fx_database: SqlDatabase) -> CountingUnitOfWork:
     """Build the unit of work of the request.
 
     :param fx_database: Catalogue with every table created.
     :type fx_database: SqlDatabase
-    :param fx_books: Registry of the books of the test.
-    :type fx_books: BookRegistry
     :returns: The unit of work, counting the transactions that write.
     :rtype: CountingUnitOfWork
     """
-    return CountingUnitOfWork(fx_database, fx_books)
+    return CountingUnitOfWork(fx_database)
 
 
 @pytest.fixture

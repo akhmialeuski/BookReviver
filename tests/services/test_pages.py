@@ -18,6 +18,7 @@ from tests.helpers.builders import (
     make_record,
     make_scan,
     make_source,
+    new_book_id,
 )
 from tests.helpers.seeding import commit_record, store_book
 
@@ -26,11 +27,11 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
-    from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
@@ -54,32 +55,31 @@ def _ready(version: PageVersion) -> PageVersion:
 
 
 async def _commit_book(
-    database: SqlDatabase, uow: UnitOfWork, book_record: BookRecord, owner: AccountId, *, databases: BookDatabases
-) -> tuple[list[Page], list[PageVersion]]:
+    database: SqlDatabase, uow: UnitOfWork, owner: AccountId, *, databases: LocatedBookDatabases
+) -> tuple[BookId, list[Page], list[PageVersion]]:
     """Commit a book of three pages stored against the book order, the middle one in the book a placeholder.
 
     :param database: Catalogue of the test, which stores the owner when it does not already.
     :type database: SqlDatabase
     :param uow: Unit of work over the catalogue and the books of the test.
     :type uow: UnitOfWork
-    :param book_record: The record of the book.
-    :type book_record: BookRecord
     :param owner: Account owning the book.
     :type owner: AccountId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
-    :returns: The pages in the order they were stored, and the base versions of the two that have one.
-    :rtype: tuple[list[Page], list[PageVersion]]
+    :type databases: LocatedBookDatabases
+    :returns: The identifier of the book, the pages in the order they were stored, and the base versions of the two
+              that have one.
+    :rtype: tuple[BookId, list[Page], list[PageVersion]]
     """
     source = make_source()
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)]
     versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
-    await commit_record(
+    book_id = await commit_record(
         database,
         uow,
-        book_record,
+        make_record(),
         *pages,
         owner=owner,
         sources=[source],
@@ -87,7 +87,7 @@ async def _commit_book(
         versions=versions,
         databases=databases,
     )
-    return pages, versions
+    return book_id, pages, versions
 
 
 class TestManifest:
@@ -114,12 +114,11 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        pages, versions = await _commit_book(
-            fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases
+        book_id, pages, versions = await _commit_book(
+            fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases
         )
 
-        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
 
         expect([overview.page for overview in manifest.items] == [pages[index] for index in BOOK_ORDER])
         expect([overview.position for overview in manifest.items] == [0, 1, 2])
@@ -148,12 +147,11 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        pages, _ = await _commit_book(
-            fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases
+        book_id, pages, _ = await _commit_book(
+            fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases
         )
 
-        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), WINDOW)
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), WINDOW)
 
         expect([(overview.page, overview.position) for overview in manifest.items] == [(pages[2], 1)])
         expect(manifest.total == len(pages))
@@ -177,19 +175,18 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
         page = make_page()
         old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             page,
             owner=fx_actor.account_id,
             versions=[new, old],
             databases=fx_open_book.databases,
         )
 
-        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [new]
 
@@ -211,14 +208,13 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
         page = make_page()
         base = _ready(make_page_version(page_id=page.id, minutes=1))
         deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             page,
             owner=fx_actor.account_id,
             versions=[base, deskewed, regions],
@@ -239,9 +235,9 @@ class TestManifest:
                 )
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
 
-        await fx_open_book.databases.open(book_record.id).change(save_heads)
+        await fx_open_book.databases.open(book_id).change(save_heads)
 
-        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [deskewed]
 
@@ -263,24 +259,23 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
         page = make_page()
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
-        await store_book(
+        book_id = await store_book(
             fx_uow(),
-            book_record,
+            make_record(),
             page,
             owner=fx_actor.account_id,
             versions=[chosen, newer],
             databases=fx_open_book.databases,
         )
-        await fx_open_book.databases.open(book_record.id).change(
+        await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.page_stages.save(
                 make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=chosen.id)
             ),
         )
 
-        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [chosen]
 
@@ -302,14 +297,13 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
         pages = [make_page(order_key=key) for key in ('a0', 'a1', 'a2')]
         pages[1] = evolve(pages[1], included=False)
-        await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_open_book.databases)
-
-        manifest = await fx_service().manifest(
-            fx_open_book(fx_actor, book_record.id), SliceRequest(), included_only=True
+        book_id = await store_book(
+            fx_uow(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_open_book.databases
         )
+
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest(), included_only=True)
 
         expect([overview.page for overview in manifest.items] == [pages[0], pages[2]])
         expect([overview.position for overview in manifest.items] == [0, 1])
@@ -337,11 +331,10 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases)
-        [source, *_] = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.sources.list_all())
+        book_id, _, _ = await _commit_book(fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases)
+        [source, *_] = await fx_open_book.databases.open(book_id).read(lambda repos: repos.sources.list_all())
 
-        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
 
         assert [overview.source_id for overview in manifest.items] == [None, source.id, source.id]
 
@@ -370,12 +363,11 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        pages, versions = await _commit_book(
-            fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases
+        book_id, pages, versions = await _commit_book(
+            fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases
         )
 
-        overview = await fx_service().get(fx_open_book(fx_actor, book_record.id), pages[0].id)
+        overview = await fx_service().get(fx_open_book(fx_actor, book_id), pages[0].id)
 
         expect(overview.page == pages[0])
         expect(overview.position == len(pages) - 1)
@@ -400,13 +392,12 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record, holder = (make_record() for _ in range(2))
         page = make_page()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-        await store_book(fx_uow(), holder, page, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        await store_book(fx_uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_open_book(fx_actor, book_record.id), page.id)
+            await fx_service().get(fx_open_book(fx_actor, book_id), page.id)
 
     async def test_missing_page_is_not_found(
         self,
@@ -426,11 +417,10 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_open_book(fx_actor, book_record.id), PageId(uuid4()))
+            await fx_service().get(fx_open_book(fx_actor, book_id), PageId(uuid4()))
 
 
 class TestJobsQueuedTogether:
@@ -451,9 +441,9 @@ class TestJobsQueuedTogether:
         :param fx_board: Board that records the jobs put on it.
         :type fx_board: FakeJobBoard
         """
-        book_record = make_record()
+        book_id = new_book_id()
 
         for _ in range(requests):
-            fx_service().detect_new_pages(book_record.id)
+            fx_service().detect_new_pages(book_id)
 
-        assert [job.kind for job in fx_board.put_jobs if job.book_id == book_record.id] == [JobKind.DETECT_CONTENT]
+        assert [job.kind for job in fx_board.put_jobs if job.book_id == book_id] == [JobKind.DETECT_CONTENT]

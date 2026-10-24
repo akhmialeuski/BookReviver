@@ -248,7 +248,7 @@ class ProcessingJobs:
         """
         run = StageRun.from_map(job.params)
         book = await self._books.open(job.book_id)
-        book_record = await book.read(lambda repos: repos.book_record.get(book.id))
+        book_record = await book.read(lambda repos: repos.book_record.get())
         plan = RunPlan(recipes=self._recipes, clock=self._clock, book=book, run=run)
         pages = await plan.pages()
         executor = RecipeRun(
@@ -357,9 +357,7 @@ class ProcessingJobs:
         """
         preview = StepPreview.from_map(job.params)
         book = await self._books.open(job.book_id)
-        book_record, page = await book.read(
-            lambda repos: (repos.book_record.get(book.id), repos.pages.get(preview.page_id))
-        )
+        book_record, page = await book.read(lambda repos: (repos.book_record.get(), repos.pages.get(preview.page_id)))
         executor = PreviewRun(book=book, book_record=book_record, runtime=self._runtime, control=control)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
 

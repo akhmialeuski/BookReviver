@@ -1,11 +1,13 @@
-"""Local directory tree under the storage root, holding the uploads, sources and derived files of every book.
+"""Local directory tree under the storage root, holding the directory of every book: its database, uploads and files.
 
-Both stores share one root, and the stores of one book place every key of the book, which ``BookKeys`` builds
-relative to the directory of the book, under ``projects/<id>/``, joined by the directory separator, so this module is
-the one that names the directory of a book in the storage. The source store owns
-``projects/<id>/incoming/<job_id>/``, where an upload is received, and ``projects/<id>/sources/<source_id>/``, where
-each source lives as uploaded. The asset store owns
-``projects/<id>/assets/`` and refuses any key outside it, so a wrong key can never erase a source.
+The directory of a book is ``projects/<id>/`` under the root, and :class:`LocalBookDirectories` is the one class that
+makes, walks and opens these directories, so this module is the one that names the directory of a book in the storage.
+A new book gets a copy of the blank database file in a new directory, an imported book gets the content of its archive,
+and :class:`LocalBookDirectory` deletes the directory whole with the database file in it. The stores of one book place
+every key of the book, which ``BookKeys`` builds relative to the directory of the book, under that directory, joined by
+the directory separator. The source store owns ``incoming/<job_id>/``, where an upload is received, and
+``sources/<source_id>/``, where each source lives as uploaded. The asset store owns ``assets/`` and refuses any key
+outside it, so a wrong key can never erase a source.
 
 Nothing is written in place and nothing stored is ever replaced. The files of a source are moved from the upload
 into a hidden sibling directory, which one rename then publishes as the source's directory. A derived file or
@@ -34,14 +36,14 @@ from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError, UploadRejectedError
 from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.values import SourceFile, UploadPath
-from bookreviver.ports.storage import AssetStore, BookArchive, BookFileStores, SourceStore
+from bookreviver.ports.storage import AssetStore, BookDirectories, BookDirectory, SourceStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from typing import BinaryIO
 
-    from bookreviver.domain.ids import BookId, JobId, SourceId, StorageKey
+    from bookreviver.domain.ids import BookDirectoryName, JobId, SourceId, StorageKey
     from bookreviver.ports.storage import IncomingFile
 
 # Read size of an upload stream, large enough to keep the per-chunk overhead negligible
@@ -54,59 +56,43 @@ ARCHIVE_COMPRESSION: int = zipfile.ZIP_STORED
 NOT_AN_ARCHIVE: str = 'The file is not a ZIP archive.'
 NO_DATABASE: str = 'The archive holds no database of a book.'
 OUTSIDE_THE_BOOK: str = 'The archive holds {name}, which is not a file of a book.'
-# What ``rmdir`` reports for a directory that is gone or still holds another store's files
-KEPT_DIRECTORY_ERRNOS: frozenset[int] = frozenset({errno.ENOENT, errno.ENOTEMPTY})
 
 
 class _LocalTree:
-    """The storage root both local stores share, with the directory of every book under it."""
+    """The storage root, with the directory of every book under it."""
 
     def __init__(self, *, root: Path) -> None:
         """Keep the files under ``root``.
 
-        :param root: Storage root shared by the source store and the asset store, created on the first write.
+        :param root: Storage root of the directories of the books, created with the first of them.
         :type root: Path
         """
         self._root = anyio.Path(root)
 
-    def _book(self, book_id: BookId) -> anyio.Path:
+    def _book(self, name: BookDirectoryName) -> anyio.Path:
         """Return the directory of a book under the root, whether or not it exists.
 
-        :param book_id: The book.
-        :type book_id: BookId
-        :returns: The path of ``projects/<book_id>`` under the root.
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :returns: The path of ``projects/<name>`` under the root.
         :rtype: anyio.Path
         """
-        return self._root / KeySegment.BOOKS / str(book_id)
-
-    @staticmethod
-    async def _remove_inside_book(path: anyio.Path) -> None:
-        """Remove one directory of a book, then the book's directory once nothing is left in it.
-
-        :param path: Directory under the directory of a book, such as ``projects/<id>/assets``.
-        :type path: anyio.Path
-        """
-        await _remove(path)
-        try:
-            await path.parent.rmdir()
-        except OSError as error:
-            if error.errno not in KEPT_DIRECTORY_ERRNOS:
-                raise
+        return self._root / KeySegment.BOOKS / str(name)
 
 
 class _BookTree(_LocalTree):
     """The directory of one book under the storage root, with the paths of the keys of the book under it."""
 
-    def __init__(self, *, root: Path, book_id: BookId) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName) -> None:
         """Keep the files of one book under ``root``.
 
         :param root: Storage root shared by the source store and the asset store, created on the first write.
         :type root: Path
-        :param book_id: The book whose files the store holds.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         """
         super().__init__(root=root)
-        self._book_id = book_id
+        self._name = name
         self._keys = BookKeys()
 
     def _path(self, key: StorageKey) -> anyio.Path:
@@ -117,15 +103,7 @@ class _BookTree(_LocalTree):
         :returns: Path of the key under the directory of the book.
         :rtype: anyio.Path
         """
-        return self._book(self._book_id).joinpath(*key.split(BookKeys.SEPARATOR))
-
-    async def _remove_area(self, area: StorageKey) -> None:
-        """Remove one area of a book, then the book's directory once no other area is left in it.
-
-        :param area: Key of the area, such as ``assets``.
-        :type area: StorageKey
-        """
-        await self._remove_inside_book(self._path(area))
+        return self._book(self._name).joinpath(*key.split(BookKeys.SEPARATOR))
 
 
 class LocalSourceStore(_BookTree, SourceStore):
@@ -250,15 +228,6 @@ class LocalSourceStore(_BookTree, SourceStore):
         """
         await _remove(self._path(self._keys.source(source_id)))
 
-    @override
-    async def delete_all(self) -> None:
-        """Remove the book's ``incoming/`` and ``sources/`` directories, then the book's directory if empty.
-
-        The book's directory stays while ``assets/`` is in it, since only the asset store removes that.
-        """
-        for area in (self._keys.incoming_area, self._keys.sources_area):
-            await self._remove_area(area)
-
     async def _existing(self, key: StorageKey) -> anyio.Path:
         """Return the directory at ``key``, which must exist.
 
@@ -304,7 +273,7 @@ class LocalAssetStore(_BookTree, AssetStore):
         :returns: Iterator yielding the sibling path once.
         :rtype: AsyncIterator[Path]
         :raises ConflictError: If something is stored at ``key``, before the writer starts or when it publishes.
-        :raises ValueError: If the key does not lie under ``projects/<id>/assets/``.
+        :raises ValueError: If the key does not lie under ``assets/``.
         """
         target = self._asset_path(key)
         conflict_message = f'Something is already stored at {key}, and stored files are never replaced'
@@ -332,7 +301,7 @@ class LocalAssetStore(_BookTree, AssetStore):
         :returns: Iterator yielding the path once.
         :rtype: AsyncIterator[Path]
         :raises NotFoundError: If nothing is stored at the key.
-        :raises ValueError: If the key does not lie under ``projects/<id>/assets/``.
+        :raises ValueError: If the key does not lie under ``assets/``.
         """
         path = self._asset_path(key)
         if not await path.exists():
@@ -350,7 +319,7 @@ class LocalAssetStore(_BookTree, AssetStore):
         :type target: StorageKey
         :raises NotFoundError: If nothing is stored at ``source``.
         :raises ConflictError: If something is stored at ``target``, before the copy starts or when it publishes.
-        :raises ValueError: If either key does not lie under ``projects/<id>/assets/``.
+        :raises ValueError: If either key does not lie under ``assets/``.
         """
         async with self.readable(source) as origin, self.writable(target) as destination:
             await anyio.to_thread.run_sync(_copy_tree, origin, destination)
@@ -361,7 +330,7 @@ class LocalAssetStore(_BookTree, AssetStore):
 
         :param prefix: Key of the file or directory to remove, matched by whole path segments.
         :type prefix: StorageKey
-        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/``.
+        :raises ValueError: If the prefix does not lie under ``assets/``.
         """
         await _remove(self._asset_path(prefix))
 
@@ -373,18 +342,9 @@ class LocalAssetStore(_BookTree, AssetStore):
         :type prefix: StorageKey
         :returns: The total size of the files in bytes, 0 when nothing is stored there.
         :rtype: int
-        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/``.
+        :raises ValueError: If the prefix does not lie under ``assets/``.
         """
         return await anyio.to_thread.run_sync(_tree_size, Path(self._asset_path(prefix)))
-
-    @override
-    async def delete_all(self) -> None:
-        """Remove the book's ``assets/`` directory, then the book's directory if empty.
-
-        The book's directory stays while ``incoming/`` or ``sources/`` is in it, since only the source store
-        removes those.
-        """
-        await self._remove_area(self._keys.assets_area)
 
     def _asset_path(self, key: StorageKey) -> anyio.Path:
         """Return the path of a key, which must name something strictly inside the ``assets/`` of the store's book.
@@ -398,44 +358,9 @@ class LocalAssetStore(_BookTree, AssetStore):
                             of another book.
         """
         if not BookKeys.is_asset(key):
-            err_msg = f'Storage key {key!r} does not lie under the assets directory of book {self._book_id}'
+            err_msg = f'Storage key {key!r} does not lie under the assets directory of book directory {self._name}'
             raise ValueError(err_msg)
         return self._path(key)
-
-
-class LocalBookFileStores(_LocalTree, BookFileStores):
-    """Opens the local source store and asset store of a book, all under one storage root."""
-
-    @override
-    def sources(self, book_id: BookId) -> LocalSourceStore:
-        """Return the local store of the uploads and sources of a book.
-
-        :param book_id: The book.
-        :type book_id: BookId
-        :returns: The source store of the book.
-        :rtype: LocalSourceStore
-        """
-        return LocalSourceStore(root=Path(self._root), book_id=book_id)
-
-    @override
-    def assets(self, book_id: BookId) -> LocalAssetStore:
-        """Return the local store of the derived files of a book.
-
-        :param book_id: The book.
-        :type book_id: BookId
-        :returns: The asset store of the book.
-        :rtype: LocalAssetStore
-        """
-        return LocalAssetStore(root=Path(self._root), book_id=book_id)
-
-    @override
-    async def discard_all_staged(self) -> None:
-        """Remove the ``incoming/`` directory of every book, and the directory of a book that it leaves empty."""
-        books = self._root / KeySegment.BOOKS
-        if not await books.is_dir():
-            return
-        async for directory in books.iterdir():
-            await self._remove_inside_book(directory / KeySegment.INCOMING)
 
 
 async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_bytes: int) -> list[SourceFile]:
@@ -524,19 +449,50 @@ class _Pieces:
         return taken
 
 
-class LocalBookArchive(_LocalTree, BookArchive):
-    """The archives of the books as ZIP files of the directories of the books under the local storage root.
+class LocalBookDirectory(_BookTree, BookDirectory):
+    """The directory ``projects/<id>/`` of one book, with its database file, its two stores and its archive.
 
     The archive is written as it is streamed, one piece of a file at a time, so a book of many gigabytes needs no
     temporary file and no more memory than one piece. Files still being written under a hidden name are left out.
+
+    :ivar _sources: The source store of the book.
+    :ivar _assets: The asset store of the book.
     """
 
-    @override
-    async def export(self, book_id: BookId, database: bytes) -> AsyncIterator[bytes]:
-        """Stream the archive of a book: its database first, then every file of its sources and derived files.
+    def __init__(self, *, root: Path, name: BookDirectoryName) -> None:
+        """Keep the directory of one book under ``root``.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param root: Storage root of the directories of the books.
+        :type root: Path
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        """
+        super().__init__(root=root, name=name)
+        self._sources = LocalSourceStore(root=root, name=name)
+        self._assets = LocalAssetStore(root=root, name=name)
+
+    @property
+    @override
+    def database(self) -> Path:
+        """The ``book.db`` in the directory of the book."""
+        return Path(self._path(self._keys.database))
+
+    @property
+    @override
+    def sources(self) -> SourceStore:
+        """The store of the uploads and sources of the book."""
+        return self._sources
+
+    @property
+    @override
+    def assets(self) -> AssetStore:
+        """The store of the derived files of the book."""
+        return self._assets
+
+    @override
+    async def export(self, database: bytes) -> AsyncIterator[bytes]:
+        """Stream the archive of the book: its database first, then every file of its sources and derived files.
+
         :param database: The copy of the database of the book.
         :type database: bytes
         :returns: The pieces of the archive, in order.
@@ -548,7 +504,7 @@ class LocalBookArchive(_LocalTree, BookArchive):
         archive = zipfile.ZipFile(pieces, mode='w', compression=ARCHIVE_COMPRESSION)
         archive.writestr(keys.database, database)
         yield pieces.take()
-        for path, name in await anyio.to_thread.run_sync(self._files_of, Path(self._book(book_id))):
+        for path, name in await anyio.to_thread.run_sync(self._files_of, Path(self._book(self._name))):
             info = await anyio.to_thread.run_sync(zipfile.ZipInfo.from_file, path, name)
             entry = archive.open(info, mode='w')
             offset = 0
@@ -562,18 +518,9 @@ class LocalBookArchive(_LocalTree, BookArchive):
         yield pieces.take()
 
     @override
-    async def unpack(self, book_id: BookId, archive: BinaryIO) -> None:
-        """Place the content of an archive as the directory of a new book, its database first.
-
-        :param book_id: The new book, which has no directory yet.
-        :type book_id: BookId
-        :param archive: The archive, a file that can be read from any position.
-        :type archive: BinaryIO
-        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
-                                     the archive of a book carries.
-        :raises ConflictError: If the new book has a directory already.
-        """
-        await anyio.to_thread.run_sync(self._unpack, book_id, archive)
+    async def delete(self) -> None:
+        """Remove the directory of the book whole, with its database file and what SQLite keeps beside it."""
+        await _remove(self._book(self._name))
 
     @staticmethod
     def _files_of(book: Path) -> list[tuple[Path, str]]:
@@ -593,11 +540,80 @@ class LocalBookArchive(_LocalTree, BookArchive):
         ]
         return sorted(files, key=itemgetter(1))
 
-    def _unpack(self, book_id: BookId, archive: BinaryIO) -> None:
+
+class LocalBookDirectories(_LocalTree, BookDirectories):
+    """The directories of the books under one storage root, which this class alone makes and walks."""
+
+    @override
+    def directory(self, name: BookDirectoryName) -> LocalBookDirectory:
+        """Return the directory of a book, without touching its files.
+
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :returns: The directory of the book.
+        :rtype: LocalBookDirectory
+        """
+        return LocalBookDirectory(root=Path(self._root), name=name)
+
+    @override
+    async def create(self, name: BookDirectoryName, blank: Path) -> LocalBookDirectory:
+        """Make the directory of a new book, unless it exists, and copy the blank database file into it.
+
+        A directory that holds files of the book and no database, as one an earlier release left, takes the copy too.
+
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :param blank: A database file of a book with no rows.
+        :type blank: Path
+        :returns: The directory of the new book.
+        :rtype: LocalBookDirectory
+        :raises ConflictError: If the directory holds a database already.
+        """
+        directory = self.directory(name)
+        target = anyio.Path(directory.database)
+        await target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # The exclusive mode refuses a database that exists, which a check before the write could not
+            copy = await anyio.open_file(target, 'xb')
+        except FileExistsError as error:
+            raise ConflictError(name) from error
+        async with copy:
+            await copy.write(await anyio.Path(blank).read_bytes())
+        return directory
+
+    @override
+    async def unpack(self, name: BookDirectoryName, archive: BinaryIO) -> LocalBookDirectory:
+        """Place the content of an archive as the directory of a new book, its database first.
+
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :returns: The directory of the new book.
+        :rtype: LocalBookDirectory
+        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
+                                     the archive of a book carries.
+        :raises ConflictError: If the new book has a directory already.
+        """
+        await anyio.to_thread.run_sync(self._unpack, name, archive)
+        return self.directory(name)
+
+    @override
+    async def discard_all_staged(self) -> None:
+        """Remove the ``incoming/`` directory of every book."""
+        books = self._root / KeySegment.BOOKS
+        if not await books.is_dir():
+            return
+        async for directory in books.iterdir():
+            await _remove(directory / KeySegment.INCOMING)
+
+    def _unpack(self, name: BookDirectoryName, archive: BinaryIO) -> None:
         """Check every name of the archive, then write its files into the new directory of the book, database first.
 
-        :param book_id: The new book.
-        :type book_id: BookId
+        A failure while writing removes the directory, so a refused or broken archive leaves nothing behind.
+
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
         :raises InvalidArchiveError: If the archive is refused.
@@ -617,16 +633,20 @@ class LocalBookArchive(_LocalTree, BookArchive):
                 placed[member.filename] = key
             if keys.database not in placed:
                 raise InvalidArchiveError(NO_DATABASE)
-            book = Path(self._book(book_id))
+            book = Path(self._book(name))
             try:
                 book.mkdir(parents=True)
             except FileExistsError as error:
-                raise ConflictError(book_id) from error
-            for member in sorted(files, key=lambda member: member.filename != keys.database):
-                target = book.joinpath(*placed[member.filename].split(keys.SEPARATOR))
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with opened.open(member) as source, target.open('xb') as copy:
-                    shutil.copyfileobj(source, copy, CHUNK_BYTES)
+                raise ConflictError(name) from error
+            try:
+                for member in sorted(files, key=lambda member: member.filename != keys.database):
+                    target = book.joinpath(*placed[member.filename].split(keys.SEPARATOR))
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with opened.open(member) as source, target.open('xb') as copy:
+                        shutil.copyfileobj(source, copy, CHUNK_BYTES)
+            except BaseException:
+                shutil.rmtree(book, ignore_errors=True)
+                raise
 
 
 def _list_files(directory: Path) -> dict[str, Path]:

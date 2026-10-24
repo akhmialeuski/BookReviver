@@ -82,9 +82,8 @@ async def fx_queued_job(
     :returns: The queued job.
     :rtype: Job
     """
-    book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-    return fx_fakes.board.put(make_job(book_id=book_record.id))
+    book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+    return fx_fakes.board.put(make_job(book_id=book_id))
 
 
 @pytest.fixture
@@ -104,9 +103,10 @@ async def fx_strangers_job(
     :returns: The queued job of the other account.
     :rtype: Job
     """
-    book_record = make_record()
-    await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
-    return fx_fakes.board.put(make_job(book_id=book_record.id))
+    book_id = await commit_record(
+        fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+    )
+    return fx_fakes.board.put(make_job(book_id=book_id))
 
 
 class TestReadJob:
@@ -148,10 +148,11 @@ class TestReadJob:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_record = make_record()
-        await store_book(fx_open_book.uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         run = fx_fakes.board.put(
-            make_job(book_id=book_record.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
+            make_job(book_id=book_id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )
         run_body = (await fx_client.get(JOB_PATH.format(book_id=run.book_id, job_id=run.id))).json()
         import_body = (

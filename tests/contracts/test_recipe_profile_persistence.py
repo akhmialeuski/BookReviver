@@ -294,7 +294,6 @@ class TestRecipeProfileRepository:
         """
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
-        book_record = make_record()
         linked = evolve(make_recipe(), profile_id=profile.id)
         unlinked = make_recipe(stage=Stage.CLEANUP)
 
@@ -309,10 +308,8 @@ class TestRecipeProfileRepository:
             return [repos.recipes.get(recipe.id).profile_id for recipe in (linked, unlinked)]
 
         uow = await _store(fx_uow, profile)
-        await store_book(uow, book_record, owner=owner_id, databases=fx_databases())
+        book_id = await store_book(uow, make_record(), owner=owner_id, databases=fx_databases())
         await (
-            fx_databases()
-            .open(book_record.id)
-            .change(lambda repos, _book_record: repos.recipes.add_many([linked, unlinked]))
+            fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add_many([linked, unlinked]))
         )
-        assert await fx_databases().open(book_record.id).read(profile_ids) == [profile.id, None]
+        assert await fx_databases().open(book_id).read(profile_ids) == [profile.id, None]

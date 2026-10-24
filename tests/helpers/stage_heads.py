@@ -12,11 +12,12 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStageKey
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
+    from tests.helpers.database import LocatedBookDatabases
 
 
 async def seed_head(
-    book_id: BookId, key: PageStageKey, *, after: PageVersion, ready: bool = True, databases: BookDatabases
+    book_id: BookId, key: PageStageKey, *, after: PageVersion, ready: bool = True, databases: LocatedBookDatabases
 ) -> PageVersion:
     """Commit a version of a stage that reads another version, and the record of the stage that names it as current.
 
@@ -29,7 +30,7 @@ async def seed_head(
     :param ready: Whether the files of the new version are published.
     :type ready: bool
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The version, which is the current one of the stage.
     :rtype: PageVersion
     """

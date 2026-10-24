@@ -7,7 +7,7 @@ from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-from bookreviver.ports.storage import BookArchive, BookFileStores
+from bookreviver.ports.storage import BookDirectories
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService
@@ -50,38 +50,36 @@ class BooksProvider(Provider):
         return BookFreshness(board=board)
 
     @provide
-    def book_tools(self, stages: StageSummaries, clock: Clock, archive: BookArchive) -> BookTools:
-        """Gather what every book a request opens works with besides its own database.
+    def book_tools(self, stages: StageSummaries, clock: Clock) -> BookTools:
+        """Gather what every book a request opens works with besides its own database and directory.
 
         :param stages: Sums of the stages of books of the request.
         :type stages: StageSummaries
         :param clock: Clock of the application.
         :type clock: Clock
-        :param archive: Archive of a whole book.
-        :type archive: BookArchive
         :returns: The tools of the books of the request.
         :rtype: BookTools
         """
-        return BookTools(stages=stages, clock=clock, archive=archive)
+        return BookTools(stages=stages, clock=clock)
 
     @provide
     def books(
-        self, uow: UnitOfWork, databases: BookDatabases, tools: BookTools, stores: BookFileStores
+        self, uow: UnitOfWork, databases: BookDatabases, directories: BookDirectories, tools: BookTools
     ) -> BooksService:
-        """Build the books service over the request's unit of work and book databases.
+        """Build the books service over the request's unit of work, book databases and book directories.
 
         :param uow: Unit of work of the current request, which runs the transactions of the catalogue.
         :type uow: UnitOfWork
-        :param databases: Opens the database of a book, which runs the transactions of that book.
+        :param databases: Opens the database of a book from its file, which runs the transactions of that book.
         :type databases: BookDatabases
+        :param directories: The directories of the books.
+        :type directories: BookDirectories
         :param tools: What every book the service opens works with.
         :type tools: BookTools
-        :param stores: Opens the source store and the asset store of a book.
-        :type stores: BookFileStores
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(uow=uow, databases=databases, tools=tools, stores=stores)
+        return BooksService(uow=uow, databases=databases, directories=directories, tools=tools)
 
     @provide(scope=Scope.APP)
     def page_runtime(

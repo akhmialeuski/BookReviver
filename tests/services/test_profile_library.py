@@ -15,8 +15,8 @@ from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProces
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, BookRecord, Recipe, RecipeProfile
-    from bookreviver.domain.ids import RecipeId
+    from bookreviver.domain.entities import Actor, Recipe, RecipeProfile
+    from bookreviver.domain.ids import BookId, RecipeId
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
@@ -56,7 +56,7 @@ async def save_profile(kit: ProcessingKit, actor: Actor, *, stage: Stage = Stage
     return await kit.profiles().save(actor, stage, ProfileDraft(name=PROFILE_NAME, steps=steps))
 
 
-async def another_book(kit: ProcessingKit, actor: Actor) -> BookRecord:
+async def another_book(kit: ProcessingKit, actor: Actor) -> BookId:
     """Commit another book of the same account.
 
     :param kit: What the processing services of the test share.
@@ -64,11 +64,12 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> BookRecord:
     :param actor: Account owning the book.
     :type actor: Actor
     :returns: The book.
-    :rtype: BookRecord
+    :rtype: BookId
     """
-    book_record = make_record(title='Another book')
-    await store_book(kit.uow(), book_record, owner=actor.account_id, databases=kit.databases)
-    return book_record
+    book_id = await store_book(
+        kit.uow(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
+    )
+    return book_id
 
 
 class TestBooksOfAProfile:
@@ -84,11 +85,11 @@ class TestBooksOfAProfile:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
-        for target in (book_record, other, book_record):
-            await fx_kit.profiles().apply(fx_open_book(actor, target.id), profile, kind=RecipeKind.TEXT)
+        for target in (book_id, other, book_id):
+            await fx_kit.profiles().apply(fx_open_book(actor, target), profile, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(
             await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
         )
@@ -102,10 +103,10 @@ class TestBooksOfAProfile:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         used = await save_profile(fx_kit, actor)
         unused = await fx_kit.profiles().duplicate(used)
-        await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), used, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().apply(fx_open_book(actor, book_id), used, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(
             await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
         )
@@ -117,8 +118,8 @@ class TestBooksOfAProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
-        stranger, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
+        stranger, _ = await fx_kit.seed_book()
         await save_profile(fx_kit, stranger)
         mine = await save_profile(fx_kit, actor)
         listed = await fx_kit.profiles().library(
@@ -136,16 +137,14 @@ class TestBooksOfAProfile:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(fx_open_book(actor, book_id), profile, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
         listed = await fx_kit.profiles().library(
             await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
         )
-        kept = await fx_open_book.databases.open(book_record.id).read(
-            lambda repos: repos.recipes.get(applied.recipe.id)
-        )
+        kept = await fx_open_book.databases.open(book_id).read(lambda repos: repos.recipes.get(applied.recipe.id))
         assert (listed.total, kept.profile_id) == (0, None)
 
     async def test_deleting_a_profile_clears_the_link_in_every_book_of_the_owner(
@@ -158,31 +157,29 @@ class TestBooksOfAProfile:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record = await fx_kit.seed_record()
+        actor, book_id = await fx_kit.seed_book()
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         applied = [
-            await fx_kit.profiles().apply(fx_open_book(actor, target.id), profile, kind=RecipeKind.TEXT)
-            for target in (book_record, other)
+            await fx_kit.profiles().apply(fx_open_book(actor, target), profile, kind=RecipeKind.TEXT)
+            for target in (book_id, other)
         ]
 
         await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
 
-        async def recipe_of(target: BookRecord, recipe_id: RecipeId) -> Recipe:
+        async def recipe_of(target: BookId, recipe_id: RecipeId) -> Recipe:
             """Read a recipe of a book as committed.
 
             :param target: The book.
-            :type target: BookRecord
+            :type target: BookId
             :param recipe_id: The recipe.
             :type recipe_id: RecipeId
             :returns: The recipe.
             :rtype: Recipe
             """
-            return await fx_open_book.databases.open(target.id).read(lambda repos: repos.recipes.get(recipe_id))
+            return await fx_open_book.databases.open(target).read(lambda repos: repos.recipes.get(recipe_id))
 
-        kept = [
-            await recipe_of(target, done.recipe.id) for target, done in zip((book_record, other), applied, strict=True)
-        ]
+        kept = [await recipe_of(target, done.recipe.id) for target, done in zip((book_id, other), applied, strict=True)]
         expect([recipe.profile_id for recipe in kept] == [None, None])
         expect([recipe.steps for recipe in kept] == [done.recipe.steps for done in applied])
         assert_expectations()
@@ -197,7 +194,7 @@ class TestDuplicateProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
         profile = await save_profile(fx_kit, actor)
         await fx_kit.profiles().set_default(profile, is_default=True)
         copy = await fx_kit.profiles().duplicate(profile)
@@ -221,7 +218,7 @@ class TestImportProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
         source = await save_profile(fx_kit, actor)
         draft = ProfileDraft(
             name=FILE_NAME,
@@ -243,7 +240,7 @@ class TestImportProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
         draft = ProfileDraft(
             name='Foreign',
             steps=[Step(processor_key=FAKE_KEY), Step(processor_key=MISSING_KEY), Step(processor_key='geometry.also')],
@@ -258,7 +255,7 @@ class TestImportProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
         draft = ProfileDraft(name='Odd', steps=[Step(processor_key=FAKE_KEY, params={'unknown': 1})])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
@@ -269,7 +266,7 @@ class TestImportProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
         draft = ProfileDraft(name='Misfiled', steps=[Step(processor_key=FAKE_KEY)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().import_profile(actor, Stage.CLEANUP, draft)
@@ -280,7 +277,7 @@ class TestImportProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_record()
+        actor, _ = await fx_kit.seed_book()
         draft = ProfileDraft(name='Idle', steps=[Step(processor_key=FAKE_KEY, enabled=False)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
@@ -293,7 +290,7 @@ class TestImportProfile:
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
         """
-        actor, _ = await fx_ordered_kit.seed_record()
+        actor, _ = await fx_ordered_kit.seed_book()
         usual = ProfileDraft(name='Usual', steps=BROKEN_ORDER)
         with pytest.raises(InvalidParametersError):
             await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, usual)

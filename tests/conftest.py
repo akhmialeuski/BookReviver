@@ -6,7 +6,6 @@ import httpx
 import pytest
 from starlette.requests import Request
 
-from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
@@ -16,11 +15,17 @@ from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
 from tests.helpers.builders import BookOpener, new_account_id
-from tests.helpers.database import SharedDatabaseProvider, copy_schema_template, create_schema_template, database_file
+from tests.helpers.database import (
+    LocatedBookDatabases,
+    SharedDatabaseProvider,
+    copy_schema_template,
+    create_schema_template,
+    database_file,
+)
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
 from tests.helpers.seeding import commit_account
-from tests.helpers.storage import SharedBookFileStores
+from tests.helpers.storage import SharedBookDirectories
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -31,7 +36,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from httpx_oauth.oauth2 import BaseOAuth2
 
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import UnitOfWork
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 TEST_BASE_URL: str = 'http://testserver'
@@ -109,15 +114,16 @@ def fx_book_changes() -> RecordingEventBus:
 
 
 @pytest.fixture
-def fx_file_stores(fx_storage_root: Path) -> SharedBookFileStores:
-    """Return the opener of the source store and the asset store of a book of the test.
+def fx_directories(fx_storage_root: Path) -> SharedBookDirectories:
+    """Return the directories of the books of the test, with their database files, source stores and asset stores.
 
-    :param fx_storage_root: Storage root of the test, which holds the files of its books.
+    :param fx_storage_root: Storage root of the test, which holds the directories of its books.
     :type fx_storage_root: Path
-    :returns: The local stores of the books under the storage root, one of each per book, the test adapter of the port.
-    :rtype: SharedBookFileStores
+    :returns: The local directories of the books under the storage root, one of each per book, the test adapter of the
+              port.
+    :rtype: SharedBookDirectories
     """
-    return SharedBookFileStores(root=fx_storage_root)
+    return SharedBookDirectories(root=fx_storage_root)
 
 
 @pytest.fixture
@@ -194,7 +200,6 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
     :rtype: AsyncIterator[BookRegistry]
     """
     books = BookRegistry(
-        fx_settings.storage_root,
         tracer=NullTracer(),
         wait_seconds=fx_settings.change_wait.job_seconds,
         idle_seconds=TEST_BOOK_IDLE_SECONDS,
@@ -207,21 +212,19 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
 
 
 @pytest.fixture
-def fx_uow(fx_database: SqlDatabase, fx_books: BookRegistry, fx_settings: Settings) -> UnitOfWorkFactory:
-    """Return a function opening a new unit of work over the catalogue and the books of the test, as a request would get.
+def fx_uow(fx_database: SqlDatabase, fx_settings: Settings) -> UnitOfWorkFactory:
+    """Return a function opening a new unit of work over the catalogue of the test, as a request would get.
 
     :param fx_database: Catalogue of the test.
     :type fx_database: SqlDatabase
-    :param fx_books: Registry of the books of the test.
-    :type fx_books: BookRegistry
     :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
     :type fx_settings: Settings
-    :returns: Function opening a unit of work over ``fx_database`` and ``fx_books``.
+    :returns: Function opening a unit of work over ``fx_database``.
     :rtype: UnitOfWorkFactory
     """
 
     def open_unit_of_work(*, wait_seconds: float | None = None) -> UnitOfWork:
-        """Open a unit of work over the catalogue and the books of the test.
+        """Open a unit of work over the catalogue of the test.
 
         :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
         :type wait_seconds: float | None
@@ -229,19 +232,24 @@ def fx_uow(fx_database: SqlDatabase, fx_books: BookRegistry, fx_settings: Settin
         :rtype: UnitOfWork
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyUnitOfWork(fx_database, fx_books, wait_seconds=seconds)
+        return SqlAlchemyUnitOfWork(fx_database, wait_seconds=seconds)
 
     return open_unit_of_work
 
 
 @pytest.fixture
 def fx_databases(
-    fx_books: BookRegistry, fx_settings: Settings, fx_book_changes: RecordingEventBus
+    fx_books: BookRegistry,
+    fx_directories: SharedBookDirectories,
+    fx_settings: Settings,
+    fx_book_changes: RecordingEventBus,
 ) -> BookDatabasesFactory:
     """Return a function opening a new opener of the databases of the books of the test, as a request would get.
 
     :param fx_books: Registry of the books of the test.
     :type fx_books: BookRegistry
+    :param fx_directories: The directories of the books of the test, which hold their database files.
+    :type fx_directories: SharedBookDirectories
     :param fx_settings: Settings of the test, whose job limit is the wait of an opener made with none.
     :type fx_settings: Settings
     :param fx_book_changes: Where the book databases announce the committed changes of the books.
@@ -250,23 +258,25 @@ def fx_databases(
     :rtype: BookDatabasesFactory
     """
 
-    def open_databases(*, wait_seconds: float | None = None) -> BookDatabases:
+    def open_databases(*, wait_seconds: float | None = None) -> LocatedBookDatabases:
         """Open the databases of the books of the test.
 
         :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
         :type wait_seconds: float | None
         :returns: A new opener of the databases of the books.
-        :rtype: BookDatabases
+        :rtype: LocatedBookDatabases
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyBookDatabases(fx_books, publisher=fx_book_changes, wait_seconds=seconds)
+        return LocatedBookDatabases(
+            fx_books, directories=fx_directories, publisher=fx_book_changes, wait_seconds=seconds
+        )
 
     return open_databases
 
 
 @pytest.fixture
 def fx_open_book(
-    fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory, fx_file_stores: SharedBookFileStores
+    fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory, fx_directories: SharedBookDirectories
 ) -> BookOpener:
     """Return the opener of the books of the test, which opens a book of an account with its database.
 
@@ -274,12 +284,12 @@ def fx_open_book(
     :type fx_uow: UnitOfWorkFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
-    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-    :type fx_file_stores: SharedBookFileStores
+    :param fx_directories: Opens the source store and the asset store of a book of the test.
+    :type fx_directories: SharedBookDirectories
     :returns: The opener, called with the actor and the identifier of the book.
     :rtype: BookOpener
     """
-    return BookOpener(uow=fx_uow, databases=fx_databases(), files=fx_file_stores)
+    return BookOpener(uow=fx_uow, databases=fx_databases(), files=fx_directories)
 
 
 @pytest.fixture

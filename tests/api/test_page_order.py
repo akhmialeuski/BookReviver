@@ -22,8 +22,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Source
+    from bookreviver.domain.entities import Actor, Source
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -39,13 +40,13 @@ SECOND_SOURCE_PAGES: int = 2
 class Book(NamedTuple):
     """A book of two sources whose five pages stand one after the other in the order of their upload.
 
-    :ivar book_record: The record of the book, owned by the signed-in account.
+    :ivar book_id: Identifier of the book.
     :ivar first: The source of the first three pages.
     :ivar second: The source of the last two pages.
     :ivar pages: The pages in book order.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     first: Source
     second: Source
     pages: list[BookPage]
@@ -53,7 +54,7 @@ class Book(NamedTuple):
     @property
     def path(self) -> str:
         """The path of the book's resources."""
-        return f'{BOOKS_PATH}/{self.book_record.id}'
+        return f'{BOOKS_PATH}/{self.book_id}'
 
     def ids(self, *indexes: int) -> list[str]:
         """Return the identifiers of pages as text, which is how a request names them.
@@ -79,7 +80,6 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     first, second = (
         make_source(name='part1.pdf'),
         make_source(name='part2.pdf'),
@@ -90,16 +90,16 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    await store_book(
+    book_id = await store_book(
         fx_uow(),
-        book_record,
+        make_record(),
         *pages,
         owner=fx_actor.account_id,
         sources=[first, second],
         scans=scans,
         databases=fx_databases(),
     )
-    return Book(book_record=book_record, first=first, second=second, pages=pages)
+    return Book(book_id=book_id, first=first, second=second, pages=pages)
 
 
 async def _manifest(client: httpx.AsyncClient, book: Book, **params: Any) -> Page[PageSchema]:
@@ -250,15 +250,16 @@ class TestMovePage:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        stranger = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id(), databases=fx_databases())
+        stranger_id = await commit_record(
+            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
 
         unknown = await fx_client.post(
             f'{fx_book.path}/pages/{fx_book.pages[1].id}/move', json={'before_page_id': str(uuid4())}
         )
         foreign = await fx_client.post(
-            f'{BOOKS_PATH}/{stranger.id}/pages/{page.id}/move', json={'before_page_id': str(page.id)}
+            f'{BOOKS_PATH}/{stranger_id}/pages/{page.id}/move', json={'before_page_id': str(page.id)}
         )
 
         expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
@@ -356,9 +357,8 @@ class TestMovePages:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        other = make_record()
         page = make_page()
-        await store_book(fx_uow(), other, page, owner=fx_actor.account_id, databases=fx_databases())
+        await store_book(fx_uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.post(
             f'{fx_book.path}/pages/move',
@@ -442,7 +442,7 @@ class TestListIncludedPages:
         """
         await (
             fx_databases()
-            .open(fx_book.book_record.id)
+            .open(fx_book.book_id)
             .change(
                 lambda repos, _book_record: repos.pages.update(evolve(fx_book.pages[1], included=False)),
             )

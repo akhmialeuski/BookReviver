@@ -51,11 +51,11 @@ class TestSet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
         answered = await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        stored = await fx_kit.stored_version(book_record.id, version.id)
+        stored = await fx_kit.stored_version(book_id, version.id)
         expect((answered.mark, answered.comment) == (ResultMark.BAD, COMMENT))
         expect((stored.mark, stored.comment) == (ResultMark.BAD, COMMENT))
         expect(stored == evolve(version, mark=ResultMark.BAD, comment=COMMENT))
@@ -71,18 +71,16 @@ class TestSet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
         await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+            fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
         )
         fx_kit.clock.moment = EPOCH + LATER
         await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, version.id, ResultNote(mark=None, comment=COMMENT)
-        )
-        stored = await fx_kit.stored_version(book_record.id, version.id)
+        await _marks().set(fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=None, comment=COMMENT))
+        stored = await fx_kit.stored_version(book_id, version.id)
         assert (stored.mark, stored.comment) == (None, COMMENT)
 
     async def test_setting_what_is_stored_answers_the_stored_version(
@@ -95,14 +93,14 @@ class TestSet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
         marked = await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
+            fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
         again = await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
+            fx_open_book(actor, book_id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
-        assert again == marked == await fx_kit.stored_version(book_record.id, version.id)
+        assert again == marked == await fx_kit.stored_version(book_id, version.id)
 
     async def test_a_preview_takes_no_mark(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
         """Verify a preview, which a collection deletes, is refused with a conflict.
@@ -112,14 +110,12 @@ class TestSet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
+        actor, book_id, page, version = await ran_geometry(fx_kit)
         preview = evolve(version, id=PREVIEW_ID, scale=VersionScale.PREVIEW)
-        await fx_open_book.databases.open(book_record.id).change(
-            lambda repos, _book_record: repos.page_versions.add(preview)
-        )
+        await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(preview))
         with pytest.raises(ConflictError):
             await _marks().set(
-                fx_open_book(actor, book_record.id), page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                fx_open_book(actor, book_id), page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
     async def test_a_version_of_another_page_is_not_found(
@@ -132,12 +128,12 @@ class TestSet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, version = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(book_record, order_key='a1')
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_id, order_key='a1')
         assert other.id != page.id
         with pytest.raises(NotFoundError):
             await _marks().set(
-                fx_open_book(actor, book_record.id), other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                fx_open_book(actor, book_id), other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
     async def test_a_comment_keeps_the_version_and_its_notes_through_a_collection(
@@ -150,14 +146,14 @@ class TestSet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_record, page, first = await ran_geometry(fx_kit)
+        actor, book_id, page, first = await ran_geometry(fx_kit)
         await _marks().set(
-            fx_open_book(actor, book_record.id), page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            fx_open_book(actor, book_id), page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
         stronger = RecipeDraft(steps=[Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, stronger)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        kept = await fx_kit.stored_version(book_record.id, first.id)
-        async with fx_kit.files.assets(book_record.id).readable(BookKeys().version_directory(first)):
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, stronger)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        kept = await fx_kit.stored_version(book_id, first.id)
+        async with fx_kit.files.assets(book_id).readable(BookKeys().version_directory(first)):
             pass
         assert (kept.mark, kept.comment) == (ResultMark.BAD, COMMENT)

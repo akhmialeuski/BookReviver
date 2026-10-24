@@ -9,7 +9,7 @@ import pytest
 from dishka import AsyncContainer
 
 from bookreviver.ports.runtime import EventStream, JobBoard
-from bookreviver.ports.storage import BookFileStores
+from bookreviver.ports.storage import BookDirectories
 from tests.helpers.board_idle import JobsIdle
 from tests.helpers.storage import BookFiles
 
@@ -57,6 +57,6 @@ async def fx_files(fx_container: AsyncContainer, fx_settings: Settings) -> BookF
     :rtype: BookFiles
     """
     return BookFiles(
-        stores=await fx_container.get(BookFileStores),
+        stores=await fx_container.get(BookDirectories),
         root=fx_settings.storage_root,
     )

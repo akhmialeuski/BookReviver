@@ -19,8 +19,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -46,11 +47,11 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 class Book(NamedTuple):
     """A book of five labelled pages of the signed-in account.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The pages in book order.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: list[BookPage]
 
     def page_path(self, index: int) -> str:
@@ -61,12 +62,12 @@ class Book(NamedTuple):
         :returns: The path of the page resource.
         :rtype: str
         """
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}'
+        return f'{BOOKS_PATH}/{self.book_id}/pages/{self.pages[index].id}'
 
     @property
     def labels_path(self) -> str:
         """The path of the numbering of a range."""
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages/labels'
+        return f'{BOOKS_PATH}/{self.book_id}/pages/labels'
 
 
 @pytest.fixture
@@ -82,7 +83,6 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(
@@ -94,8 +94,8 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_databases())
-    return Book(book_record=book_record, pages=pages)
+    book_id = await store_book(fx_uow(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases())
+    return Book(book_id=book_id, pages=pages)
 
 
 async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
@@ -108,7 +108,7 @@ async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
     :returns: The label of each page in the manifest.
     :rtype: list[str]
     """
-    response = await client.get(f'{BOOKS_PATH}/{book.book_record.id}/pages')
+    response = await client.get(f'{BOOKS_PATH}/{book.book_id}/pages')
     return [item.label for item in Page[PageSchema].model_validate_json(response.content).items]
 
 
@@ -262,12 +262,13 @@ class TestUpdatePage:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        stranger = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id(), databases=fx_databases())
+        stranger_id = await commit_record(
+            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
 
-        missing = await fx_client.patch(f'{BOOKS_PATH}/{fx_book.book_record.id}/pages/{uuid4()}', json={'label': '1'})
-        foreign = await fx_client.patch(f'{BOOKS_PATH}/{stranger.id}/pages/{page.id}', json={'label': '1'})
+        missing = await fx_client.patch(f'{BOOKS_PATH}/{fx_book.book_id}/pages/{uuid4()}', json={'label': '1'})
+        foreign = await fx_client.patch(f'{BOOKS_PATH}/{stranger_id}/pages/{page.id}', json={'label': '1'})
 
         expect(missing.status_code == status.HTTP_404_NOT_FOUND)
         expect(foreign.status_code == status.HTTP_404_NOT_FOUND)
@@ -328,7 +329,7 @@ class TestNumberPages:
 
         await fx_client.post(fx_book.labels_path, json=body)
 
-        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pagination-sections')
+        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/pagination-sections')
         flow, series = listed.json()['items']
         expect(
             (flow['first_page_id'], flow['style'], flow['start'], flow['kinds'])
@@ -357,7 +358,7 @@ class TestNumberPages:
         }
 
         previewed = await fx_client.post(f'{fx_book.labels_path}/preview', json=body)
-        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pagination-sections')
+        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_id}/pagination-sections')
 
         expect(previewed.status_code == status.HTTP_200_OK)
         expect(
