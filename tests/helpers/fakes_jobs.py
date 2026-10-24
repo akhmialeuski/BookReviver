@@ -15,7 +15,7 @@ from dishka import AnyOf, Provider, Scope, provide
 from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.domain.events import BookChanged
 from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
-from tests.helpers.builders import EPOCH
+from tests.helpers.builders import EPOCH, EVENT_QUEUE_SIZE
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -27,8 +27,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import BookResource
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import BookId
-
-EVENT_QUEUE_SIZE: int = 16
 
 
 class RecordingEventBus(InProcessEventBus):
