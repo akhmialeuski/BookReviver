@@ -20,9 +20,9 @@ from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
 from bookreviver.ports.storage import AssetStore, SourceStore
+from bookreviver.services.books import BooksService
 from bookreviver.services.imports import (
     ImportImaging,
     ImportLimits,
@@ -156,16 +156,16 @@ class ImportsProvider(Provider):
     @provide(scope=Scope.REQUEST)
     def import_service(
         self,
-        uow: UnitOfWork,
+        books: BooksService,
         storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
         parts: ProcessingParts,
     ) -> ImportService:
-        """Build the import service over the unit of work of the request or job.
+        """Build the import service over the books service of the request or job.
 
-        :param uow: Unit of work of the current request or job.
-        :type uow: UnitOfWork
+        :param books: Books service of the current request or job, which opens the book a job imports into.
+        :type books: BooksService
         :param storage: The stores of the application.
         :type storage: ImportStorage
         :param imaging: The imaging ports of the application.
@@ -177,4 +177,4 @@ class ImportsProvider(Provider):
         :returns: The import service.
         :rtype: ImportService
         """
-        return ImportService(uow=uow, storage=storage, imaging=imaging, runtime=runtime, parts=parts)
+        return ImportService(books=books, storage=storage, imaging=imaging, runtime=runtime, parts=parts)

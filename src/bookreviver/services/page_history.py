@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Recipe
     from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
     from bookreviver.domain.values import PageStepKey
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
@@ -54,13 +54,9 @@ CHANGED_SINCE: str = 'The layer {layer} of a step changed after this change, so 
 class PageHistoryService:
     """Lists the history of the steps of the acting account's pages, takes its changes back, and clears a step."""
 
-    def __init__(
-        self, *, uow: UnitOfWork, records: StageRecords, starter: JobStarter, assets: AssetStore, clock: Clock
-    ) -> None:
+    def __init__(self, *, records: StageRecords, starter: JobStarter, assets: AssetStore, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
         :param starter: Queuer of the jobs, which cuts the pyramid of the version a clear makes current.
@@ -70,7 +66,6 @@ class PageHistoryService:
         :param clock: Clock stamping the states and the undos.
         :type clock: Clock
         """
-        self._uow = uow
         self._records = records
         self._starter = starter
         self._assets = assets
@@ -87,7 +82,7 @@ class PageHistoryService:
         :rtype: StepHistory
         :raises NotFoundError: If the book has no such page.
         """
-        return await self._uow.read_book(book.id, lambda repos: self._history(repos, key))
+        return await book.read(lambda repos: self._history(repos, key))
 
     async def undo(
         self, book: Book, key: PageStepKey, change_id: PageHistoryEntryId | None
@@ -139,7 +134,7 @@ class PageHistoryService:
                 self._records.mark_stale(repos, page_id, stage)
             return added
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def clear(self, book: Book, key: PageStepKey) -> ClearedStep:
         """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
@@ -162,7 +157,7 @@ class PageHistoryService:
         only, and its last write finds the job cancelled and changes nothing, as for a run.
 
         The cancelling and the queuing of the tile cutting are transactions of their own, so this use case opens one
-        ``change_book`` for the rows. The files of the deleted versions are removed after it ended, so a store that
+        ``Book.change`` for the rows. The files of the deleted versions are removed after it ended, so a store that
         fails to remove them leaves them without a row for the next collection and does not fail the clear.
 
         :param book: The open book.
@@ -177,7 +172,7 @@ class PageHistoryService:
                                or running, which may be reading or deleting the versions the clear deletes.
         """
         # The step is checked before the previews are cancelled, so a request the change would refuse cancels nothing
-        await self._uow.read_book(book.id, lambda repos: self._recipes_with_step(repos, key))
+        await book.read(lambda repos: self._recipes_with_step(repos, key))
         if await self._starter.free_of_previews(book.id):
             raise ConflictError(BOOK_BUSY)
 
@@ -208,7 +203,7 @@ class PageHistoryService:
             repos.page_versions.delete_many([version.id for version in deleted])
             return ClearedStep(changes=changes, versions=deleted), untiled
 
-        cleared, untiled = await self._uow.change_book(book.id, work)
+        cleared, untiled = await book.change(work)
         await self._starter.enqueue_tiles(book.id, untiled)
         for version in cleared.versions:
             try:
@@ -335,7 +330,7 @@ class PageHistoryService:
         """Read the recipes of the stage of a page of a book, which must include the step.
 
         It only reads, so it is called in a ``read``, to refuse a request before anything is cancelled, and in the work
-        of the ``change_book``, to decide on what the transaction holds.
+        of the ``Book.change``, to decide on what the transaction holds.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories

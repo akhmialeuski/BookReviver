@@ -33,10 +33,9 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job
-    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
 
 
 @pytest.fixture
@@ -109,15 +108,18 @@ def fx_page_writes(monkeypatch: pytest.MonkeyPatch) -> PageWrites:
 
 @pytest.fixture
 def fx_board(
-    fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore, fx_events: RecordingEventBus, fx_clock: FixedClock
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
+    fx_events: RecordingEventBus,
+    fx_clock: FixedClock,
 ) -> FakeJobBoard:
     """Build a job board that records what is put on it and runs it when a test says so.
 
     A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
     ends at once, since the page tests look at the queueing of those and not at their work.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :param fx_events: Recording event bus.
@@ -140,7 +142,7 @@ def fx_board(
         """
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
-        service = make_page_service(fx_uow(), fx_asset_store, (fx_events, fx_clock, board))
+        service = make_page_service(fx_open_book, fx_asset_store, (fx_events, fx_clock, board))
         return await service.prepare_images(job, control)
 
     board = FakeJobBoard(runner=run, publisher=fx_events, clock=fx_clock)
@@ -166,89 +168,69 @@ def fx_runtime(
 
 
 @pytest.fixture
-def fx_service_over(
-    fx_asset_store: LocalAssetStore, fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
-) -> Callable[[UnitOfWork], PageService]:
-    """Return a function building the page service over a unit of work the test made.
+def fx_service(
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
+    fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+) -> Callable[[], PageService]:
+    """Return a function building the page service for one request or job.
 
+    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :param fx_runtime: The recording bus, the stopped clock and the job board the service reports through.
     :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
-    :returns: Function building a service over the given unit of work.
-    :rtype: Callable[[UnitOfWork], PageService]
-    """
-    return lambda uow: make_page_service(uow, fx_asset_store, fx_runtime)
-
-
-@pytest.fixture
-def fx_service(
-    fx_uow: UnitOfWorkFactory, fx_service_over: Callable[[UnitOfWork], PageService]
-) -> Callable[[], PageService]:
-    """Return a function building the page service for one request or job.
-
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
-    :param fx_service_over: Function building the page service over a unit of work.
-    :type fx_service_over: Callable[[UnitOfWork], PageService]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """
-    return lambda: fx_service_over(fx_uow())
+    return lambda: make_page_service(fx_open_book, fx_asset_store, fx_runtime)
 
 
 @pytest.fixture
-def fx_pagination_over(fx_clock: FixedClock) -> Callable[[UnitOfWork], PaginationService]:
-    """Return a function building the pagination service over a unit of work the test made.
+def fx_pagination(fx_clock: FixedClock) -> Callable[[], PaginationService]:
+    """Return a function building the pagination service for one request.
 
     :param fx_clock: Clock stopped at the epoch.
     :type fx_clock: FixedClock
-    :returns: Function building a service over the given unit of work.
-    :rtype: Callable[[UnitOfWork], PaginationService]
-    """
-    return lambda uow: PaginationService(uow=uow, clock=fx_clock)
-
-
-@pytest.fixture
-def fx_pagination(
-    fx_uow: UnitOfWorkFactory, fx_pagination_over: Callable[[UnitOfWork], PaginationService]
-) -> Callable[[], PaginationService]:
-    """Return a function building the pagination service for one request.
-
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
-    :param fx_pagination_over: Function building the pagination service over a unit of work.
-    :type fx_pagination_over: Callable[[UnitOfWork], PaginationService]
-    :returns: Function building a service over a new unit of work.
+    :returns: Function building a service.
     :rtype: Callable[[], PaginationService]
     """
-    return lambda: fx_pagination_over(fx_uow())
+    return lambda: PaginationService(clock=fx_clock)
 
 
 @pytest.fixture
-def fx_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
+) -> ProcessingKit:
     """Build what the processing services of a test share, over the database and the asset store of the test.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit that builds the processing service, the jobs of the workers and the edit service.
     :rtype: ProcessingKit
     """
-    return ProcessingKit(fx_database, fx_uow, fx_asset_store)
+    return ProcessingKit(fx_database, fx_open_book, fx_asset_store)
 
 
 @pytest.fixture
-def fx_cv_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_cv_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
+) -> ProcessingKit:
     """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto``, the five geometry
@@ -268,7 +250,7 @@ def fx_cv_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_stor
     eraser = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
     return ProcessingKit(
         fx_database,
-        fx_uow,
+        fx_open_book,
         fx_asset_store,
         processors=[
             SplitNone(),
@@ -290,14 +272,16 @@ def fx_cv_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_stor
 
 @pytest.fixture
 def fx_ordered_kit(
-    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build the processing kit over processors that declare a place.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
@@ -311,19 +295,21 @@ def fx_ordered_kit(
         SecondProcessor(),
         ThirdProcessor(),
     ]
-    return ProcessingKit(fx_database, fx_uow, fx_asset_store, processors=processors)
+    return ProcessingKit(fx_database, fx_open_book, fx_asset_store, processors=processors)
 
 
 @pytest.fixture
 def fx_measuring_kit(
-    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build the processing kit over a processor that finds an angle on each page.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and ``geometry.measuring``.
@@ -331,7 +317,7 @@ def fx_measuring_kit(
     """
     return ProcessingKit(
         fx_database,
-        fx_uow,
+        fx_open_book,
         fx_asset_store,
         processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()],
     )

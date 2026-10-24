@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, PageVersion, Scan, Source
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -99,7 +99,7 @@ def fx_book() -> Book:
 
 @pytest.fixture
 async def fx_extra_providers(
-    fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
+    fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor, fx_databases: BookDatabasesFactory
 ) -> Sequence[Provider]:
     """Store the book before the application starts, and give the application the fakes and the fake catalogue.
 
@@ -111,6 +111,8 @@ async def fx_extra_providers(
     :type fx_book: Book
     :param fx_actor: Account that owns the book.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The providers of the fakes and of the fake processors.
     :rtype: Sequence[Provider]
     """
@@ -122,6 +124,7 @@ async def fx_extra_providers(
         sources=[fx_book.source],
         scans=[fx_book.scan],
         versions=fx_book.versions,
+        databases=fx_databases(),
     )
 
     def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -135,7 +138,7 @@ async def fx_extra_providers(
         for record in fx_book.records:
             repos.page_stages.save(record)
 
-    await fx_uow().change_book(fx_book.book_record.id, save_records)
+    await fx_databases().open(fx_book.book_record.id).change(save_records)
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 
@@ -144,7 +147,7 @@ class TestStart:
 
     @pytest.mark.usefixtures('fx_app')
     async def test_marks_a_fresh_stage_of_an_outdated_processor_stale_before_the_first_request(
-        self, fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_book: Book
+        self, fx_fakes: JobFakes, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the geometry record is stale once the application runs, and the record of the base version is not.
 
@@ -153,17 +156,20 @@ class TestStart:
 
         :param fx_fakes: Adapters of the test, whose event bus records what is announced.
         :type fx_fakes: JobFakes
-        :param fx_uow: Function opening a new unit of work over the database of the test, which holds the book.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: The stored book.
         :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        states = await fx_uow().read_book(
-            fx_book.book_record.id,
-            lambda repos: [
-                repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
-                for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
-            ],
+        states = (
+            await fx_databases()
+            .open(fx_book.book_record.id)
+            .read(
+                lambda repos: [
+                    repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
+                    for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
+                ],
+            )
         )
 
         announced = [event for event in fx_fakes.events.published if not isinstance(event, BookChanged)]

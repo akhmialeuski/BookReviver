@@ -24,10 +24,10 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.values import Step, StepPreview
-from tests.helpers.builders import open_for
 from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
 
 if TYPE_CHECKING:
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = [pytest.mark.anyio, pytest.mark.timing]
@@ -43,11 +43,15 @@ SKEW_DEGREES: float = 2.0
 class TestPreviewBudget:
     """Tests for the time of a preview of the visible page, read from the span of its job."""
 
-    async def test_preview_of_the_visible_page_fits_the_budget(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_preview_of_the_visible_page_fits_the_budget(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the ``job`` span of the preview, with the deskew that ran in it, ended within the budget.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_cv_kit.seed_record()
         page, _ = await fx_cv_kit.seed_scan_page(book_record)
@@ -56,7 +60,7 @@ class TestPreviewBudget:
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=DESKEW_KEY),), step_index=0
         )
-        job = await fx_cv_kit.service().start_preview(open_for(actor, book_record.id), preview)
+        job = await fx_cv_kit.service().start_preview(fx_open_book(actor, book_record.id), preview)
         # The application opens this span around the entry point of every job in app.jobs.job_runner, which the runner
         # of the kit does not do, so it is opened here with the same name and attributes
         job_attributes = {SpanAttribute.JOB_KIND: JobKind.PREVIEW_STEP, SpanAttribute.JOB_ID: str(job.id)}

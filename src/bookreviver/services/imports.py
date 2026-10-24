@@ -8,7 +8,7 @@ scans cut.
 
 A run imports every file on its own, so one broken file never cancels the others. In its first phase it groups the
 staged files into sources and stores each source, its scans and the pages the scans give the book in one
-``change_book`` of its own, with the enrichment of the book description, so a source is either fully in the book or
+``Book.change`` of its own, with the enrichment of the book description, so a source is either fully in the book or
 not at all. Every file of the upload is a row of ``sources``: an imported one joins the book, one that a check refused
 is stored as rejected with its reason, and when the job is cancelled each file it did not reach is stored as skipped.
 The rows that are not imported are the report of the import, which the reader reads and then closes. In its second
@@ -78,10 +78,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, JobBoard, JobControl
     from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
     from bookreviver.services.book import Book
+    from bookreviver.services.books import BooksService
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 
@@ -174,13 +175,15 @@ class ImportRun:
     also the check that the job was not cancelled.
 
     :ivar imported: Identifiers of the sources the run imported, in book order.
+    :ivar book: The open book the job imports into, whose ``Book.change`` stores each source. ``execute`` opens it,
+                so it is there for every step that follows and for ``record_skipped``.
     """
 
     def __init__(
         self,
         *,
         running: RunningImport,
-        uow: UnitOfWork,
+        books: BooksService,
         storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
@@ -189,8 +192,8 @@ class ImportRun:
 
         :param running: The running job, whose request lists the files to import, and its control.
         :type running: RunningImport
-        :param uow: Unit of work of the job, whose ``change_book`` stores each source.
-        :type uow: UnitOfWork
+        :param books: Books service of the job, which opens the book the job imports into.
+        :type books: BooksService
         :param storage: The source store and the asset store.
         :type storage: ImportStorage
         :param imaging: The inspector, the rasterizer, the tiler and the runner of processors.
@@ -200,10 +203,11 @@ class ImportRun:
         """
         job = running.job
         self.imported: list[SourceId] = []
+        self.book: Book
+        self._books = books
         self._job = job
         self._control = running.control
         self._files = {file.name: file for file in (job.request.files if job.request else ())}
-        self._uow = uow
         self._sources = storage.sources
         self._assets = storage.assets
         self._inspector = imaging.inspector
@@ -223,9 +227,11 @@ class ImportRun:
     async def execute(self) -> None:
         """Import the staged files as sources, then cut the images of every scan of the book that has none.
 
+        :raises NotFoundError: If the book of the job is gone.
         :raises JobCancelledError: If the job was cancelled, which the first report after it finds out.
         """
-        unready = await self._uow.read_book(self._job.book_id, lambda repos: repos.scans.list_unready())
+        self.book = await self._books.open(self._job.book_id)
+        unready = await self.book.read(lambda repos: repos.scans.list_unready())
         await self._report(total=len(unready))
         await self._import_sources(list(self._files))
         await self._cut_scans()
@@ -253,7 +259,7 @@ class ImportRun:
             for name in names
         ]
         if rows:
-            await self._uow.change_book(self._job.book_id, lambda repos, _book_record: repos.sources.add_many(rows))
+            await self.book.change(lambda repos, _book_record: repos.sources.add_many(rows))
 
     async def _import_sources(self, names: Sequence[str]) -> None:
         """Group the named staged files into sources and import each one, in the order of the upload.
@@ -284,7 +290,7 @@ class ImportRun:
     async def _import_source(self, uploaded: UploadedSource) -> None:
         """Import one source: check it is new and readable, store it with its scans and pages, and promote its files.
 
-        The source, its scans and its pages are stored in one ``change_book``, which reads the end of the book and the
+        The source, its scans and its pages are stored in one ``Book.change``, which reads the end of the book and the
         sections of the book to place the new pages, and a source whose files cannot be promoted is taken back whole
         in a second one.
 
@@ -294,7 +300,7 @@ class ImportRun:
         """
         files = [self._files[name] for name in uploaded.names]
         main = files[0]
-        twin = await self._uow.read_book(self._job.book_id, lambda repos: repos.sources.find_by_sha256(main.sha256))
+        twin = await self.book.read(lambda repos: repos.sources.find_by_sha256(main.sha256))
         if twin is not None:
             await self._reject(
                 uploaded.names,
@@ -376,7 +382,7 @@ class ImportRun:
             self._describe_book(repos, book_record, analysis.suggestion)
             return pages
 
-        pages = await self._uow.change_book(self._job.book_id, store)
+        pages = await self.book.change(store)
 
         def retract(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Delete the pages and the source, which takes their scans with it.
@@ -395,7 +401,7 @@ class ImportRun:
         except Exception:
             # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
             # is taken back whole. Its pages go first, since deleting the source only empties their scan.
-            await self._uow.change_book(self._job.book_id, retract)
+            await self.book.change(retract)
             raise
         self.imported.append(source.id)
         self._handled.update(uploaded.names)
@@ -440,7 +446,7 @@ class ImportRun:
             kinds = {source.id: source.kind for source in sources if source.kind is not None}
             return repos.scans.list_unready(), kinds
 
-        scans, kinds = await self._uow.read_book(self._job.book_id, read)
+        scans, kinds = await self.book.read(read)
         pending = iter(scans)
 
         async def worker() -> None:
@@ -466,7 +472,7 @@ class ImportRun:
         now, and recorded with the scan, so a later change of the policy changes no stored path. The base version of a
         page copies that format along with the image. What an earlier attempt left in the directories of the scan and
         of the versions is removed first, since a stored file is never replaced. The files are written outside any
-        transaction, and the scan and its versions are marked ready together, in one ``change_book``. That change reads
+        transaction, and the scan and its versions are marked ready together, in one ``Book.change``. That change reads
         the scan and its pages again. A scan that is gone or ready already, or whose pages are not the ones the
         versions were made for, is left as it is, its files are removed, and the run counts one scan less to cut.
 
@@ -492,7 +498,7 @@ class ImportRun:
 
         # A cancellation stops the run before the next scan is cut
         await self._report()
-        book_record, pages = await self._uow.change_book(self._job.book_id, start)
+        book_record, pages = await self.book.change(start)
         full = book_record.image_policy.full_format(scan.facts.color_mode)
         ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
         of_scan = partial(self._keys.scan_rendition, ready)
@@ -542,7 +548,7 @@ class ImportRun:
             repos.scans.update(ready)
             return True
 
-        fits = await self._uow.change_book(self._job.book_id, finish)
+        fits = await self.book.change(finish)
         if not fits:
             # The scan stays unready for the next run to cut, and the files made for it are of no version or scan
             logger.warning('Scan %s was changed or deleted while its images were cut, so they were not stored', scan.id)
@@ -589,7 +595,7 @@ class ImportRun:
             detail=detail,
             imported_at=self._clock.now(),
         )
-        await self._uow.change_book(self._job.book_id, lambda repos, _book_record: repos.sources.add(source))
+        await self.book.change(lambda repos, _book_record: repos.sources.add(source))
         self._handled.update(names)
         await self._report(done=len(names))
 
@@ -613,7 +619,7 @@ class ImportService:
     def __init__(
         self,
         *,
-        uow: UnitOfWork,
+        books: BooksService,
         storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
@@ -621,8 +627,8 @@ class ImportService:
     ) -> None:
         """Build the service over the ports of one request or job.
 
-        :param uow: Unit of work of the current request or job.
-        :type uow: UnitOfWork
+        :param books: Books service of the current job, which opens the book the job imports into.
+        :type books: BooksService
         :param storage: The source store and the asset store.
         :type storage: ImportStorage
         :param imaging: The inspector, the rasterizer and the tiler.
@@ -632,7 +638,7 @@ class ImportService:
         :param parts: The recipes and the job starter, with which the split of the new pages is queued.
         :type parts: ProcessingParts
         """
-        self._uow = uow
+        self._books = books
         self._storage = storage
         self._imaging = imaging
         self._runtime = runtime
@@ -726,7 +732,7 @@ class ImportService:
         """
         run = ImportRun(
             running=RunningImport(job=job, control=control),
-            uow=self._uow,
+            books=self._books,
             storage=self._storage,
             imaging=self._imaging,
             runtime=self._runtime,
@@ -758,20 +764,18 @@ class ImportService:
         :param run: The run that ended, which lists the sources it imported.
         :type run: ImportRun
         """
-        book_id = job.book_id
         try:
-            steps = (await self._recipes.of_kind(book_id, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
+            steps = (await self._recipes.of_kind(run.book, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
             if not steps or steps[0].processor_key != AUTOMATIC_SPLIT:
                 return
-            pages = await self._uow.read_book(
-                book_id,
+            pages = await run.book.read(
                 lambda repos: [
                     page.id for source_id in run.imported for page in repos.pages.list_for_source(source_id)
                 ],
             )
             if pages:
                 await self._starter.enqueue(
-                    book_id, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)).to_map()
+                    job.book_id, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)).to_map()
                 )
         except DomainError:
             logger.warning('The split of the pages of import job %s was not queued', job.id, exc_info=True)

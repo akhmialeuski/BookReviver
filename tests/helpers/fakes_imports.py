@@ -35,6 +35,7 @@ from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRunt
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
+from tests.helpers.books_service import make_books_service
 from tests.helpers.builders import EPOCH
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_processing import FakeCatalogue
@@ -55,11 +56,12 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.ids import BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import SourceStore
     from bookreviver.services.recipes import DefaultRecipes
+    from tests.helpers.builders import BookOpener
     from tests.helpers.database import UnitOfWorkFactory
 
 TICK: timedelta = timedelta(seconds=1)
@@ -99,13 +101,13 @@ class StoredBook(NamedTuple):
         return [labels[page.id] for page in self.pages]
 
 
-async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
+async def stored_book(book_id: BookId, *, databases: BookDatabases) -> StoredBook:
     """Read the sources, scans, pages and pagination sections of a book as committed.
 
-    :param uow: Unit of work to read through.
-    :type uow: UnitOfWork
     :param book_id: Book owning the rows.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The rows, read in one transaction.
     :rtype: StoredBook
     """
@@ -125,7 +127,7 @@ async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
             sections=list(repos.pagination_sections.list_all()),
         )
 
-    return await uow.read_book(book_id, work)
+    return await databases.open(book_id).read(work)
 
 
 def pdf_upload(
@@ -411,6 +413,7 @@ class ImportRig:
 
     :ivar database: The SQL database of the test, which stores the account of the actor.
     :ivar new_uow: Function opening a unit of work over ``database``, as a new request or job would get.
+    :ivar databases: Opens the databases of the books of the test.
     :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``.
@@ -425,6 +428,7 @@ class ImportRig:
 
     database: SqlDatabase
     new_uow: UnitOfWorkFactory
+    databases: BookDatabases
     fakes: JobFakes
     events: RecordingEventBus
     sources: CrashingSourceStore
@@ -436,15 +440,16 @@ class ImportRig:
     processors: Sequence[Processor] = field(factory=lambda: [SplitNone()])
 
     @classmethod
-    def build(cls, root: Path, database: SqlDatabase, new_uow: UnitOfWorkFactory) -> ImportRig:
+    def build(cls, root: Path, database: SqlDatabase, stores: BookOpener) -> ImportRig:
         """Build the rig over the adapters of the application, with the settings' defaults.
 
         :param root: Storage root of both stores.
         :type root: Path
         :param database: SQL database of the test, such as ``fx_database``.
         :type database: SqlDatabase
-        :param new_uow: Function opening a unit of work over ``database``, such as ``fx_uow``.
-        :type new_uow: UnitOfWorkFactory
+        :param stores: Opens the units of work over ``database`` and the databases of the books, such as
+                       ``fx_open_book``.
+        :type stores: BookOpener
         :returns: The rig with nothing stored.
         :rtype: ImportRig
         """
@@ -485,7 +490,8 @@ class ImportRig:
 
         rig = cls(
             database=database,
-            new_uow=new_uow,
+            new_uow=stores.uow,
+            databases=stores.databases,
             fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
             events=events,
             sources=CrashingSourceStore(root=root),
@@ -560,7 +566,7 @@ class ImportRig:
             ),
         )
         return ImportService(
-            uow=uow,
+            books=make_books_service(uow, databases=self.databases),
             storage=ImportStorage(sources=sources or self.sources, assets=self.assets),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()

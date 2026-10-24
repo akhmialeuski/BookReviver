@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
     from tests.helpers.storage import BookFiles
 
 pytestmark = pytest.mark.anyio
@@ -193,7 +193,12 @@ class TestListBooks:
     """Tests for GET /books."""
 
     async def test_pages_through_own_books_newest_first(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the list is paged, the latest added first, and limited to the signed-in account.
 
@@ -205,11 +210,15 @@ class TestListBooks:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         books = [make_record(minutes=minutes) for minutes in range(BOOK_COUNT)]
         for book_record in books:
-            await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
-        await commit_record(fx_database, fx_uow(), make_record(minutes=BOOK_COUNT), owner=new_account_id())
+            await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        await commit_record(
+            fx_database, fx_uow(), make_record(minutes=BOOK_COUNT), owner=new_account_id(), databases=fx_databases()
+        )
 
         first = await _list_books(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE})
         second = await _list_books(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE, PAGE_NUMBER_PARAM: 2})
@@ -221,7 +230,11 @@ class TestListBooks:
         assert_expectations()
 
     async def test_counts_the_book_of_each_book(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify every listed book carries the numbers of its pages, sources and scans.
 
@@ -231,13 +244,23 @@ class TestListBooks:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(2)]
         # The second scan is a spread whose page has not been made yet, so the book has one page
         page = make_page(scan=scans[0])
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, sources=[source], scans=scans)
+        await store_book(
+            fx_uow(),
+            book_record,
+            page,
+            owner=fx_actor.account_id,
+            sources=[source],
+            scans=scans,
+            databases=fx_databases(),
+        )
 
         listed = await _list_books(fx_client, {})
 
@@ -355,6 +378,7 @@ class TestGetBook:
         fx_uow: UnitOfWorkFactory,
         *,
         stored: InvisibleBook,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify another account's book, and a store with no entry in the library, answer like a missing book.
 
@@ -368,10 +392,12 @@ class TestGetBook:
         :type fx_uow: UnitOfWorkFactory
         :param stored: How the book is stored: for another account, not at all, or as a store with no entry.
         :type stored: InvisibleBook
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         if stored is InvisibleBook.OTHER_ACCOUNT:
-            await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
+            await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
         elif stored is InvisibleBook.UNLISTED:
             await fx_uow().create_book(book_record)
 
@@ -396,7 +422,11 @@ class TestUpdateBook:
     """Tests for PATCH /books/{book_id}."""
 
     async def test_changes_only_the_fields_sent(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a partial body changes its fields and keeps the rest of the description.
 
@@ -406,9 +436,11 @@ class TestUpdateBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record(title=TITLE)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.patch(_book_path(book_record.id), json={PUBLISHER_FIELD: ' Press '})
 
@@ -419,7 +451,11 @@ class TestUpdateBook:
         assert_expectations()
 
     async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a list is replaced as a whole and a normalized identifier is stored, while unsent fields stay.
 
@@ -429,9 +465,11 @@ class TestUpdateBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = attrs.evolve(make_record(), details=FULL_DETAILS)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.patch(
             _book_path(book_record.id),
@@ -452,7 +490,11 @@ class TestUpdateBook:
         assert_expectations()
 
     async def test_null_clears_lists_the_height_and_enums_and_omitted_fields_stay(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify null empties a list, clears the height and sets an enum to unknown, and other fields stay.
 
@@ -462,9 +504,11 @@ class TestUpdateBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = attrs.evolve(make_record(), details=FULL_DETAILS)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.patch(
             _book_path(book_record.id),
@@ -485,7 +529,11 @@ class TestUpdateBook:
         assert_expectations()
 
     async def test_null_clears_a_field_as_a_merge_patch(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a merge patch sent with its own media type clears the fields sent as null and keeps the omitted ones.
 
@@ -495,11 +543,13 @@ class TestUpdateBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         author = (Contributor(name=AUTHOR['name'], role=ContributorRole.AUTHOR),)
         details = BookDetails(title=TITLE, contributors=author, notes=NOTES, orthography=Orthography.PRE_REFORM)
         book_record = attrs.evolve(make_record(), details=details)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.patch(
             _book_path(book_record.id),
@@ -514,7 +564,11 @@ class TestUpdateBook:
         assert_expectations()
 
     async def test_sets_the_image_policy_and_null_restores_the_default(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the image policy changes, and null restores the policy a new book has.
 
@@ -524,9 +578,11 @@ class TestUpdateBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         set_response = await fx_client.patch(
             _book_path(book_record.id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS}
@@ -539,7 +595,11 @@ class TestUpdateBook:
         assert_expectations()
 
     async def test_the_cover_is_the_first_page_of_the_kind_cover_and_is_not_chosen_by_hand(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the book names its first page of the kind cover as the cover, and a request cannot choose one.
 
@@ -549,11 +609,13 @@ class TestUpdateBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         title = make_page(order_key='a0', kind=PageKind.TITLE)
         cover = make_page(order_key='a1', kind=PageKind.COVER)
-        await store_book(fx_uow(), book_record, title, cover, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, title, cover, owner=fx_actor.account_id, databases=fx_databases())
 
         chosen = await fx_client.patch(_book_path(book_record.id), json={COVER_FIELD: str(title.id)})
 
@@ -563,7 +625,12 @@ class TestUpdateBook:
 
     @pytest.mark.parametrize(CASE_ARG, INVALID_UPDATE_CASES, ids=INVALID_UPDATE_IDS)
     async def test_invalid_body_is_a_problem_and_changes_nothing(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, case: InvalidBody
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        case: InvalidBody,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the title cannot be emptied or cleared, unknown fields are refused, and the book stays.
 
@@ -575,9 +642,11 @@ class TestUpdateBook:
         :type fx_actor: Actor
         :param case: Body breaking one constraint, and the field it breaks.
         :type case: InvalidBody
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record(title=TITLE)
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.patch(_book_path(book_record.id), json=case.body)
 
@@ -588,7 +657,11 @@ class TestUpdateBook:
         assert_expectations()
 
     async def test_another_accounts_book_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify another account's book cannot be changed.
 
@@ -598,9 +671,11 @@ class TestUpdateBook:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
 
         response = await fx_client.patch(_book_path(book_record.id), json={PUBLISHER_FIELD: 'Press'})
 
@@ -611,7 +686,12 @@ class TestDeleteBook:
     """Tests for DELETE /books/{book_id}."""
 
     async def test_deletes_the_book_and_its_files(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_files: BookFiles, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the answer is 204, the book is gone, and nothing of it is left on disk.
 
@@ -623,10 +703,12 @@ class TestDeleteBook:
         :type fx_files: BookFiles
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
         await fx_files.store(book_record.id, page)
 
         response = await fx_client.delete(_book_path(book_record.id))
@@ -637,7 +719,12 @@ class TestDeleteBook:
         assert_expectations()
 
     async def test_another_accounts_book_is_not_found_and_kept(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_files: BookFiles
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_files: BookFiles,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify another account's book and files survive a delete request.
 
@@ -649,10 +736,12 @@ class TestDeleteBook:
         :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the application's stores.
         :type fx_files: BookFiles
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id(), databases=fx_databases())
         await fx_files.store(book_record.id, page)
 
         response = await fx_client.delete(_book_path(book_record.id))
@@ -666,7 +755,12 @@ class TestArchive:
     """Tests for GET /books/{book_id}/archive and POST /books/archive, the export and the import of a book."""
 
     async def test_an_exported_book_is_imported_as_a_new_book(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_files: BookFiles, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the export is a ZIP file named after the title, and its import is a new book with the same files.
 
@@ -678,10 +772,12 @@ class TestArchive:
         :type fx_files: BookFiles
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record(title=ARCHIVED_TITLE)
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
         await fx_files.store(book_record.id, page)
 
         exported = await fx_client.get(f'{_book_path(book_record.id)}{ARCHIVE_SUFFIX}')
@@ -715,7 +811,11 @@ class TestArchive:
         assert_expectations()
 
     async def test_another_accounts_book_is_not_exported(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the archive of another account's book is not found.
 
@@ -725,9 +825,11 @@ class TestArchive:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
 
         response = await fx_client.get(f'{_book_path(book_record.id)}{ARCHIVE_SUFFIX}')
 

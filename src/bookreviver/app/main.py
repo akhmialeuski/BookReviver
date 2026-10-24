@@ -53,8 +53,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     is finished, so the catalogue and the stores of the books list the same books before any other pass reads them. The
     stages whose result a replaced version of a processor made are marked stale, so the workspace never shows them as up
     to date, and the blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the
-    book writes. The three passes run in a request scope of their own, as a job does, and the last two write one book
-    at a time, in a ``change_book`` of that book.
+    book writes. The three passes run in a request scope of their own, as a job does, and the last two go over the books
+    the library lists and write one book at a time, in a ``Book.change`` of that book.
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer

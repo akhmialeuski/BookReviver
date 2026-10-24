@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import StageRun
+    from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.processing import ProcessingKit
 
 PAGE_WIDTH_PX: int = 900
@@ -78,39 +79,39 @@ async def run_stage(kit: ProcessingKit, actor: Actor, book_record: BookRecord, r
     :param run: The stage, and the recipe and pages to run it on.
     :type run: StageRun
     """
-    await kit.service().start_run(open_for(actor, book_record.id), run.stage, run)
+    await kit.service().start_run(open_for(actor, book_record.id, databases=kit.databases), run.stage, run)
     await kit.work_queue()
 
 
-async def book_of(kit: ProcessingKit, book_record: BookRecord) -> list[Page]:
+async def book_of(book_record: BookRecord, *, databases: BookDatabases) -> list[Page]:
     """Read the pages of a book in book order, as committed.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_record: The record of the book.
     :type book_record: BookRecord
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: Its pages.
     :rtype: list[Page]
     """
-    listed = await kit.uow().read_book(book_record.id, lambda repos: repos.pages.list_window(EVERY_PAGE))
+    listed = await databases.open(book_record.id).read(lambda repos: repos.pages.list_window(EVERY_PAGE))
     return list(listed.items)
 
 
-async def stage_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage) -> PageStage:
+async def stage_of(book_id: BookId, page: Page, stage: Stage, *, databases: BookDatabases) -> PageStage:
     """Read the record of a stage of a page, as committed.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
     :type stage: Stage
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The record.
     :rtype: PageStage
     """
-    return await kit.uow().read_book(book_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
+    return await databases.open(book_id).read(lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
 
 
 async def head_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage) -> PageVersion:
@@ -127,6 +128,6 @@ async def head_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage)
     :returns: The version the record of the stage names.
     :rtype: PageVersion
     """
-    record = await stage_of(kit, book_id, page, stage)
+    record = await stage_of(book_id, page, stage, databases=kit.databases)
     assert record.head_version_id is not None
     return await kit.stored_version(book_id, record.head_version_id)

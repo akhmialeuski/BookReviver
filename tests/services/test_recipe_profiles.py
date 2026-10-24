@@ -10,13 +10,14 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RecipeKind, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
-from tests.helpers.builders import make_page_stage, make_recipe_profile, make_record, open_for
+from tests.helpers.builders import make_page_stage, make_recipe_profile, make_record
 from tests.helpers.processing import account_books, account_profiles
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.seeding import commit_account, store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, RecipeProfile
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -60,7 +61,7 @@ async def second_record(kit: ProcessingKit, actor: Actor) -> BookRecord:
     :rtype: BookRecord
     """
     book_record = make_record(title='Another book')
-    await store_book(kit.uow(), book_record, owner=actor.account_id)
+    await store_book(kit.uow(), book_record, owner=actor.account_id, databases=kit.databases)
     return book_record
 
 
@@ -181,17 +182,23 @@ class TestChangeProfile:
         )
         assert default is None
 
-    async def test_delete_removes_the_profile_and_no_recipe(self, fx_kit: ProcessingKit) -> None:
+    async def test_delete_removes_the_profile_and_no_recipe(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a recipe made from a profile outlives it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
-        kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
+        kept = await fx_open_book.databases.open(book_record.id).read(
+            lambda repos: repos.recipes.get(applied.recipe.id)
+        )
         assert kept.steps == profile.steps
         assert (await account_profiles(fx_kit, actor, None)).total == 0
 
@@ -200,17 +207,19 @@ class TestApplyProfile:
     """Tests for applying a profile to a book."""
 
     async def test_the_profile_is_reproduced_in_the_recipe_of_a_kind_of_another_book(
-        self, fx_kit: ProcessingKit
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify the steps arrive in their order, with their parameters and their switch, in the recipe asked for only.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
         other = await second_record(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(open_for(actor, other.id), profile, kind=RecipeKind.BW_PICTURE)
+        applied = await fx_kit.profiles().apply(fx_open_book(actor, other.id), profile, kind=RecipeKind.BW_PICTURE)
         picture = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
         text = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY)
         expect(applied.recipe.steps == profile.steps)
@@ -221,29 +230,39 @@ class TestApplyProfile:
         expect((await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).steps != profile.steps)
         assert_expectations()
 
-    async def test_applying_a_profile_marks_the_pages_of_the_recipe_stale(self, fx_kit: ProcessingKit) -> None:
+    async def test_applying_a_profile_marks_the_pages_of_the_recipe_stale(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a page the recipe processed is stale after the profile took its steps.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         page, _ = await fx_kit.seed_scan_page(book_record)
         recipe = await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         seeded = make_page_stage(page_id=page.id, recipe_id=recipe.id)
-        await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_stages.save(seeded))
+        await fx_open_book.databases.open(book_record.id).change(
+            lambda repos, _book_record: repos.page_stages.save(seeded)
+        )
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
-        record = await fx_kit.uow().read_book(
-            book_record.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        record = await fx_open_book.databases.open(book_record.id).read(
+            lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
         assert record.state is StageState.STALE
 
-    async def test_a_step_of_a_missing_processor_is_left_out_and_named(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_step_of_a_missing_processor_is_left_out_and_named(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the steps that can run are applied and the processor that cannot is reported.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await store_profile(
@@ -257,15 +276,19 @@ class TestApplyProfile:
                 ),
             ),
         )
-        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [FAKE_KEY]
         assert applied.missing_processors == (MISSING_KEY,)
 
-    async def test_a_profile_with_nothing_that_can_run_is_refused(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_profile_with_nothing_that_can_run_is_refused(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Reject a profile all of whose processors are missing, and name them.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await store_profile(
@@ -273,25 +296,27 @@ class TestApplyProfile:
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),)),
         )
         with pytest.raises(InvalidParametersError, match=MISSING_KEY):
-            await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
 
 
 class TestDefaultProfileOfANewBook:
     """Tests for the profile a stage starts with when a book opens it the first time."""
 
     async def test_the_default_profile_makes_the_recipe_of_text_pages_and_the_templates_the_others(
-        self, fx_kit: ProcessingKit
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify the profile replaces the built-in recipe of text pages and keeps its steps, and links to it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().set_default(profile, is_default=True)
         fresh = await second_record(fx_kit, actor)
-        listed = await fx_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
+        listed = await fx_kit.service().recipes(fx_open_book(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         assert [(recipe.kind, recipe.steps == profile.steps, recipe.profile_id) for recipe in listed.items] == [
             (RecipeKind.TEXT, True, profile.id),
             (RecipeKind.COLOR_PICTURE, False, None),
@@ -300,19 +325,21 @@ class TestDefaultProfileOfANewBook:
         ]
 
     async def test_the_picture_recipes_of_a_book_still_follow_the_templates_after_a_default_profile(
-        self, fx_cv_kit: ProcessingKit
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify the recipes of pictures keep their own methods when the default profile makes the text recipe.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, _ = await fx_cv_kit.seed_record()
         deskew = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=DESKEW_KEY)])
         profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, deskew)
         await fx_cv_kit.profiles().set_default(profile, is_default=True)
         fresh = await second_record(fx_cv_kit, actor)
-        listed = await fx_cv_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
+        listed = await fx_cv_kit.service().recipes(fx_open_book(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         picture = next(recipe for recipe in listed.items if recipe.kind is RecipeKind.COLOR_PICTURE)
         expect([step.processor_key for step in listed.items[0].steps] == [DESKEW_KEY])
         expect(len(picture.steps) > 1)

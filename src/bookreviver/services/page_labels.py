@@ -3,7 +3,7 @@
 The label a page shows is computed when the page is read, from the sections by ``Pagination``, except for a manual
 label, which no section changes. Nothing computed is stored, so a change of the pages or of the sections writes no
 label. A use case that adds, deletes or moves pages, or changes a section, calls ``settle`` in the work of its
-``change_book`` with the repositories of that work, which refuses the change when a section can no longer write one of
+``Book.change`` with the repositories of that work, which refuses the change when a section can no longer write one of
 its numbers. ``settle`` is synchronous and opens no transaction.
 
 A section starts at a page and so does not survive the deletion of that page. ``settle`` is told which pages are about
@@ -49,7 +49,7 @@ class PageLabels:
         """Hand on the sections of the pages that leave, and check that every section can number its pages.
 
         It writes through the repositories of its caller and opens no transaction, so it is called only from the work
-        of ``change_book``. A book without a section has nothing to hand on and no number to check.
+        of ``Book.change``. A book without a section has nothing to hand on and no number to check.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories

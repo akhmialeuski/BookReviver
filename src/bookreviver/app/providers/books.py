@@ -4,7 +4,7 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import UnitOfWork
+from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
@@ -38,17 +38,15 @@ class BooksProvider(Provider):
         return StageSummaries(catalogue=catalogue, board=board)
 
     @provide
-    def freshness(self, uow: UnitOfWork, board: JobBoard) -> BookFreshness:
+    def freshness(self, board: JobBoard) -> BookFreshness:
         """Build the freshness of the reads of the books of a request.
 
-        :param uow: Unit of work of the request.
-        :type uow: UnitOfWork
         :param board: Board of the jobs of the books.
         :type board: JobBoard
         :returns: The freshness of the reads of the books.
         :rtype: BookFreshness
         """
-        return BookFreshness(uow=uow, board=board)
+        return BookFreshness(board=board)
 
     @provide(scope=Scope.APP)
     def book_files(self, sources: SourceStore, assets: AssetStore, archive: BookArchive) -> BookStores:
@@ -66,11 +64,15 @@ class BooksProvider(Provider):
         return BookStores(sources=sources, assets=assets, archive=archive)
 
     @provide
-    def books(self, uow: UnitOfWork, clock: Clock, files: BookStores, stages: StageSummaries) -> BooksService:
-        """Build the books service over the request's unit of work.
+    def books(
+        self, uow: UnitOfWork, databases: BookDatabases, clock: Clock, files: BookStores, stages: StageSummaries
+    ) -> BooksService:
+        """Build the books service over the request's unit of work and book databases.
 
-        :param uow: Unit of work of the current request.
+        :param uow: Unit of work of the current request, which runs the transactions of the catalogue.
         :type uow: UnitOfWork
+        :param databases: Opens the database of a book, which runs the transactions of that book.
+        :type databases: BookDatabases
         :param clock: Clock of the application.
         :type clock: Clock
         :param files: Source store and asset store of the application.
@@ -80,7 +82,7 @@ class BooksProvider(Provider):
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(uow=uow, clock=clock, files=files, stages=stages)
+        return BooksService(uow=uow, databases=databases, clock=clock, files=files, stages=stages)
 
     @provide(scope=Scope.APP)
     def page_runtime(
@@ -118,11 +120,11 @@ class BooksProvider(Provider):
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide
-    def pages(self, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> PageService:
-        """Build the page service over the request's or job's unit of work.
+    def pages(self, books: BooksService, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> PageService:
+        """Build the page service over the request's or job's books service.
 
-        :param uow: Unit of work of the current request or job.
-        :type uow: UnitOfWork
+        :param books: Books service of the current request or job, which opens the books a job runs on.
+        :type books: BooksService
         :param assets: Asset store of the application.
         :type assets: AssetStore
         :param runtime: The publisher, clock, order keys and job board of the application.
@@ -132,40 +134,34 @@ class BooksProvider(Provider):
         :returns: The page service of the request or job.
         :rtype: PageService
         """
-        return PageService(uow=uow, assets=assets, runtime=runtime, imaging=imaging)
+        return PageService(books=books, assets=assets, runtime=runtime, imaging=imaging)
 
     @provide
-    def pagination(self, uow: UnitOfWork, clock: Clock) -> PaginationService:
+    def pagination(self, clock: Clock) -> PaginationService:
         """Build the pagination service over the request's unit of work.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :param clock: Clock of the application.
         :type clock: Clock
         :returns: The pagination service of the request.
         :rtype: PaginationService
         """
-        return PaginationService(uow=uow, clock=clock)
+        return PaginationService(clock=clock)
 
     @provide
-    def places(self, uow: UnitOfWork, clock: Clock) -> PlaceService:
+    def places(self, clock: Clock) -> PlaceService:
         """Build the place service over the request's unit of work.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :param clock: Clock of the application.
         :type clock: Clock
         :returns: The place service of the request.
         :rtype: PlaceService
         """
-        return PlaceService(uow=uow, clock=clock)
+        return PlaceService(clock=clock)
 
     @provide
-    def sources(self, uow: UnitOfWork, board: JobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
+    def sources(self, board: JobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
         """Build the source service over the request's unit of work.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param sources: Source store of the application.
@@ -175,4 +171,4 @@ class BooksProvider(Provider):
         :returns: The source service of the request.
         :rtype: SourceService
         """
-        return SourceService(uow=uow, board=board, sources=sources, assets=assets)
+        return SourceService(board=board, sources=sources, assets=assets)

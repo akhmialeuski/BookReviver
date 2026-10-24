@@ -13,7 +13,6 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import (
     VERSION_ID_PATTERN,
-    Actor,
     LibraryEntry,
     PageEdit,
     PageHistoryEntry,
@@ -72,14 +71,6 @@ class TestLibraryEntry:
         """Verify a book is in one library, so the identifier of the entry is the identifier of the book."""
         entry = LibraryEntry(book_id=make_record().id, owner_id=new_account_id(), added_at=EPOCH)
         assert entry.id == entry.book_id
-
-    def test_only_the_owner_is_the_owner(self) -> None:
-        """Verify the actor of the owning account owns the book and the actor of any other account does not."""
-        owner = new_account_id()
-        entry = LibraryEntry(book_id=make_record().id, owner_id=owner, added_at=EPOCH)
-        expect(entry.is_owned_by(Actor(account_id=owner)))
-        expect(not entry.is_owned_by(Actor(account_id=new_account_id())))
-        assert_expectations()
 
 
 class TestJobStage:

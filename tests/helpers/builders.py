@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from attrs import frozen
+
 from bookreviver.domain.entities import (
     BookPlace,
     BookRecord,
@@ -70,6 +72,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
+    from bookreviver.ports.persistence import BookDatabases
+    from tests.helpers.database import UnitOfWorkFactory
 from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
     BookDetails,
@@ -164,17 +168,46 @@ def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
     )
 
 
-def open_for(actor: Actor, book_id: BookId) -> Book:
+@frozen
+class BookOpener:
+    """Opens the books of a test with their databases, as the access dependencies open them for a request.
+
+    A test that opens a book also seeds the catalogue and reads and writes the databases of the books, so the opener
+    hands out the units of work and the databases of the test too.
+
+    :ivar uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :ivar databases: Opens the databases of the books of the test.
+    """
+
+    uow: UnitOfWorkFactory
+    databases: BookDatabases
+
+    def __call__(self, actor: Actor, book_id: BookId) -> Book:
+        """Open a book for the actor, without reading the library.
+
+        :param actor: Account the book is opened for, which the test made its owner.
+        :type actor: Actor
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
+        :returns: The open book.
+        :rtype: Book
+        """
+        return open_for(actor, book_id, databases=self.databases)
+
+
+def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases) -> Book:
     """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
 
     :param actor: Account the book is opened for, which the test made its owner.
     :type actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
+    :param databases: Opens the database of the book.
+    :type databases: BookDatabases
     :returns: The open book.
     :rtype: Book
     """
-    return Book(book_id, actor.account_id)
+    return Book(book_id, actor.account_id, databases.open(book_id))
 
 
 def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:

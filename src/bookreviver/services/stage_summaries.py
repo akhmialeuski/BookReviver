@@ -8,7 +8,7 @@ no page has a record of is counted as not run, since the records are written whe
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
 book: the books service does that through the library. Every method reads, synchronously, through the
-repositories of the book of the transaction its caller runs in, which is the work of ``UnitOfWork.read_book``.
+repositories of the book of the transaction its caller runs in, which is the work of ``Book.read``.
 """
 
 from collections import defaultdict

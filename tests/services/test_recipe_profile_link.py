@@ -8,7 +8,7 @@ from attrs import evolve
 from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, Step
-from tests.helpers.builders import make_record, open_for
+from tests.helpers.builders import make_record
 from tests.helpers.processing import account_books
 from tests.helpers.processors import SECOND_KEY, THIRD_KEY
 from tests.helpers.seeding import store_book
@@ -16,6 +16,8 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Recipe, RecipeProfile
     from bookreviver.domain.ids import BookId
+    from bookreviver.ports.persistence import BookDatabases
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -67,23 +69,23 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> BookRecord:
     :rtype: BookRecord
     """
     book_record = make_record(title='Another book')
-    await store_book(kit.uow(), book_record, owner=actor.account_id)
+    await store_book(kit.uow(), book_record, owner=actor.account_id, databases=kit.databases)
     return book_record
 
 
-async def stored_recipe(kit: ProcessingKit, book_id: BookId, recipe: Recipe) -> Recipe:
+async def stored_recipe(book_id: BookId, recipe: Recipe, *, databases: BookDatabases) -> Recipe:
     """Read a recipe back through a new unit of work.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :param recipe: The recipe to read.
     :type recipe: Recipe
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The recipe as committed.
     :rtype: Recipe
     """
-    return await kit.uow().read_book(book_id, lambda repos: repos.recipes.get(recipe.id))
+    return await databases.open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
 
 
 class TestProfileOrder:
@@ -185,36 +187,46 @@ class TestReplaceProfile:
                 profile, ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=CLEANUP_KEY)])
             )
 
-    async def test_the_recipes_made_from_the_profile_are_not_changed(self, fx_ordered_kit: ProcessingKit) -> None:
+    async def test_the_recipes_made_from_the_profile_are_not_changed(
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a book that applied the profile keeps its steps when the profile is replaced.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
-        applied = await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        applied = await fx_ordered_kit.profiles().apply(
+            fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT
+        )
         await fx_ordered_kit.profiles().replace(
             profile, ProfileDraft(name=RENAMED, steps=[Step(processor_key=SECOND_KEY)])
         )
-        assert await stored_recipe(fx_ordered_kit, book_record.id, applied.recipe) == applied.recipe
+        assert await stored_recipe(book_record.id, applied.recipe, databases=fx_open_book.databases) == applied.recipe
 
 
 class TestRecipeLink:
     """Tests for the profile a recipe of a book remembers it was made from."""
 
-    async def test_an_applied_profile_makes_a_recipe_linked_to_it(self, fx_ordered_kit: ProcessingKit) -> None:
+    async def test_an_applied_profile_makes_a_recipe_linked_to_it(
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the recipe a profile is applied to names the profile.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (
-            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.BLANK)
+            await fx_ordered_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.BLANK)
         ).recipe
-        assert (await stored_recipe(fx_ordered_kit, book_record.id, applied)).profile_id == profile.id
+        assert (await stored_recipe(book_record.id, applied, databases=fx_open_book.databases)).profile_id == profile.id
 
     async def test_the_default_profile_of_a_new_book_is_the_profile_of_its_first_recipe(
         self, fx_ordered_kit: ProcessingKit
@@ -231,63 +243,79 @@ class TestRecipeLink:
         recipe = await fx_ordered_kit.recipe_of(actor, fresh, Stage.GEOMETRY)
         assert recipe.profile_id == profile.id
 
-    async def test_a_recipe_can_be_linked_to_a_profile_and_unlinked_again(self, fx_ordered_kit: ProcessingKit) -> None:
+    async def test_a_recipe_can_be_linked_to_a_profile_and_unlinked_again(
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify linking records the profile, changes neither the steps nor the time, and None unlinks.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         recipe = await fx_ordered_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         key = RecipeKey(Stage.GEOMETRY, recipe.id)
-        linked = await fx_ordered_kit.profiles().link(open_for(actor, book_record.id), key, profile)
+        linked = await fx_ordered_kit.profiles().link(fx_open_book(actor, book_record.id), key, profile)
         assert linked == evolve(recipe, profile_id=profile.id)
-        assert await stored_recipe(fx_ordered_kit, book_record.id, recipe) == linked
-        unlinked = await fx_ordered_kit.profiles().link(open_for(actor, book_record.id), key, None)
+        assert await stored_recipe(book_record.id, recipe, databases=fx_open_book.databases) == linked
+        unlinked = await fx_ordered_kit.profiles().link(fx_open_book(actor, book_record.id), key, None)
         assert unlinked == recipe
 
-    async def test_saving_the_steps_of_a_linked_recipe_keeps_its_link(self, fx_ordered_kit: ProcessingKit) -> None:
+    async def test_saving_the_steps_of_a_linked_recipe_keeps_its_link(
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a recipe that is edited is still made from its profile, which is how the book is compared with it.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (
-            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+            await fx_ordered_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         ).recipe
         edited = RecipeDraft(steps=[Step(processor_key=SECOND_KEY, enabled=False), Step(processor_key=THIRD_KEY)])
         saved = await fx_ordered_kit.service().save_recipe(
-            open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, applied.id), edited
+            fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, applied.id), edited
         )
         assert saved.profile_id == profile.id
 
-    async def test_deleting_a_profile_unlinks_the_recipes_made_from_it(self, fx_ordered_kit: ProcessingKit) -> None:
+    async def test_deleting_a_profile_unlinks_the_recipes_made_from_it(
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the recipes outlive their profile and no longer name it.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (
-            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+            await fx_ordered_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         ).recipe
         await fx_ordered_kit.profiles().remove(profile, await account_books(fx_ordered_kit, actor))
-        assert (await stored_recipe(fx_ordered_kit, book_record.id, applied)).profile_id is None
+        assert (await stored_recipe(book_record.id, applied, databases=fx_open_book.databases)).profile_id is None
 
-    async def test_a_profile_of_another_stage_is_refused(self, fx_ordered_kit: ProcessingKit) -> None:
+    async def test_a_profile_of_another_stage_is_refused(
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Reject linking a recipe to a profile whose steps belong to another stage.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         cleanup = await save_profile(fx_ordered_kit, actor, (Step(processor_key=CLEANUP_KEY),), stage=Stage.CLEANUP)
         recipe = await fx_ordered_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         with pytest.raises(InvalidParametersError):
             await fx_ordered_kit.profiles().link(
-                open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), cleanup
+                fx_open_book(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), cleanup
             )

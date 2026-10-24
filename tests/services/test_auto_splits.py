@@ -19,6 +19,7 @@ from tests.plugins.synthetic import draw_blank, draw_single_page, draw_spread
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -60,7 +61,12 @@ async def choose(kit: ProcessingKit, actor: Actor, book_record: BookRecord, page
     :type choice: SplitChoice
     """
     key = await kit.edit_key(book_record.id, page, Stage.PAGE_SPLIT, SPLIT_AUTO)
-    await kit.edits().save(open_for(actor, book_record.id), key, NewPageEdit(kind=choice.editor, geometry=choice), None)
+    await kit.edits().save(
+        open_for(actor, book_record.id, databases=kit.databases),
+        key,
+        NewPageEdit(kind=choice.editor, geometry=choice),
+        None,
+    )
 
 
 async def run_over_every_page(kit: ProcessingKit, actor: Actor, book_record: BookRecord) -> None:
@@ -76,7 +82,7 @@ async def run_over_every_page(kit: ProcessingKit, actor: Actor, book_record: Boo
     :param book_record: The record of the book.
     :type book_record: BookRecord
     """
-    pages = await book_of(kit, book_record)
+    pages = await book_of(book_record, databases=kit.databases)
     await run_stage(
         kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(page.id for page in pages))
     )
@@ -93,7 +99,7 @@ class TestAutomaticSplit:
         """
         actor, book_record, [first, single, _last] = await seed_mixed_book(fx_cv_kit)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
-        pages = await book_of(fx_cv_kit, book_record)
+        pages = await book_of(book_record, databases=fx_cv_kit.databases)
         expect([page.slot for page in pages] == WHOLE_BOOK_SLOTS)
         expect(pages[0].id == first.id and pages[2].id == single.id)
         expect(all(page.scan_id is not None for page in pages))
@@ -110,7 +116,7 @@ class TestAutomaticSplit:
         written = len(fx_cv_kit.writer.calls)
         await run_over_every_page(fx_cv_kit, actor, book_record)
         expect(len(fx_cv_kit.writer.calls) == written)
-        expect(len(await book_of(fx_cv_kit, book_record)) == len(WHOLE_BOOK_SLOTS))
+        expect(len(await book_of(book_record, databases=fx_cv_kit.databases)) == len(WHOLE_BOOK_SLOTS))
         assert_expectations()
 
     async def test_a_page_the_step_was_unsure_of_carries_the_reason(self, fx_cv_kit: ProcessingKit) -> None:
@@ -122,7 +128,7 @@ class TestAutomaticSplit:
         actor, book_record = await fx_cv_kit.seed_record()
         await fx_cv_kit.seed_scan_page(book_record, image=png_bytes(draw_blank()))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
-        pages = await book_of(fx_cv_kit, book_record)
+        pages = await book_of(book_record, databases=fx_cv_kit.databases)
         heads = [await head_of(fx_cv_kit, book_record.id, page, Stage.PAGE_SPLIT) for page in pages]
         assert [head.review for head in heads] == [ReviewReason.UNSURE_GUTTER] * 2
 
@@ -141,9 +147,12 @@ class TestSplitChoice:
         await choose(fx_cv_kit, actor, book_record, first, SplitChoice(pages=SplitChoice.ONE_PAGE))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         await run_over_every_page(fx_cv_kit, actor, book_record)
-        pages = await book_of(fx_cv_kit, book_record)
+        pages = await book_of(book_record, databases=fx_cv_kit.databases)
         expect([page.slot for page in pages] == [Page.WHOLE_SCAN, Page.WHOLE_SCAN, Page.LEFT_HALF, Page.RIGHT_HALF])
-        expect((await stage_of(fx_cv_kit, book_record.id, pages[0], Stage.PAGE_SPLIT)).state is StageState.FRESH)
+        expect(
+            (await stage_of(book_record.id, pages[0], Stage.PAGE_SPLIT, databases=fx_cv_kit.databases)).state
+            is StageState.FRESH
+        )
         assert_expectations()
 
     async def test_without_a_confirmation_the_choice_of_one_page_fails_and_deletes_nothing(
@@ -158,8 +167,11 @@ class TestSplitChoice:
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
         await choose(fx_cv_kit, actor, book_record, first, SplitChoice(pages=SplitChoice.ONE_PAGE))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,)))
-        expect(len(await book_of(fx_cv_kit, book_record)) == len(WHOLE_BOOK_SLOTS))
-        expect((await stage_of(fx_cv_kit, book_record.id, first, Stage.PAGE_SPLIT)).state is StageState.FAILED)
+        expect(len(await book_of(book_record, databases=fx_cv_kit.databases)) == len(WHOLE_BOOK_SLOTS))
+        expect(
+            (await stage_of(book_record.id, first, Stage.PAGE_SPLIT, databases=fx_cv_kit.databases)).state
+            is StageState.FAILED
+        )
         assert_expectations()
 
     async def test_two_pages_for_a_single_page_survives_a_run_on_all_pages(self, fx_cv_kit: ProcessingKit) -> None:
@@ -173,27 +185,29 @@ class TestSplitChoice:
         await choose(fx_cv_kit, actor, book_record, single, SplitChoice(pages=SplitChoice.TWO_PAGES))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(single.id,)))
         await run_over_every_page(fx_cv_kit, actor, book_record)
-        pages = await book_of(fx_cv_kit, book_record)
+        pages = await book_of(book_record, databases=fx_cv_kit.databases)
         expect([page.slot for page in pages] == [1, 2, 1, 2, 1, 2])
         assert_expectations()
 
     async def test_deleting_the_choice_returns_the_decision_to_the_automatic_split(
-        self, fx_cv_kit: ProcessingKit
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify the page returns to one page when its choice of two is deleted, after the confirmation.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, [_first, single, _last] = await seed_mixed_book(fx_cv_kit)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
         await choose(fx_cv_kit, actor, book_record, single, SplitChoice(pages=SplitChoice.TWO_PAGES))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
         await fx_cv_kit.edits().delete(
-            open_for(actor, book_record.id),
+            fx_open_book(actor, book_record.id),
             await fx_cv_kit.edit_key(book_record.id, single, Stage.PAGE_SPLIT, SPLIT_AUTO),
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
-        pages = await book_of(fx_cv_kit, book_record)
+        pages = await book_of(book_record, databases=fx_open_book.databases)
         expect([page.slot for page in pages] == WHOLE_BOOK_SLOTS)
         assert_expectations()

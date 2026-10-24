@@ -81,7 +81,7 @@ class RecipeProfiles:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request. A use case that changes the profiles of the account runs in one
-                    ``change``, and ``link`` runs in the ``change_book`` of the book it changes.
+                    ``change``, and ``link`` runs in the ``Book.change`` of the book it changes.
         :type uow: UnitOfWork
         :param recipes: The recipes of the book, which check the steps of a profile.
         :type recipes: RecipeBook
@@ -274,7 +274,7 @@ class RecipeProfiles:
                 )
             return repos.recipes.update(evolve(recipe, profile_id=profile.id))
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def rename(self, profile: RecipeProfile, name: str) -> RecipeProfile:
         """Give a profile another name.
@@ -339,7 +339,7 @@ class RecipeProfiles:
     async def remove(self, profile: RecipeProfile, books: Iterable[Book]) -> None:
         """Delete a profile, and clear the link to it in the recipes of the books, which changes no step.
 
-        The books are cleared one at a time, each in a ``change_book`` of its own, and the profile goes last, so a
+        The books are cleared one at a time, each in a ``Book.change`` of its own, and the profile goes last, so a
         failure keeps the profile and calling this again finishes the job.
 
         :param profile: The profile.
@@ -361,7 +361,7 @@ class RecipeProfiles:
                     repos.recipes.update(evolve(recipe, profile_id=None))
 
         for book in books:
-            await self._uow.change_book(book.id, unlink)
+            await book.change(unlink)
         await self._uow.change(lambda repos: repos.recipe_profiles.delete(profile.id))
 
     async def apply(self, book: Book, profile: RecipeProfile, *, kind: RecipeKind) -> AppliedProfile:
@@ -385,7 +385,7 @@ class RecipeProfiles:
         steps, missing = self._recipes.installed(profile.steps)
         if missing and not any(step.enabled for step in steps):
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=KEY_SEPARATOR.join(missing)))
-        recipe = await self._recipes.of_kind(book.id, profile.stage, kind)
+        recipe = await self._recipes.of_kind(book, profile.stage, kind)
         # The steps were checked when the profile was saved, and rules may have been added to the processors since
         draft = RecipeDraft(steps=steps, order=OrderMode.FREE, profile_id=profile.id)
         applied = await self._put(book, RecipeKey(stage=profile.stage, recipe_id=recipe.id), draft, profile)
@@ -409,9 +409,7 @@ class RecipeProfiles:
         :rtype: Recipe
         :raises NotFoundError: If the book has no such recipe of the stage, or the stage has no steps by default.
         """
-        recipe = await self._uow.read_book(
-            book.id, lambda repos: self._recipes.get(repos, key.recipe_id, stage=key.stage)
-        )
+        recipe = await book.read(lambda repos: self._recipes.get(repos, key.recipe_id, stage=key.stage))
         default = await self._recipes.default_profile(book.id, key.stage)
         draft = self._recipes.default_draft(key.stage, recipe.kind, default)
         return await self._put(book, key, draft, default if draft.profile_id is not None else None)
@@ -462,5 +460,5 @@ class RecipeProfiles:
 
         counts: Counter[RecipeProfileId] = Counter()
         for book in books:
-            counts.update(await self._uow.read_book(book.id, profiles_of))
+            counts.update(await book.read(profiles_of))
         return counts

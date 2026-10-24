@@ -4,7 +4,7 @@ The services, the domain and the jobs never check an owner. A route of a book or
 dependency of this module, which reads it from the catalogue, compares its owner with the signed-in account and answers
 a book or a profile of another account exactly like a missing one, so the identifiers of other accounts cannot be
 probed. A list of the account's books or profiles is read here too, so a service is handed the objects it works on and
-never chooses whose they are.
+never chooses whose they are. The books service opens each book with its database, and takes no part in the choice.
 
 Every route of one book takes ``Annotated[Book, Depends(open_book)]``, written in place so that ruff sees the
 ``book_id`` of the path the dependency reads. FastAPI resolves a dependency once per request, so ``fresh_book`` and the
@@ -27,12 +27,12 @@ from bookreviver.domain.ids import BookId, RecipeProfileId
 from bookreviver.domain.values import Slice, SliceRequest
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.services.book import Book
+from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import LibraryEntry
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import CatalogueRepositories
-    from bookreviver.services.books import BooksService
 
 BOOK_ID_DESCRIPTION: Final = 'Identifier of the book'
 PROFILE_ID_DESCRIPTION: Final = 'Identifier of the recipe profile'
@@ -55,11 +55,13 @@ def _owner_window(repos: CatalogueRepositories, *, account_id: AccountId, reques
     return repos.library.list_for_owner(account_id, request)
 
 
-async def books_of(uow: UnitOfWork, account_id: AccountId) -> list[Book]:
+async def books_of(uow: UnitOfWork, books_service: BooksService, account_id: AccountId) -> list[Book]:
     """Read every book of an account, window by window, the latest added first.
 
     :param uow: Unit of work of the request, whose ``read`` of the catalogue lists the library.
     :type uow: UnitOfWork
+    :param books_service: Books service of the request, which opens each book with its database.
+    :type books_service: BooksService
     :param account_id: The account.
     :type account_id: AccountId
     :returns: The books of the account.
@@ -69,7 +71,7 @@ async def books_of(uow: UnitOfWork, account_id: AccountId) -> list[Book]:
     while True:
         request = SliceRequest(offset=len(books), limit=ENTRY_WINDOW)
         window = await uow.read(partial(_owner_window, account_id=account_id, request=request))
-        books.extend(Book(entry.book_id, entry.owner_id) for entry in window.items)
+        books.extend(books_service.book(entry) for entry in window.items)
         if len(books) >= window.total or not window.items:
             return books
 
@@ -98,12 +100,14 @@ class AccountBooks:
         :param account_id: The account.
         :type account_id: AccountId
         """
-        await self._books.delete_all(await books_of(self._uow, account_id))
+        await self._books.delete_all(await books_of(self._uow, self._books, account_id))
 
 
 @inject
 async def open_book(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)], actor: ActorDep, uow: FromDishka[UnitOfWork]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    actor: ActorDep,
+    books: FromDishka[BooksService],
 ) -> Book:
     """Open the book the path names, when the signed-in account owns it.
 
@@ -111,20 +115,25 @@ async def open_book(
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
-    :param uow: Unit of work of the request.
-    :type uow: UnitOfWork
+    :param books: Books service of the request, which opens the book with its database.
+    :type books: BooksService
     :returns: The open book.
     :rtype: Book
     :raises NotFoundError: If the library has no such book, or the book belongs to another account.
     """
-    entry = await uow.read(lambda repos: repos.library.get(book_id))
-    if not entry.is_owned_by(actor):
+    book = await books.open(book_id)
+    if book.owner_id != actor.account_id:
         raise NotFoundError(book_id)
-    return Book(entry.book_id, entry.owner_id)
+    return book
 
 
 @inject
-async def own_books(params: Annotated[Params, Depends()], actor: ActorDep, uow: FromDishka[UnitOfWork]) -> Slice[Book]:
+async def own_books(
+    params: Annotated[Params, Depends()],
+    actor: ActorDep,
+    uow: FromDishka[UnitOfWork],
+    books: FromDishka[BooksService],
+) -> Slice[Book]:
     """Read the window of the signed-in account's books the page parameters ask for, the latest added first.
 
     :param params: Page number and size from the query.
@@ -133,26 +142,30 @@ async def own_books(params: Annotated[Params, Depends()], actor: ActorDep, uow: 
     :type actor: Actor
     :param uow: Unit of work of the request.
     :type uow: UnitOfWork
+    :param books: Books service of the request, which opens each book with its database.
+    :type books: BooksService
     :returns: The books of the window, and the number of all the account's books.
     :rtype: Slice[Book]
     """
     request = slice_request(params)
     window = await uow.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))
-    return Slice(items=[Book(entry.book_id, entry.owner_id) for entry in window.items], total=window.total)
+    return Slice(items=[books.book(entry) for entry in window.items], total=window.total)
 
 
 @inject
-async def all_own_books(actor: ActorDep, uow: FromDishka[UnitOfWork]) -> list[Book]:
+async def all_own_books(actor: ActorDep, uow: FromDishka[UnitOfWork], books: FromDishka[BooksService]) -> list[Book]:
     """Read every book of the signed-in account, which a change of one of its profiles reaches.
 
     :param actor: The signed-in account.
     :type actor: Actor
     :param uow: Unit of work of the request.
     :type uow: UnitOfWork
+    :param books: Books service of the request, which opens each book with its database.
+    :type books: BooksService
     :returns: The books of the account.
     :rtype: list[Book]
     """
-    return await books_of(uow, actor.account_id)
+    return await books_of(uow, books, actor.account_id)
 
 
 def _owned_profile(repos: CatalogueRepositories, account_id: AccountId, profile_id: RecipeProfileId) -> RecipeProfile:

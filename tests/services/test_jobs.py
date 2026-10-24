@@ -15,19 +15,23 @@ from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.jobs import JobService
-from tests.helpers.builders import make_book_change, make_job, make_record, new_account_id, open_for
+from tests.helpers.builders import make_book_change, make_job, make_record, new_account_id
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_record
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.services.book import Book
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
-pytestmark = pytest.mark.anyio
+# The tests open books of the library with the databases of the test, whether or not they store any
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures('fx_databases')]
 
 WINDOW: SliceRequest = SliceRequest(limit=50)
 STAGED_UPLOAD_NAME: str = 'book.pdf'
@@ -82,7 +86,9 @@ def fx_owner() -> Actor:
 
 
 @pytest.fixture
-async def fx_book(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner: Actor) -> BookRecord:
+async def fx_book(
+    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner: Actor, fx_databases: BookDatabasesFactory
+) -> BookRecord:
     """Store a book of ``fx_owner``, and the account of the owner.
 
     :param fx_database: Database of the test.
@@ -91,19 +97,40 @@ async def fx_book(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner:
     :type fx_uow: UnitOfWorkFactory
     :param fx_owner: Account owning the book.
     :type fx_owner: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
-    await commit_record(fx_database, fx_uow(), book_record, owner=fx_owner.account_id)
+    await commit_record(fx_database, fx_uow(), book_record, owner=fx_owner.account_id, databases=fx_databases())
     return book_record
+
+
+@pytest.fixture
+def fx_open_own_book(fx_owner: Actor, fx_open_book: BookOpener) -> Callable[[BookId], Book]:
+    """Return a function opening a book of the acting account with its database.
+
+    :param fx_owner: Account the books belong to.
+    :type fx_owner: Actor
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: Function taking the identifier of the book.
+    :rtype: Callable[[BookId], Book]
+    """
+    return lambda book_id: fx_open_book(fx_owner, book_id)
 
 
 class TestGet:
     """Tests for JobService.get()."""
 
     async def test_owner_reads_job(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the owner of the book reads its job as the board holds it.
 
@@ -115,12 +142,19 @@ class TestGet:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
-        assert await fx_job_service.get(open_for(fx_owner, job.book_id), job.id) == job
+        assert await fx_job_service.get(fx_open_book(fx_owner, job.book_id), job.id) == job
 
     async def test_job_of_another_book_is_not_found(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a job is read only through the book it works on, so an open book tells nothing of other jobs.
 
@@ -132,28 +166,39 @@ class TestGet:
         :type fx_owner: Actor
         :param fx_book: Book the job works on.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id))
         with pytest.raises(NotFoundError):
-            await fx_job_service.get(open_for(fx_owner, BookId(uuid4())), job.id)
+            await fx_job_service.get(fx_open_book(fx_owner, BookId(uuid4())), job.id)
 
-    async def test_job_the_board_does_not_hold_is_not_found(self, fx_job_service: JobService, fx_owner: Actor) -> None:
+    async def test_job_the_board_does_not_hold_is_not_found(
+        self, fx_job_service: JobService, fx_owner: Actor, fx_open_book: BookOpener
+    ) -> None:
         """Verify a job the process does not hold, such as one of before a restart, is reported as missing.
 
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
         :param fx_owner: Account asking for the job.
         :type fx_owner: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         with pytest.raises(NotFoundError):
-            await fx_job_service.get(open_for(fx_owner, BookId(uuid4())), UNKNOWN_JOB)
+            await fx_job_service.get(fx_open_book(fx_owner, BookId(uuid4())), UNKNOWN_JOB)
 
 
 class TestList:
     """Tests for JobService.list_for_book()."""
 
     async def test_lists_the_jobs_of_the_book_newest_first_and_the_active_ones_alone(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the list holds the jobs of the book, newest first, and ``active`` leaves the ended ones out.
 
@@ -165,13 +210,15 @@ class TestList:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         ended = fx_fakes.board.put(make_job(book_id=fx_book.id, minutes=0))
         await fx_fakes.board.run_queued()
         queued = fx_fakes.board.put(make_job(book_id=fx_book.id, minutes=1))
         elsewhere = fx_fakes.board.put(make_job(book_id=make_record().id, minutes=2))
-        everything = await fx_job_service.list_for_book(open_for(fx_owner, fx_book.id), WINDOW, active=False)
-        active = await fx_job_service.list_for_book(open_for(fx_owner, fx_book.id), WINDOW, active=True)
+        everything = await fx_job_service.list_for_book(fx_open_book(fx_owner, fx_book.id), WINDOW, active=False)
+        active = await fx_job_service.list_for_book(fx_open_book(fx_owner, fx_book.id), WINDOW, active=True)
         expect([job.id for job in everything.items] == [queued.id, ended.id])
         expect(everything.total == len(everything.items))
         expect([job.id for job in active.items] == [queued.id])
@@ -183,7 +230,12 @@ class TestCancel:
     """Tests for JobService.cancel()."""
 
     async def test_queued_job_is_cancelled_announced_and_never_runs(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify cancelling a queued job drops it from the queue, publishes the change, and the job never runs.
 
@@ -195,9 +247,11 @@ class TestCancel:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
-        cancelled = await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
+        cancelled = await fx_job_service.cancel(fx_open_book(fx_owner, job.book_id), job.id)
         await fx_fakes.board.run_queued()
         expect((cancelled.state, cancelled.finished_at) == (JobState.CANCELLED, fx_fakes.clock.now()))
         expect(fx_fakes.board.get(job.id) == cancelled)
@@ -206,7 +260,12 @@ class TestCancel:
         assert_expectations()
 
     async def test_running_job_is_cancelled_and_stops_at_its_next_task(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify cancelling a running job answers at once, and the job ends cancelled once its task has returned.
 
@@ -218,6 +277,8 @@ class TestCancel:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
         release = fx_fakes.scripted.hold(job)
@@ -226,7 +287,7 @@ class TestCancel:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
             running = fx_fakes.board.get(job.id).state
-            cancelled = await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
+            cancelled = await fx_job_service.cancel(fx_open_book(fx_owner, job.book_id), job.id)
             release.set()
         expect(running is JobState.RUNNING)
         expect(cancelled is not None and cancelled.state is JobState.CANCELLED)
@@ -239,8 +300,8 @@ class TestCancel:
         fx_fakes: JobFakes,
         fx_job_service: JobService,
         fx_sources: LocalSourceStore,
-        fx_owner: Actor,
         fx_book: BookRecord,
+        fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
         """Verify the upload of an import that never ran is removed, since nothing else would remove it.
 
@@ -250,14 +311,14 @@ class TestCancel:
         :type fx_job_service: JobService
         :param fx_sources: Store of the uploads.
         :type fx_sources: LocalSourceStore
-        :param fx_owner: Account owning the book.
-        :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_own_book: Function opening a book of the acting account with its database.
+        :type fx_open_own_book: Callable[[BookId], Book]
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
         await fx_sources.stage(fx_book.id, job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-        await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
+        await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
         with pytest.raises(NotFoundError):
             async with fx_sources.staged_files(fx_book.id, job.id):
                 pass
@@ -267,8 +328,8 @@ class TestCancel:
         fx_fakes: JobFakes,
         fx_job_service: JobService,
         fx_sources: LocalSourceStore,
-        fx_owner: Actor,
         fx_book: BookRecord,
+        fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
         """Verify the service leaves the upload of a running import alone, which its run still reads.
 
@@ -278,10 +339,10 @@ class TestCancel:
         :type fx_job_service: JobService
         :param fx_sources: Store of the uploads.
         :type fx_sources: LocalSourceStore
-        :param fx_owner: Account owning the book.
-        :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_own_book: Function opening a book of the acting account with its database.
+        :type fx_open_own_book: Callable[[BookId], Book]
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
         await fx_sources.stage(fx_book.id, job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
@@ -290,14 +351,19 @@ class TestCancel:
         async with anyio.create_task_group() as group:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
-            await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
+            await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
             async with fx_sources.staged_files(fx_book.id, job.id) as staged:
                 names.extend(staged)
             release.set()
         expect(names == [STAGED_UPLOAD_NAME])
 
     async def test_finished_job_cannot_be_cancelled(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a finished job keeps its final state, nothing more is published, and the refusal is a conflict.
 
@@ -309,12 +375,14 @@ class TestCancel:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id))
         await fx_fakes.board.run_queued()
         published = list(fx_fakes.events.published)
         with pytest.raises(ConflictError):
-            await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
+            await fx_job_service.cancel(fx_open_book(fx_owner, job.book_id), job.id)
         expect(fx_fakes.board.get(job.id).state is JobState.SUCCEEDED)
         expect(fx_fakes.events.published == published)
         assert_expectations()
@@ -324,7 +392,12 @@ class TestEvents:
     """Tests for JobService.events()."""
 
     async def test_owner_receives_only_book_events(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
+        self,
+        fx_fakes: JobFakes,
+        fx_job_service: JobService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a subscription keeps its book's events published before the first read, and none of another.
 
@@ -336,9 +409,11 @@ class TestEvents:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         other = make_record()
-        async with await fx_job_service.events(open_for(fx_owner, fx_book.id)) as stream:
+        async with await fx_job_service.events(fx_open_book(fx_owner, fx_book.id)) as stream:
             # Published before anything reads the stream, as while the response headers are still being sent
             await fx_fakes.events.publish(make_book_change(book_id=other.id))
             await fx_fakes.events.publish(make_book_change(book_id=fx_book.id))

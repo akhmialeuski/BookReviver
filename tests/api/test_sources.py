@@ -39,10 +39,11 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Source
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases
     from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.books import Book
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -57,47 +58,50 @@ SOURCE_ID_PARAM: str = 'source_id'
 @pytest.fixture
 async def fx_book(
     fx_database: SqlDatabase,
-    fx_uow: UnitOfWorkFactory,
     fx_source_store: SourceStore,
     fx_asset_store: AssetStore,
     fx_actor: Actor,
+    fx_open_book: BookOpener,
 ) -> Book:
     """Commit and store a book of the signed-in account.
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Source store of the application.
     :type fx_source_store: SourceStore
     :param fx_asset_store: Asset store of the application.
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_uow(), fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, fx_actor)
 
 
 @pytest.fixture
 async def fx_strangers_book(
-    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_asset_store: AssetStore
+    fx_database: SqlDatabase,
+    fx_source_store: SourceStore,
+    fx_asset_store: AssetStore,
+    fx_open_book: BookOpener,
 ) -> Book:
     """Commit and store a book of an account that is not signed in.
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Source store of the application.
     :type fx_source_store: SourceStore
     :param fx_asset_store: Asset store of the application.
     :type fx_asset_store: AssetStore
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_uow(), fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, None)
 
 
 def _sources_path(book: Book) -> str:
@@ -133,11 +137,11 @@ def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
     return (FakeBoardProvider(fx_board),)
 
 
-async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, name: str, *, minutes: int) -> Source:
+async def _add_unimported(
+    book: Book, status_of: SourceStatus, name: str, *, minutes: int, databases: BookDatabases
+) -> Source:
     """Commit a file of the book that the import rejected or skipped, which has no scan and no stored file.
 
-    :param uow: Unit of work over the database of the test, which the application runs on.
-    :type uow: UnitOfWork
     :param book: The stored book.
     :type book: Book
     :param status_of: Status of the file, rejected or skipped.
@@ -146,6 +150,8 @@ async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, 
     :type name: str
     :param minutes: Minutes after the epoch the file was recorded.
     :type minutes: int
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The stored source.
     :rtype: Source
     """
@@ -159,7 +165,7 @@ async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, 
         rejection=RejectionReason.UNSUPPORTED_TYPE if rejected else None,
         detail=RejectionReason.UNSUPPORTED_TYPE.label if rejected else '',
     )
-    await uow.change_book(book.book_record.id, lambda repos, _book_record: repos.sources.add(source))
+    await databases.open(book.book_record.id).change(lambda repos, _book_record: repos.sources.add(source))
     return source
 
 
@@ -192,19 +198,21 @@ class TestListSources:
         assert_expectations()
 
     async def test_lists_the_imported_sources_alone_unless_asked_for_the_report_of_an_import(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the rejected and skipped files are listed only for their statuses, with their reasons.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        rejected = await _add_unimported(fx_uow(), fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
-        skipped = await _add_unimported(fx_uow(), fx_book, SourceStatus.SKIPPED, 'later.pdf', minutes=6)
+        rejected = await _add_unimported(
+            fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5, databases=fx_databases()
+        )
+        skipped = await _add_unimported(fx_book, SourceStatus.SKIPPED, 'later.pdf', minutes=6, databases=fx_databases())
 
         default = Page[SourceSchema].model_validate_json((await fx_client.get(_sources_path(fx_book))).content)
         report = Page[SourceSchema].model_validate_json(
@@ -394,19 +402,19 @@ class TestDeleteUnimportedSources:
     """Tests for DELETE /books/{book_id}/sources/unimported."""
 
     async def test_deletes_the_report_of_the_import_and_keeps_the_imported_sources(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify closing the report answers 204 and deletes the rejected and skipped files, and nothing else.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        await _add_unimported(fx_uow(), fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
-        await _add_unimported(fx_uow(), fx_book, SourceStatus.SKIPPED, 'later.pdf', minutes=6)
+        await _add_unimported(fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5, databases=fx_databases())
+        await _add_unimported(fx_book, SourceStatus.SKIPPED, 'later.pdf', minutes=6, databases=fx_databases())
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
 
@@ -422,7 +430,7 @@ class TestDeleteUnimportedSources:
         assert_expectations()
 
     async def test_import_in_progress_is_a_conflict(
-        self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_uow: UnitOfWorkFactory, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the report of an import that still runs is not closed, and its rows stay.
 
@@ -430,12 +438,12 @@ class TestDeleteUnimportedSources:
         :type fx_client: httpx.AsyncClient
         :param fx_board: Board of the application.
         :type fx_board: FakeJobBoard
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        kept = await _add_unimported(fx_uow(), fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
+        kept = await _add_unimported(fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5, databases=fx_databases())
         fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
@@ -488,7 +496,12 @@ class TestListScans:
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_scan(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        full: Rendition,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the path of the full image names the format its scan was stored in, whatever the book's policy.
 
@@ -502,12 +515,16 @@ class TestListScans:
         :type fx_actor: Actor
         :param full: Format the scan records for its full image.
         :type full: Rendition
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
         book_record = evolve(make_record(), image_policy=policy)
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, sources=[source], scans=[scan])
+        await store_book(
+            fx_uow(), book_record, owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
+        )
 
         response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/scans')
 
@@ -516,7 +533,11 @@ class TestListScans:
         assert images.full == f'{IIIF_PATH}/{BookKeys(book_record.id).scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a scan whose renditions are not cut yet is listed without image paths.
 
@@ -526,6 +547,8 @@ class TestListScans:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         source = make_source()
@@ -535,6 +558,7 @@ class TestListScans:
             owner=fx_actor.account_id,
             sources=[source],
             scans=[make_scan(source=source, number=0)],
+            databases=fx_databases(),
         )
 
         response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/scans')

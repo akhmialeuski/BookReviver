@@ -1,10 +1,10 @@
 """Use cases of the processing framework a request makes: recipes, runs, previews and page versions.
 
 A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. The use cases here
-change a recipe or the current version of a stage, which writes rows in one ``change_book`` and marks the pages
+change a recipe or the current version of a stage, which writes rows in one ``Book.change`` and marks the pages
 they affect stale, or start heavy work, a run, a preview, a cut of tiles, a collection or a measure of the book, which
 records a job with its parameters, queues it and answers at once, since a request handler never blocks on CPU-bound
-work. A use case that starts heavy work holds no transaction itself: it finds the recipes, which opens a ``change_book``
+work. A use case that starts heavy work holds no transaction itself: it finds the recipes, which opens a ``Book.change``
 of its own when the stage has none, and then the job starter records the job in a ``change`` of its own. Neither runs
 a processor. The workers do, through ``ProcessingJobs``, and the files of a step are written by ``steps.py``.
 
@@ -32,9 +32,9 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord, Job, Page, PageStage, PageVersion, Recipe
     from bookreviver.domain.geometry import Point
-    from bookreviver.domain.ids import BookId, PageId, PageVersionId
+    from bookreviver.domain.ids import PageId, PageVersionId
     from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, StageRun, VersionFilter
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
@@ -60,15 +60,12 @@ class ProcessingService:
     def __init__(
         self,
         *,
-        uow: UnitOfWork,
         assets: AssetStore,
         catalogue: ProcessorCatalog,
         parts: ProcessingParts,
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, in whose ``change_book`` blocks the changing use cases write.
-        :type uow: UnitOfWork
         :param assets: Store of the derived files, whose size a report of a collection reads.
         :type assets: AssetStore
         :param catalogue: The processors the application can run.
@@ -76,7 +73,6 @@ class ProcessingService:
         :param parts: The recipes, the stage records, the job tracker and the job starter over the unit of work.
         :type parts: ProcessingParts
         """
-        self._uow = uow
         self._assets = assets
         self._catalogue = catalogue
         self._recipes = parts.recipes
@@ -105,13 +101,13 @@ class ProcessingService:
         :rtype: Slice[Recipe]
         :raises NotFoundError: If the stage has no recipe.
         """
-        recipes = await self._recipes.recipes(book.id, stage)
+        recipes = await self._recipes.recipes(book, stage)
         return Slice(items=recipes[request.offset : request.offset + request.limit], total=len(recipes))
 
     async def save_recipe(self, book: Book, key: RecipeKey, draft: RecipeDraft) -> Recipe:
         """Replace the steps of a recipe of a stage, and mark the pages it processed stale, in one transaction.
 
-        It opens a ``change_book`` of its own, in which the ownership, the recipe and the stale marks are read and
+        It opens a ``Book.change`` of its own, in which the ownership, the recipe and the stale marks are read and
         written together. The browser is told after the transaction.
 
         :param book: The open book.
@@ -145,7 +141,7 @@ class ProcessingService:
             self._records.mark_recipe_stale(repos, recipe.id)
             return changed
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def start_run(self, book: Book, stage: Stage, run: StageRun) -> Job:
         """Record a job that runs a stage over some pages, each by the recipe of its kind, and queue it.
@@ -174,31 +170,31 @@ class ProcessingService:
             if (page_ids := run.page_ids) is not None:
                 repos.pages.list_by_ids(page_ids)
 
-        await self._recipes.recipes(book.id, stage, checking=check)
+        await self._recipes.recipes(book, stage, checking=check)
         if run.through_step is not None:
-            planned = {recipe.id: recipe for recipe in (await self._plan(book.id, run).recipes()).values()}
+            planned = {recipe.id: recipe for recipe in (await self._plan(book, run).recipes()).values()}
             for recipe in planned.values():
                 if run.through_step >= len(recipe.steps) or not recipe.indexed_steps_through(run.through_step):
                     raise ConflictError(
                         NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.kind.label)
                     )
         if run.mode is not RunMode.KEEP and not run.confirm_overwrite:
-            affected = (await self._plan(book.id, run).impact()).affected
+            affected = (await self._plan(book, run).impact()).affected
             if affected:
                 raise ConflictError(NEEDS_CONFIRMATION.format(mode=run.mode.label, pages=affected))
         return await self._starter.enqueue(book.id, JobKind.RUN_STAGE, run.to_map())
 
-    def _plan(self, book_id: BookId, run: StageRun) -> RunPlan:
-        """Plan a run over the unit of work of the request.
+    def _plan(self, book: Book, run: StageRun) -> RunPlan:
+        """Plan a run over the book.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param run: The run.
         :type run: StageRun
         :returns: The pages and recipes of the run.
         :rtype: RunPlan
         """
-        return RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book_id, run=run)
+        return RunPlan(recipes=self._recipes, clock=self._clock, book=book, run=run)
 
     async def start_measure(self, book: Book) -> Job:
         """Record a job that measures the book and writes the medians into the normalize step, and queue it.
@@ -211,7 +207,7 @@ class ProcessingService:
         :raises ConflictError: If a run or a measure of the book is queued or running, which may be writing the
                                versions that are measured or the recipe.
         """
-        await self._recipes.recipes(book.id, Stage.GEOMETRY)
+        await self._recipes.recipes(book, Stage.GEOMETRY)
         return await self._starter.enqueue(book.id, JobKind.MEASURE_BOOK, {})
 
     async def start_preview(self, book: Book, preview: StepPreview) -> Job:
@@ -228,7 +224,7 @@ class ProcessingService:
         :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the book is queued
                                or running.
         """
-        await self._uow.read_book(book.id, lambda repos: repos.pages.get(preview.page_id))
+        await book.read(lambda repos: repos.pages.get(preview.page_id))
         checked = StepPreview(
             page_id=preview.page_id,
             stage=preview.stage,
@@ -264,7 +260,7 @@ class ProcessingService:
             repos.pages.get(page_id)
             return repos.page_stages.list_for_page(page_id)
 
-        records = await self._uow.read_book(book.id, work)
+        records = await book.read(work)
         return Slice(items=records[request.offset : request.offset + request.limit], total=len(records))
 
     async def choose_version(self, book: Book, page_id: PageId, stage: Stage, version_id: PageVersionId) -> PageStage:
@@ -295,9 +291,7 @@ class ProcessingService:
                                measure of the book, a tile cutting or a collection of the book is queued or
                                running, which may be reading or deleting the versions the choice depends on.
         """
-        await self._uow.read_book(
-            book.id, lambda repos: self._choosable(repos, repos.pages.get(page_id), stage, version_id)
-        )
+        await book.read(lambda repos: self._choosable(repos, repos.pages.get(page_id), stage, version_id))
         if await self._starter.free_of_previews(book.id):
             raise ConflictError(BOOK_BUSY)
         key = PageStageKey(page_id, stage)
@@ -322,7 +316,7 @@ class ProcessingService:
                 repos, key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
             )
 
-        version, record = await self._uow.change_book(book.id, work)
+        version, record = await book.change(work)
         if version.renditions is not None and not version.tiles_ready:
             await self._starter.enqueue_tiles(book.id, [version_id])
         return record
@@ -388,7 +382,7 @@ class ProcessingService:
             ]
             return Slice(items=matching[request.offset : request.offset + request.limit], total=len(matching))
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def version(self, book: Book, page_id: PageId, version_id: PageVersionId) -> PageVersion:
         """Return one version of a page.
@@ -417,7 +411,7 @@ class ProcessingService:
             repos.pages.get(page_id)
             return self._version_of(repos, page_id, version_id)
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def start_tiles(self, book: Book, page_id: PageId, version_id: PageVersionId) -> Job:
         """Record a job that cuts the tile pyramid of a version, which the viewer asks for when it opens one.
@@ -461,7 +455,7 @@ class ProcessingService:
             """
             return repos.page_versions.collectable(collection.previews_older_than)
 
-        old = await self._uow.read_book(book.id, work)
+        old = await book.read(work)
         keys = BookKeys(book.id)
         sizes = [await self._assets.size_of(keys.version_directory(version)) for version in old]
         return CollectionReport(versions=len(old), size_bytes=sum(sizes))
@@ -526,7 +520,7 @@ class ProcessingService:
                     return mapped
                 version = self._version_of(repos, page_id, version.input_id)
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     def _choosable(self, repos: BookRepositories, page: Page, stage: Stage, version_id: PageVersionId) -> PageVersion:
         """Return a version of a page, if it can be made the current one of a stage.

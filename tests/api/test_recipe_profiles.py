@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, RecipeProfile
     from bookreviver.ports.persistence import UnitOfWork
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -157,18 +157,20 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookRecord:
     """Commit a book of the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+    await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
     return book_record
 
 
@@ -370,7 +372,11 @@ class TestApplyProfile:
         assert_expectations()
 
     async def test_a_new_book_starts_with_the_default_profile(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the first request of a stage in a new book answers with the default profile.
 
@@ -380,11 +386,13 @@ class TestApplyProfile:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.put(_default_path(profile.id))
         fresh = make_record(title='Fresh')
-        await store_book(fx_uow(), fresh, owner=fx_actor.account_id)
+        await store_book(fx_uow(), fresh, owner=fx_actor.account_id, databases=fx_databases())
         recipe = await _text_recipe(fx_client, fresh)
         expect((recipe.profile_id, recipe.steps) == (profile.id, profile.steps))
         assert_expectations()
@@ -564,7 +572,12 @@ class TestLibrary:
     """Tests for the books of a profile, the copy of a profile and the file a profile is exchanged by."""
 
     async def test_the_listing_counts_the_books_that_use_each_profile(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_book: BookRecord
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_book: BookRecord,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify applying a profile to two books makes the listing say two, and a profile never applied says none.
 
@@ -576,11 +589,13 @@ class TestLibrary:
         :type fx_actor: Actor
         :param fx_book: A book of the signed-in account.
         :type fx_book: BookRecord
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         used = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME))
         other = make_record(title='Another book')
-        await store_book(fx_uow(), other, owner=fx_actor.account_id)
+        await store_book(fx_uow(), other, owner=fx_actor.account_id, databases=fx_databases())
         for book in (fx_book, other, fx_book):
             await fx_client.post(_apply_path(book, used.id), json={'kind': 'text'})
         listed = await fx_client.get(PROFILES_PATH)

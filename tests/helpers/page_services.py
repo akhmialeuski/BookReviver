@@ -11,6 +11,7 @@ from bookreviver.ports.imaging import Tiler
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.steps import StepRunner
+from tests.helpers.books_service import make_books_service
 from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
 
@@ -19,9 +20,9 @@ if TYPE_CHECKING:
 
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
     from bookreviver.ports.storage import AssetStore
+    from tests.helpers.builders import BookOpener
 
 # What the fake tiler writes, so a test can tell that a rendition of a version was cut
 PREVIEW_CONTENT: bytes = b'preview'
@@ -81,7 +82,7 @@ class FakeTiler(Tiler):
 
 
 def make_page_service(
-    uow: UnitOfWork,
+    stores: BookOpener,
     assets: AssetStore,
     runtime: tuple[EventPublisher, Clock, JobBoard],
     *,
@@ -90,8 +91,8 @@ def make_page_service(
 ) -> PageService:
     """Build a page service over a unit of work, as a new request or job would get one.
 
-    :param uow: Unit of work of the service, usually a new one over the database of the test.
-    :type uow: UnitOfWork
+    :param stores: Opens the unit of work and the databases of the service, over the database of the test.
+    :type stores: BookOpener
     :param assets: Asset store the service writes and reads files through.
     :type assets: AssetStore
     :param runtime: The publisher, the clock and the job board the service reports through.
@@ -107,7 +108,7 @@ def make_page_service(
     publisher, clock, board = runtime
     tiler = FakeTiler()
     return PageService(
-        uow=uow,
+        books=make_books_service(stores.uow(), databases=stores.databases),
         assets=assets,
         runtime=PageRuntime(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board

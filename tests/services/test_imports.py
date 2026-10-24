@@ -5,6 +5,7 @@ from functools import partial
 from operator import attrgetter, itemgetter
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 import anyio
 import pytest
@@ -44,6 +45,7 @@ from bookreviver.domain.errors import (
     UploadRejectedError,
 )
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged
+from bookreviver.domain.ids import BookId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Contributor, JobEnd, StageRun
 from bookreviver.plugins.split_none import SplitNone
@@ -96,11 +98,14 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, PaginationSection, Scan, Source
-    from bookreviver.domain.ids import BookId, JobId, PageId, StorageKey
+    from bookreviver.domain.ids import JobId, PageId, StorageKey
     from bookreviver.domain.values import SourceFile
+    from bookreviver.ports.persistence import BookDatabases
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.services.book import Book
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import BookDatabasesFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -112,6 +117,7 @@ INCOMING_UPLOADS: str = 'incoming/*'
 FILES_ARG: str = 'files'
 AUTO_SPLIT: str = 'split.auto'
 CASE_ARG: str = 'case'
+STAGED_NAME: str = 'missing.pdf'
 # The renditions cut from the ``full`` image, whatever its format
 DERIVED: tuple[Rendition, ...] = (Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES)
 BILEVEL_MODE: str = '1'
@@ -202,19 +208,19 @@ DJVU_WIDTHS: list[int] = [page.size_px[0] for page in DJVU_PAGES]
 
 
 @pytest.fixture
-def fx_rig(fx_storage_root: Path, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory) -> ImportRig:
+def fx_rig(fx_storage_root: Path, fx_database: SqlDatabase, fx_open_book: BookOpener) -> ImportRig:
     """Build the adapters an import runs on, over the storage root and the database of the test.
 
     :param fx_storage_root: Storage root under the test's temporary directory.
     :type fx_storage_root: Path
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :type fx_open_book: BookOpener
     :returns: The rig with an empty database and nothing stored.
     :rtype: ImportRig
     """
-    return ImportRig.build(fx_storage_root, fx_database, fx_uow)
+    return ImportRig.build(fx_storage_root, fx_database, fx_open_book)
 
 
 @pytest.fixture
@@ -253,7 +259,9 @@ async def fx_book(fx_rig: ImportRig, fx_owner: Actor) -> BookRecord:
     :rtype: BookRecord
     """
     book_record = make_record()
-    await commit_record(fx_rig.database, fx_rig.open_uow(), book_record, owner=fx_owner.account_id)
+    await commit_record(
+        fx_rig.database, fx_rig.open_uow(), book_record, owner=fx_owner.account_id, databases=fx_rig.databases
+    )
     return book_record
 
 
@@ -340,7 +348,7 @@ async def _import(rig: ImportRig, actor: Actor, book_id: BookId, files: list[Upl
     :returns: The job as the board holds it after the run.
     :rtype: Job
     """
-    job = await rig.service().start_import(open_for(actor, book_id), files)
+    job = await rig.service().start_import(open_for(actor, book_id, databases=rig.databases), files)
     await rig.fakes.board.run_queued()
     return rig.stored_job(job)
 
@@ -360,7 +368,7 @@ async def _running_import(rig: ImportRig, actor: Actor, book_id: BookId, files: 
     :returns: Iterator yielding the running job once its run is held, and letting it go when the block ends.
     :rtype: AsyncIterator[Job]
     """
-    job = await rig.service().start_import(open_for(actor, book_id), files)
+    job = await rig.service().start_import(open_for(actor, book_id, databases=rig.databases), files)
     inspecting, released = anyio.Event(), anyio.Event()
 
     async def hold() -> None:
@@ -379,113 +387,112 @@ async def _running_import(rig: ImportRig, actor: Actor, book_id: BookId, files: 
             released.set()
 
 
-async def _report(rig: ImportRig, book_id: BookId) -> list[Source]:
+async def _report(book_id: BookId, *, databases: BookDatabases) -> list[Source]:
     """Read the rejected and skipped files of a book as committed, which are the report of its imports.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the files.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The files, in the order the imports recorded them.
     :rtype: list[Source]
     """
-    return list(await rig.open_uow().read_book(book_id, lambda repos: repos.sources.list_unimported()))
+    return list(await databases.open(book_id).read(lambda repos: repos.sources.list_unimported()))
 
 
-async def _sources(rig: ImportRig, book_id: BookId) -> list[Source]:
+async def _sources(book_id: BookId, *, databases: BookDatabases) -> list[Source]:
     """Read the sources of a book as committed, in import order.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the sources.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The sources.
     :rtype: list[Source]
     """
-    return (await stored_book(rig.open_uow(), book_id)).sources
+    return (await stored_book(book_id, databases=databases)).sources
 
 
-async def _scans(rig: ImportRig, book_id: BookId) -> list[Scan]:
+async def _scans(book_id: BookId, *, databases: BookDatabases) -> list[Scan]:
     """Read the scans of a book as committed, source by source.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the scans.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The scans.
     :rtype: list[Scan]
     """
-    return (await stored_book(rig.open_uow(), book_id)).scans
+    return (await stored_book(book_id, databases=databases)).scans
 
 
-async def _pages(rig: ImportRig, book_id: BookId) -> list[Page]:
+async def _pages(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
     """Read the pages of a book as committed, in book order.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the pages.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The pages.
     :rtype: list[Page]
     """
-    return (await stored_book(rig.open_uow(), book_id)).pages
+    return (await stored_book(book_id, databases=databases)).pages
 
 
-async def _labels(rig: ImportRig, book_id: BookId) -> list[str]:
+async def _labels(book_id: BookId, *, databases: BookDatabases) -> list[str]:
     """Read the labels the pages of a book show, in book order, as the sections committed give them.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the pages.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The labels.
     :rtype: list[str]
     """
-    return (await stored_book(rig.open_uow(), book_id)).labels
+    return (await stored_book(book_id, databases=databases)).labels
 
 
-async def _sections(rig: ImportRig, book_id: BookId) -> list[PaginationSection]:
+async def _sections(book_id: BookId, *, databases: BookDatabases) -> list[PaginationSection]:
     """Read the pagination sections of a book as committed, in the order they were made.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the sections.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The sections.
     :rtype: list[PaginationSection]
     """
-    return (await stored_book(rig.open_uow(), book_id)).sections
+    return (await stored_book(book_id, databases=databases)).sections
 
 
-async def _versions(rig: ImportRig, book_id: BookId, page_ids: Collection[PageId]) -> list[PageVersion]:
+async def _versions(book_id: BookId, page_ids: Collection[PageId], *, databases: BookDatabases) -> list[PageVersion]:
     """Read the versions of some pages as committed, page by page in the order the versions were created.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Book owning the pages.
     :type book_id: BookId
     :param page_ids: Pages owning the versions.
     :type page_ids: Collection[PageId]
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The versions.
     :rtype: list[PageVersion]
     """
-    return await rig.open_uow().read_book(
-        book_id,
+    return await databases.open(book_id).read(
         lambda repos: [version for page_id in page_ids for version in repos.page_versions.list_for_page(page_id)],
     )
 
 
-async def _book_record(rig: ImportRig, book_id: BookId) -> BookRecord:
+async def _book_record(book_id: BookId, *, databases: BookDatabases) -> BookRecord:
     """Read a book as committed.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_id: Identifier of the book.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The book.
     :rtype: BookRecord
     """
-    return await rig.open_uow().read_book(book_id, lambda repos: repos.book_record.get(book_id))
+    return await databases.open(book_id).read(lambda repos: repos.book_record.get(book_id))
 
 
 async def _is_stored(assets: AssetStore, key: StorageKey) -> bool:
@@ -518,7 +525,7 @@ async def _record_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> Boo
     :rtype: BookRecord
     """
     book_record = evolve(make_record(), image_policy=policy)
-    await commit_record(rig.database, rig.open_uow(), book_record, owner=owner.account_id)
+    await commit_record(rig.database, rig.open_uow(), book_record, owner=owner.account_id, databases=rig.databases)
     return book_record
 
 
@@ -655,11 +662,30 @@ BAD_FILE_IDS: list[str] = [
 ]
 
 
+@pytest.fixture
+def fx_open_own_book(fx_owner: Actor, fx_open_book: BookOpener) -> Callable[[BookId], Book]:
+    """Return a function opening a book of the acting account with its database.
+
+    :param fx_owner: Account the books belong to.
+    :type fx_owner: Actor
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: Function taking the identifier of the book.
+    :rtype: Callable[[BookId], Book]
+    """
+    return lambda book_id: fx_open_book(fx_owner, book_id)
+
+
 class TestStartImport:
     """Tests for ImportService.start_import()."""
 
     async def test_stages_the_upload_and_puts_a_queued_job_with_its_files_on_the_board(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_book_files: list[UploadFile]
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_book_files: list[UploadFile],
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the upload is staged for the job, the job records its files in upload order, and the board holds it.
 
@@ -673,8 +699,10 @@ class TestStartImport:
         :type fx_book: BookRecord
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        job = await fx_rig.service().start_import(open_for(fx_owner, fx_book.id), fx_book_files)
+        job = await fx_rig.service().start_import(fx_open_book(fx_owner, fx_book.id), fx_book_files)
 
         async with fx_rig.sources.staged_files(fx_book.id, job.id) as staged:
             staged_names = sorted(staged)
@@ -691,11 +719,16 @@ class TestStartImport:
             ]
         )
         expect(staged_names == [PART_ONE_NAME, PART_TWO_NAME, PART_THREE_NAME])
-        expect(await stored_book(fx_rig.open_uow(), fx_book.id) == ([], [], [], []))
+        expect(await stored_book(fx_book.id, databases=fx_open_book.databases) == ([], [], [], []))
         assert_expectations()
 
     async def test_book_with_an_import_queued_raises_conflict_before_receiving_anything(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        fx_storage_root: Path,
     ) -> None:
         """Verify a second upload is refused while an import is queued, before its files are streamed.
 
@@ -713,14 +746,21 @@ class TestStartImport:
         queued = fx_rig.fakes.board.put(make_job(book_id=fx_book.id))
 
         with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
-            await fx_rig.service().start_import(open_for(fx_owner, fx_book.id), [image_upload(fx_samples, IMAGE_NAME)])
+            await fx_rig.service().start_import(
+                open_for(fx_owner, fx_book.id, databases=fx_rig.databases), [image_upload(fx_samples, IMAGE_NAME)]
+            )
 
         expect(fx_rig.fakes.board.put_jobs == [queued])
         expect(not await anyio.Path(fx_storage_root / BookKeys(fx_book.id).incoming_area).exists())
         assert_expectations()
 
     async def test_book_with_an_import_running_raises_conflict_and_leaves_only_the_upload_of_that_import(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        fx_storage_root: Path,
     ) -> None:
         """Verify a second upload is refused while an import is running, and its upload is not kept.
 
@@ -739,7 +779,7 @@ class TestStartImport:
         async with _running_import(fx_rig, fx_owner, fx_book.id, first) as running:
             with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
                 await fx_rig.service().start_import(
-                    open_for(fx_owner, fx_book.id), [image_upload(fx_samples, 'again.png')]
+                    open_for(fx_owner, fx_book.id, databases=fx_rig.databases), [image_upload(fx_samples, 'again.png')]
                 )
 
             expect(running.state is JobState.RUNNING)
@@ -748,7 +788,7 @@ class TestStartImport:
         assert_expectations()
 
     async def test_finished_import_does_not_keep_the_book_from_importing_again(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_open_book: BookOpener
     ) -> None:
         """Verify a book whose last import ended accepts a new upload.
 
@@ -760,11 +800,13 @@ class TestStartImport:
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         earlier = await _import(fx_rig, fx_owner, fx_book.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book.id), [image_upload(fx_samples, COVER_NAME, width_px=SECOND_PART_WIDTH_PX)]
+            fx_open_book(fx_owner, fx_book.id), [image_upload(fx_samples, COVER_NAME, width_px=SECOND_PART_WIDTH_PX)]
         )
 
         expect(earlier.state is JobState.SUCCEEDED)
@@ -773,7 +815,12 @@ class TestStartImport:
 
     @pytest.mark.parametrize(CASE_ARG, REFUSED_UPLOADS, ids=REFUSED_IDS)
     async def test_upload_that_breaks_a_rule_is_refused_and_leaves_nothing(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, case: UploadCase
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        case: UploadCase,
     ) -> None:
         """Verify each upload rule refuses with its problem, and no job or upload is left.
 
@@ -795,7 +842,7 @@ class TestStartImport:
 
         with pytest.raises(UploadRejectedError) as refusal:
             await fx_rig.service(max_files=case.max_files, max_bytes=case.max_bytes).start_import(
-                open_for(fx_owner, fx_book.id), files
+                open_for(fx_owner, fx_book.id, databases=fx_rig.databases), files
             )
 
         expect(refusal.value.problem is case.problem)
@@ -808,7 +855,7 @@ class TestAuthorizeUpload:
     """Tests for ImportService.authorize_upload(), which the API runs before it reads the body of a request."""
 
     async def test_owner_of_an_idle_book_may_upload(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_open_book: BookOpener
     ) -> None:
         """Verify the owner of a book with no import running is allowed, and nothing is put on the board.
 
@@ -818,15 +865,17 @@ class TestAuthorizeUpload:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        await fx_rig.service().authorize_upload(open_for(fx_owner, fx_book.id))
+        await fx_rig.service().authorize_upload(fx_open_book(fx_owner, fx_book.id))
 
         expect(fx_rig.fakes.board.put_jobs == [])
         expect(fx_rig.fakes.board.jobs(fx_book.id, active=False) == [])
         assert_expectations()
 
     async def test_book_that_imports_is_a_conflict(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_open_book: BookOpener
     ) -> None:
         """Verify a book with an import on the board is refused with the conflict of the upload rule.
 
@@ -836,11 +885,13 @@ class TestAuthorizeUpload:
         :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         fx_rig.fakes.board.put(make_job(book_id=fx_book.id))
 
         with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
-            await fx_rig.service().authorize_upload(open_for(fx_owner, fx_book.id))
+            await fx_rig.service().authorize_upload(fx_open_book(fx_owner, fx_book.id))
 
 
 class TestRunImport:
@@ -865,16 +916,16 @@ class TestRunImport:
         job = await _import(fx_rig, fx_owner, fx_book.id, fx_book_files)
 
         sources, scans, pages = (
-            await _sources(fx_rig, fx_book.id),
-            await _scans(fx_rig, fx_book.id),
-            await _pages(fx_rig, fx_book.id),
+            await _sources(fx_book.id, databases=fx_rig.databases),
+            await _scans(fx_book.id, databases=fx_rig.databases),
+            await _pages(fx_book.id, databases=fx_rig.databases),
         )
         by_id = {scan.id: scan for scan in scans}
         expect(job.state is JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == [PART_THREE_NAME, PART_TWO_NAME, PART_ONE_NAME])
         expect(all(source.status is SourceStatus.IMPORTED for source in sources))
         expect([source.scan_count for source in sources] == [1, SECOND_PART_PAGES, FIRST_PART_PAGES])
-        expect(await _report(fx_rig, fx_book.id) == [])
+        expect(await _report(fx_book.id, databases=fx_rig.databases) == [])
         expect(len(scans) == len(pages) == SCAN_COUNT)
         expect(all(page.origin is PageOrigin.SCAN and page.scan_id in by_id for page in pages))
         expect(
@@ -908,7 +959,7 @@ class TestRunImport:
 
         job = await _import(fx_rig, fx_owner, fx_book.id, uploads)
 
-        sources = await _sources(fx_rig, fx_book.id)
+        sources = await _sources(fx_book.id, databases=fx_rig.databases)
         stored = []
         for source in sources:
             async with fx_rig.sources.source_files(fx_book.id, source.id) as files:
@@ -919,7 +970,7 @@ class TestRunImport:
             [[file.name for file in source.files] for source in sources] == [[SECOND_VOLUME_SCAN], [FIRST_VOLUME_SCAN]]
         )
         expect(stored == [[VOLUME_SCAN_NAME], [VOLUME_SCAN_NAME]])
-        expect(await _report(fx_rig, fx_book.id) == [])
+        expect(await _report(fx_book.id, databases=fx_rig.databases) == [])
         assert_expectations()
 
     async def test_system_files_of_a_directory_are_rejected_and_do_not_stop_the_import(
@@ -947,9 +998,12 @@ class TestRunImport:
         job = await _import(fx_rig, fx_owner, fx_book.id, uploads)
 
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in await _sources(fx_rig, fx_book.id)] == [FOLDER_SCAN])
+        expect([source.file_name for source in await _sources(fx_book.id, databases=fx_rig.databases)] == [FOLDER_SCAN])
         expect(
-            [(file.file_name, file.status, file.rejection) for file in await _report(fx_rig, fx_book.id)]
+            [
+                (file.file_name, file.status, file.rejection)
+                for file in await _report(fx_book.id, databases=fx_rig.databases)
+            ]
             == [
                 (FOLDER_VIEW_FILE, SourceStatus.REJECTED, RejectionReason.SYSTEM_FILE),
                 (RESOURCE_FORK_FILE, SourceStatus.REJECTED, RejectionReason.SYSTEM_FILE),
@@ -980,10 +1034,10 @@ class TestRunImport:
 
         await _import(fx_rig, fx_owner, fx_book.id, files)
 
-        scans = await _scans(fx_rig, fx_book.id)
+        scans = await _scans(fx_book.id, databases=fx_rig.databases)
         expected = [*ROMAN_THEN_ARABIC_LABELS, '']
         expect([scan.source_label for scan in scans] == expected)
-        expect(await _labels(fx_rig, fx_book.id) == expected)
+        expect(await _labels(fx_book.id, databases=fx_rig.databases) == expected)
         assert_expectations()
 
     async def test_makes_a_pagination_section_of_each_page_label_rule_of_a_pdf(
@@ -1007,7 +1061,10 @@ class TestRunImport:
 
         await _import(fx_rig, fx_owner, fx_book.id, [upload(LABELLED_PDF_NAME, content=labelled.read_bytes())])
 
-        pages, sections = await _pages(fx_rig, fx_book.id), await _sections(fx_rig, fx_book.id)
+        pages, sections = (
+            await _pages(fx_book.id, databases=fx_rig.databases),
+            await _sections(fx_book.id, databases=fx_rig.databases),
+        )
         by_start = {section.first_page_id: section for section in sections}
         expect(len(sections) == len(ROMAN_THEN_ARABIC_RULES))
         expect(by_start[pages[0].id].style is LabelStyle.ROMAN_LOWER)
@@ -1035,8 +1092,13 @@ class TestRunImport:
 
         await _import(fx_rig, fx_owner, fx_book.id, [upload(LABELLED_PDF_NAME, content=labelled.read_bytes())])
 
-        pages, sections = await _pages(fx_rig, fx_book.id), await _sections(fx_rig, fx_book.id)
-        expect(await _labels(fx_rig, fx_book.id) == ['i', 'ii', PREFIX_ONLY_LABEL, PREFIX_ONLY_LABEL])
+        pages, sections = (
+            await _pages(fx_book.id, databases=fx_rig.databases),
+            await _sections(fx_book.id, databases=fx_rig.databases),
+        )
+        expect(
+            await _labels(fx_book.id, databases=fx_rig.databases) == ['i', 'ii', PREFIX_ONLY_LABEL, PREFIX_ONLY_LABEL]
+        )
         expect([page.manual_label is not None for page in pages] == [False, False, True, True])
         expect(
             sorted(section.display for section in sections)
@@ -1064,9 +1126,12 @@ class TestRunImport:
 
         await _import(fx_rig, fx_owner, fx_book.id, files)
 
-        pages, sections = await _pages(fx_rig, fx_book.id), await _sections(fx_rig, fx_book.id)
+        pages, sections = (
+            await _pages(fx_book.id, databases=fx_rig.databases),
+            await _sections(fx_book.id, databases=fx_rig.databases),
+        )
         [stopper] = [section for section in sections if section.first_page_id == pages[-1].id]
-        expect(await _labels(fx_rig, fx_book.id) == [*ROMAN_THEN_ARABIC_LABELS, ''])
+        expect(await _labels(fx_book.id, databases=fx_rig.databases) == [*ROMAN_THEN_ARABIC_LABELS, ''])
         expect(stopper.display is NumberDisplay.NOT_COUNTED)
         expect(len(sections) == len(ROMAN_THEN_ARABIC_RULES) + 1)
         assert_expectations()
@@ -1092,7 +1157,7 @@ class TestRunImport:
 
         await _import(fx_rig, fx_owner, fx_book.id, files)
 
-        assert await _sections(fx_rig, fx_book.id) == []
+        assert await _sections(fx_book.id, databases=fx_rig.databases) == []
 
     async def test_a_later_source_with_page_labels_makes_sections_of_its_own(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
@@ -1118,12 +1183,18 @@ class TestRunImport:
         await _import(fx_rig, fx_owner, fx_book.id, [upload(FIRST_LABELLED_PDF_NAME, content=first.read_bytes())])
         await _import(fx_rig, fx_owner, fx_book.id, [upload(SECOND_LABELLED_PDF_NAME, content=second.read_bytes())])
 
-        pages, sections = await _pages(fx_rig, fx_book.id), await _sections(fx_rig, fx_book.id)
+        pages, sections = (
+            await _pages(fx_book.id, databases=fx_rig.databases),
+            await _sections(fx_book.id, databases=fx_rig.databases),
+        )
         starts = {section.first_page_id for section in sections}
         size = len(ROMAN_THEN_ARABIC_LABELS)
         expect(len(sections) == 2 * len(ROMAN_THEN_ARABIC_RULES))
         expect(starts == {pages[0].id, pages[2].id, pages[size].id, pages[size + 2].id})
-        expect(await _labels(fx_rig, fx_book.id) == [*ROMAN_THEN_ARABIC_LABELS, *ROMAN_THEN_ARABIC_LABELS])
+        expect(
+            await _labels(fx_book.id, databases=fx_rig.databases)
+            == [*ROMAN_THEN_ARABIC_LABELS, *ROMAN_THEN_ARABIC_LABELS]
+        )
         assert_expectations()
 
     async def test_writes_the_renditions_of_every_scan_and_the_base_version_of_every_page(
@@ -1143,7 +1214,10 @@ class TestRunImport:
         await _import(fx_rig, fx_owner, fx_book.id, fx_book_files)
 
         keys = BookKeys(fx_book.id)
-        scans, pages = await _scans(fx_rig, fx_book.id), await _pages(fx_rig, fx_book.id)
+        scans, pages = (
+            await _scans(fx_book.id, databases=fx_rig.databases),
+            await _pages(fx_book.id, databases=fx_rig.databases),
+        )
         missing: list[StorageKey] = []
         for scan in scans:
             missing += [
@@ -1151,7 +1225,7 @@ class TestRunImport:
                 for rendition in (scan.renditions.full, *DERIVED)
                 if not await _is_stored(fx_rig.assets, key := keys.scan_rendition(scan, rendition))
             ]
-        versions = await _versions(fx_rig, fx_book.id, [page.id for page in pages])
+        versions = await _versions(fx_book.id, [page.id for page in pages], databases=fx_rig.databases)
         for version in versions:
             missing += [
                 key
@@ -1192,9 +1266,9 @@ class TestRunImport:
         await _import(fx_rig, fx_owner, fx_book.id, [image_upload(fx_samples, COVER_NAME)])
 
         keys = BookKeys(fx_book.id)
-        [scan] = await _scans(fx_rig, fx_book.id)
-        [page] = await _pages(fx_rig, fx_book.id)
-        [version] = await _versions(fx_rig, fx_book.id, [page.id])
+        [scan] = await _scans(fx_book.id, databases=fx_rig.databases)
+        [page] = await _pages(fx_book.id, databases=fx_rig.databases)
+        [version] = await _versions(fx_book.id, [page.id], databases=fx_rig.databases)
         # The asset store hands out a hidden directory beside the key, which the pyramid is published from
         assert sorted(target.parent for target in fx_rig.tiler.targets) == sorted(
             [
@@ -1277,11 +1351,11 @@ class TestRunImport:
         :type fx_samples: Path
         """
         await _import(fx_rig, fx_owner, fx_book.id, [pdf_upload(fx_samples, 'first.pdf', pages=2)])
-        before = await _pages(fx_rig, fx_book.id)
+        before = await _pages(fx_book.id, databases=fx_rig.databases)
 
         await _import(fx_rig, fx_owner, fx_book.id, [pdf_upload(fx_samples, 'second.pdf', pages=2, width_px=210)])
 
-        pages = await _pages(fx_rig, fx_book.id)
+        pages = await _pages(fx_book.id, databases=fx_rig.databases)
         assert (pages[: len(before)], len(pages)) == (before, 2 * len(before))
 
 
@@ -1321,9 +1395,9 @@ class TestRunImportFullFormat:
         await _import(fx_rig, fx_owner, book_record.id, [image_upload(fx_samples, case.name, mode=case.mode)])
 
         keys = BookKeys(book_record.id)
-        [scan] = await _scans(fx_rig, book_record.id)
-        [page] = await _pages(fx_rig, book_record.id)
-        [version] = await _versions(fx_rig, book_record.id, [page.id])
+        [scan] = await _scans(book_record.id, databases=fx_rig.databases)
+        [page] = await _pages(book_record.id, databases=fx_rig.databases)
+        [version] = await _versions(book_record.id, [page.id], databases=fx_rig.databases)
         other = Rendition.FULL_JPEG if case.expected is Rendition.FULL_PNG else Rendition.FULL_PNG
         expect(fx_rig.rasterizer.formats == [case.expected])
         expect(scan.renditions.full is case.expected)
@@ -1351,9 +1425,8 @@ class TestRunImportFullFormat:
         """
         book_record = await _record_with(fx_rig, fx_owner, ImagePolicy.COMPACT)
         await _import(fx_rig, fx_owner, book_record.id, [image_upload(fx_samples, 'first.jpg')])
-        [first] = await _scans(fx_rig, book_record.id)
-        await fx_rig.open_uow().change_book(
-            book_record.id,
+        [first] = await _scans(book_record.id, databases=fx_rig.databases)
+        await fx_rig.databases.open(book_record.id).change(
             lambda repos, _book_record: repos.book_record.update(
                 evolve(book_record, image_policy=ImagePolicy.LOSSLESS)
             ),
@@ -1363,7 +1436,7 @@ class TestRunImportFullFormat:
         await _import(fx_rig, fx_owner, book_record.id, [second])
 
         keys = BookKeys(book_record.id)
-        scans = await _scans(fx_rig, book_record.id)
+        scans = await _scans(book_record.id, databases=fx_rig.databases)
         kept = next(scan for scan in scans if scan.id == first.id)
         added = next(scan for scan in scans if scan.id != first.id)
         expect(kept.renditions.full is Rendition.FULL_JPEG)
@@ -1400,14 +1473,14 @@ class TestRunImportDjvu:
         job = await _import(fx_rig, fx_owner, book_record.id, djvu_uploads([bundle]))
 
         keys = BookKeys(book_record.id)
-        scans = await _scans(fx_rig, book_record.id)
+        scans = await _scans(book_record.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(sorted(scan.facts.color_mode for scan in scans) == sorted(page.mode for page in DJVU_PAGES))
         for scan in scans:
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(await _stored_image(fx_rig, keys.scan_rendition(scan, scan.renditions.full)) == wanted)
-        for page in await _pages(fx_rig, book_record.id):
-            [version] = await _versions(fx_rig, book_record.id, [page.id])
+        for page in await _pages(book_record.id, databases=fx_rig.databases):
+            [version] = await _versions(book_record.id, [page.id], databases=fx_rig.databases)
             scan = next(scan for scan in scans if scan.id == page.scan_id)
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(version.renditions is not None and version.renditions.full is scan.renditions.full)
@@ -1436,8 +1509,8 @@ class TestRunImportDjvu:
 
         job = await _import(fx_rig, fx_owner, fx_book.id, uploads)
 
-        pdf, djvu = await _sources(fx_rig, fx_book.id)
-        scans = [scan for scan in await _scans(fx_rig, fx_book.id) if scan.source_id == djvu.id]
+        pdf, djvu = await _sources(fx_book.id, databases=fx_rig.databases)
+        scans = [scan for scan in await _scans(fx_book.id, databases=fx_rig.databases) if scan.source_id == djvu.id]
         async with fx_rig.sources.source_files(fx_book.id, djvu.id) as stored:
             stored_names = sorted(path.name for path in stored)
         expect(job.state is JobState.SUCCEEDED)
@@ -1470,9 +1543,9 @@ class TestRunImportDjvu:
         await _import(fx_rig, fx_owner, fx_book.id, djvu_uploads([tenth, second]))
 
         sources, scans, pages = (
-            await _sources(fx_rig, fx_book.id),
-            await _scans(fx_rig, fx_book.id),
-            await _pages(fx_rig, fx_book.id),
+            await _sources(fx_book.id, databases=fx_rig.databases),
+            await _scans(fx_book.id, databases=fx_rig.databases),
+            await _pages(fx_book.id, databases=fx_rig.databases),
         )
         widths = {scan.id: scan.facts.width_px for scan in scans}
         expect([source.file_name for source in sources] == [DJVU_PART_TEN_NAME, DJVU_PART_TWO_NAME])
@@ -1498,7 +1571,7 @@ class TestRunImportDjvu:
 
         await _import(fx_rig, fx_owner, fx_book.id, djvu_uploads(files))
 
-        sources = await _sources(fx_rig, fx_book.id)
+        sources = await _sources(fx_book.id, databases=fx_rig.databases)
         expect([source.file_name for source in sources] == [path.name for path in files])
         expect([source.scan_count for source in sources] == [1] * len(files))
         assert_expectations()
@@ -1528,11 +1601,14 @@ class TestRunImportDjvu:
             [*djvu_uploads([index, first]), pdf_upload(fx_samples, PDF_AFTER_DJVU_NAME)],
         )
 
-        [rejected] = await _report(fx_rig, fx_book.id)
+        [rejected] = await _report(fx_book.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect((rejected.file_name, rejected.rejection) == (DJVU_INDEX_NAME, RejectionReason.UNREADABLE))
         expect('p0002.djvu, p0003.djvu' in rejected.detail)
-        expect([source.file_name for source in await _sources(fx_rig, fx_book.id)] == [PDF_AFTER_DJVU_NAME])
+        expect(
+            [source.file_name for source in await _sources(fx_book.id, databases=fx_rig.databases)]
+            == [PDF_AFTER_DJVU_NAME]
+        )
         assert_expectations()
 
 
@@ -1570,10 +1646,11 @@ class TestRunImportChecks:
             ],
         )
 
-        duplicate, unreadable = await _report(fx_rig, fx_book.id)
+        duplicate, unreadable = await _report(fx_book.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(
-            [source.file_name for source in await _sources(fx_rig, fx_book.id)] == [ORIGINAL_PDF_NAME, OTHER_IMAGE_NAME]
+            [source.file_name for source in await _sources(fx_book.id, databases=fx_rig.databases)]
+            == [ORIGINAL_PDF_NAME, OTHER_IMAGE_NAME]
         )
         expect((duplicate.file_name, duplicate.status) == (COPY_PDF_NAME, SourceStatus.REJECTED))
         expect(duplicate.rejection is RejectionReason.DUPLICATE)
@@ -1605,10 +1682,10 @@ class TestRunImportChecks:
 
         expect((job.state, job.error) == (JobState.FAILED, NO_SOURCE_IMPORTED))
         expect(
-            [(file.file_name, file.rejection) for file in await _report(fx_rig, fx_book.id)]
+            [(file.file_name, file.rejection) for file in await _report(fx_book.id, databases=fx_rig.databases)]
             == [(REPEATED_IMAGE_NAME, RejectionReason.DUPLICATE)]
         )
-        expect(len(await _sources(fx_rig, fx_book.id)) == 1)
+        expect(len(await _sources(fx_book.id, databases=fx_rig.databases)) == 1)
         assert_expectations()
 
     @pytest.mark.parametrize(CASE_ARG, BAD_FILES, ids=BAD_FILE_IDS)
@@ -1635,13 +1712,15 @@ class TestRunImportChecks:
             [upload(case.name, content=case.content), image_upload(fx_samples, PAGE_JPEG_NAME)],
         )
 
-        [rejected] = await _report(fx_rig, fx_book.id)
+        [rejected] = await _report(fx_book.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(
             (rejected.file_name, rejected.status, rejected.rejection) == (case.name, SourceStatus.REJECTED, case.reason)
         )
         expect(rejected.detail != '')
-        expect([source.file_name for source in await _sources(fx_rig, fx_book.id)] == [PAGE_JPEG_NAME])
+        expect(
+            [source.file_name for source in await _sources(fx_book.id, databases=fx_rig.databases)] == [PAGE_JPEG_NAME]
+        )
         assert_expectations()
 
     async def test_job_that_imports_nothing_fails_and_keeps_every_rejection(
@@ -1664,9 +1743,12 @@ class TestRunImportChecks:
         )
 
         expect((job.state, job.error) == (JobState.FAILED, NO_SOURCE_IMPORTED))
-        expect(sorted(file.file_name for file in await _report(fx_rig, fx_book.id)) == [UNREADABLE_PDF_NAME, TEXT_NAME])
-        expect(await _sources(fx_rig, fx_book.id) == [])
-        expect(await _pages(fx_rig, fx_book.id) == [])
+        expect(
+            sorted(file.file_name for file in await _report(fx_book.id, databases=fx_rig.databases))
+            == [UNREADABLE_PDF_NAME, TEXT_NAME]
+        )
+        expect(await _sources(fx_book.id, databases=fx_rig.databases) == [])
+        expect(await _pages(fx_book.id, databases=fx_rig.databases) == [])
         assert_expectations()
 
     async def test_fills_empty_fields_of_the_description_from_the_first_source_that_has_them(
@@ -1701,7 +1783,7 @@ class TestRunImportChecks:
             ],
         )
 
-        book_record = await _book_record(fx_rig, fx_book.id)
+        book_record = await _book_record(fx_book.id, databases=fx_rig.databases)
         expect(book_record.details.title == fx_book.details.title)
         expect(book_record.details.contributors == (Contributor(name=FIRST_AUTHOR, role=ContributorRole.AUTHOR),))
         expect([BookResource.RECORD in parts for parts in fx_book_changes.changed_parts()].count(True) == 1)
@@ -1739,7 +1821,7 @@ class TestRunImportChecks:
         fx_book_changes.published.clear()
         await _import(fx_rig, fx_owner, fx_book.id, [upload(PDF_NAME, content=path.read_bytes())])
 
-        details = (await _book_record(fx_rig, fx_book.id)).details
+        details = (await _book_record(fx_book.id, databases=fx_rig.databases)).details
         expect((details.languages, details.subjects) == (('bel',), ('Folklore',)))
         expect([item.value for item in details.identifiers] == ['0306406152'])
         expect([BookResource.RECORD in parts for parts in fx_book_changes.changed_parts()].count(True) == 1)
@@ -1762,7 +1844,9 @@ class TestRunImportChecks:
         book_record = make_record()
         owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
         described = evolve(book_record, details=evolve(book_record.details, contributors=owner_author))
-        await commit_record(fx_rig.database, fx_rig.open_uow(), described, owner=fx_owner.account_id)
+        await commit_record(
+            fx_rig.database, fx_rig.open_uow(), described, owner=fx_owner.account_id, databases=fx_rig.databases
+        )
         fx_book_changes.published.clear()
 
         await _import(
@@ -1772,7 +1856,7 @@ class TestRunImportChecks:
             [pdf_upload(fx_samples, PDF_NAME, pages=1, metadata={AUTHOR_KEY: 'Document Author'})],
         )
 
-        expect((await _book_record(fx_rig, book_record.id)).details == described.details)
+        expect((await _book_record(book_record.id, databases=fx_rig.databases)).details == described.details)
         expect(not any(BookResource.RECORD in parts for parts in fx_book_changes.changed_parts()))
         assert_expectations()
 
@@ -1806,7 +1890,7 @@ class TestRunImportLifecycle:
             [pdf_upload(fx_samples, PDF_NAME, pages=LONG_BOOK_PAGES)],
         )
 
-        scans = await _scans(fx_rig, fx_book.id)
+        scans = await _scans(fx_book.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(fx_rig.rasterizer.peak == PARALLEL_SCANS)
         expect(sorted(fx_rig.rasterizer.extracted) == list(range(LONG_BOOK_PAGES)))
@@ -1815,7 +1899,12 @@ class TestRunImportLifecycle:
         assert_expectations()
 
     async def test_job_cancelled_between_sources_keeps_the_source_it_committed_and_skips_the_rest(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        fx_storage_root: Path,
     ) -> None:
         """Verify a cancelled job stops before the next source, records the files it never reached, and removes them.
 
@@ -1834,7 +1923,7 @@ class TestRunImportLifecycle:
         :type fx_storage_root: Path
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book.id),
+            open_for(fx_owner, fx_book.id, databases=fx_rig.databases),
             [pdf_upload(fx_samples, PDF_NAME, pages=1), pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)],
         )
 
@@ -1848,9 +1937,9 @@ class TestRunImportLifecycle:
         await fx_rig.fakes.board.run_queued()
 
         stored = fx_rig.stored_job(job)
-        [skipped] = await _report(fx_rig, fx_book.id)
+        [skipped] = await _report(fx_book.id, databases=fx_rig.databases)
         expect(stored.state is JobState.CANCELLED)
-        expect([source.file_name for source in await _sources(fx_rig, fx_book.id)] == [PDF_NAME])
+        expect([source.file_name for source in await _sources(fx_book.id, databases=fx_rig.databases)] == [PDF_NAME])
         expect((skipped.file_name, skipped.status, skipped.rejection) == (SECOND_PDF_NAME, SourceStatus.SKIPPED, None))
         expect((skipped.kind, skipped.file_type, skipped.scan_count) == (SourceKind.PDF, FileType.PDF, 0))
         expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
@@ -1858,7 +1947,12 @@ class TestRunImportLifecycle:
         assert_expectations()
 
     async def test_cancellation_records_every_file_not_reached_and_is_raised_again(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        fx_storage_root: Path,
     ) -> None:
         """Verify a job stopped in the middle of the checks skips the files after it, with a type only when it has one.
 
@@ -1877,7 +1971,7 @@ class TestRunImportLifecycle:
         :type fx_storage_root: Path
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book.id),
+            open_for(fx_owner, fx_book.id, databases=fx_rig.databases),
             [
                 upload(TEXT_NAME, content=BROKEN_PDF),
                 pdf_upload(fx_samples, PDF_NAME, pages=1),
@@ -1891,7 +1985,7 @@ class TestRunImportLifecycle:
         with pytest.raises(JobCancelledError):
             await fx_rig.service().run_import(job, control)
 
-        rows = {row.file_name: row for row in await _report(fx_rig, fx_book.id)}
+        rows = {row.file_name: row for row in await _report(fx_book.id, databases=fx_rig.databases)}
         expect(
             {name: (row.status, row.kind, row.file_type) for name, row in rows.items()}
             == {
@@ -1901,7 +1995,7 @@ class TestRunImportLifecycle:
             }
         )
         expect(rows[TEXT_NAME].rejection is RejectionReason.UNSUPPORTED_TYPE)
-        expect(await _sources(fx_rig, fx_book.id) == [])
+        expect(await _sources(fx_book.id, databases=fx_rig.databases) == [])
         expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
         assert_expectations()
 
@@ -1931,7 +2025,8 @@ class TestRunImportLifecycle:
         """
         one_at_a_time = _tuned(fx_rig, parallel_scans=1)
         job = await one_at_a_time.service().start_import(
-            open_for(fx_owner, fx_book.id), [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)]
+            open_for(fx_owner, fx_book.id, databases=fx_rig.databases),
+            [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)],
         )
 
         async def cancel_after_the_first_scan(event: DomainEvent) -> None:
@@ -1952,19 +2047,27 @@ class TestRunImportLifecycle:
         expect(cancelled.state is JobState.CANCELLED)
         # The second scan is never started, since the job is found cancelled before it
         expect(fx_rig.rasterizer.extracted == [0])
-        expect([scan.renditions.ready for scan in await _scans(fx_rig, fx_book.id)] == [True, False, False])
-        expect(len(await _pages(fx_rig, fx_book.id)) == THREE_PAGES)
+        expect(
+            [scan.renditions.ready for scan in await _scans(fx_book.id, databases=fx_rig.databases)]
+            == [True, False, False]
+        )
+        expect(len(await _pages(fx_book.id, databases=fx_rig.databases)) == THREE_PAGES)
 
         next_job = await _import(one_at_a_time, fx_owner, fx_book.id, [image_upload(fx_samples, COVER_NAME)])
 
         expect(next_job.state is JobState.SUCCEEDED)
-        expect(all(scan.renditions.ready for scan in await _scans(fx_rig, fx_book.id)))
+        expect(all(scan.renditions.ready for scan in await _scans(fx_book.id, databases=fx_rig.databases)))
         # The file of the new upload, its scan, and the two scans the cancelled job left are all counted in its progress
         expect((next_job.progress.done, next_job.progress.total) == (THREE_PAGES + 1, THREE_PAGES + 1))
         assert_expectations()
 
     async def test_import_after_a_crash_keeps_what_was_stored_and_rejects_it_as_a_duplicate(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        fx_storage_root: Path,
     ) -> None:
         """Verify a restarted process keeps the source a crashed import stored, and the same upload cuts the rest.
 
@@ -1986,11 +2089,13 @@ class TestRunImportLifecycle:
         """
         content = pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES).file.read()
         crashing = _tuned(fx_rig, parallel_scans=1)
-        await crashing.service().start_import(open_for(fx_owner, fx_book.id), [upload(PDF_NAME, content=content)])
+        await crashing.service().start_import(
+            open_for(fx_owner, fx_book.id, databases=fx_rig.databases), [upload(PDF_NAME, content=content)]
+        )
         fx_rig.tiler.crash_on_preview = CRASHING_PREVIEW
         with pytest.raises(BaseExceptionGroup):
             await crashing.fakes.board.run_queued()
-        stored = await _sources(fx_rig, fx_book.id)
+        stored = await _sources(fx_book.id, databases=fx_rig.databases)
 
         await fx_rig.sources.discard_all_staged()
         restarted = _tuned(fx_rig, parallel_scans=1)
@@ -2002,14 +2107,17 @@ class TestRunImportLifecycle:
         )
 
         expect(
-            [(row.file_name, row.rejection) for row in await _report(fx_rig, fx_book.id)]
+            [(row.file_name, row.rejection) for row in await _report(fx_book.id, databases=fx_rig.databases)]
             == [(PDF_NAME, RejectionReason.DUPLICATE)]
         )
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in await _sources(fx_rig, fx_book.id)] == [PDF_NAME, COVER_NAME])
-        expect((await _sources(fx_rig, fx_book.id))[0] == stored[0])
-        expect(len(await _scans(fx_rig, fx_book.id)) == THREE_PAGES + 1)
-        expect(all(scan.renditions.ready for scan in await _scans(fx_rig, fx_book.id)))
+        expect(
+            [source.file_name for source in await _sources(fx_book.id, databases=fx_rig.databases)]
+            == [PDF_NAME, COVER_NAME]
+        )
+        expect((await _sources(fx_book.id, databases=fx_rig.databases))[0] == stored[0])
+        expect(len(await _scans(fx_book.id, databases=fx_rig.databases)) == THREE_PAGES + 1)
+        expect(all(scan.renditions.ready for scan in await _scans(fx_book.id, databases=fx_rig.databases)))
         expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
         assert_expectations()
 
@@ -2039,7 +2147,7 @@ class TestRunImportLifecycle:
         )
 
         expect((job.state, job.error) == (JobState.FAILED, DAMAGED_PAGE_ERROR))
-        expect(len(await _sources(fx_rig, fx_book.id)) == 1)
+        expect(len(await _sources(fx_book.id, databases=fx_rig.databases)) == 1)
         expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
         assert_expectations()
 
@@ -2092,9 +2200,9 @@ class TestRunImportFailures:
 
         expect(job.state is JobState.FAILED)
         expect(job.error == JobEnd.UNEXPECTED_FAILURE)
-        expect(await _sources(fx_rig, fx_book.id) == [])
-        expect(await _scans(fx_rig, fx_book.id) == [])
-        expect(await _pages(fx_rig, fx_book.id) == [])
+        expect(await _sources(fx_book.id, databases=fx_rig.databases) == [])
+        expect(await _scans(fx_book.id, databases=fx_rig.databases) == [])
+        expect(await _pages(fx_book.id, databases=fx_rig.databases) == [])
         expect((job.progress.done, job.progress.total) == (0, 1))
         assert_expectations()
 
@@ -2120,7 +2228,7 @@ class TestRunImportFailures:
 
         expect((job.state, job.error) == (JobState.FAILED, REFUSED_SCANS_ERROR))
         expect((job.progress.done, job.progress.total) == (0, 1))
-        expect(await _sources(fx_rig, fx_book.id) == [])
+        expect(await _sources(fx_book.id, databases=fx_rig.databases) == [])
         assert_expectations()
 
 
@@ -2154,7 +2262,8 @@ class TestRunImportQueue:
         :type fx_book_changes: RecordingEventBus
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book.id), [pdf_upload(fx_samples, QUEUE_PDF, pages=FOUR_PAGES)]
+            open_for(fx_owner, fx_book.id, databases=fx_rig.databases),
+            [pdf_upload(fx_samples, QUEUE_PDF, pages=FOUR_PAGES)],
         )
         cancelled = anyio.Event()
 
@@ -2188,12 +2297,15 @@ class TestRunImportQueue:
         expect(stored.state is JobState.CANCELLED)
         expect(sorted(fx_rig.rasterizer.extracted) == [0, 1])
         expect(fx_rig.rasterizer.running == 0)
-        expect([scan.renditions.ready for scan in await _scans(fx_rig, fx_book.id)] == [True] + [False] * 3)
-        expect(len(await _pages(fx_rig, fx_book.id)) == FOUR_PAGES)
+        expect(
+            [scan.renditions.ready for scan in await _scans(fx_book.id, databases=fx_rig.databases)]
+            == [True] + [False] * 3
+        )
+        expect(len(await _pages(fx_book.id, databases=fx_rig.databases)) == FOUR_PAGES)
         assert_expectations()
 
     async def test_cutters_that_find_the_book_held_wait_for_it_and_count_every_scan(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_open_book: BookOpener
     ) -> None:
         """Verify two cutters that ask for the held book wait for it together and do not fail, and both scans count.
 
@@ -2209,9 +2321,11 @@ class TestRunImportQueue:
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book.id), [pdf_upload(fx_samples, QUEUE_PDF, pages=PARALLEL_SCANS)]
+            fx_open_book(fx_owner, fx_book.id), [pdf_upload(fx_samples, QUEUE_PDF, pages=PARALLEL_SCANS)]
         )
         extracting: list[int] = []
         both_extracting = anyio.Event()
@@ -2234,15 +2348,19 @@ class TestRunImportQueue:
             async with anyio.create_task_group() as group:
                 group.start_soon(fx_rig.fakes.board.run_queued)
                 await both_extracting.wait()
-                async with hold_book_in_thread(fx_rig.open_uow(), fx_book.id):
+                async with hold_book_in_thread(fx_open_book.databases.open(fx_book.id)):
                     proceed.set()
                     await anyio.wait_all_tasks_blocked()
-                    expect(not any(scan.renditions.ready for scan in await _scans(fx_rig, fx_book.id)))
+                    expect(
+                        not any(
+                            scan.renditions.ready for scan in await _scans(fx_book.id, databases=fx_open_book.databases)
+                        )
+                    )
 
         stored = fx_rig.stored_job(job)
         expect((stored.state, stored.error) == (JobState.SUCCEEDED, ''))
         expect(fx_rig.rasterizer.peak == PARALLEL_SCANS)
-        expect(all(scan.renditions.ready for scan in await _scans(fx_rig, fx_book.id)))
+        expect(all(scan.renditions.ready for scan in await _scans(fx_book.id, databases=fx_open_book.databases)))
         expect((stored.progress.done, stored.progress.total) == (1 + PARALLEL_SCANS, 1 + PARALLEL_SCANS))
         assert_expectations()
 
@@ -2368,7 +2486,7 @@ class TestRunImportSplit:
         job = await _import(offering, fx_owner, fx_book.id, [pdf_upload(fx_samples, PDF_NAME, pages=2)])
 
         [queued] = self._split_jobs(offering)
-        pages = await _pages(fx_rig, fx_book.id)
+        pages = await _pages(fx_book.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(
             StageRun.from_map(queued.params) == StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(p.id for p in pages))
@@ -2395,7 +2513,7 @@ class TestRunImportSplit:
         await _import(offering, fx_owner, fx_book.id, [pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)])
 
         runs = [StageRun.from_map(job.params) for job in self._split_jobs(offering)]
-        pages = await _pages(fx_rig, fx_book.id)
+        pages = await _pages(fx_book.id, databases=fx_rig.databases)
         assert [run.page_ids for run in runs][1] == (pages[-1].id,)
 
     async def test_queues_nothing_when_the_recipe_was_chosen_by_hand(
@@ -2421,7 +2539,7 @@ class TestRunImportSplit:
         assert_expectations()
 
     async def test_a_split_that_cannot_be_queued_does_not_fail_the_import(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_open_book: BookOpener
     ) -> None:
         """Verify a book that is processing something already still ends its import as succeeded.
 
@@ -2433,10 +2551,12 @@ class TestRunImportSplit:
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         offering = self._offering(fx_rig, AUTO_SPLIT)
         job = await offering.service().start_import(
-            open_for(fx_owner, fx_book.id), [pdf_upload(fx_samples, PDF_NAME, pages=1)]
+            fx_open_book(fx_owner, fx_book.id), [pdf_upload(fx_samples, PDF_NAME, pages=1)]
         )
         # A run queued behind the import, which is still queued when the import ends and asks for its own
         busy = offering.fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
@@ -2448,41 +2568,64 @@ class TestRunImportSplit:
         assert_expectations()
 
 
-async def delete_the_page(rig: ImportRig, book_record: BookRecord) -> None:
+async def delete_the_page(book_record: BookRecord, databases: BookDatabases) -> None:
     """Delete the only page of the book in a change of its own, as the user would while its scan is cut.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_record: Record of the book whose page is deleted.
     :type book_record: BookRecord
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     """
-    [page] = await _pages(rig, book_record.id)
-    await rig.open_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.delete(page.id))
+    [page] = await _pages(book_record.id, databases=databases)
+    await databases.open(book_record.id).change(lambda repos, _book_record: repos.pages.delete(page.id))
 
 
-async def delete_the_source(rig: ImportRig, book_record: BookRecord) -> None:
+async def delete_the_source(book_record: BookRecord, databases: BookDatabases) -> None:
     """Delete the only source of the book, with its scan, in a change of its own.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_record: Record of the book whose source is deleted.
     :type book_record: BookRecord
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     """
-    [source] = await _sources(rig, book_record.id)
-    await rig.open_uow().change_book(book_record.id, lambda repos, _book_record: repos.sources.delete(source.id))
+    [source] = await _sources(book_record.id, databases=databases)
+    await databases.open(book_record.id).change(lambda repos, _book_record: repos.sources.delete(source.id))
 
 
-async def make_the_scan_ready(rig: ImportRig, book_record: BookRecord) -> None:
+async def make_the_scan_ready(book_record: BookRecord, databases: BookDatabases) -> None:
     """Mark the only scan of the book ready in a change of its own, as another run would have.
 
-    :param rig: Adapters of the import.
-    :type rig: ImportRig
     :param book_record: Record of the book whose scan is marked.
     :type book_record: BookRecord
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     """
-    [scan] = await _scans(rig, book_record.id)
+    [scan] = await _scans(book_record.id, databases=databases)
     ready = evolve(scan, renditions=evolve(scan.renditions, ready=True))
-    await rig.open_uow().change_book(book_record.id, lambda repos, _book_record: repos.scans.update(ready))
+    await databases.open(book_record.id).change(lambda repos, _book_record: repos.scans.update(ready))
+
+
+class TestRunImportOfAMissingBook:
+    """Tests for an import job whose book is gone by the time the job runs."""
+
+    async def test_job_ends_failed_and_its_upload_is_removed(self, fx_rig: ImportRig) -> None:
+        """Verify the job of a book that is gone fails with the reason, and the staged upload it never used is removed.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        """
+        book_id = BookId(uuid4())
+        job = fx_rig.fakes.board.put(make_job(book_id=book_id))
+        await fx_rig.sources.stage(book_id, job.id, [upload(STAGED_NAME)], max_bytes=MAX_BYTES)
+
+        await fx_rig.fakes.board.run_queued()
+
+        ended = fx_rig.stored_job(job)
+        expect((ended.state, ended.error) == (JobState.FAILED, str(NotFoundError(book_id))))
+        with pytest.raises(NotFoundError):
+            async with fx_rig.sources.staged_files(book_id, job.id):
+                pass
+        assert_expectations()
 
 
 class TestRunImportApplyStep:
@@ -2502,7 +2645,7 @@ class TestRunImportApplyStep:
         fx_owner: Actor,
         fx_book: BookRecord,
         fx_samples: Path,
-        case: Callable[[ImportRig, BookRecord], Awaitable[None]],
+        case: Callable[[BookRecord, BookDatabases], Awaitable[None]],
     ) -> None:
         """Verify a scan whose book changed after the cut writes no version and announces nothing, and the job ends well.
 
@@ -2518,7 +2661,7 @@ class TestRunImportApplyStep:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         :param case: What another request does to the book while the scan is cut.
-        :type case: Callable[[ImportRig, BookRecord], Awaitable[None]]
+        :type case: Callable[[BookRecord, BookDatabases], Awaitable[None]]
         """
         cut: list[Scan] = []
 
@@ -2529,16 +2672,16 @@ class TestRunImportApplyStep:
             :type _number: int
             """
             fx_rig.rasterizer.before_extract = None
-            cut.extend(await _scans(fx_rig, fx_book.id))
-            await case(fx_rig, fx_book)
+            cut.extend(await _scans(fx_book.id, databases=fx_rig.databases))
+            await case(fx_book, fx_rig.databases)
 
         fx_rig.rasterizer.before_extract = change_the_book_once
 
         job = await _import(fx_rig, fx_owner, fx_book.id, [image_upload(fx_samples, IMAGE_NAME)])
 
-        pages = await _pages(fx_rig, fx_book.id)
-        versions = await fx_rig.open_uow().read_book(
-            fx_book.id, lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
+        pages = await _pages(fx_book.id, databases=fx_rig.databases)
+        versions = await fx_rig.databases.open(fx_book.id).read(
+            lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
         )
         # The progress counts the file of the upload, and the scan counted one less to cut
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
@@ -2551,7 +2694,12 @@ class TestStartImportConcurrently:
     """Tests for two uploads of one book that meet at the check of the active import."""
 
     async def test_two_uploads_that_pass_the_early_check_together_put_one_job_and_remove_the_other_upload(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_samples: Path,
+        fx_storage_root: Path,
     ) -> None:
         """Verify of two uploads that both passed the early check, one puts its job and the other is refused.
 
@@ -2608,7 +2756,7 @@ class TestStartImportConcurrently:
             """
             try:
                 outcomes[name] = await fx_rig.service().start_import(
-                    open_for(fx_owner, fx_book.id), [image_upload(fx_samples, name)]
+                    open_for(fx_owner, fx_book.id, databases=fx_rig.databases), [image_upload(fx_samples, name)]
                 )
             except ConflictError as error:
                 outcomes[name] = error
@@ -2639,18 +2787,17 @@ def fx_sources(fx_rig: ImportRig) -> SourceService:
     :returns: The source service of a new request.
     :rtype: SourceService
     """
-    uow = fx_rig.open_uow()
-    return SourceService(uow=uow, board=fx_rig.fakes.board, sources=fx_rig.sources, assets=fx_rig.assets)
+    return SourceService(board=fx_rig.fakes.board, sources=fx_rig.sources, assets=fx_rig.assets)
 
 
 @pytest.fixture
-async def fx_files(fx_rig: ImportRig, fx_book: BookRecord) -> list[Source]:
+async def fx_files(fx_book: BookRecord, fx_databases: BookDatabasesFactory) -> list[Source]:
     """Store an imported, a rejected and a skipped file in ``fx_project``, recorded in that order.
 
-    :param fx_rig: Adapters of the import.
-    :type fx_rig: ImportRig
     :param fx_book: Book of the owner.
     :type fx_book: BookRecord
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The imported source, the rejected file and the skipped file.
     :rtype: list[Source]
     """
@@ -2670,7 +2817,7 @@ async def fx_files(fx_rig: ImportRig, fx_book: BookRecord) -> list[Source]:
         status=SourceStatus.SKIPPED,
     )
     files = [imported, rejected, skipped]
-    await fx_rig.open_uow().change_book(fx_book.id, lambda repos, _book_record: repos.sources.add_many(files))
+    await fx_databases().open(fx_book.id).change(lambda repos, _book_record: repos.sources.add_many(files))
     return files
 
 
@@ -2689,7 +2836,12 @@ class TestSourceReport:
     """Tests for the files of an import that SourceService lists and closes: the rejected and the skipped ones."""
 
     async def test_lists_only_the_imported_sources_unless_told_otherwise(
-        self, fx_sources: SourceService, fx_owner: Actor, fx_book: BookRecord, fx_files: list[Source]
+        self,
+        fx_sources: SourceService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_files: list[Source],
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a listing with no statuses is the list of the sources of the book.
 
@@ -2701,8 +2853,10 @@ class TestSourceReport:
         :type fx_book: BookRecord
         :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        listed = await fx_sources.list(open_for(fx_owner, fx_book.id), BOOK_WINDOW)
+        listed = await fx_sources.list(fx_open_book(fx_owner, fx_book.id), BOOK_WINDOW)
 
         expect(list(listed.items) == fx_files[:1])
         expect(listed.total == 1)
@@ -2720,37 +2874,40 @@ class TestSourceReport:
     async def test_lists_the_files_of_the_statuses_asked_for_in_the_order_they_were_recorded(
         self,
         fx_sources: SourceService,
-        fx_owner: Actor,
         fx_book: BookRecord,
         fx_files: list[Source],
         case: StatusCase,
+        fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
         """Verify a listing returns the files in the given statuses only, and counts only them.
 
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
-        :param fx_owner: Account owning the book.
-        :type fx_owner: Actor
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         :param case: The statuses asked for, and the files they must return.
         :type case: StatusCase
+        :param fx_open_own_book: Function opening a book of the acting account with its database.
+        :type fx_open_own_book: Callable[[BookId], Book]
         """
-        listed = await fx_sources.list(open_for(fx_owner, fx_book.id), BOOK_WINDOW, statuses=case.statuses)
+        listed = await fx_sources.list(fx_open_own_book(fx_book.id), BOOK_WINDOW, statuses=case.statuses)
 
         expect(list(listed.items) == [fx_files[position] for position in case.positions])
         expect(listed.total == len(case.positions))
         assert_expectations()
 
     async def test_deleting_the_report_removes_the_rejected_and_skipped_files_and_keeps_the_sources(
-        self, fx_rig: ImportRig, fx_sources: SourceService, fx_owner: Actor, fx_book: BookRecord, fx_files: list[Source]
+        self,
+        fx_sources: SourceService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_files: list[Source],
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify closing the report of an import deletes its rows and no imported source.
 
-        :param fx_rig: Adapters of the import.
-        :type fx_rig: ImportRig
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
         :param fx_owner: Account owning the book.
@@ -2759,15 +2916,22 @@ class TestSourceReport:
         :type fx_book: BookRecord
         :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        await fx_sources.delete_unimported(open_for(fx_owner, fx_book.id))
+        await fx_sources.delete_unimported(fx_open_book(fx_owner, fx_book.id))
 
-        expect(await _report(fx_rig, fx_book.id) == [])
-        expect(await _sources(fx_rig, fx_book.id) == fx_files[:1])
+        expect(await _report(fx_book.id, databases=fx_open_book.databases) == [])
+        expect(await _sources(fx_book.id, databases=fx_open_book.databases) == fx_files[:1])
         assert_expectations()
 
     async def test_deleting_the_report_while_the_book_imports_is_a_conflict(
-        self, fx_rig: ImportRig, fx_sources: SourceService, fx_owner: Actor, fx_book: BookRecord, fx_files: list[Source]
+        self,
+        fx_rig: ImportRig,
+        fx_sources: SourceService,
+        fx_owner: Actor,
+        fx_book: BookRecord,
+        fx_files: list[Source],
     ) -> None:
         """Verify the report is kept while an import is queued or running, since that import is still writing it.
 
@@ -2785,6 +2949,6 @@ class TestSourceReport:
         fx_rig.fakes.board.put(make_job(book_id=fx_book.id))
 
         with pytest.raises(ConflictError, match=SOURCE_IMPORTING):
-            await fx_sources.delete_unimported(open_for(fx_owner, fx_book.id))
+            await fx_sources.delete_unimported(open_for(fx_owner, fx_book.id, databases=fx_rig.databases))
 
-        assert await _report(fx_rig, fx_book.id) == fx_files[1:]
+        assert await _report(fx_book.id, databases=fx_rig.databases) == fx_files[1:]

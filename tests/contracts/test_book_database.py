@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import Book
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -85,15 +85,13 @@ class TestChange:
         assert received == changed
 
     async def test_two_changes_that_read_and_write_one_page_keep_both_writes(
-        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory, fx_book: Book
+        self, fx_databases: BookDatabasesFactory, fx_book: Book
     ) -> None:
         """Verify two changes that each read a page and write another field of it both keep their writes.
 
         Both are started while the book is held, so each would write the page as it read it if the second were let in
         before the first had committed.
 
-        :param fx_uow: Function opening a new unit of work, which holds the book.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         :param fx_book: Stored book both changes belong to.
@@ -124,7 +122,7 @@ class TestChange:
             """
             repos.pages.update(evolve(repos.pages.get(page.id), notes=STAMP))
 
-        async with anyio.create_task_group() as tasks, hold_book_in_thread(fx_uow(), book_id):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(fx_databases().open(book_id)):
             tasks.start_soon(first.change, label_page)
             await anyio.wait_all_tasks_blocked()
             tasks.start_soon(second.change, note_page)

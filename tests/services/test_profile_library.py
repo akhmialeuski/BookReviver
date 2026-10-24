@@ -9,7 +9,7 @@ from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
 from bookreviver.services.recipe_profiles import COPY_NAME
-from tests.helpers.builders import make_record, open_for
+from tests.helpers.builders import make_record
 from tests.helpers.processing import account_books, account_profiles
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 from tests.helpers.seeding import store_book
@@ -17,6 +17,7 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Recipe, RecipeProfile
     from bookreviver.domain.ids import RecipeId
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -66,7 +67,7 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> BookRecord:
     :rtype: BookRecord
     """
     book_record = make_record(title='Another book')
-    await store_book(kit.uow(), book_record, owner=actor.account_id)
+    await store_book(kit.uow(), book_record, owner=actor.account_id, databases=kit.databases)
     return book_record
 
 
@@ -74,33 +75,37 @@ class TestBooksOfAProfile:
     """Tests for the number of books that use each profile of the library."""
 
     async def test_a_book_counts_once_however_many_recipes_it_made_from_the_profile(
-        self, fx_kit: ProcessingKit
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify two books count two, and a second recipe of the same profile in one book adds none.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         for target in (book_record, other, book_record):
-            await fx_kit.profiles().apply(open_for(actor, target.id), profile, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(fx_open_book(actor, target.id), profile, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(
             await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
         )
         assert [(item.profile.id, item.books) for item in listed.items] == [(profile.id, BOOKS_OF_ONE_PROFILE)]
 
-    async def test_a_profile_that_no_book_uses_has_none(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_profile_that_no_book_uses_has_none(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
         """Verify a profile that was never applied is listed with no books, beside one that was.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         used = await save_profile(fx_kit, actor)
         unused = await fx_kit.profiles().duplicate(used)
-        await fx_kit.profiles().apply(open_for(actor, book_record.id), used, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), used, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(
             await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
         )
@@ -121,33 +126,43 @@ class TestBooksOfAProfile:
         )
         assert ([item.profile.id for item in listed.items], listed.total) == ([mine.id], 1)
 
-    async def test_deleting_a_profile_removes_it_from_the_library(self, fx_kit: ProcessingKit) -> None:
+    async def test_deleting_a_profile_removes_it_from_the_library(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a deleted profile is no longer listed, and the book that used it keeps its recipe.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
         listed = await fx_kit.profiles().library(
             await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
         )
-        kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
+        kept = await fx_open_book.databases.open(book_record.id).read(
+            lambda repos: repos.recipes.get(applied.recipe.id)
+        )
         assert (listed.total, kept.profile_id) == (0, None)
 
-    async def test_deleting_a_profile_clears_the_link_in_every_book_of_the_owner(self, fx_kit: ProcessingKit) -> None:
+    async def test_deleting_a_profile_clears_the_link_in_every_book_of_the_owner(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the recipes of both books that were made from the profile lose the link, and keep their steps.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_kit.seed_record()
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         applied = [
-            await fx_kit.profiles().apply(open_for(actor, target.id), profile, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(fx_open_book(actor, target.id), profile, kind=RecipeKind.TEXT)
             for target in (book_record, other)
         ]
 
@@ -163,7 +178,7 @@ class TestBooksOfAProfile:
             :returns: The recipe.
             :rtype: Recipe
             """
-            return await fx_kit.uow().read_book(target.id, lambda repos: repos.recipes.get(recipe_id))
+            return await fx_open_book.databases.open(target.id).read(lambda repos: repos.recipes.get(recipe_id))
 
         kept = [
             await recipe_of(target, done.recipe.id) for target, done in zip((book_record, other), applied, strict=True)

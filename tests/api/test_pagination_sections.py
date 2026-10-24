@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -62,20 +62,22 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
     """Commit a book of four text pages for the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
     book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
     pages = [make_page(order_key=key) for key in keys]
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_databases())
     return Book(book_record=book_record, pages=pages)
 
 
@@ -214,7 +216,12 @@ class TestCreateSection:
         assert_expectations()
 
     async def test_page_of_another_book_and_book_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_book: Book,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a first page that is another book's, and a book of another account, both answer 404.
 
@@ -226,10 +233,12 @@ class TestCreateSection:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         stranger = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id(), databases=fx_databases())
 
         foreign_page = await fx_client.post(
             fx_book.sections_path, json={'first_page_id': str(page.id), 'style': 'arabic'}
@@ -266,7 +275,11 @@ class TestListSections:
         assert_expectations()
 
     async def test_a_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the sections of another account's book are answered not found.
 
@@ -276,9 +289,11 @@ class TestListSections:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         stranger = make_record()
-        await commit_record(fx_database, fx_uow(), stranger, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, owner=new_account_id(), databases=fx_databases())
 
         response = await fx_client.get(f'{BOOKS_PATH}/{stranger.id}/pagination-sections')
 

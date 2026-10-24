@@ -20,7 +20,6 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     new_account_id,
-    open_for,
 )
 from tests.helpers.seeding import commit_record, store_book
 
@@ -31,9 +30,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
@@ -57,7 +57,7 @@ def _ready(version: PageVersion) -> PageVersion:
 
 
 async def _commit_book(
-    database: SqlDatabase, uow: UnitOfWork, book_record: BookRecord, owner: AccountId
+    database: SqlDatabase, uow: UnitOfWork, book_record: BookRecord, owner: AccountId, *, databases: BookDatabases
 ) -> tuple[list[Page], list[PageVersion]]:
     """Commit a book of three pages stored against the book order, the middle one in the book a placeholder.
 
@@ -69,6 +69,8 @@ async def _commit_book(
     :type book_record: BookRecord
     :param owner: Account owning the book.
     :type owner: AccountId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The pages in the order they were stored, and the base versions of the two that have one.
     :rtype: tuple[list[Page], list[PageVersion]]
     """
@@ -78,7 +80,15 @@ async def _commit_book(
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)]
     versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
     await commit_record(
-        database, uow, book_record, *pages, owner=owner, sources=[source], scans=scans, versions=versions
+        database,
+        uow,
+        book_record,
+        *pages,
+        owner=owner,
+        sources=[source],
+        scans=scans,
+        versions=versions,
+        databases=databases,
     )
     return pages, versions
 
@@ -92,6 +102,7 @@ class TestManifest:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify pages come in the byte order of their keys, numbered from zero, each with its own base version.
 
@@ -103,11 +114,15 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        pages, versions = await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
+        pages, versions = await _commit_book(
+            fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases
+        )
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
 
         expect([overview.page for overview in manifest.items] == [pages[index] for index in BOOK_ORDER])
         expect([overview.position for overview in manifest.items] == [0, 1, 2])
@@ -121,6 +136,7 @@ class TestManifest:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a window starting at an offset numbers its pages from that offset and reports the whole book.
 
@@ -132,18 +148,26 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        pages, _ = await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
+        pages, _ = await _commit_book(
+            fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases
+        )
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), WINDOW)
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), WINDOW)
 
         expect([(overview.page, overview.position) for overview in manifest.items] == [(pages[2], 1)])
         expect(manifest.total == len(pages))
         assert_expectations()
 
     async def test_shows_the_newest_base_version_of_a_page(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a page cut from its scan again shows the base version created last.
 
@@ -153,13 +177,22 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
         page = make_page()
         old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[new, old])
+        await store_book(
+            fx_uow(),
+            book_record,
+            page,
+            owner=fx_actor.account_id,
+            versions=[new, old],
+            databases=fx_open_book.databases,
+        )
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [new]
 
@@ -168,6 +201,7 @@ class TestManifest:
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the page shows its deskewed version, and not the base version it was made from or the regions without an image.
 
@@ -177,13 +211,22 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
         page = make_page()
         base = _ready(make_page_version(page_id=page.id, minutes=1))
         deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[base, deskewed, regions])
+        await store_book(
+            fx_uow(),
+            book_record,
+            page,
+            owner=fx_actor.account_id,
+            versions=[base, deskewed, regions],
+            databases=fx_open_book.databases,
+        )
 
         def save_heads(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Save the records that name the base version and the deskewed one as current, and the regions too.
@@ -199,9 +242,9 @@ class TestManifest:
                 )
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
 
-        await fx_uow().change_book(book_record.id, save_heads)
+        await fx_open_book.databases.open(book_record.id).change(save_heads)
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [deskewed]
 
@@ -210,6 +253,7 @@ class TestManifest:
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a version the user chose as current is shown over a base version that was made after it.
 
@@ -219,24 +263,36 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
         page = make_page()
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[chosen, newer])
-        await fx_uow().change_book(
-            book_record.id,
+        await store_book(
+            fx_uow(),
+            book_record,
+            page,
+            owner=fx_actor.account_id,
+            versions=[chosen, newer],
+            databases=fx_open_book.databases,
+        )
+        await fx_open_book.databases.open(book_record.id).change(
             lambda repos, _book_record: repos.page_stages.save(
                 make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=chosen.id)
             ),
         )
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [chosen]
 
     async def test_included_only_leaves_out_the_pages_kept_out_and_numbers_the_rest(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a listing of the included pages skips an excluded page, and numbers the listed pages among themselves.
 
@@ -246,13 +302,17 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
         pages = [make_page(order_key=key) for key in ('a0', 'a1', 'a2')]
         pages[1] = evolve(pages[1], included=False)
-        await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest(), included_only=True)
+        manifest = await fx_service().manifest(
+            fx_open_book(fx_actor, book_record.id), SliceRequest(), included_only=True
+        )
 
         expect([overview.page for overview in manifest.items] == [pages[0], pages[2]])
         expect([overview.position for overview in manifest.items] == [0, 1])
@@ -265,6 +325,7 @@ class TestManifest:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify each page of the window knows the source of its scan, which selects the pages of one source.
 
@@ -276,12 +337,14 @@ class TestManifest:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
-        [source, *_] = await fx_uow().read_book(book_record.id, lambda repos: repos.sources.list_all())
+        await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases)
+        [source, *_] = await fx_open_book.databases.open(book_record.id).read(lambda repos: repos.sources.list_all())
 
-        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
+        manifest = await fx_service().manifest(fx_open_book(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.source_id for overview in manifest.items] == [None, source.id, source.id]
 
@@ -295,6 +358,7 @@ class TestGet:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a page read by its identifier knows its place in the book and its base version.
 
@@ -306,11 +370,15 @@ class TestGet:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        pages, versions = await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
+        pages, versions = await _commit_book(
+            fx_database, fx_uow(), book_record, fx_actor.account_id, databases=fx_open_book.databases
+        )
 
-        overview = await fx_service().get(open_for(fx_actor, book_record.id), pages[0].id)
+        overview = await fx_service().get(fx_open_book(fx_actor, book_record.id), pages[0].id)
 
         expect(overview.page == pages[0])
         expect(overview.position == len(pages) - 1)
@@ -318,7 +386,11 @@ class TestGet:
         assert_expectations()
 
     async def test_page_of_another_book_of_the_actor_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a page is found only through the book that holds it, even for an owner of both books.
 
@@ -328,17 +400,23 @@ class TestGet:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record, holder = (make_record() for _ in range(2))
         page = make_page()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
-        await store_book(fx_uow(), holder, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        await store_book(fx_uow(), holder, page, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(open_for(fx_actor, book_record.id), page.id)
+            await fx_service().get(fx_open_book(fx_actor, book_record.id), page.id)
 
     async def test_missing_page_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify an identifier no page has is reported as not found.
 
@@ -348,12 +426,14 @@ class TestGet:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(open_for(fx_actor, book_record.id), PageId(uuid4()))
+            await fx_service().get(fx_open_book(fx_actor, book_record.id), PageId(uuid4()))
 
 
 class TestOpenAsset:
@@ -365,6 +445,7 @@ class TestOpenAsset:
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the owner reads a stored derived file through the path the service hands out.
 
@@ -376,9 +457,11 @@ class TestOpenAsset:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
         key = BookKeys(book_record.id).book
         async with fx_asset_store.writable(key) as target:
             target.write_bytes(FILE_CONTENT)
@@ -392,6 +475,7 @@ class TestOpenAsset:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a stored derived file is read by its key alone, whoever owns its book.
 
@@ -403,9 +487,11 @@ class TestOpenAsset:
         :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
         key = BookKeys(book_record.id).book
         async with fx_asset_store.writable(key) as target:
             target.write_bytes(FILE_CONTENT)
@@ -417,7 +503,12 @@ class TestOpenAsset:
         'area', [KeySegment.SOURCES, KeySegment.INCOMING, 'notes'], ids=['sources', 'incoming', 'unknown-area']
     )
     async def test_key_outside_the_assets_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor, area: str
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        area: str,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a key in the book's source area, its uploads or any other area is not found, not an error.
 
@@ -429,16 +520,22 @@ class TestOpenAsset:
         :type fx_actor: Actor
         :param area: Directory of the book the key lies in.
         :type area: str
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(StorageKey(f'{BookKeys(book_record.id).prefix}{area}/{uuid4()}')):
                 pytest.fail('A key outside the assets was opened.')
 
     async def test_key_without_a_file_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a key of the actor's book with nothing stored behind it is not found.
 
@@ -448,9 +545,11 @@ class TestOpenAsset:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(BookKeys(book_record.id).book):

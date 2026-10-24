@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -76,18 +76,20 @@ def _body() -> dict[str, Any]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookRecord:
     """Commit a book of the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+    await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
     return book_record
 
 
@@ -129,7 +131,11 @@ class TestGetPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the place of a book of another account answers 404, as a missing book does.
 
@@ -139,9 +145,11 @@ class TestGetPlace:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         strangers = make_record()
-        await commit_record(fx_database, fx_uow(), strangers, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), strangers, owner=new_account_id(), databases=fx_databases())
         response = await fx_client.get(_path(strangers))
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -167,7 +175,11 @@ class TestPutPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a place cannot be written into a book of another account.
 
@@ -177,9 +189,11 @@ class TestPutPlace:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         strangers = make_record()
-        await commit_record(fx_database, fx_uow(), strangers, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), strangers, owner=new_account_id(), databases=fx_databases())
         response = await fx_client.put(_path(strangers), json=_body())
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

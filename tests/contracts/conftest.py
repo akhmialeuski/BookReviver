@@ -28,7 +28,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.ordering import OrderKeys
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookDatabases
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 type OwnerFactory = Callable[[], Awaitable[AccountId]]
 
@@ -183,44 +184,52 @@ class Book(NamedTuple):
     owner_id: AccountId
 
 
-async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> Book:
+async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: BookDatabases) -> Book:
     """Store a book of a new account.
 
     :param uow_factory: Function opening a new unit of work over the catalogue and the books of the test.
     :type uow_factory: UnitOfWorkFactory
     :param new_owner: Function creating an account the catalogue accepts as an owner.
     :type new_owner: OwnerFactory
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The stored book.
     :rtype: Book
     """
     book_record, owner_id = make_record(), await new_owner()
-    await store_book(uow_factory(), book_record, owner=owner_id)
+    await store_book(uow_factory(), book_record, owner=owner_id, databases=databases)
     return Book(book_record=book_record, owner_id=owner_id)
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory) -> Book:
     """Store a book that the changes of the tests change.
 
     :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
     :type fx_new_owner: OwnerFactory
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
-    return await _store_book(fx_uow, fx_new_owner)
+    return await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
 
 
 @pytest.fixture
-async def fx_other_book(fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> Book:
+async def fx_other_book(
+    fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+) -> Book:
     """Store a second book, which a change of the first book must not wait for.
 
     :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
     :type fx_new_owner: OwnerFactory
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
-    return await _store_book(fx_uow, fx_new_owner)
+    return await _store_book(fx_uow, fx_new_owner, databases=fx_databases())

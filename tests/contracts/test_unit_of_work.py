@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabase, BookDatabases, UnitOfWork
     from tests.contracts.conftest import Book
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
@@ -150,15 +150,18 @@ class ChangeKind(NamedTuple):
             return await stores.databases.open(book.book_record.id).read(work)
         return await stores.uow.read(work)
 
-    def lock_of(self, book: Book) -> BookId | None:
+    def lock_of(self, stores: Stores, book: Book) -> BookDatabase | UnitOfWork:
         """Name what a holder holds to stop a change of this kind.
 
+        :param stores: Unit of work and opener of the books of the holder.
+        :type stores: Stores
         :param book: The book of the test.
         :type book: Book
-        :returns: The book whose store the change takes, or None for a change of the catalogue.
-        :rtype: BookId | None
+        :returns: The database of the book whose store the change takes, or the unit of work for a change of the
+                  catalogue.
+        :rtype: BookDatabase | UnitOfWork
         """
-        return book.book_record.id if self.of_book else None
+        return stores.databases.open(book.book_record.id) if self.of_book else stores.uow
 
     def rows(self, book: Book, number: int) -> tuple[Any, Any]:
         """Build two rows of two repositories of the store, which differ from those of any other number.
@@ -757,7 +760,7 @@ class TestChangeWait:
             """Ask for the change and note when its work runs."""
             await kind.run(waiter, fx_book, lambda _repos: ran.append(SECOND_IN))
 
-        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder.uow, kind.lock_of(fx_book)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(kind.lock_of(holder, fx_book)):
             tasks.start_soon(wait_and_run)
             await anyio.wait_all_tasks_blocked()
             ran_while_held.extend(ran)
@@ -783,7 +786,7 @@ class TestChangeWait:
         """
         holder, impatient = fx_stores(), fx_stores(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with hold_book_in_thread(holder.uow, fx_book.book_record.id):
+        async with hold_book_in_thread(holder.databases.open(fx_book.book_record.id)):
             await impatient.databases.open(fx_other_book.book_record.id).change(
                 lambda _repos, _book_record: ran.append(OTHER_BOOK)
             )
@@ -804,7 +807,7 @@ class TestChangeWait:
         """
         holder, impatient = fx_stores(), fx_stores(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with hold_book_in_thread(holder.uow, None):
+        async with hold_book_in_thread(holder.uow):
             await impatient.databases.open(fx_book.book_record.id).change(
                 lambda _repos, _book_record: ran.append(OTHER_BOOK)
             )
@@ -843,7 +846,7 @@ class TestChangeWait:
             seen.append({row.id for row in first_rows} <= kind.found(repos, fx_book))
             kind.add(repos, second_rows)
 
-        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder.uow, kind.lock_of(fx_book)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(kind.lock_of(holder, fx_book)):
             tasks.start_soon(kind.run, first, fx_book, lambda repos: kind.add(repos, first_rows))
             await anyio.wait_all_tasks_blocked()
             tasks.start_soon(kind.run, second, fx_book, add_second)
@@ -884,7 +887,7 @@ class TestChangeWait:
             """
             await kind.run(waiters[number], fx_book, lambda _repos: ran.append(number))
 
-        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder.uow, kind.lock_of(fx_book)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(kind.lock_of(holder, fx_book)):
             for number in range(WAITERS):
                 tasks.start_soon(wait_and_run, number)
                 await anyio.wait_all_tasks_blocked()
@@ -914,7 +917,7 @@ class TestChangeWait:
         holder, impatient = fx_stores(), fx_stores(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
         before = await kind.read(holder, fx_book, lambda repos: kind.found(repos, fx_book))
-        async with hold_book_in_thread(holder.uow, kind.lock_of(fx_book)):
+        async with hold_book_in_thread(kind.lock_of(holder, fx_book)):
             started = perf_counter()
             with pytest.raises(BookBusyError):
                 await kind.run(impatient, fx_book, lambda _repos: ran.append(SECOND_IN))
@@ -961,7 +964,7 @@ class TestChangeWait:
             """Ask for the change under the limit of a job and note when its work runs."""
             await kind.run(job, fx_book, lambda _repos: order.append(SECOND_IN))
 
-        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder.uow, kind.lock_of(fx_book)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(kind.lock_of(holder, fx_book)):
             tasks.start_soon(wait_as_a_job)
             await anyio.wait_all_tasks_blocked()
             with pytest.raises(BookBusyError):

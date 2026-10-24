@@ -15,7 +15,7 @@ from bookreviver.api.auth import current_actor
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
-from tests.helpers.builders import new_account_id
+from tests.helpers.builders import BookOpener, new_account_id
 from tests.helpers.database import SharedDatabaseProvider, copy_schema_template, create_schema_template, database_file
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
@@ -253,6 +253,20 @@ def fx_databases(
         return SqlAlchemyBookDatabases(fx_books, publisher=fx_book_changes, wait_seconds=seconds)
 
     return open_databases
+
+
+@pytest.fixture
+def fx_open_book(fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory) -> BookOpener:
+    """Return the opener of the books of the test, which opens a book of an account with its database.
+
+    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :type fx_uow: UnitOfWorkFactory
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
+    :returns: The opener, called with the actor and the identifier of the book.
+    :rtype: BookOpener
+    """
+    return BookOpener(uow=fx_uow, databases=fx_databases())
 
 
 @pytest.fixture

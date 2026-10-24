@@ -12,7 +12,7 @@ earlier one.
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
 Saving and deleting an edit write the manual layer of the step to the history of the page, with the edit before and
 after as snapshots, so an undo can put either back. The rows of an edit are written by the work of one
-``change_book``, with the stale marks.
+``Book.change``, with the stale marks.
 
 A mask arrives as an upload. It is written to a scratch key while its digest is worked out, since its final key holds
 the hash of the whole edit, and then copied to that key and the scratch removed, all before the transaction opens.
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, IncomingFile
@@ -68,7 +68,6 @@ class EditService:
     def __init__(
         self,
         *,
-        uow: UnitOfWork,
         assets: AssetStore,
         catalogue: ProcessorCatalog,
         records: StageRecords,
@@ -76,8 +75,6 @@ class EditService:
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
         :param assets: Store of the derived files, where masks are kept.
         :type assets: AssetStore
         :param catalogue: The processors the application can run, which say what edit each reads.
@@ -87,7 +84,6 @@ class EditService:
         :param clock: Clock stamping the edits.
         :type clock: Clock
         """
-        self._uow = uow
         self._assets = assets
         self._catalogue = catalogue
         self._records = records
@@ -126,7 +122,7 @@ class EditService:
 
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
-        await self._uow.read_book(book.id, check)
+        await book.read(check)
         keys = BookKeys(book.id)
         mask_digest, scratch = (None, None) if mask is None else await self._receive(keys, key, mask)
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
@@ -167,7 +163,7 @@ class EditService:
             self._records.mark_stale(repos, key.page_id, key.stage)
 
         # A mask stays when the change fails, since its key holds the hash of the edit and an equal edit finds it there
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
         return stored
 
     async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageEdit]:
@@ -197,7 +193,7 @@ class EditService:
             states = repos.page_step_states.list_for_page(page_id, stage)
             return [state.edit for state in states if state.edit is not None]
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def delete(self, book: Book, key: PageStepKey) -> None:
         """Delete the edit a step reads, and mark the stage stale.
@@ -228,7 +224,7 @@ class EditService:
             self._store(repos, state, evolve(state, edit=None, updated_at=self._clock.now()))
             self._records.mark_stale(repos, key.page_id, key.stage)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     @staticmethod
     def _store(repos: BookRepositories, state: PageStepState, changed: PageStepState) -> None:

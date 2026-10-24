@@ -12,7 +12,7 @@ built on an outdated version of an earlier stage is caught as well. A processor 
 taken as outdated, since a plugin that is not installed says nothing about its version, and a record that is stale or
 failed already is left as it is.
 
-The records of every stored book are checked, once, when the application starts. No event is published, because
+The records of every book of the library are checked, once, when the application starts. No event is published, because
 nothing is listening yet: a browser reads the stages of a book when it opens the book, after the application has
 started.
 """
@@ -28,10 +28,12 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.entities import BookRecord, PageStage, PageVersion
-    from bookreviver.domain.ids import BookId, PageVersionId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.domain.ids import PageVersionId
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.book import Book
+    from bookreviver.services.books import BooksService
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +41,17 @@ logger = logging.getLogger(__name__)
 class OutdatedResults:
     """Marks the fresh stage records of all books stale when a processor that made their result has a new version."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> None:
+    def __init__(self, *, books: BooksService, catalogue: ProcessorCatalog, clock: Clock) -> None:
         """Work over the ports of one unit of work.
 
-        :param uow: Unit of work whose transactions read the records and mark them.
-        :type uow: UnitOfWork
+        :param books: Books service that opens each listed book, whose transactions read the records and mark them.
+        :type books: BooksService
         :param catalogue: The processors the application can run, with the versions that are installed.
         :type catalogue: ProcessorCatalog
         :param clock: Clock stamping the records that change.
         :type clock: Clock
         """
-        self._uow = uow
+        self._books = books
         self._catalogue = catalogue
         self._clock = clock
 
@@ -60,7 +62,7 @@ class OutdatedResults:
         records, pages and stages lead to it, so the number of queries follows the depth of the chains, and the number
         of rows read the number of distinct versions. A version is judged once, and a chain that meets a version judged
         already takes its verdict. The reading of a book is one transaction that only reads, so it takes no lock. The
-        records are then written by one ``change_book`` for the book, which reads each record again and marks it only
+        records are then written by one ``Book.change`` for the book, which reads each record again and marks it only
         if it is still fresh and still stands on the same version.
 
         :returns: The records that became stale.
@@ -86,22 +88,22 @@ class OutdatedResults:
             ]
 
         stale: list[PageStage] = []
-        for book_id in await self._uow.stored_books():
-            if outdated := await self._uow.read_book(book_id, find):
-                stale.extend(await self._mark_book(book_id, outdated))
+        for book in await self._books.listed():
+            if outdated := await book.read(find):
+                stale.extend(await self._mark_book(book, outdated))
         logger.info('Marked %d stage records stale because a processor of their result has a new version.', len(stale))
         return stale
 
-    async def _mark_book(self, book_id: BookId, outdated: Sequence[PageStage]) -> list[PageStage]:
-        """Mark the outdated records of one book stale, in a ``change_book`` of its own.
+    async def _mark_book(self, book: Book, outdated: Sequence[PageStage]) -> list[PageStage]:
+        """Mark the outdated records of one book stale, in a ``Book.change`` of its own.
 
         The records of the pages are read again in one query of the transaction, since a request may have marked them,
         run them or deleted them since the outdated ones were found. A record that is not fresh any longer, or stands
         on another version, is left as it is, and the others are written by one statement. The method opens its
         transaction, so it is called only outside one.
 
-        :param book_id: Book owning the records.
-        :type book_id: BookId
+        :param book: The open book owning the records.
+        :type book: Book
         :param outdated: The records found outdated, which belong to the pages of the book.
         :type outdated: Sequence[PageStage]
         :returns: The records that became stale.
@@ -130,7 +132,7 @@ class OutdatedResults:
             ]
             return list(repos.page_stages.save_many(stale))
 
-        return await self._uow.change_book(book_id, work)
+        return await book.change(work)
 
 
 class VersionChains:

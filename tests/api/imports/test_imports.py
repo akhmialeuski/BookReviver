@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
     from tests.api.imports.watch import ImportWatch
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -125,9 +125,9 @@ class TestUploadSources:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
         tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a book uploaded as two PDF parts and a cover is imported as three sources, pages in book order.
 
@@ -138,12 +138,12 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         samples = tmp_path / 'samples'
         samples.mkdir()
@@ -157,7 +157,7 @@ class TestUploadSources:
         queued = response.json()
         finished = await fx_import.finished(queued)
 
-        book = await stored_book(fx_uow(), fx_book.id)
+        book = await stored_book(fx_book.id, databases=fx_databases())
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         expect(response.status_code == HTTPStatus.ACCEPTED)
@@ -250,9 +250,9 @@ class TestUploadSources:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
         tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify an index with its page files is one source of several files, and one lacking a file is rejected.
 
@@ -262,12 +262,12 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         complete = write_djvu_indirect(tmp_path, pages=DJVU_PAGES, index_name='a-index.djvu', prefix='a')
         incomplete = write_djvu_indirect(tmp_path, pages=DJVU_PAGES, index_name='b-index.djvu', prefix='b')
@@ -280,7 +280,7 @@ class TestUploadSources:
         ).json()
         finished = await fx_import.finished(queued)
 
-        [source] = (await stored_book(fx_uow(), fx_book.id)).sources
+        [source] = (await stored_book(fx_book.id, databases=fx_databases())).sources
         [rejected] = await fx_import.report(fx_book.id)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect((source.file_name, source.scan_count) == ('a-index.djvu', len(DJVU_PAGES)))
@@ -290,7 +290,12 @@ class TestUploadSources:
         assert_expectations()
 
     async def test_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify an upload to a book of another account answers 404, as if the book did not exist.
 
@@ -302,9 +307,11 @@ class TestUploadSources:
         :type fx_uow: UnitOfWorkFactory
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         stranger_record = make_record()
-        await commit_record(fx_database, fx_uow(), stranger_record, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger_record, owner=new_account_id(), databases=fx_databases())
 
         response = await fx_client.post(
             SOURCES_PATH.format(book_id=stranger_record.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
@@ -398,7 +405,12 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
 
     async def test_book_of_another_account_is_refused_unread(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a non-owner gets 404 without the server reading the files it sent.
 
@@ -410,9 +422,11 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :type fx_uow: UnitOfWorkFactory
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         stranger_record = make_record()
-        await commit_record(fx_database, fx_uow(), stranger_record, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger_record, owner=new_account_id(), databases=fx_databases())
 
         response = await fx_client.post(
             SOURCES_PATH.format(book_id=stranger_record.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
