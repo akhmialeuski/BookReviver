@@ -157,7 +157,7 @@ class SpreadSplit:
         self._book = book
         self._book_record = book_record
         self._runner = runtime.runner
-        self._catalogue = runtime.catalogue
+        self._processors = runtime.processors
         self._publisher = runtime.publisher
         self._order_keys = runtime.order_keys
         self._records = records
@@ -176,7 +176,7 @@ class SpreadSplit:
         steps = recipe.enabled_steps
         if recipe.stage is not Stage.PAGE_SPLIT or not steps:
             return False
-        return self._catalogue.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
+        return self._processors.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
 
     async def split(self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool = False) -> RunOutcome:
         """Split the scan of a page into two pages, and make the base version of each half the current one.
@@ -207,7 +207,7 @@ class SpreadSplit:
         :raises ConflictError: If the page has no scan.
         """
         step = recipe.enabled_steps[0]
-        processor = self._catalogue.get(step.processor_key)
+        processor = self._processors.get(step.processor_key)
         layers = PageLayers(page)
 
         def read(repos: BookRepositories) -> SplitBasis:

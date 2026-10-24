@@ -1,4 +1,4 @@
-"""Provider of the limit a unit of work of the persistence port waits for the writer with, by its scope."""
+"""Provider of the limit a catalogue database of the persistence port waits for the writer with, by its scope."""
 
 from dishka import Provider, Scope, provide
 
@@ -11,9 +11,9 @@ from bookreviver.ports.persistence import ChangeWaitSeconds
 
 
 class ChangeWaitProvider(Provider):
-    """The limit a unit of work waits for the write lock with, chosen by the context of the scope it lives in.
+    """The limit a catalogue database waits for the write lock with, chosen by the context of the scope it lives in.
 
-    A unit of work that serves an HTTP request must answer in seconds, so its limit is short and a busy book is
+    A catalogue database that serves an HTTP request must answer in seconds, so its limit is short and a busy book is
     reported at once as a problem the interface can retry. A background job must not lose its work to a short wait,
     and the work of the startup in the lifespan is no request either, so both get the long limit. Neither is told
     apart by a flag that every caller would have to pass. dishka's FastAPI integration puts the ``Request`` into the
@@ -24,7 +24,7 @@ class ChangeWaitProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def job_limit(self, settings: Settings) -> ChangeWaitSeconds:
-        """Give the limit of a unit of work that serves no HTTP request.
+        """Give the limit of a catalogue database that serves no HTTP request.
 
         :param settings: Application settings, of which the limit of a job is read.
         :type settings: Settings
@@ -36,7 +36,7 @@ class ChangeWaitProvider(Provider):
     # Registered after the default, so that dishka takes it in a scope whose context has a Request
     @provide(scope=Scope.REQUEST, when=HasContext(Request))
     def request_limit(self, settings: Settings) -> ChangeWaitSeconds:
-        """Give the limit of a unit of work that serves an HTTP request.
+        """Give the limit of a catalogue database that serves an HTTP request.
 
         :param settings: Application settings, of which the limit of a request is read.
         :type settings: Settings

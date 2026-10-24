@@ -2,7 +2,7 @@
 
 A job reads and computes outside any block and stores its result in a short block that reads again what it went by.
 The runner calls the writer of renditions after a processor ran and before that block, so a change made through a
-second unit of work from there lands exactly in the window the block has to close.
+second catalogue database from there lands exactly in the window the block has to close.
 """
 
 from typing import TYPE_CHECKING
@@ -31,7 +31,7 @@ def change_while_writing(
     :type kit: ProcessingKit
     :param monkeypatch: Fixture that restores the writer when the test ends.
     :type monkeypatch: pytest.MonkeyPatch
-    :param change: The change to make through a unit of work of its own.
+    :param change: The change to make through a catalogue database of its own.
     :type change: Callable[[], Awaitable[None]]
     """
     write = kit.writer.write
@@ -74,7 +74,7 @@ def change_when_published(
     :type kit: ProcessingKit
     :param monkeypatch: Fixture that restores the bus when the test ends.
     :type monkeypatch: pytest.MonkeyPatch
-    :param change: The change to make through a unit of work of its own.
+    :param change: The change to make through a catalogue database of its own.
     :type change: Callable[[], Awaitable[None]]
     """
     publish = kit.events.publish

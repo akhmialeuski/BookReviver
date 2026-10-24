@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -86,7 +86,7 @@ def fx_import_board(fx_events: RecordingEventBus) -> FakeJobBoard:
 
 
 def _service(board: FakeJobBoard) -> SourceService:
-    """Build the source service for one request, over a unit of work and the stores and the board of the test.
+    """Build the source service for one request, over a catalogue database and the stores and the board of the test.
 
     :param board: Board the service reads the jobs of a book from.
     :type board: FakeJobBoard
@@ -104,7 +104,7 @@ def fx_service(
 
     :param fx_import_board: Board the service reads the jobs of a book from.
     :type fx_import_board: FakeJobBoard
-    :returns: Function building a service over a new unit of work.
+    :returns: Function building a service over a new catalogue database.
     :rtype: Callable[[], SourceService]
     """
     return lambda: _service(fx_import_board)
@@ -114,7 +114,7 @@ def fx_service(
 def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookOpener:
     """Return the opener of the books of the test over source stores whose first deletion fails.
 
-    :param fx_open_book: Opens the books of the test, whose units of work and databases the opener shares.
+    :param fx_open_book: Opens the books of the test, whose catalogue databases and databases the opener shares.
     :type fx_open_book: BookOpener
     :param fx_storage_root: Storage root of the test, which holds the files of its books.
     :type fx_storage_root: Path
@@ -122,7 +122,7 @@ def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookO
     :rtype: BookOpener
     """
     stores = SharedBookDirectories(root=fx_storage_root, source_store=SourceStoreFailingOnce)
-    return BookOpener(uow=fx_open_book.uow, databases=fx_open_book.databases, files=stores)
+    return BookOpener(catalogue=fx_open_book.catalogue, databases=fx_open_book.databases, files=stores)
 
 
 async def _record_unimported(book_id: BookId, *, databases: LocatedBookDatabases) -> tuple[Source, Source]:
@@ -315,7 +315,7 @@ class TestGet:
     async def test_source_of_another_book_of_the_actor_is_not_found(
         self,
         fx_service: Callable[[], SourceService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_book: Book,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -324,8 +324,8 @@ class TestGet:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_actor: Account the service acts for.
@@ -334,7 +334,7 @@ class TestGet:
         :type fx_open_book: BookOpener
         """
         other_id = await store_book(
-            fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
 
         with pytest.raises(NotFoundError):
@@ -414,7 +414,7 @@ class TestScans:
     async def test_source_of_another_book_is_not_found(
         self,
         fx_service: Callable[[], SourceService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_book: Book,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -423,8 +423,8 @@ class TestScans:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_actor: Account the service acts for.
@@ -433,7 +433,7 @@ class TestScans:
         :type fx_open_book: BookOpener
         """
         other_id = await store_book(
-            fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
 
         with pytest.raises(NotFoundError):

@@ -41,16 +41,16 @@ logger = logging.getLogger(__name__)
 class OutdatedResults:
     """Marks the fresh stage records of all books stale when a processor that made their result has a new version."""
 
-    def __init__(self, *, books: BooksService, catalogue: ProcessorCatalog) -> None:
-        """Work over the ports of one unit of work.
+    def __init__(self, *, books: BooksService, processors: ProcessorCatalog) -> None:
+        """Work over the ports of one catalogue database.
 
         :param books: Books service that opens each listed book, whose transactions read the records and mark them.
         :type books: BooksService
-        :param catalogue: The processors the application can run, with the versions that are installed.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, with the versions that are installed.
+        :type processors: ProcessorCatalog
         """
         self._books = books
-        self._catalogue = catalogue
+        self._processors = processors
 
     async def mark_stale(self) -> list[PageStage]:
         """Mark every fresh record whose result a replaced version of a processor made stale, one book at a time.
@@ -65,7 +65,7 @@ class OutdatedResults:
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
-        installed = {spec.key: spec.version for spec in self._catalogue.specs()}
+        installed = {spec.key: spec.version for spec in self._processors.specs()}
 
         def find(repos: BookRepositories) -> list[PageStage]:
             """Find the fresh records of the book that stand on a replaced version.

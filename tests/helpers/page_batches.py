@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def carry_over(kit: ProcessingKit) -> CarryOverService:
-    """Build the carry-over service over a new unit of work.
+    """Build the carry-over service over a new catalogue database.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -30,7 +30,7 @@ def carry_over(kit: ProcessingKit) -> CarryOverService:
 
 
 def run_impact(kit: ProcessingKit) -> RunImpactService:
-    """Build the service that counts what a run would take away, over a new unit of work.
+    """Build the service that counts what a run would take away, over a new catalogue database.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -60,7 +60,7 @@ def _page_field(key: PageStepKey, name: str) -> ValueField:
 
 @frozen
 class PageValues:
-    """Sets and takes back the value one page uses for a field of a step, each through a new unit of work.
+    """Sets and takes back the value one page uses for a field of a step, each through a new catalogue database.
 
     :ivar kit: What the processing services of the test share.
     :ivar actor: Account acting.

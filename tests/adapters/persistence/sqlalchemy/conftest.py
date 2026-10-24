@@ -11,8 +11,8 @@ import pytest
 from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_record
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener
     from tests.helpers.storage import SharedBookDirectories
@@ -78,7 +78,7 @@ def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: 
 
     :param fx_database: Fresh SQLite database with every table created.
     :type fx_database: SqlDatabase
-    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
     :type fx_open_book: BookOpener
     :param tmp_path: Temporary directory of the test, which holds the storage root of the rig.
     :type tmp_path: Path
@@ -207,11 +207,11 @@ def fx_traced_books(fx_open_books: Callable[[float], BookRegistry]) -> BookRegis
 
 @pytest.fixture
 def fx_impatient_books(fx_open_books: Callable[[float], BookRegistry]) -> BookRegistry:
-    """Open a second registry over the books of the first, for the units of work that give up for the lock at once.
+    """Open a second registry over the books of the first, for the catalogue databases that give up for the lock at once.
 
     Its databases have write queues of their own, so its blocks meet those of the first registry at the busy timeout of
     SQLite, as the blocks of another process do, and meet each other in its queues. The limit of a block is that of its
-    unit of work, so a test that wants a refusal opens its unit of work with ``IMPATIENT_SECONDS``.
+    catalogue database, so a test that wants a refusal opens its catalogue database with ``IMPATIENT_SECONDS``.
 
     :param fx_open_books: Function that opens a registry of the books of the test.
     :type fx_open_books: Callable[[float], BookRegistry]
@@ -222,26 +222,26 @@ def fx_impatient_books(fx_open_books: Callable[[float], BookRegistry]) -> BookRe
 
 
 @pytest.fixture
-def fx_traced_uow(fx_traced_database: SqlDatabase) -> Callable[..., UnitOfWork]:
-    """Give a function opening a unit of work over the traced catalogue, with the limit it is told.
+def fx_traced_catalogue(fx_traced_database: SqlDatabase) -> Callable[..., CatalogueDatabase]:
+    """Give a function opening a catalogue database over the traced catalogue, with the limit it is told.
 
     :param fx_traced_database: The traced catalogue.
     :type fx_traced_database: SqlDatabase
-    :returns: Function taking an optional wait limit and returning a new unit of work.
-    :rtype: Callable[..., UnitOfWork]
+    :returns: Function taking an optional wait limit and returning a new catalogue database.
+    :rtype: Callable[..., CatalogueDatabase]
     """
 
-    def open_unit_of_work(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> UnitOfWork:
-        """Open a unit of work over the traced catalogue.
+    def open_catalogue_database(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> CatalogueDatabase:
+        """Open a catalogue database over the traced catalogue.
 
         :param wait_seconds: How long a change waits for its writer.
         :type wait_seconds: float
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
+        :returns: A new catalogue database.
+        :rtype: CatalogueDatabase
         """
-        return SqlAlchemyUnitOfWork(fx_traced_database, wait_seconds=wait_seconds)
+        return SqlAlchemyCatalogueDatabase(fx_traced_database, wait_seconds=wait_seconds)
 
-    return open_unit_of_work
+    return open_catalogue_database
 
 
 @pytest.fixture
@@ -305,7 +305,7 @@ def fx_impatient_databases(
 @pytest.fixture
 async def fx_book(
     fx_traced_database: SqlDatabase,
-    fx_traced_uow: Callable[..., UnitOfWork],
+    fx_traced_catalogue: Callable[..., CatalogueDatabase],
     fx_traced_databases: Callable[..., LocatedBookDatabases],
     fx_tracer: AskingTracer,
 ) -> BookId:
@@ -315,8 +315,8 @@ async def fx_book(
 
     :param fx_traced_database: Catalogue to store the owner into.
     :type fx_traced_database: SqlDatabase
-    :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
-    :type fx_traced_uow: Callable[..., UnitOfWork]
+    :param fx_traced_catalogue: Function opening a catalogue database over the traced catalogue and books.
+    :type fx_traced_catalogue: Callable[..., CatalogueDatabase]
     :param fx_traced_databases: Function opening the databases of the traced books.
     :type fx_traced_databases: Callable[..., LocatedBookDatabases]
     :param fx_tracer: Tracer of the test.
@@ -325,7 +325,7 @@ async def fx_book(
     :rtype: BookId
     """
     book_id = await store_book(
-        fx_traced_uow(),
+        fx_traced_catalogue(),
         make_record(),
         owner=await commit_account(fx_traced_database),
         databases=fx_traced_databases(),

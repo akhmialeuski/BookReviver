@@ -3,12 +3,12 @@
 ``JOB_ENTRIES`` is the registry of the entries. An entry takes the container of a request scope, the job and its
 control, takes the service that does the work from the scope, and calls its one method, which does the tasks of the job
 and returns how it ended. ``job_runner`` is the runner the board is built with: it opens a request scope for each job,
-so a job gets its own unit of work like an HTTP request, picks the entry of the kind of the job, and runs it inside a
-``job`` span.
+so a job gets its own catalogue database like an HTTP request, picks the entry of the kind of the job, and runs it
+inside a ``job`` span.
 
 A job kind without an entry cannot be run, and the runner refuses it at once, which the board records as a failed job.
 
-The span is the root of a trace of its own: a job is a unit of work of its own, and the task that runs it copied the
+The span is the root of a trace of its own: a job is work of its own, and the task that runs it copied the
 context of whoever put the job on the board, so the span of a request would become its parent there. With no parent a
 trace has the same shape however the job was put.
 """

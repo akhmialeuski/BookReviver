@@ -1,8 +1,8 @@
 """Domain events published while use cases run, delivered to the browser as server-sent events.
 
-A committed change of a book is one ``BookChanged``, which the unit of work publishes with the parts of the book the
-change wrote, so the browser reads again only those parts. The jobs live in the memory of the process and raise no
-version of the book, so a job publishes ``JobChanged`` with the whole job, and a version a page gains is announced by
+A committed change of a book is one ``BookChanged``, which the change publishes once it commits, with the parts of the
+book the change wrote, so the browser reads again only those parts. The jobs live in the memory of the process and raise
+no version of the book, so a job publishes ``JobChanged`` with the whole job, and a version a page gains is announced by
 ``PageVersionReady`` with its identifier, which a preview waits for.
 """
 

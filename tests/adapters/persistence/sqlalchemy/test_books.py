@@ -122,7 +122,7 @@ class TestBlank:
 
 
 class TestOpen:
-    """Tests for the opening of a book by a unit of work, which migrates it and refuses a newer one."""
+    """Tests for the opening of a book by a transaction, which migrates it and refuses a newer one."""
 
     async def test_a_book_without_a_file_is_not_found(self, fx_books: BookRegistry, tmp_path: Path) -> None:
         """Verify a book whose file does not exist answers like a missing one.
@@ -186,7 +186,7 @@ class TestOpen:
         assert _revisions(path) == [NEWER_REVISION]
 
     async def test_two_uses_of_a_book_share_one_database(self, fx_books: BookRegistry, tmp_path: Path) -> None:
-        """Verify a book is opened once, so every unit of work of the book meets the others in its one write queue.
+        """Verify a book is opened once, so every transaction of the book meets the others in its one write queue.
 
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
@@ -199,12 +199,12 @@ class TestOpen:
 
 
 class TestClose:
-    """Tests for the closing of a book for good, which waits for the units of work using it."""
+    """Tests for the closing of a book for good, which waits for the transactions using it."""
 
     async def test_close_waits_for_the_use_in_progress_and_leaves_the_file(
         self, fx_books: BookRegistry, tmp_path: Path
     ) -> None:
-        """Verify a close asked while a unit of work uses the book returns once the use ends, and keeps the file.
+        """Verify a close asked while a transaction uses the book returns once the use ends, and keeps the file.
 
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
@@ -228,7 +228,7 @@ class TestClose:
         assert_expectations()
 
     async def test_a_closed_book_is_not_opened_again(self, fx_books: BookRegistry, tmp_path: Path) -> None:
-        """Verify a unit of work asking for a book while it is being closed, or after, answers like a missing book.
+        """Verify a transaction asking for a book while it is being closed, or after, answers like a missing book.
 
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
@@ -285,7 +285,7 @@ class TestCloseIdle:
             assert second is not first
 
     async def test_a_book_in_use_is_never_closed(self, fx_idle_books: BookRegistry, tmp_path: Path) -> None:
-        """Verify a book that a unit of work holds stays open however long it has been held.
+        """Verify a book that a transaction holds stays open however long it has been held.
 
         :param fx_idle_books: Registry whose books are idle as soon as they are released.
         :type fx_idle_books: BookRegistry

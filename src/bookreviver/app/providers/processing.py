@@ -4,8 +4,8 @@ The catalogue, the executor and the runner of processors keep no per-request sta
 application. The catalogue loads the plugins of the pools the settings name when it is built, from the same source
 that each process of the executor builds its own catalogue from. The executor starts its processes when the container
 first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that works
-through a unit of work is built per request or job: the parts the use cases share, the service of the requests, the
-jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a
+through a catalogue database is built per request or job: the parts the use cases share, the service of the requests,
+the jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a
 run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only
 ``api`` knows, as it does for the import.
 """
@@ -22,7 +22,7 @@ from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import UnitOfWork
+from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
 from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.tracing import Tracer
@@ -100,15 +100,15 @@ class ProcessingProvider(Provider):
             await stack.aclose()
 
     @provide(scope=Scope.APP)
-    def recipe_order(self, catalogue: ProcessorCatalog) -> RecipeOrder:
+    def recipe_order(self, processors: ProcessorCatalog) -> RecipeOrder:
         """Read the order the processors ask for from their specs.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :returns: The finder of steps that stand off their place.
         :rtype: RecipeOrder
         """
-        return RecipeOrder(catalogue)
+        return RecipeOrder(processors)
 
     @provide(scope=Scope.APP)
     def default_recipes(self, settings: Settings) -> DefaultRecipes:
@@ -168,15 +168,15 @@ class ProcessingProvider(Provider):
     @provide(scope=Scope.REQUEST)
     def processing_parts(
         self,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         defaults: DefaultRecipes,
         runtime: ProcessingRuntime,
         config: ProcessingConfig,
     ) -> ProcessingParts:
         """Build the parts the processing use cases share in the request or job.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
         :param runtime: The publisher and the board.
@@ -186,27 +186,29 @@ class ProcessingProvider(Provider):
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        return ProcessingParts.build(catalogue, defaults, runtime, config)
+        return ProcessingParts.build(processors, defaults, runtime, config)
 
     @provide(scope=Scope.REQUEST)
-    def processing_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:
+    def processing_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:
         """Build the processing service of a request.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param parts: The parts the processing use cases share.
         :type parts: ProcessingParts
         :returns: The processing service.
         :rtype: ProcessingService
         """
-        return ProcessingService(catalogue=catalogue, parts=parts)
+        return ProcessingService(processors=processors, parts=parts)
 
     @provide(scope=Scope.REQUEST)
-    def recipe_profiles(self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService) -> RecipeProfiles:
+    def recipe_profiles(
+        self, catalogue: CatalogueDatabase, parts: ProcessingParts, processing: ProcessingService
+    ) -> RecipeProfiles:
         """Build the service of the recipe profiles of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
+        :param catalogue: Catalogue database of the current request.
+        :type catalogue: CatalogueDatabase
         :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
         :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
@@ -214,23 +216,23 @@ class ProcessingProvider(Provider):
         :returns: The profiles service.
         :rtype: RecipeProfiles
         """
-        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing)
+        return RecipeProfiles(catalogue=catalogue, recipes=parts.recipes, processing=processing)
 
     @provide(scope=Scope.APP)
     def stage_runtime(
         self,
         runner: StepRunner,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         runtime: ProcessingRuntime,
         order_keys: OrderKeys,
         config: ProcessingConfig,
     ) -> StageRuntime:
-        """Gather what a run of a stage works with, apart from the book and the unit of work.
+        """Gather what a run of a stage works with, apart from the book and the catalogue database.
 
         :param runner: Runner of processors.
         :type runner: StepRunner
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param runtime: The publisher, the board and the tracer.
         :type runtime: ProcessingRuntime
         :param order_keys: Order keys of the application.
@@ -242,7 +244,7 @@ class ProcessingProvider(Provider):
         """
         return StageRuntime(
             runner=runner,
-            catalogue=catalogue,
+            processors=processors,
             publisher=runtime.publisher,
             order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
@@ -269,30 +271,30 @@ class ProcessingProvider(Provider):
         return ProcessingJobs(books=books, runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
-    def edit_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> EditService:
+    def edit_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> EditService:
         """Build the edit service of a request.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
         :returns: The edit service.
         :rtype: EditService
         """
-        return EditService(catalogue=catalogue, records=parts.records)
+        return EditService(processors=processors, records=parts.records)
 
     @provide(scope=Scope.REQUEST)
-    def page_settings_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> PageSettingsService:
+    def page_settings_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> PageSettingsService:
         """Build the page settings service of a request.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
         :returns: The page settings service.
         :rtype: PageSettingsService
         """
-        return PageSettingsService(catalogue=catalogue, records=parts.records)
+        return PageSettingsService(processors=processors, records=parts.records)
 
     @provide(scope=Scope.REQUEST)
     def run_impact_service(self, parts: ProcessingParts) -> RunImpactService:
@@ -337,14 +339,14 @@ class ProcessingProvider(Provider):
         return ResultMarksService()
 
     @provide(scope=Scope.REQUEST)
-    def outdated_results(self, books: BooksService, catalogue: ProcessorCatalog) -> OutdatedResults:
-        """Build the finder of results that a replaced version of a processor made over the unit of work of the start.
+    def outdated_results(self, books: BooksService, processors: ProcessorCatalog) -> OutdatedResults:
+        """Build the finder of results that a replaced version of a processor made, over the database of the start.
 
         :param books: Books service of the start of the application, which opens each stored book.
         :type books: BooksService
-        :param catalogue: The processors the application can run, with the versions that are installed.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, with the versions that are installed.
+        :type processors: ProcessorCatalog
         :returns: The outdated results service.
         :rtype: OutdatedResults
         """
-        return OutdatedResults(books=books, catalogue=catalogue)
+        return OutdatedResults(books=books, processors=processors)

@@ -5,8 +5,8 @@ pages, the group of the page, or the page itself. ``StepValueLayers`` decides th
 needs for one page: the values of the parts of the book, once for every step of the page, and the place of the page
 in the book, once and only when a part of the pages has a value for a step, since a run over a book that has none must
 not pay for it. The reads are synchronous and go through the repositories the caller passes, so a run asks from the work
-of ``UnitOfWork.read``; what has been read stays in the object, and the later calls, in the same transaction or in
-another, read nothing again.
+of ``CatalogueDatabase.read``; what has been read stays in the object, and the later calls, in the same transaction or
+in another, read nothing again.
 """
 
 from typing import TYPE_CHECKING

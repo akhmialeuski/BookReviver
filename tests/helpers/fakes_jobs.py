@@ -102,7 +102,7 @@ class JobFakes:
     """The event bus and the job board a job test shares with the services and the application it builds.
 
     The database is not part of the fakes, since the application of an API test runs on the database of the test,
-    which a test reaches through ``fx_database`` and ``fx_uow``.
+    which a test reaches through ``fx_database`` and ``fx_catalogue``.
 
     :ivar events: Event bus serving both publishers and subscribers.
     :ivar scripted: Scripted runner a test can hold or make fail, which the board runs its jobs with unless ``runner``

@@ -177,8 +177,8 @@ class BookRecordRow(BookTable):
     :ivar image_policy: How the images of the book's scans and page versions are stored, stored by value.
     :ivar created_at: Time the book was created.
     :ivar updated_at: Time of the last change, set by the domain.
-    :ivar version: Number of the changes of the book committed so far, which only the unit of work raises, by one for
-                   every change that wrote a part of the book a reader asks for.
+    :ivar version: Number of the changes of the book committed so far, which only a change of the book raises, by one
+        for            every change that wrote a part of the book a reader asks for.
     """
 
     __tablename__ = BOOK_RECORDS_TABLE
@@ -331,8 +331,8 @@ SourceRow.scan_count = column_property(
 class PageGroupRow(BookTable):
     """Row of a group the user put pages in, which the pages, the values and the history of a group name by its key.
 
-    A group has no operation of its own: it is made when a page is first given its label, and removed by the unit of
-    work once no row names it. The key is an integer of the file, which never leaves the adapter.
+    A group has no operation of its own: it is made when a page is first given its label, and removed by the change
+    once no row names it. The key is an integer of the file, which never leaves the adapter.
 
     :ivar id: Key of the group within the file of the book.
     :ivar label: Label of the group, unique and never empty.

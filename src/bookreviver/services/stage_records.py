@@ -7,7 +7,7 @@ again. A record that already failed stays failed, since a stale mark would hide 
 
 Every method that writes or reads records takes the ``BookRepositories`` of the transaction it runs in, so it is called
 from the work of ``Book.change`` or ``Book.read`` and opens no transaction of its own. It is
-synchronous, like the work that calls it, and announces nothing: the unit of work tells the browser that the stages
+synchronous, like the work that calls it, and announces nothing: the browser is told that the stages
 changed once the transaction committed.
 
 A value for the odd pages or the even pages is taken by place, so a page that a change of the places of the pages turns

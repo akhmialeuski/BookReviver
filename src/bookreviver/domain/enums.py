@@ -1294,7 +1294,7 @@ class SpanAttribute(LabeledStrEnum):
 
 
 class SpanParent(LabeledStrEnum):
-    """Which span a new span is the child of, which a unit of work of its own does not leave to the context."""
+    """Which span a new span is the child of, which work of its own, such as a job, does not leave to the context."""
 
     CURRENT = 'current', 'The span current where it is opened'
     NONE = 'none', 'No parent: the span starts a trace of its own'

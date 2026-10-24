@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
@@ -111,15 +111,15 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 @pytest.fixture
 async def fx_book(
-    fx_uow: UnitOfWorkFactory,
+    fx_catalogue: CatalogueDatabaseFactory,
     fx_directories: SharedBookDirectories,
     fx_actor: Actor,
     fx_databases: BookDatabasesFactory,
 ) -> Book:
     """Commit a book of one page and store the full image of its scan as a real JPEG.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_directories: Opens the source store and the asset store of a book of the test.
     :type fx_directories: SharedBookDirectories
     :param fx_actor: The signed-in account.
@@ -136,7 +136,7 @@ async def fx_book(
     )
     page = make_page(scan=scan)
     book_id = await store_book(
-        fx_uow(),
+        fx_catalogue(),
         make_record(),
         page,
         owner=fx_actor.account_id,

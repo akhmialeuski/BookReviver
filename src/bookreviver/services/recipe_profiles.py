@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Recipe
     from bookreviver.domain.enums import RecipeKind, Stage
     from bookreviver.domain.values import ProfileDraft
-    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, CatalogueRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.processing import ProcessingService
     from bookreviver.services.recipes import RecipeBook
@@ -76,18 +76,18 @@ class AppliedProfile:
 class RecipeProfiles:
     """Saves, copies, exchanges, renames, deletes and applies the recipe profiles it is given."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, processing: ProcessingService) -> None:
+    def __init__(self, *, catalogue: CatalogueDatabase, recipes: RecipeBook, processing: ProcessingService) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request. A use case that changes the profiles of the account runs in one
-                    ``change``, and ``link`` runs in the ``Book.change`` of the book it changes.
-        :type uow: UnitOfWork
+        :param catalogue: Catalogue database of the request. A use case that changes the profiles of the account runs in
+            one         ``change``, and ``link`` runs in the ``Book.change`` of the book it changes.
+        :type catalogue: CatalogueDatabase
         :param recipes: The recipes of the book, which check the steps of a profile.
         :type recipes: RecipeBook
         :param processing: The use cases that put the steps of a profile into a recipe of a book.
         :type processing: ProcessingService
         """
-        self._uow = uow
+        self._catalogue = catalogue
         self._recipes = recipes
         self._processing = processing
 
@@ -140,7 +140,7 @@ class RecipeProfiles:
                 )
             )
 
-        return await self._uow.change(work)
+        return await self._catalogue.change(work)
 
     async def import_profile(self, owner: Actor, stage: Stage, draft: ProfileDraft) -> RecipeProfile:
         """Save the profile a file holds, which gets new identifiers for its steps.
@@ -186,7 +186,7 @@ class RecipeProfiles:
             created_at=moment,
             updated_at=moment,
         )
-        return await self._uow.change(lambda repos: repos.recipe_profiles.add(profile))
+        return await self._catalogue.change(lambda repos: repos.recipe_profiles.add(profile))
 
     async def replace(self, profile: RecipeProfile, draft: ProfileDraft) -> RecipeProfile:
         """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
@@ -228,7 +228,7 @@ class RecipeProfiles:
                 )
             )
 
-        return await self._uow.change(work)
+        return await self._catalogue.change(work)
 
     async def link(self, book: Book, key: RecipeKey, profile: RecipeProfile | None) -> Recipe:
         """Record which profile a recipe of a book was made from, or that it was made from none.
@@ -295,7 +295,7 @@ class RecipeProfiles:
             current = repos.recipe_profiles.get(profile.id)
             return repos.recipe_profiles.update(evolve(current, name=name, updated_at=datetime.now(UTC)))
 
-        return await self._uow.change(work)
+        return await self._catalogue.change(work)
 
     async def remove(self, profile: RecipeProfile, books: Iterable[Book]) -> None:
         """Delete a profile, and clear the link to it in the recipes of the books, which changes no step.
@@ -323,7 +323,7 @@ class RecipeProfiles:
 
         for book in books:
             await book.change(unlink)
-        await self._uow.change(lambda repos: repos.recipe_profiles.delete(profile.id))
+        await self._catalogue.change(lambda repos: repos.recipe_profiles.delete(profile.id))
 
     async def apply(self, book: Book, profile: RecipeProfile, *, kind: RecipeKind) -> AppliedProfile:
         """Put the steps of a profile into the recipe of one kind of page of the profile's stage, and link it.

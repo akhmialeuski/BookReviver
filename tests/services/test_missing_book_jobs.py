@@ -73,7 +73,7 @@ class TestJobsOfAMissingBook:
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_open_book: Opens the units of work and the databases of the books of the test.
+        :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
         :type fx_open_book: BookOpener
         """
         kit = ProcessingKit(fx_database, fx_open_book, processors=[FakeContentProbe([])])

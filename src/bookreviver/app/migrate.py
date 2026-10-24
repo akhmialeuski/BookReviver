@@ -94,7 +94,7 @@ def split_shared_database() -> None:
     )
     split = SharedDatabaseSplit(
         settings.data_dir.resolve() / SHARED_DATABASE,
-        catalogue=catalogue,
+        catalogue_db=catalogue,
         books=books,
         directories=LocalBookDirectories(root=settings.storage_root),
     )

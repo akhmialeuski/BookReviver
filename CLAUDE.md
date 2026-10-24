@@ -75,8 +75,8 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
 - Everything on the event loop is async: the API and the ports of files, jobs, events and HTTP. The persistence
   repositories are synchronous and run only inside the work a service or an access dependency hands to
-  `UnitOfWork.read` or `change` of the catalogue, or `Book.read` or `change` of one book, which the adapter runs in a
-  worker thread as one transaction of that file. Other blocking library calls go through
+  `CatalogueDatabase.read` or `change` of the catalogue, or `Book.read` or `change` of one book, which the adapter runs
+  in a worker thread as one transaction of that file. Other blocking library calls go through
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.

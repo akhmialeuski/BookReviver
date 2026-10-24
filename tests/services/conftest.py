@@ -75,7 +75,7 @@ def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobB
     A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
     ends at once, since the page tests look at the queueing of those and not at their work.
 
-    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
     :type fx_open_book: BookOpener
     :param fx_events: Recording event bus.
     :type fx_events: RecordingEventBus
@@ -123,11 +123,11 @@ def fx_service(
 ) -> Callable[[], PageService]:
     """Return a function building the page service for one request or job.
 
-    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
     :type fx_open_book: BookOpener
     :param fx_runtime: The recording bus and the job board the service reports through.
     :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
-    :returns: Function building a service over a new unit of work.
+    :returns: Function building a service over a new catalogue database.
     :rtype: Callable[[], PageService]
     """
     return lambda: make_page_service(fx_open_book, fx_runtime)

@@ -4,7 +4,7 @@ Each port repository works on two levels. A row repository of
 :mod:`bookreviver.adapters.persistence.sqlalchemy.rows` supplies every generic query of one table, and a mapper from
 :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turns its rows into domain entities. The port repository
 adds only the queries specific to BookReviver, such as the counts of a book. The repositories are
-synchronous, because the unit of work runs the whole work of a use case in one worker thread.
+synchronous, because the catalogue database runs the whole work of a use case in one worker thread.
 :class:`SqlAlchemyCatalogueRepositories` binds the repositories of the catalogue to the session of a transaction of the
 catalogue, and :class:`SqlAlchemyBookRepositories` those of a book to a session of the file of that book. The row
 repositories report the database's checks as the domain errors the port promises.
@@ -162,7 +162,7 @@ class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT
     def __init__(self, *, rows: RowRepository[RowT], mapper: RowMapper[EntityT, RowT]) -> None:
         """Create the repository over one table.
 
-        :param rows: Row repository of the entity's table, bound to the session of the unit of work.
+        :param rows: Row repository of the entity's table, bound to the session of the transaction.
         :type rows: RowRepository[RowT]
         :param mapper: Translation between the entity and its row.
         :type mapper: RowMapper[EntityT, RowT]
@@ -270,7 +270,7 @@ class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, BookId, Lib
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``library`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=LibraryRows(session=session), mapper=LibraryEntryMapper())
@@ -312,7 +312,7 @@ class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRo
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``sources`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=SourceRows(session=session), mapper=SourceMapper())
@@ -367,7 +367,7 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``scans`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=ScanRows(session=session), mapper=ScanMapper())
@@ -445,7 +445,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
     def __init__(self, session: Session, groups: PageGroups) -> None:
         """Create the repository over the ``pages`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         :param groups: The groups of the book on the session, which name the group of a page.
         :type groups: PageGroups
@@ -554,7 +554,8 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
     def update_many(self, pages: Sequence[Page]) -> None:
         """Replace the stored state of several pages with one read and one flush, in the transaction of the work.
 
-        The transaction makes the pages change together or not at all, as the unit of work rolls it back on an error.
+        The transaction makes the pages change together or not at all, because an error rolls the whole transaction
+        back.
 
         :param pages: Pages with their new state.
         :type pages: Sequence[Page]
@@ -622,7 +623,7 @@ class SqlAlchemyPaginationSectionRepository(
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``pagination_sections`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=PaginationSectionRows(session=session), mapper=PaginationSectionMapper())
@@ -646,7 +647,7 @@ class SqlAlchemyPageVersionRepository(
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``page_versions`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=PageVersionRows(session=session), mapper=PageVersionMapper())
@@ -849,7 +850,7 @@ class SqlAlchemyPageStageRepository(
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``page_stages`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=PageStageRows(session=session), mapper=PageStageMapper())
@@ -1065,7 +1066,7 @@ class SqlAlchemyPageStepStateRepository(
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``page_step_states`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=PageStepStateRows(session=session), mapper=PageStepStateMapper())
@@ -1149,7 +1150,7 @@ class SqlAlchemyStepValuesRepository(StepValuesRepository):
     def __init__(self, session: Session, groups: PageGroups) -> None:
         """Create the repository over the ``step_values`` and the ``group_values`` tables.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         :param groups: The groups of the book on the session, which name the group of the values of a group.
         :type groups: PageGroups
@@ -1337,7 +1338,7 @@ class SqlAlchemyPageHistoryRepository(PageHistoryRepository):
     def __init__(self, session: Session, groups: PageGroups) -> None:
         """Create the repository over the ``page_history`` and the ``step_changes`` tables.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         :param groups: The groups of the book on the session, which name the group of a change of a group.
         :type groups: PageGroups
@@ -1490,7 +1491,7 @@ class SqlAlchemyBookPlaceRepository(BookPlaceRepository):
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``book_places`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         self._places = BookPlaceRows(session=session)
@@ -1524,7 +1525,7 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``recipes`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=RecipeRows(session=session), mapper=RecipeMapper())
@@ -1560,7 +1561,7 @@ class SqlAlchemyRecipeProfileRepository(
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``recipe_profiles`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         super().__init__(rows=RecipeProfileRows(session=session), mapper=RecipeProfileMapper())
@@ -1588,8 +1589,8 @@ class SqlAlchemyRecipeProfileRepository(
 class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
     """Every repository of the catalogue, bound to the session of one transaction of the catalogue.
 
-    The unit of work builds one for each transaction and hands it to the work, so the repositories share the session,
-    and with it the transaction, and are dropped with it.
+    The catalogue database builds one for each transaction and hands it to the work, so the repositories share the
+    session, and with it the transaction, and are dropped with it.
 
     :ivar library: Library repository bound to the session.
     :ivar recipe_profiles: Recipe profile repository bound to the session.
@@ -1608,15 +1609,15 @@ class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
 class SqlAlchemyBookRepositories(BookRepositories):
     """Every repository of a book, bound to the session of one transaction of the file of the book.
 
-    The unit of work builds one for each transaction and hands it to the work, so the repositories share the session,
-    and with it the transaction, and are dropped with it.
+    The database of the book builds one for each transaction and hands it to the work, so the repositories share the
+    session, and with it the transaction, and are dropped with it.
 
     :ivar book_record: Repository of the record of the book, bound to the session.
     :ivar sources: Source repository bound to the session.
     :ivar scans: Scan repository bound to the session.
     :ivar pages: Page repository bound to the session.
     :ivar pagination_sections: Pagination section repository bound to the session.
-    :ivar groups: The groups of the pages of the book on the session, which the unit of work prunes after a change.
+    :ivar groups: The groups of the pages of the book on the session, which the work prunes after a change.
     :ivar page_versions: Page version repository bound to the session.
     :ivar page_stages: Page stage repository bound to the session.
     :ivar page_step_states: Page step state repository bound to the session.

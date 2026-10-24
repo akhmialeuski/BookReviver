@@ -52,7 +52,7 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
 
     :param database: Catalogue to commit into, which gets the account of the owner when it does not store it.
     :type database: SqlDatabase
-    :param stores: Opens the unit of work to store the book through, over the same catalogue, the databases, and the
+    :param stores: Opens the catalogue database to store the book through, over the same catalogue, the databases, and the
                    source store and the asset store receiving the sources, the renditions of the scans and the page.
     :type stores: BookOpener
     :param owner: The actor owning the book, or None for an account that acts nowhere else.
@@ -74,7 +74,7 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
     owner_id = new_account_id() if owner is None else owner.account_id
     book_id = await commit_record(
         database,
-        stores.uow(),
+        stores.catalogue(),
         make_record(),
         page,
         owner=owner_id,

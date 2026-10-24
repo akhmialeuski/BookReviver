@@ -15,7 +15,7 @@ from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
@@ -29,7 +29,7 @@ class TestClear:
     async def test_a_version_deleted_after_the_collection_chose_it_is_skipped_and_the_others_go(
         self,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -37,8 +37,8 @@ class TestClear:
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -50,7 +50,7 @@ class TestClear:
         )
         book_id = await commit_record(
             fx_database,
-            fx_uow(),
+            fx_catalogue(),
             make_record(),
             page,
             owner=new_account_id(),
@@ -63,7 +63,7 @@ class TestClear:
             .change(lambda repos, _book_record: repos.page_versions.delete_many([deleted.id]))
         )
         clearing = VersionClearing(
-            book=await make_books_service(fx_uow(), databases=fx_databases(), files=fx_directories).open(book_id)
+            book=await make_books_service(fx_catalogue(), databases=fx_databases(), files=fx_directories).open(book_id)
         )
 
         await clearing.clear([kept, deleted])
@@ -75,7 +75,7 @@ class TestClear:
     async def test_the_mark_of_the_user_written_after_the_collection_chose_the_version_is_kept_on_the_marked_row(
         self,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         monkeypatch: pytest.MonkeyPatch,
         fx_databases: BookDatabasesFactory,
@@ -86,8 +86,8 @@ class TestClear:
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param monkeypatch: Fixture that restores the patched store after the test.
@@ -99,7 +99,7 @@ class TestClear:
         chosen = evolve(make_page_version(page_id=page.id), state=VersionState.READY)
         book_id = await commit_record(
             fx_database,
-            fx_uow(),
+            fx_catalogue(),
             make_record(),
             page,
             owner=new_account_id(),
@@ -114,7 +114,7 @@ class TestClear:
 
         monkeypatch.setattr(fx_directories.assets(book_id), 'delete_prefix', AsyncMock(side_effect=OSError))
         clearing = VersionClearing(
-            book=await make_books_service(fx_uow(), databases=fx_databases(), files=fx_directories).open(book_id)
+            book=await make_books_service(fx_catalogue(), databases=fx_databases(), files=fx_directories).open(book_id)
         )
 
         await clearing.clear([chosen])

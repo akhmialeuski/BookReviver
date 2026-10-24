@@ -30,11 +30,11 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PaginationSection
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
 
@@ -90,12 +90,16 @@ NUMBERING_CASES: list[NumberingCase] = [
 
 
 async def _commit_book(
-    uow: UnitOfWork, owner: Actor, *layout: tuple[PageKind, bool], databases: LocatedBookDatabases, label: str = ''
+    catalogue: CatalogueDatabase,
+    owner: Actor,
+    *layout: tuple[PageKind, bool],
+    databases: LocatedBookDatabases,
+    label: str = '',
 ) -> tuple[BookId, list[Page]]:
     """Commit a book of pages of the given kinds and inclusion, all labelled by hand with ``label`` when it is given.
 
-    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
+    :type catalogue: CatalogueDatabase
     :param owner: Account owning the book.
     :type owner: Actor
     :param layout: Kind and inclusion of each page in book order.
@@ -117,7 +121,7 @@ async def _commit_book(
         )
         for key, (kind, included) in zip(keys, layout, strict=True)
     ]
-    book_id = await store_book(uow, make_record(), *pages, owner=owner.account_id, databases=databases)
+    book_id = await store_book(catalogue, make_record(), *pages, owner=owner.account_id, databases=databases)
     return book_id, pages
 
 
@@ -194,7 +198,7 @@ class TestSections:
     async def test_roman_front_matter_is_followed_by_arabic_text_from_one(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
         fx_open_book: BookOpener,
@@ -203,16 +207,16 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
 
         fx_book_changes.published.clear()
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
@@ -226,7 +230,7 @@ class TestSections:
     async def test_a_page_counted_and_not_printed_shows_its_number_in_square_brackets(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -234,14 +238,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
 
         await fx_pagination().add(
             fx_open_book(fx_actor, book_id),
@@ -260,7 +264,7 @@ class TestSections:
     async def test_a_page_that_is_not_counted_takes_no_number(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -268,14 +272,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
 
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], display=NumberDisplay.NOT_COUNTED))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
@@ -285,7 +289,7 @@ class TestSections:
     async def test_plates_get_their_own_series_without_breaking_the_text_count(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -293,15 +297,15 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         layout = [(kind, True) for kind in (PageKind.FRONTISPIECE, TEXT, TEXT, PageKind.PLATE, TEXT, PageKind.PLATE)]
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *layout, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *layout, databases=fx_open_book.databases)
 
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(
@@ -321,7 +325,7 @@ class TestSections:
     async def test_a_label_written_by_hand_stays_when_a_section_is_made(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -330,8 +334,8 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
@@ -339,7 +343,7 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
         await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(pages[1], manual_label=HAND_WRITTEN)),
         )
@@ -355,7 +359,7 @@ class TestSections:
     async def test_no_page_is_written_when_no_label_changes(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -364,8 +368,8 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
@@ -373,7 +377,7 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         fx_page_writes.start()
 
@@ -386,7 +390,7 @@ class TestSections:
     async def test_removing_a_section_gives_its_pages_to_the_section_before_it(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -394,14 +398,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
         preface = await fx_pagination().add(
             fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
         )
@@ -418,7 +422,7 @@ class TestSections:
     async def test_updating_a_section_changes_its_first_page_and_its_rule(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -426,14 +430,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
@@ -450,7 +454,7 @@ class TestSections:
     async def test_a_second_section_of_one_flow_cannot_start_at_the_same_page(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -458,14 +462,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], kinds=PLATES))
 
@@ -482,7 +486,7 @@ class TestSections:
         self,
         fx_pagination: Callable[[], PaginationService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -492,18 +496,18 @@ class TestSections:
         :type fx_pagination: Callable[[], PaginationService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(2), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(2), databases=fx_open_book.databases)
         owner = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, owner.account_id)
         stranger, strangers_pages = await _commit_book(
-            fx_uow(), owner, *_text_book(1), databases=fx_open_book.databases
+            fx_catalogue(), owner, *_text_book(1), databases=fx_open_book.databases
         )
         own = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
 
@@ -521,7 +525,7 @@ class TestSections:
     async def test_sections_are_listed_in_book_order_with_the_main_flow_first(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -529,14 +533,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
         late = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[3]))
         series = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], kinds=PLATES))
         flow = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
@@ -552,7 +556,7 @@ class TestSections:
     async def test_numbers_past_the_roman_limit_conflict_and_store_nothing(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -560,14 +564,14 @@ class TestSections:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
 
         with pytest.raises(ConflictError, match=str(ROMAN_LIMIT + 1)):
             await fx_pagination().add(
@@ -589,7 +593,7 @@ class TestNumberPages:
     async def test_writes_every_style_with_and_without_brackets_skipping_what_is_not_counted(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         case: NumberingCase,
         fx_open_book: BookOpener,
@@ -600,8 +604,8 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param case: Style, brackets and the labels the four numbered pages get.
@@ -610,7 +614,7 @@ class TestNumberPages:
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
         numbering = PageNumbering(
             first_page_id=pages[0].id,
@@ -638,7 +642,7 @@ class TestNumberPages:
     async def test_numbering_a_range_makes_a_section_a_series_for_the_skipped_kinds_and_no_closing_at_the_end(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -646,14 +650,14 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
         skipped = frozenset({PageKind.COVER, PageKind.PLATE})
 
         await fx_pagination().number(
@@ -695,13 +699,13 @@ class TestNumberPages:
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_open_book.uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
         fx_page_writes.start()
 
@@ -730,7 +734,7 @@ class TestNumberPages:
     async def test_numbering_the_same_range_again_replaces_its_sections_and_gives_up_the_labels_by_hand(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -738,14 +742,14 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
         first = PageNumbering(first_page_id=pages[0].id, last_page_id=pages[-1].id, style=LabelStyle.ROMAN_LOWER)
         await fx_pagination().number(fx_open_book(fx_actor, book_id), first)
         await fx_open_book.databases.open(book_id).change(
@@ -769,7 +773,7 @@ class TestNumberPages:
     async def test_the_sections_that_start_inside_the_range_are_replaced(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -777,14 +781,14 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(6), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(6), databases=fx_open_book.databases)
         before = await fx_pagination().add(
             fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
         )
@@ -803,7 +807,7 @@ class TestNumberPages:
     async def test_a_range_of_one_page_numbers_that_page(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -811,15 +815,15 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
 
         await fx_pagination().number(
@@ -832,7 +836,7 @@ class TestNumberPages:
     async def test_range_that_runs_backwards_conflicts_and_changes_nothing(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
         fx_open_book: BookOpener,
@@ -841,17 +845,17 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
 
         fx_book_changes.published.clear()
@@ -868,7 +872,7 @@ class TestNumberPages:
     async def test_numbers_past_the_roman_limit_conflict_and_change_nothing(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -877,8 +881,8 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
@@ -887,7 +891,7 @@ class TestNumberPages:
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
         fx_page_writes.start()
 
@@ -909,7 +913,7 @@ class TestNumberPages:
     async def test_page_of_another_book_is_not_found(
         self,
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -917,15 +921,15 @@ class TestNumberPages:
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
-        _, others = await _commit_book(fx_uow(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
+        _, others = await _commit_book(fx_catalogue(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
             await fx_pagination().number(
@@ -951,13 +955,13 @@ class TestNumberPages:
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_open_book.uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
         fx_page_writes.start()
         numbering = PageNumbering(
@@ -985,7 +989,7 @@ class TestNumberPages:
 
     async def test_a_numbering_asked_after_a_page_is_labelled_waits_and_numbers_the_result(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_writes: PageWrites,
         fx_pagination: Callable[[], PaginationService],
         fx_actor: Actor,
@@ -997,8 +1001,8 @@ class TestNumberPages:
         numbering waits for the held book, so it cannot read the old label, and it numbers the page it finds
         afterwards.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_pagination: Function building the service for one request.
@@ -1009,7 +1013,7 @@ class TestNumberPages:
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
         )
         numbering = PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC)
         fx_page_writes.start()
@@ -1052,7 +1056,7 @@ class TestRecomputeInPageUseCases:
 
         :param pagination: Function building the pagination service for one request.
         :type pagination: Callable[[], PaginationService]
-        :param stores: Opens the unit of work to commit through, over a database that stores the account of the owner,
+        :param stores: Opens the catalogue database to commit through, over a database that stores the account of the owner,
                        and the databases of the books.
         :type stores: BookOpener
         :param owner: Account owning the book.
@@ -1064,7 +1068,7 @@ class TestRecomputeInPageUseCases:
         :returns: The book and its pages in book order, numbered.
         :rtype: tuple[BookRecord, list[Page]]
         """
-        book_id, pages = await _commit_book(stores.uow(), owner, *_text_book(count), databases=stores.databases)
+        book_id, pages = await _commit_book(stores.catalogue(), owner, *_text_book(count), databases=stores.databases)
         await pagination().add(stores(owner, book_id), _draft(pages[0], **section))
         return book_id, pages
 
@@ -1084,7 +1088,7 @@ class TestRecomputeInPageUseCases:
         :type fx_pagination: Callable[[], PaginationService]
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
@@ -1158,7 +1162,7 @@ class TestRecomputeInPageUseCases:
         :type fx_pagination: Callable[[], PaginationService]
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
@@ -1178,7 +1182,7 @@ class TestRecomputeInPageUseCases:
         self,
         fx_service: Callable[[], PageService],
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1188,14 +1192,14 @@ class TestRecomputeInPageUseCases:
         :type fx_service: Callable[[], PageService]
         :param fx_pagination: Function building the pagination service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
@@ -1211,7 +1215,7 @@ class TestRecomputeInPageUseCases:
         self,
         fx_service: Callable[[], PageService],
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1221,14 +1225,14 @@ class TestRecomputeInPageUseCases:
         :type fx_service: Callable[[], PageService]
         :param fx_pagination: Function building the pagination service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
         kept = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2], style=LabelStyle.ROMAN_LOWER))
 
@@ -1240,7 +1244,7 @@ class TestRecomputeInPageUseCases:
         self,
         fx_service: Callable[[], PageService],
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1250,14 +1254,14 @@ class TestRecomputeInPageUseCases:
         :type fx_service: Callable[[], PageService]
         :param fx_pagination: Function building the pagination service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         doomed = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2], start=FIRST_NUMBER))
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[3]))
@@ -1289,13 +1293,13 @@ class TestRecomputeInPageUseCases:
         :type fx_pagination: Callable[[], PaginationService]
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_open_book.uow(), fx_actor, *_text_book(5), databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases
         )
         await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(pages[1], manual_label=HAND_WRITTEN)),
@@ -1351,7 +1355,7 @@ class TestRecomputeInPageUseCases:
         self,
         fx_service: Callable[[], PageService],
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1361,14 +1365,14 @@ class TestRecomputeInPageUseCases:
         :type fx_service: Callable[[], PageService]
         :param fx_pagination: Function building the pagination service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
@@ -1387,7 +1391,7 @@ class TestRecomputeInPageUseCases:
         self,
         fx_service: Callable[[], PageService],
         fx_pagination: Callable[[], PaginationService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1397,14 +1401,14 @@ class TestRecomputeInPageUseCases:
         :type fx_service: Callable[[], PageService]
         :param fx_pagination: Function building the pagination service for one request.
         :type fx_pagination: Callable[[], PaginationService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], prefix=PLATE_PREFIX, kinds=PLATES))
 
@@ -1476,7 +1480,7 @@ class TestRecomputeInPageUseCases:
     async def test_a_book_without_sections_keeps_every_label_it_has(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -1485,8 +1489,8 @@ class TestRecomputeInPageUseCases:
 
         :param fx_service: Function building the page service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the services act for.
@@ -1495,7 +1499,7 @@ class TestRecomputeInPageUseCases:
         :type fx_open_book: BookOpener
         """
         book_id, pages = await _commit_book(
-            fx_uow(), fx_actor, *_text_book(3), label=STALE_LABEL, databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, *_text_book(3), label=STALE_LABEL, databases=fx_open_book.databases
         )
         fx_page_writes.start()
 

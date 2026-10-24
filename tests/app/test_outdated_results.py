@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, PageVersion, Scan, Source
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -104,14 +104,18 @@ def fx_book() -> Book:
 
 @pytest.fixture
 async def fx_extra_providers(
-    fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor, fx_databases: BookDatabasesFactory
+    fx_fakes: JobFakes,
+    fx_catalogue: CatalogueDatabaseFactory,
+    fx_book: Book,
+    fx_actor: Actor,
+    fx_databases: BookDatabasesFactory,
 ) -> Sequence[Provider]:
     """Store the book before the application starts, and give the application the fakes and the fake catalogue.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_book: The book to store.
     :type fx_book: Book
     :param fx_actor: Account that owns the book.
@@ -122,7 +126,7 @@ async def fx_extra_providers(
     :rtype: Sequence[Provider]
     """
     await store_book(
-        fx_uow(),
+        fx_catalogue(),
         fx_book.book_record,
         fx_book.page,
         owner=fx_actor.account_id,
@@ -158,7 +162,7 @@ class TestStart:
         """Verify the geometry record is stale once the application runs, and the record of the base version is not.
 
         The running application is only started, and no request is made, so the mark can only come from the start
-        itself. No service announces it, and the unit of work announces the change of the stages of the book.
+        itself. No service announces it, and the commit of the change announces the stages of the book.
 
         :param fx_fakes: Adapters of the test, whose event bus records what is announced.
         :type fx_fakes: JobFakes

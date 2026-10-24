@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.domain.ids import BookId
     from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
@@ -81,15 +81,15 @@ def _jpeg() -> bytes:
 
 @pytest.fixture
 async def fx_book(
-    fx_uow: UnitOfWorkFactory,
+    fx_catalogue: CatalogueDatabaseFactory,
     fx_directories: SharedBookDirectories,
     fx_actor: Actor,
     fx_databases: BookDatabasesFactory,
 ) -> Book:
     """Commit the book and store the full image of both scans as a real JPEG.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_directories: Opens the source store and the asset store of a book of the test.
     :type fx_directories: SharedBookDirectories
     :param fx_actor: The signed-in account.
@@ -113,7 +113,7 @@ async def fx_book(
     placeholder = evolve(make_page(order_key='a1'), kind=PageKind.COVER, notes='Missing')
     base = BaseVersions.split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
     book_id = await store_book(
-        fx_uow(),
+        fx_catalogue(),
         make_record(),
         shown,
         placeholder,
@@ -212,7 +212,7 @@ class TestCreatePage:
     async def test_blank_leaf_without_a_size_in_a_book_without_images_is_a_conflict_problem(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -220,14 +220,14 @@ class TestCreatePage:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.post(f'{BOOKS_PATH}/{book_id}/pages', json={'origin': 'blank', 'kind': 'blank'})
 
@@ -303,7 +303,7 @@ class TestCreatePage:
         fx_client: httpx.AsyncClient,
         fx_book: Book,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify an anchor that is no page of the book, and a book of another account, answer 404.
@@ -314,13 +314,13 @@ class TestCreatePage:
         :type fx_book: Book
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         stranger_id = await commit_record(
-            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
 
         unknown = await fx_client.post(
@@ -569,7 +569,7 @@ class TestAttachScan:
         self,
         fx_client: httpx.AsyncClient,
         fx_book: Book,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -579,8 +579,8 @@ class TestAttachScan:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -589,7 +589,12 @@ class TestAttachScan:
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         await store_book(
-            fx_uow(), make_record(), owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
+            fx_catalogue(),
+            make_record(),
+            owner=fx_actor.account_id,
+            sources=[source],
+            scans=[scan],
+            databases=fx_databases(),
         )
         path = f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan'
 

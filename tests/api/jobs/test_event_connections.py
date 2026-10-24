@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import UnitOfWork
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from bookreviver.ports.persistence import CatalogueDatabase
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -34,11 +34,13 @@ pytestmark = pytest.mark.anyio
 OPEN_TABS: int = 3
 
 
-async def _store_book_of(uow: UnitOfWork, owner_id: AccountId, *, databases: LocatedBookDatabases) -> BookId:
+async def _store_book_of(
+    catalogue: CatalogueDatabase, owner_id: AccountId, *, databases: LocatedBookDatabases
+) -> BookId:
     """Commit a book of an account to the catalogue and the books of the test.
 
-    :param uow: Unit of work over the catalogue and the books of the running application.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database over the catalogue and the books of the running application.
+    :type catalogue: CatalogueDatabase
     :param owner_id: Committed account that owns the book.
     :type owner_id: AccountId
     :param databases: Opens the databases of the books of the test.
@@ -46,15 +48,17 @@ async def _store_book_of(uow: UnitOfWork, owner_id: AccountId, *, databases: Loc
     :returns: The identifier of the stored book.
     :rtype: BookId
     """
-    return await store_book(uow, make_record(), owner=owner_id, databases=databases)
+    return await store_book(catalogue, make_record(), owner=owner_id, databases=databases)
 
 
 @pytest.fixture
-async def fx_owned_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookId:
+async def fx_owned_book(
+    fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> BookId:
     """Commit a book of the signed-in account, which the catalogue of the test stores.
 
-    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -62,25 +66,25 @@ async def fx_owned_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases
     :returns: The identifier of the stored book of the signed-in account.
     :rtype: BookId
     """
-    return await _store_book_of(fx_uow(), fx_actor.account_id, databases=fx_databases())
+    return await _store_book_of(fx_catalogue(), fx_actor.account_id, databases=fx_databases())
 
 
 @pytest.fixture
 async def fx_strangers_book(
-    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
+    fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory, fx_databases: BookDatabasesFactory
 ) -> BookId:
     """Commit a book of another account.
 
     :param fx_database: Catalogue of the test, which the running application runs on.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
     :returns: The identifier of the stored book of the other account.
     :rtype: BookId
     """
-    return await _store_book_of(fx_uow(), await commit_account(fx_database), databases=fx_databases())
+    return await _store_book_of(fx_catalogue(), await commit_account(fx_database), databases=fx_databases())
 
 
 class TestStreamConnections:

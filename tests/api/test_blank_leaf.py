@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
@@ -98,15 +98,15 @@ def _jpeg() -> bytes:
 
 @pytest.fixture
 async def fx_book(
-    fx_uow: UnitOfWorkFactory,
+    fx_catalogue: CatalogueDatabaseFactory,
     fx_actor: Actor,
     fx_databases: BookDatabasesFactory,
     fx_directories: SharedBookDirectories,
 ) -> Book:
     """Commit the book and store the full image of every scan and of every base version as a real JPEG.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -137,7 +137,7 @@ async def fx_book(
         for page, scan in zip(pages, scans, strict=True)
     ]
     book_id = await store_book(
-        fx_uow(),
+        fx_catalogue(),
         make_record(),
         *pages,
         owner=fx_actor.account_id,

@@ -1,4 +1,4 @@
-"""Building the page service of a test over a unit of work of the test's database and the local asset store."""
+"""Building the page service of a test over a catalogue database of the test's database and the local asset store."""
 
 from typing import TYPE_CHECKING, override
 
@@ -87,9 +87,9 @@ def make_page_service(
     order_keys: OrderKeys | None = None,
     renditions: RenditionWriter | None = None,
 ) -> PageService:
-    """Build a page service over a unit of work, as a new request or job would get one.
+    """Build a page service over a catalogue database, as a new request or job would get one.
 
-    :param stores: Opens the unit of work, the databases and the file stores of the service, over the test's own.
+    :param stores: Opens the catalogue database, the databases and the file stores of the service, over the test's own.
     :type stores: BookOpener
     :param runtime: The publisher and the job board the service reports through.
     :type runtime: tuple[EventPublisher, JobBoard]
@@ -104,7 +104,7 @@ def make_page_service(
     publisher, board = runtime
     tiler = FakeTiler()
     return PageService(
-        books=make_books_service(stores.uow(), databases=stores.databases, files=stores.files),
+        books=make_books_service(stores.catalogue(), databases=stores.databases, files=stores.files),
         runtime=PageRuntime(publisher=publisher, order_keys=order_keys or FractionalOrderKeys(), board=board),
         imaging=PageImaging(
             base_versions=BaseVersions(tiler=tiler),

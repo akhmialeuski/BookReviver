@@ -53,12 +53,12 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.recipes import DefaultRecipes
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
 
 PAGE_WIDTH_PX: int = 200
 PAGE_HEIGHT_PX: int = 300
@@ -419,7 +419,7 @@ class ImportRig:
     """Everything an import test runs on, built over one temporary storage root.
 
     :ivar database: The SQL database of the test, which stores the account of the actor.
-    :ivar new_uow: Function opening a unit of work over ``database``, as a new request or job would get.
+    :ivar new_catalogue: Function opening a catalogue database over ``database``, as a new request or job would get.
     :ivar databases: Opens the databases of the books of the test.
     :ivar fakes: The recording event bus and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
@@ -433,7 +433,7 @@ class ImportRig:
     """
 
     database: SqlDatabase
-    new_uow: UnitOfWorkFactory
+    new_catalogue: CatalogueDatabaseFactory
     databases: LocatedBookDatabases
     fakes: JobFakes
     events: RecordingEventBus
@@ -452,7 +452,7 @@ class ImportRig:
         :type root: Path
         :param database: SQL database of the test, such as ``fx_database``.
         :type database: SqlDatabase
-        :param stores: Opens the units of work over ``database`` and the databases of the books, such as
+        :param stores: Opens the catalogue databases over ``database`` and the databases of the books, such as
                        ``fx_open_book``.
         :type stores: BookOpener
         :returns: The rig with nothing stored.
@@ -495,7 +495,7 @@ class ImportRig:
 
         rig = cls(
             database=database,
-            new_uow=stores.uow,
+            new_catalogue=stores.catalogue,
             databases=stores.databases,
             fakes=JobFakes(events=events, runner=run),
             events=events,
@@ -523,26 +523,26 @@ class ImportRig:
             tiler=self.tiler,
         )
 
-    def open_uow(self) -> UnitOfWork:
-        """Open a unit of work over the rig's database, as a new request or job would get.
+    def open_catalogue(self) -> CatalogueDatabase:
+        """Open a catalogue database over the rig's database, as a new request or job would get.
 
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
+        :returns: A new catalogue database.
+        :rtype: CatalogueDatabase
         """
-        return self.new_uow()
+        return self.new_catalogue()
 
     def service(
         self,
         *,
-        uow: UnitOfWork | None = None,
+        catalogue: CatalogueDatabase | None = None,
         parallel_scans: int = DEFAULT_PARALLEL_SCANS,
         max_files: int = MAX_FILES,
         max_bytes: int = MAX_BYTES,
     ) -> ImportService:
-        """Build an import service over a new unit of work, as a new request or job would get.
+        """Build an import service over a new catalogue database, as a new request or job would get.
 
-        :param uow: Unit of work the service works in, or None for a new one over the rig's database.
-        :type uow: UnitOfWork | None
+        :param catalogue: Catalogue database the service works in, or None for a new one over the rig's database.
+        :type catalogue: CatalogueDatabase | None
         :param parallel_scans: Largest number of scans cut at once.
         :type parallel_scans: int
         :param max_files: Largest number of files in an upload.
@@ -552,7 +552,7 @@ class ImportRig:
         :returns: The service, sharing the database, the stores and the event bus of the rig.
         :rtype: ImportService
         """
-        uow = uow or self.open_uow()
+        catalogue = catalogue or self.open_catalogue()
         parts = ProcessingParts.build(
             FakeCatalogue(self.processors),
             self.defaults,
@@ -563,7 +563,7 @@ class ImportRig:
             ),
         )
         return ImportService(
-            books=make_books_service(uow, databases=self.databases, files=self.files),
+            books=make_books_service(catalogue, databases=self.databases, files=self.files),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),

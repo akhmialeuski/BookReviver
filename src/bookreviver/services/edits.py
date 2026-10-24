@@ -68,17 +68,17 @@ class EditService:
     def __init__(
         self,
         *,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         records: StageRecords,
     ) -> None:
         """Work over the ports of one request.
 
-        :param catalogue: The processors the application can run, which say what edit each reads.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, which say what edit each reads.
+        :type processors: ProcessorCatalog
         :param records: Writer of the stage records, which an edit marks stale.
         :type records: StageRecords
         """
-        self._catalogue = catalogue
+        self._processors = processors
         self._records = records
 
     async def save(self, book: Book, key: PageStepKey, edit: NewPageEdit, mask: IncomingFile | None) -> PageEdit:
@@ -254,7 +254,7 @@ class EditService:
         :raises NotFoundError: If no recipe of the stage has the step, or its processor is not installed.
         """
         step = find_step(repos.recipes, key)
-        return self._catalogue.get(step.processor_key).spec
+        return self._processors.get(step.processor_key).spec
 
     def _check(self, repos: BookRepositories, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool) -> None:
         """Check that the edit is the one the processor of the step reads.

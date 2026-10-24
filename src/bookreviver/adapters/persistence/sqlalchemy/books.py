@@ -3,19 +3,19 @@
 The file of a book lies in the directory of the book, which the storage owns: it copies the blank file of a new book
 into the directory, unpacks the file of an imported one and deletes the directory whole, and the registry is given the
 path of the file. :class:`BookRegistry` opens a
-:class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the book schema the first time a unit of
-work asks for the book, brings the file to the head revision of that schema when it is behind, and refuses a file at a
-revision this code does not ship with ``BookTooNewError``, leaving the file as it is for the newer code. Each open book
-has engines and a write queue of its own, so a change of one book never waits for a change of another.
+:class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the book schema the first time a
+transaction asks for the book, brings the file to the head revision of that schema when it is behind, and refuses a file
+at a revision this code does not ship with ``BookTooNewError``, leaving the file as it is for the newer code. Each open
+book has engines and a write queue of its own, so a change of one book never waits for a change of another.
 
 A new book starts as a copy of a blank file at the head revision, made once for the registry: running the revisions
 takes about a second, and copying a file a few milliseconds.
 
-A book that no unit of work has used for the idle limit is closed, which disposes of its engines and their
+A book that no transaction has used for the idle limit is closed, which disposes of its engines and their
 connections, and the next use opens it again. :meth:`BookRegistry.keep_closing_idle` looks for such books ten times
-within the limit, run by the application in a task group of its own. Closing a book for good waits until the units of
-work using it have ended, so no transaction is cut off, and every later use of the book is refused, so the storage can
-delete its file.
+within the limit, run by the application in a task group of its own. Closing a book for good waits until the
+transactions using it have ended, so no transaction is cut off, and every later use of the book is refused, so the
+storage can delete its file.
 
 Every method runs on the event loop. The calls that block, on files or on Alembic, go to worker threads.
 """
@@ -45,12 +45,12 @@ if TYPE_CHECKING:
 
 @define
 class OpenBook:
-    """A book whose database is open, and the units of work using it.
+    """A book whose database is open, and the transactions using it.
 
     :ivar database: The database of the book.
-    :ivar users: How many units of work are inside a transaction of the book, or waiting for one.
-    :ivar idle_since: Reading of the monotonic clock when the last unit of work stopped using the book.
-    :ivar released: Event a removal waits on until the last unit of work stops using the book, or None.
+    :ivar users: How many transactions are inside the book, or waiting for one.
+    :ivar idle_since: Reading of the monotonic clock when the last transaction stopped using the book.
+    :ivar released: Event a removal waits on until the last transaction stops using the book, or None.
     """
 
     database: SqlDatabase
@@ -82,9 +82,9 @@ class BookRegistry:
         :param tracer: Tracer the write blocks of every book are timed with.
         :type tracer: Tracer
         :param wait_seconds: The busy timeout every connection of a book gets, which is the longest wait limit of a
-                             unit of work.
+                             catalogue database.
         :type wait_seconds: float
-        :param idle_seconds: How long a book stays open after the last unit of work used it.
+        :param idle_seconds: How long a book stays open after the last transaction used it.
         :type idle_seconds: float
         :param blank: A file of the book schema at the head revision that new books are copied from, or None to make one
                       on the first creation of a book.
@@ -104,7 +104,7 @@ class BookRegistry:
 
     @asynccontextmanager
     async def use(self, book_id: BookId, path: Path) -> AsyncIterator[SqlDatabase]:
-        """Hold the database of a book open for one unit of work, opening it from its file first when it is closed.
+        """Hold the database of a book open for the caller, opening it from its file first when it is closed.
 
         :param book_id: The book.
         :type book_id: BookId
@@ -125,7 +125,7 @@ class BookRegistry:
                 book.released.set()
 
     async def close(self, book_id: BookId) -> None:
-        """Close the database of a book for good, once no unit of work uses it, so its file can be deleted.
+        """Close the database of a book for good, once no transaction uses it, so its file can be deleted.
 
         A book that is not open, or closed already, is only marked closed, so a deletion broken off half way can run
         again.
@@ -144,7 +144,7 @@ class BookRegistry:
         await book.database.dispose()
 
     async def close_idle(self) -> None:
-        """Close every open book that no unit of work has used for the idle limit."""
+        """Close every open book that no transaction has used for the idle limit."""
         since = monotonic() - self._idle_seconds
         async with self._lock:
             idle = [book_id for book_id, book in self._open.items() if not book.users and book.idle_since <= since]
@@ -173,7 +173,7 @@ class BookRegistry:
         """Count one more user of a book, opening its database first when it is closed.
 
         The open book is looked up and counted with no await between, so a removal or a closing never finds it unused
-        while a unit of work has it in hand.
+        while a caller has it in hand.
 
         :param book_id: The book.
         :type book_id: BookId
@@ -218,7 +218,7 @@ class BookRegistry:
     async def _migrate(self, database: SqlDatabase) -> None:
         """Bring the file of a book to the head revision of the book schema, unless it is there already.
 
-        :param database: The database of the book, not yet handed to any unit of work.
+        :param database: The database of the book, not yet handed to any caller.
         :type database: SqlDatabase
         :raises BookTooNewError: If the file is at a revision this code does not ship.
         """

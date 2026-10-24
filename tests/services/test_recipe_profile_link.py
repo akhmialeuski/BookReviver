@@ -57,7 +57,7 @@ async def save_profile(
 
 
 async def stored_recipe(book_id: BookId, recipe: Recipe, *, databases: LocatedBookDatabases) -> Recipe:
-    """Read a recipe back through a new unit of work.
+    """Read a recipe back through a new catalogue database.
 
     :param book_id: Identifier of the book.
     :type book_id: BookId
@@ -84,7 +84,7 @@ class TestProfileOrder:
         """
         actor, _ = await fx_ordered_kit.seed_book()
         profile = await save_profile(fx_ordered_kit, actor)
-        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
+        stored = await fx_ordered_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert (profile.order, stored.order) == (OrderMode.USUAL, OrderMode.USUAL)
 
     async def test_a_profile_saved_in_the_free_order_keeps_a_step_off_a_required_place(
@@ -97,7 +97,7 @@ class TestProfileOrder:
         """
         actor, _ = await fx_ordered_kit.seed_book()
         profile = await save_profile(fx_ordered_kit, actor, BROKEN_ORDER, order=OrderMode.FREE)
-        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
+        stored = await fx_ordered_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert ([step.processor_key for step in stored.steps], stored.order) == (
             [THIRD_KEY, SECOND_KEY],
             OrderMode.FREE,
@@ -131,7 +131,7 @@ class TestReplaceProfile:
         profile = await save_profile(fx_ordered_kit, actor)
         draft = ProfileDraft(name=RENAMED, steps=BROKEN_ORDER, order=OrderMode.FREE)
         replaced = await fx_ordered_kit.profiles().replace(profile, draft)
-        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
+        stored = await fx_ordered_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert stored == replaced
         assert (stored.name, stored.order, stored.stage) == (RENAMED, OrderMode.FREE, Stage.GEOMETRY)
         assert [step.processor_key for step in stored.steps] == [THIRD_KEY, SECOND_KEY]
@@ -148,7 +148,7 @@ class TestReplaceProfile:
         profile = await save_profile(fx_ordered_kit, actor)
         with pytest.raises(InvalidParametersError):
             await fx_ordered_kit.profiles().replace(profile, ProfileDraft(name=PROFILE_NAME, steps=BROKEN_ORDER))
-        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
+        stored = await fx_ordered_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert stored == profile
 
     async def test_a_step_of_another_stage_is_refused(self, fx_ordered_kit: ProcessingKit) -> None:

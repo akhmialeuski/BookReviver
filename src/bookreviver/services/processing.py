@@ -59,17 +59,17 @@ class ProcessingService:
     def __init__(
         self,
         *,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         parts: ProcessingParts,
     ) -> None:
         """Work over the ports of one request.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
-        :param parts: The recipes, the stage records, the job tracker and the job starter over the unit of work.
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
+        :param parts: The recipes, the stage records, the job tracker and the job starter over the catalogue database.
         :type parts: ProcessingParts
         """
-        self._catalogue = catalogue
+        self._processors = processors
         self._recipes = parts.recipes
         self._records = parts.records
         self._starter = parts.starter
@@ -80,7 +80,7 @@ class ProcessingService:
         :returns: The specs, by key.
         :rtype: Sequence[ProcessorSpec]
         """
-        return self._catalogue.specs()
+        return self._processors.specs()
 
     async def recipes(self, book: Book, stage: Stage, request: SliceRequest) -> Slice[Recipe]:
         """List the recipes of a stage, one for each kind of page, creating them the first time the stage is asked for.

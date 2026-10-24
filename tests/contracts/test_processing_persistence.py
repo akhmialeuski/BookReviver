@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.step_values import StepValues
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -132,12 +132,12 @@ def _add_head(repos: BookRepositories, _book_record: BookRecord, *, version: Pag
 
 
 async def _store_page(
-    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
+    catalogue_factory: CatalogueDatabaseFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, PageId]:
     """Store a book with one page, each in the change that owns it.
 
-    :param uow_factory: Function opening a new unit of work over the database of the test.
-    :type uow_factory: UnitOfWorkFactory
+    :param catalogue_factory: Function opening a new catalogue database over the database of the test.
+    :type catalogue_factory: CatalogueDatabaseFactory
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
@@ -146,7 +146,7 @@ async def _store_page(
     :rtype: tuple[BookId, PageId]
     """
     page = make_page()
-    book_id = await store_book(uow_factory(), make_record(), page, owner=await new_owner(), databases=databases)
+    book_id = await store_book(catalogue_factory(), make_record(), page, owner=await new_owner(), databases=databases)
     return book_id, page.id
 
 
@@ -218,19 +218,19 @@ class TestRecipeRepository:
     """Tests for the recipes of a book."""
 
     async def test_stage_has_one_recipe_for_each_kind(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject a second recipe of a kind in a stage, which two requests making the recipes could both store.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         first = make_recipe(kind=RecipeKind.BLANK)
         second = make_recipe(kind=RecipeKind.BLANK, minutes=1)
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(first))
@@ -238,19 +238,19 @@ class TestRecipeRepository:
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(second))
 
     async def test_every_kind_and_other_stages_may_be_added_beside_a_recipe(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the one recipe of a kind is per stage, and the recipes of the stage are listed by creation.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         recipes = [make_recipe(kind=kind, minutes=index) for index, kind in enumerate(RecipeKind)]
         other_stage = make_recipe(stage=Stage.CLEANUP)
         await (
@@ -262,12 +262,12 @@ class TestRecipeRepository:
         assert [recipe.id for recipe in listed] == [recipe.id for recipe in recipes]
 
     async def test_list_for_book_returns_the_recipes_of_each_stage_in_pipeline_order(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the recipes of another book are left out, and the stages keep the pipeline order.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -278,9 +278,9 @@ class TestRecipeRepository:
         geometry = make_recipe()
         picture = make_recipe(kind=RecipeKind.BW_PICTURE, minutes=1)
         elsewhere = make_recipe()
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id, other_id = [
-            await store_book(uow, make_record(), owner=owner_id, databases=fx_databases()) for _ in range(2)
+            await store_book(catalogue, make_record(), owner=owner_id, databases=fx_databases()) for _ in range(2)
         ]
         await (
             fx_databases()
@@ -292,22 +292,22 @@ class TestRecipeRepository:
         assert [recipe.id for recipe in listed] == [geometry.id, picture.id, cleanup.id]
 
     async def test_steps_survive_the_store(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a recipe reads back with its steps, their parameters, identifiers and switches.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         plain = make_recipe()
         other = Step(processor_key='geometry.other', params={}, enabled=False)
         recipe = evolve(plain, steps=(*plain.steps, other, evolve(plain.steps[0], step_id=StepId(uuid4()))))
-        book_id = await store_book(uow, make_record(), owner=await fx_new_owner(), databases=fx_databases())
+        book_id = await store_book(catalogue, make_record(), owner=await fx_new_owner(), databases=fx_databases())
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
         assert await fx_databases().open(book_id).read(lambda repos: repos.recipes.get(recipe.id)) == recipe
 
@@ -322,18 +322,18 @@ class TestRecipeRepository:
             await fx_databases().open(new_book_id()).change(lambda repos, _book_record: repos.recipes.add(recipe))
 
     async def test_deleting_a_recipe_leaves_its_pages_without_it(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the stage record of a page keeps its row and loses the recipe that is deleted.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         recipe = make_recipe()
 
         def add_recipe_and_record(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -357,18 +357,18 @@ class TestRecipeRepository:
         assert kept.recipe_id is None
 
     async def test_deleting_the_book_deletes_its_recipes(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the recipes go with their book.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         recipe = make_recipe()
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
         await fx_databases().delete_book(book_id)
@@ -380,18 +380,18 @@ class TestPageStageRepository:
     """Tests for the current version of each stage of each page."""
 
     async def test_save_stores_a_record_and_replaces_it(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a record is stored by the first save and replaced by the second, which is how a run advances it.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         stale = make_page_stage(page_id=page_id, state=StageState.STALE)
 
         def save_twice(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -414,18 +414,18 @@ class TestPageStageRepository:
         assert found == stale
 
     async def test_save_many_stores_new_records_and_replaces_stored_ones_in_one_call(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify one call stores two new records and replaces a stored one, and returns them in the order given.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         await (
             fx_databases()
             .open(book_id)
@@ -449,18 +449,18 @@ class TestPageStageRepository:
         assert_expectations()
 
     async def test_save_many_with_a_record_of_a_missing_page_stores_nothing(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject the call and keep its other records out of the book, which the whole call rolls back.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         batch = [make_page_stage(page_id=page_id), make_page_stage(page_id=PageId(new_account_id()))]
 
         with pytest.raises(NotFoundError):
@@ -469,53 +469,53 @@ class TestPageStageRepository:
         assert await fx_databases().open(book_id).read(lambda repos: repos.page_stages.list_for_page(page_id)) == []
 
     async def test_find_returns_none_for_a_stage_that_has_not_run(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a missing record is None for find and a NotFoundError for get.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         key = PageStageKey(page_id, Stage.CLEANUP)
         assert await fx_databases().open(book_id).read(lambda repos: repos.page_stages.find(key)) is None
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).read(lambda repos: repos.page_stages.get(key))
 
     async def test_record_of_a_missing_page_is_not_found(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject a record whose page is not stored.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         record = make_page_stage(page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_stages.save(record))
 
     async def test_list_for_page_follows_the_order_of_the_stages(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the records of a page come in pipeline order, whatever order they were saved in.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
 
         def save_out_of_order(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Save a record for each of three stages, the last stage first.
@@ -533,12 +533,12 @@ class TestPageStageRepository:
         assert [record.stage for record in listed] == [Stage.PAGE_SPLIT, Stage.GEOMETRY, Stage.CLEANUP]
 
     async def test_list_for_pages_reads_the_records_of_the_given_pages_only(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify one read gives the records of several pages in pipeline order, and none of the other pages.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -546,8 +546,10 @@ class TestPageStageRepository:
         """
         pages = [make_page(order_key=f'a{index}') for index in range(3)]
         first, second, other = (page.id for page in pages)
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), *pages, owner=await fx_new_owner(), databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(
+            catalogue, make_record(), *pages, owner=await fx_new_owner(), databases=fx_databases()
+        )
         records = [
             make_page_stage(page_id=page.id, stage=stage)
             for page in pages
@@ -563,36 +565,36 @@ class TestPageStageRepository:
         }
 
     async def test_head_version_and_recipe_are_checked(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject a record that names a version or a recipe that is not stored.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         record = make_page_stage(page_id=page_id, head_version_id=PageVersionId('0' * 16))
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_stages.save(record))
 
     async def test_queries_by_recipe_and_by_stage_of_a_book(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the records of a recipe and of a stage are found, and neither another stage nor another book.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
-        other_book_id, other_page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        other_book_id, other_page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         recipe = make_recipe()
         mine = make_page_stage(page_id=page_id, recipe_id=recipe.id)
         theirs = make_page_stage(page_id=other_page_id)
@@ -624,18 +626,18 @@ class TestPageStageRepository:
         assert found == ([mine], [mine])
 
     async def test_list_fresh_returns_the_fresh_records_of_the_book(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the fresh records are listed in the order of the stages, and no stale or failed one is in.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         fresh = [
             make_page_stage(page_id=page_id, stage=Stage.CLEANUP),
             make_page_stage(page_id=page_id, stage=Stage.GEOMETRY),
@@ -650,22 +652,22 @@ class TestPageStageRepository:
         assert list(listed) == sorted(fresh, key=lambda record: order.index(record.stage))
 
     async def test_list_replaced_returns_the_records_made_by_another_version_of_the_processor_in_any_state(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a stage's records of the book are listed when their version is of the key but not the given one.
 
         A record of the installed version, one of another processor and one of another stage are left out, and the
         state of the record does not matter.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         installed = ProcessorRef(key=BLANK_PROCESSOR, version='2')
-        books = [await _store_page(fx_uow, fx_new_owner, databases=fx_databases()) for _ in range(4)]
+        books = [await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases()) for _ in range(4)]
         pages = [page_id for _, page_id in books]
         made_by = [
             ProcessorRef(key=BLANK_PROCESSOR, version='1'),
@@ -694,18 +696,18 @@ class TestPageStageRepository:
         assert found == [[records[0]], [], [], [records[3]]]
 
     async def test_head_ids_lists_the_current_versions_of_a_book(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the identifiers of the head versions of the book's records are listed once each.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         version = _version(base)
 
@@ -725,28 +727,28 @@ class TestPageStageRepository:
         assert set(await fx_databases().open(book_id).read(lambda repos: repos.page_stages.head_ids())) == {version.id}
 
     async def test_tally_counts_the_records_of_each_stage_by_state_and_review(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify one grouped count gives each stage its states and marks, and leaves out what does not count.
 
         A mark on a failed page, a placeholder and the pages of another book are not counted.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         marked, stale, failed = (_blank_page(f'a{number}') for number in range(3))
         placeholder = make_page(order_key='b0')
         elsewhere = _blank_page('a0')
         book_id = await store_book(
-            uow, make_record(), marked, stale, failed, placeholder, owner=owner_id, databases=fx_databases()
+            catalogue, make_record(), marked, stale, failed, placeholder, owner=owner_id, databases=fx_databases()
         )
-        other_id = await store_book(uow, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
+        other_id = await store_book(catalogue, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
         marked_head = await _add_marked_head(book_id, marked, databases=fx_databases())
         failed_head = await _add_marked_head(book_id, failed, databases=fx_databases())
         records = [
@@ -767,21 +769,21 @@ class TestPageStageRepository:
         assert counts == {(Stage.GEOMETRY, 1, 1, 1, 1, 3), (Stage.CLEANUP, 1, 0, 0, 0, 0)}
 
     async def test_tally_counts_a_page_both_stale_and_marked_once_in_check(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a page that is stale and marked adds to check once, and a fresh page with no mark adds nothing.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         both, clean = (_blank_page(f'a{number}') for number in range(2))
         book_id = await store_book(
-            uow, make_record(), both, clean, owner=await fx_new_owner(), databases=fx_databases()
+            catalogue, make_record(), both, clean, owner=await fx_new_owner(), databases=fx_databases()
         )
         head_id = await _add_marked_head(book_id, both, databases=fx_databases())
         records = [
@@ -793,28 +795,36 @@ class TestPageStageRepository:
         assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
 
     async def test_step_tally_counts_the_pages_stopped_at_each_step(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the pages a run stopped at a step are counted by step, and partial in the tally of the stage.
 
         A page run through every step, a failed record, a placeholder and the pages of another book are left out.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         first, second, whole, failed = (_blank_page(f'a{number}') for number in range(4))
         placeholder = make_page(order_key='b1')
         elsewhere = _blank_page('a1')
         book_id = await store_book(
-            uow, make_record(), first, second, whole, failed, placeholder, owner=owner_id, databases=fx_databases()
+            catalogue,
+            make_record(),
+            first,
+            second,
+            whole,
+            failed,
+            placeholder,
+            owner=owner_id,
+            databases=fx_databases(),
         )
-        other_id = await store_book(uow, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
+        other_id = await store_book(catalogue, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
         stopped = [
             evolve(make_page_stage(page_id=page.id, state=state), through_step=through_step)
             for page, through_step, state in (
@@ -839,18 +849,18 @@ class TestPageStageRepository:
         assert tally.partial == 2
 
     async def test_deleting_the_head_version_leaves_the_record_without_it(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the record keeps its row when its head version is deleted.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         version = _version(base)
 
@@ -875,18 +885,18 @@ class TestPageStageRepository:
         assert kept.head_version_id is None
 
     async def test_deleting_the_page_deletes_its_records_states_and_history(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the stage records, the step states and the history of the steps go with their page.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
 
         def add_records(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add a stage record, a step state with an edit and a change of the history of a step.
@@ -920,18 +930,18 @@ class TestPageStepStateRepository:
     """Tests for the settings and the manual edits of the steps of the pages."""
 
     async def test_save_stores_a_state_and_replaces_it(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a second save of the same step on the same page and stage replaces the state.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         first = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 3})
         replacement = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 7})
 
@@ -951,18 +961,18 @@ class TestPageStepStateRepository:
         assert await fx_databases().open(book_id).read(lambda repos: repos.page_step_states.find(key)) == replacement
 
     async def test_settings_and_edit_survive_the_store_together(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the fields a page changes and its manual edit read back, and a state may hold either alone.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         both = make_page_step_state(
             page_id=page_id, params={MAX_ANGLE: 3, METHOD: PROJECTION}, edit=make_page_edit(page_id=page_id)
         )
@@ -992,18 +1002,18 @@ class TestPageStepStateRepository:
         assert read_back == [both, settings_only, edit_only]
 
     async def test_geometry_and_mask_survive_the_store(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the split line a user drew reads back as the same line in the edit of a state.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         geometry = Line(start=Point(x=1100.5, y=0), end=Point(x=1104, y=1561))
         edit = PageEdit(
             page_id=page_id,
@@ -1020,18 +1030,18 @@ class TestPageStepStateRepository:
         assert await fx_databases().open(book_id).read(lambda repos: repos.page_step_states.get(state.key)) == state
 
     async def test_list_for_page_filters_by_stage(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the states of one stage are listed apart from those of the page's other stages.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         geometry = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 3})
         cleanup = evolve(geometry, stage=Stage.CLEANUP)
 
@@ -1060,18 +1070,18 @@ class TestPageStepStateRepository:
         assert listed == ([geometry], [geometry, cleanup])
 
     async def test_two_steps_of_one_processor_keep_two_states(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify states of two steps on one page and stage are stored apart and found each by its step.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         first = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 1})
         second = make_page_step_state(page_id=page_id, step_id=StepId(uuid4()), params={MAX_ANGLE: 2})
 
@@ -1095,19 +1105,19 @@ class TestPageStepStateRepository:
         assert found == (first, second)
 
     async def test_list_for_step_reads_one_step_over_several_pages(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the states of one step on the asked pages are listed, and those of other steps or pages are not.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        first_record, first_page = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
-        second_record, second_page = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        first_record, first_page = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        second_record, second_page = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         on_first = make_page_step_state(page_id=first_page, params={MAX_ANGLE: 1})
         on_second = make_page_step_state(page_id=second_page, params={MAX_ANGLE: 2})
         other_step = make_page_step_state(page_id=first_page, step_id=StepId(uuid4()), params={MAX_ANGLE: 3})
@@ -1150,35 +1160,35 @@ class TestPageStepStateRepository:
         assert (listed, both, wrong_stage, second_listed) == ([on_first], [on_first], [], [on_second])
 
     async def test_state_of_a_missing_page_is_not_found(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject a state whose page is not stored.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         state = make_page_step_state(page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_step_states.save(state))
 
     async def test_delete_removes_a_state(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a deleted state is gone, and deleting it again is a NotFoundError.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         state = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 3})
 
         def save_and_delete(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -1205,18 +1215,18 @@ class TestStepValuesRepository:
     """Tests for the values of the steps for the odd pages, the even pages and the groups."""
 
     async def test_save_stores_values_and_replaces_them(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a second save for the same step and part of the pages replaces the values, and they read back.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         first = make_step_values(params={MAX_ANGLE: 3})
         replacement = make_step_values(params={MAX_ANGLE: 7, METHOD: PROJECTION})
 
@@ -1236,18 +1246,18 @@ class TestStepValuesRepository:
         assert found == replacement
 
     async def test_every_part_of_the_pages_keeps_its_own_values_of_a_step(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the odd pages, the even pages and two groups are four rows, listed by scope and group label.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         parts = [
             make_step_values(scope=ValueScope.GROUP, group_label=INDEX_GROUP),
             make_step_values(scope=ValueScope.EVEN, params={MAX_ANGLE: 4}),
@@ -1264,19 +1274,19 @@ class TestStepValuesRepository:
         ]
 
     async def test_lists_keep_the_steps_and_the_books_apart(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the values of another step and another book are not listed, and a book lists every stage.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
-        other_book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        other_book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         mine = make_step_values()
         other_step = make_step_values(step_id=StepId(uuid4()))
         other_stage = evolve(make_step_values(step_id=StepId(uuid4())), stage=Stage.CLEANUP)
@@ -1299,19 +1309,19 @@ class TestStepValuesRepository:
         )
 
     async def test_two_books_sharing_a_step_keep_separate_values(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify books built from one profile, which share a step id, keep, replace and delete their values apart.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        first_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
-        second_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        first_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        second_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         first = make_step_values(params={MAX_ANGLE: 3})
         second = make_step_values(params={MAX_ANGLE: 9})
         await fx_databases().open(first_id).change(lambda repos, _book_record: repos.step_values.save(first))
@@ -1346,18 +1356,18 @@ class TestStepValuesRepository:
         assert_expectations()
 
     async def test_delete_removes_one_part_and_a_missing_one_is_not_found(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a deleted part is gone, the other part stays, and deleting what is not stored is refused.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         even = make_step_values()
         odd = make_step_values(scope=ValueScope.ODD)
         await fx_databases().open(book_id).change(partial(_save_values, values=[even, odd]))
@@ -1382,19 +1392,19 @@ class TestStepValuesRepository:
             await fx_databases().open(new_book_id()).change(lambda repos, _book_record: repos.step_values.save(values))
 
     async def test_deleting_the_book_deletes_its_values(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the values of a book are removed with it and those of another book stay.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
-        other_book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        other_book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         kept = make_step_values(scope=ValueScope.ODD)
         mine = make_step_values()
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.step_values.save(mine))
@@ -1412,18 +1422,18 @@ class TestPageHistoryRepository:
     """Tests for the history of the layers of the steps of the pages."""
 
     async def test_change_survives_the_store(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a change reads back with its layers before and after, its source and its batch.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         change = evolve(
             make_page_history_entry(page_id=page_id, before=None, after={METHOD: 'otsu'}),
             scope=ValueScope.GROUP,
@@ -1437,18 +1447,18 @@ class TestPageHistoryRepository:
         assert (read_back, stored) == ([stored], evolve(change, sequence=1))
 
     async def test_a_change_of_two_pages_is_one_change_each_page_keeps_until_its_own_history_goes(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a change of values reaching two pages lists in both, and clearing it on one leaves it on the other.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         other = make_page(order_key=OTHER_ORDER_KEY)
         values = make_step_values(scope=ValueScope.ODD)
         change = PageHistoryEntry.of_values(
@@ -1487,18 +1497,18 @@ class TestPageHistoryRepository:
         assert_expectations()
 
     async def test_changes_made_at_the_same_instant_list_in_the_order_they_were_written(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the sequence, not the time or the identifier, orders the history, across transactions and a batch.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         written = [make_page_history_entry(page_id=page_id, created_at=EPOCH) for _ in range(6)]
 
         def add_first_two(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -1532,18 +1542,18 @@ class TestPageHistoryRepository:
         )
 
     async def test_list_for_page_is_oldest_first_and_filters_by_stage(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the history of a page is listed from the oldest change, and one stage apart from the others.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         later = make_page_history_entry(page_id=page_id, created_at=EPOCH + RECENT)
         earlier = make_page_history_entry(page_id=page_id, created_at=EPOCH)
         cleanup = make_page_history_entry(page_id=page_id, stage=Stage.CLEANUP, created_at=EPOCH + OLD)
@@ -1568,18 +1578,18 @@ class TestPageHistoryRepository:
         )
 
     async def test_list_for_batch_lists_the_changes_of_the_batch_of_every_page(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a batch lists its changes across pages, by page and sequence, and leaves out the other changes.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, first_page = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, first_page = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         second_page = make_page(order_key=SECOND_ORDER_KEY)
         batch = ChangeBatchId(uuid4())
         members = [
@@ -1610,18 +1620,18 @@ class TestPageHistoryRepository:
         assert listed == expected
 
     async def test_list_undoing_finds_the_undos_of_the_given_changes_only(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the changes that take back the given changes are listed, and a change that stands has none.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         taken, standing, other = (make_page_history_entry(page_id=page_id) for _ in range(3))
         undo = evolve(make_page_history_entry(page_id=page_id), source=ChangeSource.UNDO, undoes=taken.id)
         unrelated = evolve(make_page_history_entry(page_id=page_id), source=ChangeSource.UNDO, undoes=other.id)
@@ -1645,18 +1655,18 @@ class TestPageHistoryRepository:
         assert ([change.id for change in found], nothing) == ([undo.id], [])
 
     async def test_delete_for_step_deletes_that_step_on_that_page_only(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify every change of one step on one page goes, whatever its source, and the rest of the history stays.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         other_page = make_page(order_key=SECOND_ORDER_KEY)
         doomed = [make_page_history_entry(page_id=page_id) for _ in range(3)]
         undo = evolve(make_page_history_entry(page_id=page_id), source=ChangeSource.UNDO, undoes=doomed[0].id)
@@ -1702,18 +1712,18 @@ class TestPageHistoryRepository:
         )
 
     async def test_delete_for_step_of_a_step_with_no_history_deletes_nothing(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a step with no change on the page is a count of zero and not an error.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         step = PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)
         deleted = (
             await fx_databases()
@@ -1723,18 +1733,18 @@ class TestPageHistoryRepository:
         assert deleted == 0
 
     async def test_a_change_added_after_delete_for_step_is_numbered_above_every_remaining_one(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the sequence of the page goes on above the highest one it still holds, whichever changes were deleted.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         other_step = StepId(uuid4())
         written = [
             make_page_history_entry(page_id=page_id),
@@ -1762,35 +1772,35 @@ class TestPageHistoryRepository:
         assert ([change.sequence for change in listed], added.sequence) == ([2, 3], 3)
 
     async def test_change_of_a_missing_page_is_not_found(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject a change whose page is not stored.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         change = make_page_history_entry(page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_history.add(change))
 
     async def test_change_is_stored_once(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a change with an identifier that is stored already is a conflict.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         change = make_page_history_entry(page_id=page_id)
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_history.add(change))
         with pytest.raises(ConflictError):
@@ -1801,18 +1811,18 @@ class TestPageVersionProcessing:
     """Tests for the queries a run and a collection make on page versions, and for the columns processing added."""
 
     async def test_scale_edit_and_pyramid_survive_the_store(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the scale, the edit hash, the state of the pyramid and the review mark of a version read back.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         version = evolve(
             _version(base, scale=VersionScale.PREVIEW, edit_hash='0123456789abcdef', tiles_ready=True),
@@ -1826,18 +1836,18 @@ class TestPageVersionProcessing:
         assert await fx_databases().open(book_id).read(lambda repos: repos.page_versions.get(version.id)) == version
 
     async def test_find_returns_a_version_by_its_identifier_or_none(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a repeated run finds the version of the earlier run, and a new one finds nothing.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.page_versions.add(base))
         found = (
@@ -1848,18 +1858,18 @@ class TestPageVersionProcessing:
         assert found == (base, None)
 
     async def test_list_by_ids_reads_the_versions_found_and_leaves_out_the_others(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify one read gives the stored versions among the identifiers, the earliest first.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         older = make_page_version(page_id=page_id, minutes=1)
         newer = make_page_version(page_id=page_id, minutes=2)
         unwanted = make_page_version(page_id=page_id, minutes=3)
@@ -1876,18 +1886,18 @@ class TestPageVersionProcessing:
         assert [version.id for version in found] == [older.id, newer.id]
 
     async def test_list_for_stage_filters_and_pages_the_versions_of_a_page(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the versions of a page are filtered by stage and scale and cut into windows with their total.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         first = evolve(_version(base), created_at=EPOCH + timedelta(minutes=1))
         second = evolve(_version(base), created_at=EPOCH + timedelta(minutes=2))
@@ -1918,18 +1928,18 @@ class TestPageVersionProcessing:
         ) == ([first.id, second.id], [preview.id], ([second.id, preview.id], 3))
 
     async def test_list_for_stage_filters_the_versions_by_mark(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a mark narrows the versions to those that carry it, and no mark lists marked and unmarked alike.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         bad = evolve(_version(base), mark=ResultMark.BAD, created_at=EPOCH + timedelta(minutes=1))
         good = evolve(_version(base), mark=ResultMark.GOOD, created_at=EPOCH + timedelta(minutes=2))
@@ -1957,21 +1967,21 @@ class TestPageVersionProcessing:
         ) == ([bad.id], [good.id], [bad.id, good.id, unmarked.id])
 
     async def test_collectable_is_non_base_and_outside_the_current_chains(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a collection may delete versions that no page shows and no chain of a shown version needs.
 
         The base version stays, a head and the version it was computed from stay, and a young preview stays. A full
         run that nothing refers to goes however recent it is, and so does an old preview.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = evolve(make_page_version(page_id=page_id), created_at=EPOCH)
         feeder = _version(base)
         head = evolve(_version(base, stage=Stage.CLEANUP), input_id=feeder.id)
@@ -1996,20 +2006,20 @@ class TestPageVersionProcessing:
         assert {version.id for version in found} == {orphan.id, recent.id, old_preview.id}
 
     async def test_collectable_keeps_a_version_marked_good_or_commented_with_its_inputs(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a collection leaves a version the user marked Good or wrote on, and the inputs it reads.
 
         A version marked Bad with no comment is no different from an unjudged one, and goes.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = evolve(make_page_version(page_id=page_id), created_at=EPOCH)
         input_of_good = _version(base)
         good = evolve(_version(base), input_id=input_of_good.id, mark=ResultMark.GOOD)
@@ -2023,21 +2033,21 @@ class TestPageVersionProcessing:
         assert {version.id for version in found} == {plain_bad.id, unjudged.id}
 
     async def test_collectable_keeps_the_inputs_of_every_version_that_stays(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify an input goes only with the versions that read it, and not from under one that stays.
 
         The current version of a stage reads an input, which the database would leave it without if the input were
         deleted, and the input of that input stays too. A chain of versions that nothing outside it reads goes whole.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = evolve(make_page_version(page_id=page_id), created_at=EPOCH)
         first = _version(base)
         second = evolve(_version(base), input_id=first.id)
@@ -2061,18 +2071,18 @@ class TestPageVersionProcessing:
         assert {version.id for version in found} == {chain_start.id, chain_end.id}
 
     async def test_delete_many_removes_the_versions_and_ignores_missing_ones(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify several versions go in one call, and an identifier that is not stored is no error.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, page_id = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         base = make_page_version(page_id=page_id)
         doomed = [_version(base), _version(base)]
         ids = [*(version.id for version in doomed), MISSING_VERSION_ID]

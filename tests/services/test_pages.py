@@ -28,10 +28,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
@@ -55,14 +55,14 @@ def _ready(version: PageVersion) -> PageVersion:
 
 
 async def _commit_book(
-    database: SqlDatabase, uow: UnitOfWork, owner: AccountId, *, databases: LocatedBookDatabases
+    database: SqlDatabase, catalogue: CatalogueDatabase, owner: AccountId, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, list[Page], list[PageVersion]]:
     """Commit a book of three pages stored against the book order, the middle one in the book a placeholder.
 
     :param database: Catalogue of the test, which stores the owner when it does not already.
     :type database: SqlDatabase
-    :param uow: Unit of work over the catalogue and the books of the test.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database over the catalogue and the books of the test.
+    :type catalogue: CatalogueDatabase
     :param owner: Account owning the book.
     :type owner: AccountId
     :param databases: Opens the databases of the books of the test.
@@ -78,7 +78,7 @@ async def _commit_book(
     versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
     book_id = await commit_record(
         database,
-        uow,
+        catalogue,
         make_record(),
         *pages,
         owner=owner,
@@ -97,7 +97,7 @@ class TestManifest:
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -107,15 +107,15 @@ class TestManifest:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages, versions = await _commit_book(
-            fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases
+            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
         )
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
@@ -130,7 +130,7 @@ class TestManifest:
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -140,15 +140,15 @@ class TestManifest:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages, _ = await _commit_book(
-            fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases
+            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
         )
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), WINDOW)
@@ -160,7 +160,7 @@ class TestManifest:
     async def test_shows_the_newest_base_version_of_a_page(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -168,8 +168,8 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
@@ -178,7 +178,7 @@ class TestManifest:
         page = make_page()
         old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
         book_id = await store_book(
-            fx_uow(),
+            fx_catalogue(),
             make_record(),
             page,
             owner=fx_actor.account_id,
@@ -193,7 +193,7 @@ class TestManifest:
     async def test_shows_the_current_version_of_the_latest_stage_that_has_an_image(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -201,8 +201,8 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
@@ -213,7 +213,7 @@ class TestManifest:
         deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
         book_id = await store_book(
-            fx_uow(),
+            fx_catalogue(),
             make_record(),
             page,
             owner=fx_actor.account_id,
@@ -244,7 +244,7 @@ class TestManifest:
     async def test_shows_the_current_version_even_when_a_newer_base_version_exists(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -252,8 +252,8 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
@@ -262,7 +262,7 @@ class TestManifest:
         page = make_page()
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
         book_id = await store_book(
-            fx_uow(),
+            fx_catalogue(),
             make_record(),
             page,
             owner=fx_actor.account_id,
@@ -282,7 +282,7 @@ class TestManifest:
     async def test_included_only_leaves_out_the_pages_kept_out_and_numbers_the_rest(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -290,8 +290,8 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
@@ -300,7 +300,7 @@ class TestManifest:
         pages = [make_page(order_key=key) for key in ('a0', 'a1', 'a2')]
         pages[1] = evolve(pages[1], included=False)
         book_id = await store_book(
-            fx_uow(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_catalogue(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_open_book.databases
         )
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest(), included_only=True)
@@ -314,7 +314,7 @@ class TestManifest:
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -324,14 +324,16 @@ class TestManifest:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, _, _ = await _commit_book(fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, _, _ = await _commit_book(
+            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
+        )
         [source, *_] = await fx_open_book.databases.open(book_id).read(lambda repos: repos.sources.list_all())
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
@@ -346,7 +348,7 @@ class TestGet:
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -356,15 +358,15 @@ class TestGet:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book_id, pages, versions = await _commit_book(
-            fx_database, fx_uow(), fx_actor.account_id, databases=fx_open_book.databases
+            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
         )
 
         overview = await fx_service().get(fx_open_book(fx_actor, book_id), pages[0].id)
@@ -377,7 +379,7 @@ class TestGet:
     async def test_page_of_another_book_of_the_actor_is_not_found(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -385,16 +387,20 @@ class TestGet:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         page = make_page()
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
-        await store_book(fx_uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        await store_book(
+            fx_catalogue(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_open_book(fx_actor, book_id), page.id)
@@ -402,7 +408,7 @@ class TestGet:
     async def test_missing_page_is_not_found(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -410,14 +416,16 @@ class TestGet:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_open_book(fx_actor, book_id), PageId(uuid4()))

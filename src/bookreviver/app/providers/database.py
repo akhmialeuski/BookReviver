@@ -1,8 +1,8 @@
-"""Provider of the catalogue, of the databases of the books and of the unit of work over them.
+"""Provider of the catalogue, of the databases of the books and of the catalogue database over them.
 
-The catalogue and the registry of the books are one per application, and the unit of work and the book databases over
-them are built per request or job. The same unit of work is the ``UnitOfWork`` of the port and the one the accounts run
-on, so the accounts add no second connection pool and no second unit of work.
+The catalogue and the registry of the books are one per application, and the catalogue database and the book databases
+over them are built per request or job. The same catalogue database is the ``CatalogueDatabase`` of the port and the one
+the accounts run on, so the accounts add no second connection pool and no second catalogue database.
 
 The application never changes the schema of the catalogue. Its migrations are applied by hand, after a copy of the data
 directory if it matters, and the provider only compares the revision of the catalogue with the head of the migrations
@@ -20,10 +20,10 @@ from sqlalchemy.orm import configure_mappers
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
-from bookreviver.ports.persistence import BookDatabases, ChangeWaitSeconds, UnitOfWork
+from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase, ChangeWaitSeconds
 from bookreviver.ports.runtime import EventPublisher
 from bookreviver.ports.tracing import Tracer
 
@@ -42,9 +42,11 @@ RUN: str = ': run `'
 
 
 class DatabaseProvider(Provider):
-    """One catalogue at the head revision and one registry of books per application, and one unit of work per request.
+    """One catalogue and one registry of books per application, and one catalogue database per request.
 
-    :ivar unit_of_work_port: The unit of work of the request as the ``UnitOfWork`` port.
+    The catalogue is at its head revision.
+
+    :ivar catalogue_database_port: The catalogue database of the request as the ``CatalogueDatabase`` port.
     :ivar book_databases_port: The opener of the books of the request as the ``BookDatabases`` port.
     """
 
@@ -118,26 +120,26 @@ class DatabaseProvider(Provider):
             await books.dispose()
 
     @provide(scope=Scope.REQUEST)
-    def unit_of_work(
+    def catalogue_database(
         self,
         database: SqlDatabase,
         wait_seconds: ChangeWaitSeconds,
-    ) -> SqlAlchemyUnitOfWork:
-        """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
+    ) -> SqlAlchemyCatalogueDatabase:
+        """Build the catalogue database of a request or job, which keeps no state but the wait limit of its scope.
 
         The services and the account database both take this one. It holds no session or connection, so it needs no
         closing.
 
         :param database: The catalogue, whose threads and connections the transactions of the catalogue use.
         :type database: SqlDatabase
-        :param wait_seconds: How long a change of the unit of work waits for a writer, by the scope it lives in.
+        :param wait_seconds: How long a change of the catalogue database waits for a writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
-        :returns: Unit of work over the catalogue.
-        :rtype: SqlAlchemyUnitOfWork
+        :returns: Catalogue database over the catalogue.
+        :rtype: SqlAlchemyCatalogueDatabase
         """
-        return SqlAlchemyUnitOfWork(database, wait_seconds=wait_seconds)
+        return SqlAlchemyCatalogueDatabase(database, wait_seconds=wait_seconds)
 
-    unit_of_work_port = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)
+    catalogue_database_port = alias(source=SqlAlchemyCatalogueDatabase, provides=CatalogueDatabase)
 
     @provide(scope=Scope.REQUEST)
     def book_databases(

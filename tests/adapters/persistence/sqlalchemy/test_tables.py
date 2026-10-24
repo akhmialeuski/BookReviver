@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow, ScanRow
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import BookDatabasesFactory, BookSessions, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, BookSessions, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -67,15 +67,15 @@ class TestBookRecordRow:
 
     async def test_update_keeps_pages(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_book_sessions: BookSessions,
         fx_owner_id: AccountId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify updating a book leaves its pages, which the relationships must not merge away.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
         :param fx_owner_id: Committed account owning the book.
@@ -84,8 +84,8 @@ class TestBookRecordRow:
         :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        uow = fx_uow()
-        book_id = await store_book(uow, book_record, make_page(), owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, make_page(), owner=fx_owner_id, databases=fx_databases())
 
         renamed = evolve(book_record, details=evolve(book_record.details, title='Renamed'))
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(renamed))
@@ -98,15 +98,15 @@ class TestStepChangeRow:
 
     async def test_a_deleted_page_takes_its_own_change_and_leaves_one_another_page_names(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_book_sessions: BookSessions,
         fx_owner_id: AccountId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify deleting a page removes the change of its own layer, and keeps a change of values another page has.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
         :param fx_owner_id: Committed account owning the book.
@@ -115,8 +115,8 @@ class TestStepChangeRow:
         :type fx_databases: BookDatabasesFactory
         """
         book_record, deleted, kept = make_record(), make_page(order_key='a0'), make_page(order_key='b0')
-        uow = fx_uow()
-        book_id = await store_book(uow, book_record, deleted, kept, owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, deleted, kept, owner=fx_owner_id, databases=fx_databases())
         values = make_step_values(scope=ValueScope.ODD)
         shared = PageHistoryEntry.of_values([deleted.id, kept.id], values, values, ChangeSource.USER)
         own = make_page_history_entry(page_id=deleted.id)
@@ -136,7 +136,7 @@ class TestLibraryRow:
     async def test_owner_with_a_book_cannot_be_deleted(
         self,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_owner_id: AccountId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -144,14 +144,14 @@ class TestLibraryRow:
 
         :param fx_database: Catalogue of the test, from which the account is deleted with plain SQL.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        await store_book(fx_uow(), make_record(), owner=fx_owner_id, databases=fx_databases())
+        await store_book(fx_catalogue(), make_record(), owner=fx_owner_id, databases=fx_databases())
         with pytest.raises(IntegrityError, match=SQLITE_FOREIGN_KEY_FAILED):
             await fx_database.write(
                 lambda session: session.execute(delete(AccountTable).filter_by(id=fx_owner_id)),
@@ -160,18 +160,18 @@ class TestLibraryRow:
                 wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
             )
 
-    async def test_entry_of_a_missing_owner_raises_not_found(self, fx_uow: UnitOfWorkFactory) -> None:
+    async def test_entry_of_a_missing_owner_raises_not_found(self, fx_catalogue: CatalogueDatabaseFactory) -> None:
         """Verify a book cannot join the library of an account that does not exist, reported by the account.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         """
         owner_id = new_account_id()
         entry = LibraryEntry(
             book_id=new_book_id(), owner_id=owner_id, directory=directory_of(new_book_id()), added_at=EPOCH
         )
         with pytest.raises(NotFoundError, match=str(owner_id)):
-            await fx_uow().change(lambda repos: repos.library.add(entry))
+            await fx_catalogue().change(lambda repos: repos.library.add(entry))
 
 
 class TestSourceRow:
@@ -179,15 +179,15 @@ class TestSourceRow:
 
     async def test_database_refuses_a_second_imported_source_with_one_digest(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_book_sessions: BookSessions,
         fx_owner_id: AccountId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the database itself refuses a second imported source with a digest, whatever a service checked first.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
         :param fx_owner_id: Committed account owning the book.
@@ -197,7 +197,7 @@ class TestSourceRow:
         """
         first = make_source(name=FIRST_NAME)
         book_id = await store_book(
-            fx_uow(), make_record(), owner=fx_owner_id, sources=[first], databases=fx_databases()
+            fx_catalogue(), make_record(), owner=fx_owner_id, sources=[first], databases=fx_databases()
         )
         second = SourceMapper().to_row(evolve(make_source(name=SECOND_NAME), sha256=first.sha256))
 
@@ -216,15 +216,15 @@ class TestSourceRow:
 
     async def test_files_no_import_took_in_may_repeat_the_digest_of_an_imported_source(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_book_sessions: BookSessions,
         fx_owner_id: AccountId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify any number of rejected and skipped files share a digest with an imported source.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
         :param fx_owner_id: Committed account owning the book.
@@ -234,7 +234,7 @@ class TestSourceRow:
         """
         imported = make_source(name=FIRST_NAME)
         book_id = await store_book(
-            fx_uow(), make_record(), owner=fx_owner_id, sources=[imported], databases=fx_databases()
+            fx_catalogue(), make_record(), owner=fx_owner_id, sources=[imported], databases=fx_databases()
         )
         unimported = [
             evolve(

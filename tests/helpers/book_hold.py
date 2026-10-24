@@ -18,21 +18,21 @@ from bookreviver.ports.persistence import BookDatabase
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import CatalogueDatabase
 
 # The longest a blocked change holds its thread when a test fails before it lets the change go
 HOLD_LIMIT_SECONDS: float = 30.0
 
 
 @asynccontextmanager
-async def hold_book_in_thread(holder: BookDatabase | UnitOfWork) -> AsyncIterator[None]:
+async def hold_book_in_thread(holder: BookDatabase | CatalogueDatabase) -> AsyncIterator[None]:
     """Hold a book or the catalogue by a change whose work blocks the thread it runs in until the block ends.
 
     Every other change of the same store waits behind the held one. A change of another book, or of the catalogue when a
     book is held, runs at once.
 
-    :param holder: The database of the book that is held, or the unit of work whose change holds the catalogue.
-    :type holder: BookDatabase | UnitOfWork
+    :param holder: The database of the book that is held, or the catalogue database whose change holds the catalogue.
+    :type holder: BookDatabase | CatalogueDatabase
     :returns: Iterator yielding once the work of the change has started, and letting it commit when the block ends.
     :rtype: AsyncIterator[None]
     """
@@ -44,7 +44,7 @@ async def hold_book_in_thread(holder: BookDatabase | UnitOfWork) -> AsyncIterato
         The work runs in a worker thread of ``anyio.to_thread``, so it reaches the event loop through
         ``anyio.from_thread``.
 
-        :param _arguments: What the unit of work hands its work, which this work does not need.
+        :param _arguments: What the catalogue database hands its work, which this work does not need.
         :type _arguments: object
         """
         anyio.from_thread.run_sync(inside.set)

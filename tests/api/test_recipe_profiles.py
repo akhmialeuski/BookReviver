@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, RecipeProfile
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import UnitOfWork
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from bookreviver.ports.persistence import CatalogueDatabase
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -147,11 +147,13 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookId:
+async def fx_book(
+    fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> BookId:
     """Commit a book of the signed-in account.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -159,24 +161,24 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     :returns: The stored book.
     :rtype: BookId
     """
-    book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+    book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
     return book_id
 
 
-async def _store(database: SqlDatabase, uow: UnitOfWork, profile: RecipeProfile) -> RecipeProfile:
+async def _store(database: SqlDatabase, catalogue: CatalogueDatabase, profile: RecipeProfile) -> RecipeProfile:
     """Commit a profile as an earlier request would have, and the account owning it unless the database stores it.
 
     :param database: Catalogue of the test, which the application runs on.
     :type database: SqlDatabase
-    :param uow: Unit of work over the catalogue and the books of the test.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database over the catalogue and the books of the test.
+    :type catalogue: CatalogueDatabase
     :param profile: Profile to store.
     :type profile: RecipeProfile
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
     await ensure_account(database, profile.account_id)
-    return await uow.change(lambda repos: repos.recipe_profiles.add(profile))
+    return await catalogue.change(lambda repos: repos.recipe_profiles.add(profile))
 
 
 class TestProfiles:
@@ -226,7 +228,11 @@ class TestProfiles:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_a_profile_of_another_account_is_a_404_problem(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_book: BookId
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_book: BookId,
     ) -> None:
         """Verify another account's profile is not listed and cannot be changed or applied.
 
@@ -234,13 +240,13 @@ class TestProfiles:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book: A book of the signed-in account.
         :type fx_book: BookId
         """
         foreign = await _store(
-            fx_database, fx_uow(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
+            fx_database, fx_catalogue(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
         )
         path = f'{PROFILES_PATH}/{foreign.id}'
         listed = await fx_client.get(PROFILES_PATH)
@@ -307,7 +313,7 @@ class TestApplyProfile:
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_book: BookId,
     ) -> None:
@@ -317,8 +323,8 @@ class TestApplyProfile:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_book: A book of the signed-in account.
@@ -326,7 +332,7 @@ class TestApplyProfile:
         """
         profile = await _store(
             fx_database,
-            fx_uow(),
+            fx_catalogue(),
             make_recipe_profile(
                 account_id=fx_actor.account_id, steps=(_step(MISSING_KEY), _step(FAKE_KEY, strength=2))
             ),
@@ -515,7 +521,7 @@ class TestLibrary:
     async def test_the_listing_counts_the_books_that_use_each_profile(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_book: BookId,
         fx_databases: BookDatabasesFactory,
@@ -524,8 +530,8 @@ class TestLibrary:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_book: A book of the signed-in account.
@@ -536,7 +542,7 @@ class TestLibrary:
         used = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME))
         other = await store_book(
-            fx_uow(), make_record(title='Another book'), owner=fx_actor.account_id, databases=fx_databases()
+            fx_catalogue(), make_record(title='Another book'), owner=fx_actor.account_id, databases=fx_databases()
         )
         for book in (fx_book, other, fx_book):
             await fx_client.post(_apply_path(book, used.id), json={'kind': 'text'})
@@ -661,7 +667,7 @@ class TestLibrary:
         assert_expectations()
 
     async def test_a_profile_of_another_account_cannot_be_exported_or_copied(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory
     ) -> None:
         """Verify another account's profile answers 404 to the export and to the copy.
 
@@ -669,11 +675,11 @@ class TestLibrary:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         """
         foreign = await _store(
-            fx_database, fx_uow(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
+            fx_database, fx_catalogue(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
         )
         responses = [
             await fx_client.get(f'{PROFILES_PATH}/{foreign.id}/{EXPORT_SUFFIX}'),

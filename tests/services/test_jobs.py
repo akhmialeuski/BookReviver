@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.storage import SharedBookDirectories
 
 # The tests open books of the library with the databases of the test, whether or not they store any
@@ -70,14 +70,17 @@ def fx_owner() -> Actor:
 
 @pytest.fixture
 async def fx_book(
-    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner: Actor, fx_databases: BookDatabasesFactory
+    fx_database: SqlDatabase,
+    fx_catalogue: CatalogueDatabaseFactory,
+    fx_owner: Actor,
+    fx_databases: BookDatabasesFactory,
 ) -> BookId:
     """Store a book of ``fx_owner``, and the account of the owner.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_owner: Account owning the book.
     :type fx_owner: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -86,7 +89,7 @@ async def fx_book(
     :rtype: BookId
     """
     book_id = await commit_record(
-        fx_database, fx_uow(), make_record(), owner=fx_owner.account_id, databases=fx_databases()
+        fx_database, fx_catalogue(), make_record(), owner=fx_owner.account_id, databases=fx_databases()
     )
     return book_id
 

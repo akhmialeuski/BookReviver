@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -94,14 +94,17 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 @pytest.fixture
 async def fx_book(
-    fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+    fx_client: httpx.AsyncClient,
+    fx_catalogue: CatalogueDatabaseFactory,
+    fx_actor: Actor,
+    fx_databases: BookDatabasesFactory,
 ) -> Book:
     """Commit a book of three pages and read the step of its geometry recipe.
 
     :param fx_client: Client of the running application.
     :type fx_client: httpx.AsyncClient
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -113,7 +116,7 @@ async def fx_book(
     scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
     pages = [make_page(order_key=order_key, scan=scan) for order_key, scan in zip(ORDER_KEYS, scans, strict=True)]
     book_id = await store_book(
-        fx_uow(),
+        fx_catalogue(),
         make_record(),
         *pages,
         owner=fx_actor.account_id,

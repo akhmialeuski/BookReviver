@@ -18,7 +18,7 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -32,19 +32,19 @@ def _stages() -> StageSummaries:
     :rtype: StageSummaries
     """
     board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE))
-    return StageSummaries(catalogue=FakeCatalogue([]), board=board)
+    return StageSummaries(processors=FakeCatalogue([]), board=board)
 
 
 class TestOverview:
     """Tests for StageSummaries.overview() of a book."""
 
     async def test_returns_the_book_with_the_counts_of_its_book(
-        self, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_open_book: BookOpener
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_open_book: BookOpener
     ) -> None:
         """Verify the overview counts the included pages, the sources and the scans of the book.
 
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account that owns the book.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
@@ -56,7 +56,7 @@ class TestOverview:
         pages = [make_page(order_key=f'a{scan.number}', scan=scan) for scan in scans]
         # A duplicate scan kept out of the book is no page of it
         book_id = await store_book(
-            fx_uow(),
+            fx_catalogue(),
             book_record,
             *pages[:-1],
             evolve(pages[-1], included=False),
@@ -80,18 +80,20 @@ class TestUpdate:
     """Tests for Book.update()."""
 
     async def test_sets_the_image_policy(
-        self, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_open_book: BookOpener
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_open_book: BookOpener
     ) -> None:
         """Verify the image policy of the book changes.
 
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account that owns the book.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
 
         book = fx_open_book(fx_actor, book_id)
 

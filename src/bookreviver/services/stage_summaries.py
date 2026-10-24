@@ -39,16 +39,16 @@ if TYPE_CHECKING:
 class StageSummaries:
     """Sums the stages of books over their pages, from the records of the page stages."""
 
-    def __init__(self, *, catalogue: ProcessorCatalog, board: JobBoard) -> None:
+    def __init__(self, *, processors: ProcessorCatalog, board: JobBoard) -> None:
         """Work over the ports of one request.
 
-        :param catalogue: The processors the application can run, which say which stages are available.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, which say which stages are available.
+        :type processors: ProcessorCatalog
         :param board: Board holding the jobs of every book, which tells the stages that are running. Its reads are safe
                       from the worker thread of a read transaction, which is where this class is called.
         :type board: JobBoard
         """
-        self._catalogue = catalogue
+        self._processors = processors
         self._board = board
 
     async def overview(self, book: Book) -> BookOverview:
@@ -159,7 +159,7 @@ class StageSummaries:
             steps = (
                 {}
                 if step_id is None
-                else StepRows(catalogue=self._catalogue, stage=stage, step_id=step_id).of(
+                else StepRows(processors=self._processors, stage=stage, step_id=step_id).of(
                     repos, pages.items, records, heads
                 )
             )
@@ -251,7 +251,7 @@ class StageSummaries:
         :returns: One summary for each stage, in the order of the pipeline.
         :rtype: list[StageSummary]
         """
-        with_processor = {spec.stage for spec in self._catalogue.specs()}
+        with_processor = {spec.stage for spec in self._processors.specs()}
         return [
             StageSummary.of(
                 stage,

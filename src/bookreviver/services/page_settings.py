@@ -200,15 +200,15 @@ class _Scene:
 class PageSettingsService:
     """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's books."""
 
-    def __init__(self, *, catalogue: ProcessorCatalog, records: StageRecords) -> None:
+    def __init__(self, *, processors: ProcessorCatalog, records: StageRecords) -> None:
         """Work over the ports of one request.
 
-        :param catalogue: The processors the application can run, which check the value of a field.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, which check the value of a field.
+        :type processors: ProcessorCatalog
         :param records: Writer of the stage records, which a changed value marks stale.
         :type records: StageRecords
         """
-        self._catalogue = catalogue
+        self._processors = processors
         self._records = records
 
     async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageStepSettings]:
@@ -300,7 +300,7 @@ class PageSettingsService:
             """
             scene = _Scene.load(repos, field, datetime.now(UTC))
             name = field.name
-            processor = self._catalogue.get(next(iter(scene.steps.values())).processor_key)
+            processor = self._processors.get(next(iter(scene.steps.values())).processor_key)
             if scene.holder is None:
                 own = {
                     page.id: {

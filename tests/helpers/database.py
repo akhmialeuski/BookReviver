@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.ports.runtime import EventPublisher
     from bookreviver.ports.storage import BookDirectories
 
@@ -46,18 +46,18 @@ NO_DATABASE_FILE: str = (
 )
 
 
-class UnitOfWorkFactory(Protocol):
-    """A function opening a new unit of work over the database of the test."""
+class CatalogueDatabaseFactory(Protocol):
+    """A function opening a new catalogue database over the database of the test."""
 
-    def __call__(self, *, wait_seconds: float | None = None) -> UnitOfWork:
-        """Open a unit of work over the database of the test.
+    def __call__(self, *, wait_seconds: float | None = None) -> CatalogueDatabase:
+        """Open a catalogue database over the database of the test.
 
-        :param wait_seconds: How long a change of the unit of work waits for its turn before it gives up with
+        :param wait_seconds: How long a change of the catalogue database waits for its turn before it gives up with
                              ``BookBusyError``, which a request gets shorter than a job. None for the limit of a job
                              in the settings of the test.
         :type wait_seconds: float | None
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
+        :returns: A new catalogue database.
+        :rtype: CatalogueDatabase
         """
 
 

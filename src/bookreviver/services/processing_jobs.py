@@ -95,7 +95,7 @@ class ProcessingJobs:
         :type books: BooksService
         :param runtime: The runner, the catalogue, the publisher and the size of a preview.
         :type runtime: StageRuntime
-        :param parts: The recipes, the stage records and the job starter over the unit of work.
+        :param parts: The recipes, the stage records and the job starter over the catalogue database.
         :type parts: ProcessingParts
         :param pages: The page service, which queues the detection of the content of the pages a split made.
         :type pages: PageService

@@ -51,11 +51,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import ColorMode
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import RenditionInfo
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.storage import SharedBookDirectories
 
@@ -134,7 +134,7 @@ class FlakyRenditionWriter(FakeRenditionWriter):
 
 
 async def _commit_book(
-    uow: UnitOfWork,
+    catalogue: CatalogueDatabase,
     files: SharedBookDirectories,
     owner: Actor,
     sizes: Sequence[tuple[int, int, float | None]] = (FIRST_SCAN_SIZE,),
@@ -143,8 +143,8 @@ async def _commit_book(
 ) -> BookOfScans:
     """Commit a book with a scan of each size, a page of each scan and its ready base version, and store the images.
 
-    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
+    :type catalogue: CatalogueDatabase
     :param files: Opens the asset store of the book, which receives the full image of each scan.
     :type files: SharedBookDirectories
     :param owner: Account owning the book.
@@ -168,7 +168,7 @@ async def _commit_book(
         for page, scan in zip(pages, scans, strict=True)
     ]
     book_id = await store_book(
-        uow,
+        catalogue,
         make_record(),
         *pages,
         owner=owner.account_id,
@@ -185,12 +185,12 @@ async def _commit_book(
 
 
 async def _placeholder_book(
-    uow: UnitOfWork, files: SharedBookDirectories, owner: Actor, *, databases: LocatedBookDatabases
+    catalogue: CatalogueDatabase, files: SharedBookDirectories, owner: Actor, *, databases: LocatedBookDatabases
 ) -> tuple[BookOfScans, Page]:
     """Commit a book of one scan page, and a placeholder after it.
 
-    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
+    :type catalogue: CatalogueDatabase
     :param files: Opens the asset store of the book, which receives the full image of the scan.
     :type files: SharedBookDirectories
     :param owner: Account owning the book.
@@ -200,7 +200,7 @@ async def _placeholder_book(
     :returns: The book and its placeholder.
     :rtype: tuple[BookOfScans, Page]
     """
-    book = await _commit_book(uow, files, owner, databases=databases)
+    book = await _commit_book(catalogue, files, owner, databases=databases)
     page = make_page(order_key=PLACEHOLDER_ORDER_KEY)
     placeholder = evolve(page, kind=PageKind.COVER, notes=PLACEHOLDER_NOTES)
     await databases.open(book.book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
@@ -370,7 +370,7 @@ class TestAddPlaceholder:
         :type fx_open_book: BookOpener
         """
         _, board = fx_runtime
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label=THIRD_LABEL, notes=LOST_NOTES)
 
         overview = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
@@ -410,7 +410,7 @@ class TestAddPlaceholder:
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(
-            fx_open_book.uow(),
+            fx_open_book.catalogue(),
             fx_directories,
             fx_actor,
             [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
@@ -445,8 +445,10 @@ class TestAddPlaceholder:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(fx_open_book.uow(), fx_directories, fx_stranger, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        stranger = await _commit_book(
+            fx_open_book.catalogue(), fx_directories, fx_stranger, databases=fx_open_book.databases
+        )
         pages_before = await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases)
         lost = NewPage(
             origin=NewPageOrigin.PLACEHOLDER,
@@ -486,7 +488,9 @@ class TestAddBlank:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await _commit_book(
+            fx_open_book.catalogue(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases
+        )
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER)
 
         first = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
@@ -506,7 +510,7 @@ class TestAddBlank:
     async def test_median_of_an_even_number_of_pages_is_rounded_and_leaves_out_what_is_not_counted(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -515,8 +519,8 @@ class TestAddBlank:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -525,7 +529,7 @@ class TestAddBlank:
         :type fx_open_book: BookOpener
         """
         sizes = [(100, 100, None), (102, 200, None), (9999, 9999, None), (500, 500, None), (300, 300, None)]
-        book = await _commit_book(fx_uow(), fx_directories, fx_actor, sizes, databases=fx_open_book.databases)
+        book = await _commit_book(fx_catalogue(), fx_directories, fx_actor, sizes, databases=fx_open_book.databases)
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(book.pages[2], included=False))
         )
@@ -546,7 +550,7 @@ class TestAddBlank:
     async def test_a_given_size_replaces_the_median(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -554,14 +558,16 @@ class TestAddBlank:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         size = PageSize(width_px=640, height_px=480, dpi=96.0)
 
         overview = await fx_service().add(
@@ -574,7 +580,7 @@ class TestAddBlank:
     async def test_without_a_size_and_without_pages_with_images_conflicts_and_stores_nothing(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_board: FakeJobBoard,
         fx_open_book: BookOpener,
@@ -583,8 +589,8 @@ class TestAddBlank:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -593,7 +599,7 @@ class TestAddBlank:
         :type fx_open_book: BookOpener
         """
         book_id = await store_book(
-            fx_uow(), make_record(), make_page(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_catalogue(), make_record(), make_page(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
 
         with pytest.raises(ConflictError):
@@ -631,7 +637,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
 
@@ -656,7 +662,7 @@ class TestAttachScan:
 
     async def test_binds_the_scan_after_a_printed_number_written_before_it_in_the_queue_of_the_book(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_actor: Actor,
@@ -668,8 +674,8 @@ class TestAttachScan:
         reads the placeholder after the number was written, which is proved with ``wait_all_tasks_blocked``, never
         with a delay.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_runtime: The recording bus and the job board the service reports through.
@@ -680,7 +686,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         binding = make_page_service(fx_open_book, fx_runtime)
@@ -719,7 +725,7 @@ class TestAttachScan:
     async def test_keeps_the_label_the_placeholder_had(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -728,8 +734,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -738,7 +744,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(placeholder, manual_label=FIRST_LABEL)),
@@ -752,7 +758,7 @@ class TestAttachScan:
     async def test_scan_of_another_book_and_an_unknown_scan_are_not_found(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -761,8 +767,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -771,9 +777,9 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        elsewhere = await _commit_book(fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        elsewhere = await _commit_book(fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
             await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, elsewhere.scans[0].id)
@@ -809,7 +815,7 @@ class TestAttachScan:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         page = book.pages[0]
         if origin is PageOrigin.BLANK:
@@ -822,7 +828,7 @@ class TestAttachScan:
     async def test_scan_another_page_shows_conflicts_naming_the_place_of_that_page(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -831,8 +837,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -841,7 +847,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         before = await _stored_pages(book.book_id, databases=fx_open_book.databases)
 
@@ -872,7 +878,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         keys = BookKeys()
         async with fx_directories.assets(book.book_id).writable(
@@ -915,13 +921,13 @@ class TestAttachScan:
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         fx_book_changes.published.clear()
 
@@ -934,7 +940,7 @@ class TestAttachScan:
     async def test_scan_without_renditions_conflicts(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -943,8 +949,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -953,7 +959,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         await fx_open_book.databases.open(book.book_id).change(
@@ -989,7 +995,7 @@ class TestDelete:
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(
-            fx_open_book.uow(),
+            fx_open_book.catalogue(),
             fx_directories,
             fx_actor,
             [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
@@ -1037,12 +1043,12 @@ class TestDelete:
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
         fx_book_changes.published.clear()
 
         await fx_service().delete(fx_open_book(fx_actor, book.book_id), book.pages[0].id)
@@ -1070,8 +1076,10 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(fx_open_book.uow(), fx_directories, fx_stranger, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        stranger = await _commit_book(
+            fx_open_book.catalogue(), fx_directories, fx_stranger, databases=fx_open_book.databases
+        )
 
         with pytest.raises(NotFoundError):
             await fx_service().delete(fx_open_book(fx_actor, book.book_id), stranger.pages[0].id)
@@ -1117,7 +1125,7 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         size = PageSize(width_px=64, height_px=48, dpi=150.0)
         overview = await fx_service().add(
@@ -1159,7 +1167,7 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         service = make_page_service(fx_open_book, fx_runtime)
@@ -1198,7 +1206,7 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         size = PageSize(width_px=8, height_px=8)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
@@ -1238,7 +1246,7 @@ class TestPrepareImages:
         def service() -> PageService:
             """Build a service whose maker of blank leaves fails once, over the board that runs its jobs.
 
-            :returns: The page service of a new unit of work.
+            :returns: The page service of a new catalogue database.
             :rtype: PageService
             """
             return make_page_service(
@@ -1249,7 +1257,7 @@ class TestPrepareImages:
 
         board = _board_that_runs(service, fx_events)
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=PageSize(width_px=8, height_px=8))
         first = await service().add(fx_open_book(fx_actor, book_id), new)
@@ -1298,7 +1306,7 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
+            fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
@@ -1335,7 +1343,7 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         size = PageSize(width_px=8, height_px=8)
         overview = await fx_service().add(
@@ -1356,12 +1364,16 @@ class TestPrepareImages:
         assert_expectations()
 
     async def test_job_with_nothing_to_prepare_succeeds(
-        self, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_board: FakeJobBoard, fx_databases: BookDatabasesFactory
+        self,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_board: FakeJobBoard,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a job that finds no pending or failed version ends succeeded with no steps.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -1369,7 +1381,7 @@ class TestPrepareImages:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
         job = fx_board.put(make_job(book_id=book_id, kind=JobKind.PREPARE_PAGES))
 
         await fx_board.run_queued()
@@ -1438,7 +1450,7 @@ class TestPrepareImagesWhileTheBookChanges:
         :rtype: TwoLeaves
         """
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         pages = await _add_leaves(
             lambda: make_page_service(fx_open_book, fx_runtime),
@@ -1538,7 +1550,7 @@ class TestPrepareImagesWhileTheBookChanges:
         def service() -> PageService:
             """Build a service whose maker of blank leaves fails once, over the board that runs its jobs.
 
-            :returns: The page service of a new unit of work.
+            :returns: The page service of a new catalogue database.
             :rtype: PageService
             """
             return make_page_service(
@@ -1549,7 +1561,7 @@ class TestPrepareImagesWhileTheBookChanges:
 
         board = _board_that_runs(service, fx_events)
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         [leaf] = await _add_leaves(service, fx_actor, book_id, 1, opener=fx_open_book)
 
@@ -1588,7 +1600,7 @@ class TestPrepareImagesWhileTheBookChanges:
         def request_service() -> PageService:
             """Build the service of a new request, which puts its jobs on the board that runs them.
 
-            :returns: The page service of a new unit of work.
+            :returns: The page service of a new catalogue database.
             :rtype: PageService
             """
             return make_page_service(fx_open_book, (fx_events, board))
@@ -1607,7 +1619,7 @@ class TestPrepareImagesWhileTheBookChanges:
         def job_service() -> PageService:
             """Build the service a job runs through, whose first leaf is written while another request adds one.
 
-            :returns: The page service of a new unit of work.
+            :returns: The page service of a new catalogue database.
             :rtype: PageService
             """
             return make_page_service(
@@ -1618,7 +1630,7 @@ class TestPrepareImagesWhileTheBookChanges:
 
         board = _board_that_runs(job_service, fx_events)
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         [first] = await _add_leaves(request_service, fx_actor, book_id, 1, opener=fx_open_book)
 
@@ -1639,7 +1651,7 @@ class TestPrepareImagesWhileTheBookChanges:
     async def test_second_leaf_while_a_job_is_queued_queues_no_second_job(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_board: FakeJobBoard,
         fx_open_book: BookOpener,
@@ -1648,8 +1660,8 @@ class TestPrepareImagesWhileTheBookChanges:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -1657,7 +1669,9 @@ class TestPrepareImagesWhileTheBookChanges:
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
 
         await _add_leaves(fx_service, fx_actor, book_id, 3, opener=fx_open_book)
 
@@ -1670,7 +1684,7 @@ class TestAddBlankWithoutSizedPages:
     async def test_book_whose_scan_pages_are_all_kept_out_says_it_is_the_recorded_size_that_is_missing(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -1682,8 +1696,8 @@ class TestAddBlankWithoutSizedPages:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -1691,7 +1705,7 @@ class TestAddBlankWithoutSizedPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await _commit_book(fx_catalogue(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update_many([evolve(page, included=False) for page in book.pages]),
         )
@@ -1781,12 +1795,12 @@ class TestAddMany:
         :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
         keys = CountingOrderKeys()
         service = make_page_service(fx_open_book, fx_runtime, order_keys=keys)
         fx_book_changes.published.clear()
@@ -1805,7 +1819,7 @@ class TestAddMany:
 
     async def test_pages_without_a_place_follow_the_page_before_them_and_each_anchor_is_one_place(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
         fx_actor: Actor,
@@ -1813,8 +1827,8 @@ class TestAddMany:
     ) -> None:
         """Verify a run starts at its anchor, continues after the page before it, and keeps the order listed.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_runtime: The recording bus and the job board.
@@ -1825,7 +1839,7 @@ class TestAddMany:
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(
-            fx_uow(), fx_directories, fx_actor, [FIRST_SCAN_SIZE] * 3, databases=fx_open_book.databases
+            fx_catalogue(), fx_directories, fx_actor, [FIRST_SCAN_SIZE] * 3, databases=fx_open_book.databases
         )
         first, _, last = book.pages
         keys = CountingOrderKeys()
@@ -1873,7 +1887,9 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await _commit_book(
+            fx_open_book.catalogue(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases
+        )
         sized = PageSize(width_px=8, height_px=9)
         new = [
             NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK),
@@ -1910,12 +1926,12 @@ class TestAddMany:
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
         lost = PageAnchor(page_id=PageId(UUID(int=7)), side=Side.AFTER)
         new = [_placeholder('1'), _placeholder('2'), _placeholder('3', lost)]
 
@@ -1930,7 +1946,7 @@ class TestAddMany:
     async def test_a_blank_leaf_without_a_size_in_a_book_without_images_names_its_index(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1938,14 +1954,16 @@ class TestAddMany:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         new = [_placeholder('1'), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)]
 
         with pytest.raises(ConflictError, match='index 1 of the list'):
@@ -1974,8 +1992,10 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(fx_open_book.uow(), fx_directories, fx_stranger, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        stranger = await _commit_book(
+            fx_open_book.catalogue(), fx_directories, fx_stranger, databases=fx_open_book.databases
+        )
         too_many = [_placeholder('x')] * (fx_service().MAX_PAGES_PER_BATCH + 1)
 
         with pytest.raises(ConflictError):
@@ -1987,7 +2007,7 @@ class TestAddMany:
     async def test_a_thousand_pages_are_one_transaction(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1995,14 +2015,16 @@ class TestAddMany:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         labels = [str(number) for number in range(fx_service().MAX_PAGES_PER_BATCH)]
 
         await fx_service().add_many(fx_open_book(fx_actor, book_id), [_placeholder(label) for label in labels])

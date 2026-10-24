@@ -1,7 +1,7 @@
 """The pagination sections of a book, and the numbering of a range of pages that makes one.
 
 A section numbers the pages from the page it starts at, and the labels of the pages are computed from the sections when
-they are read, so a use case that changes a section writes no label, and the unit of work tells the browser that the
+they are read, so a use case that changes a section writes no label, and the browser is told that the
 pages changed once the transaction committed.
 
 ``number`` keeps the older way of numbering a range of pages, which is now a way of making sections. It makes a section

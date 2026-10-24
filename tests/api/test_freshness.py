@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -55,7 +55,7 @@ class TestConditionalRead:
     async def test_a_read_that_still_holds_is_answered_304_and_a_change_gives_a_new_tag(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -63,15 +63,17 @@ class TestConditionalRead:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        book_id = await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_catalogue(), book_record, page, owner=fx_actor.account_id, databases=fx_databases()
+        )
 
         first = await fx_client.get(_pages_path(book_id))
         tag = first.headers[ETAG_HEADER]
@@ -90,7 +92,7 @@ class TestConditionalRead:
     async def test_two_reads_of_one_book_have_two_tags(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -98,15 +100,17 @@ class TestConditionalRead:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        book_id = await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_catalogue(), book_record, page, owner=fx_actor.account_id, databases=fx_databases()
+        )
         tag = (await fx_client.get(_pages_path(book_id))).headers[ETAG_HEADER]
 
         response = await fx_client.get(_page_path(book_id, page), headers={IF_NONE_MATCH_HEADER: tag})
@@ -117,7 +121,7 @@ class TestConditionalRead:
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a read of another account's book answers 404 even with a tag that matches any.
@@ -126,13 +130,13 @@ class TestConditionalRead:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_id = await commit_record(
-            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
 
         response = await fx_client.get(_pages_path(book_id), headers={IF_NONE_MATCH_HEADER: '*'})
@@ -142,7 +146,7 @@ class TestConditionalRead:
     async def test_the_place_of_the_reader_is_not_tagged(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -150,14 +154,14 @@ class TestConditionalRead:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.get(f'{BOOKS_PATH}/{book_id}/place')
 

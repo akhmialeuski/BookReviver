@@ -1003,7 +1003,7 @@ class TestRunApplyStep:
         actor, book_id, page = await prepared_page(fx_kit)
 
         async def mark_the_running_version() -> None:
-            """Mark and comment the version of the stage that is being made, through a unit of work of its own."""
+            """Mark and comment the version of the stage that is being made, through a catalogue database of its own."""
             listed = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
             [running] = [version for version in listed.items if version.state is VersionState.RUNNING]
             await fx_kit.databases.open(book_id).change(

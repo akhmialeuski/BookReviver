@@ -93,21 +93,21 @@ class SharedDatabaseSplit:
     """Moves the rows of the shared database into the catalogue and the files of the books."""
 
     def __init__(
-        self, shared: Path, *, catalogue: SqlDatabase, books: BookRegistry, directories: BookDirectories
+        self, shared: Path, *, catalogue_db: SqlDatabase, books: BookRegistry, directories: BookDirectories
     ) -> None:
         """Split ``shared`` into the given catalogue and books.
 
         :param shared: The shared database file of the earlier releases.
         :type shared: Path
-        :param catalogue: The database of the catalogue, which must hold no account yet.
-        :type catalogue: SqlDatabase
+        :param catalogue_db: The database of the catalogue, which must hold no account yet.
+        :type catalogue_db: SqlDatabase
         :param books: The registry of the databases of the books, which opens their files.
         :type books: BookRegistry
         :param directories: The directories of the books, which make the directory of each book with its file.
         :type directories: BookDirectories
         """
         self._shared = shared
-        self._catalogue = catalogue
+        self._catalogue_db = catalogue_db
         self._books = books
         self._directories = directories
 
@@ -120,7 +120,7 @@ class SharedDatabaseSplit:
             account or a book already, or a book has a file already.
         """
         await to_thread.run_sync(self._require_shared)
-        await to_thread.run_sync(self._catalogue.migrations.upgrade)
+        await to_thread.run_sync(self._catalogue_db.migrations.upgrade)
         catalogue = self._catalogue_path()
         accounts = await to_thread.run_sync(self._fill_catalogue, catalogue)
         book_ids = await to_thread.run_sync(self._book_ids)
@@ -162,7 +162,7 @@ class SharedDatabaseSplit:
         :rtype: Path
         :raises SplitRefusedError: If the URL of the catalogue names no file.
         """
-        database = make_url(self._catalogue.config.connection_string or '').database
+        database = make_url(self._catalogue_db.config.connection_string or '').database
         if not database:
             err_msg = 'The catalogue has no file to fill.'
             raise SplitRefusedError(err_msg)

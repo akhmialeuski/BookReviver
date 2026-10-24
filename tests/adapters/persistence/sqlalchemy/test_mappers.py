@@ -48,7 +48,7 @@ from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -109,12 +109,12 @@ class TestBookRecordMapper:
     """Tests for BookRecordMapper."""
 
     async def test_every_field_survives_the_database(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a book with a full description, and a lossless policy reads back unchanged.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -122,8 +122,8 @@ class TestBookRecordMapper:
         """
         book_record = make_record()
         described = evolve(book_record, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS)
-        uow = fx_uow()
-        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, owner=fx_owner_id, databases=fx_databases())
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(described))
         assert await fx_databases().open(book_id).read(lambda repos: repos.book_record.get()) == described
 
@@ -146,12 +146,12 @@ class TestPageMapper:
     """Tests for PageMapper."""
 
     async def test_every_field_survives_the_database(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify an excluded right half of a spread with its label, kind and notes reads back unchanged.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -168,9 +168,9 @@ class TestPageMapper:
             notes='Colour chart of the scanner',
             updated_at=EPOCH + timedelta(minutes=5),
         )
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id = await store_book(
-            uow, make_record(), page, sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
+            catalogue, make_record(), page, sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
         )
         assert await fx_databases().open(book_id).read(lambda repos: repos.pages.get(page.id)) == page
 
@@ -185,15 +185,15 @@ class TestPageVersionMapper:
     )
     async def test_every_field_survives_the_database(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_owner_id: AccountId,
         renditions: Renditions | None,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a split version with its input, parameters, crop transform, data and renditions reads back unchanged.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param renditions: Renditions state of the version, None for a step without an image.
@@ -214,9 +214,9 @@ class TestPageVersionMapper:
             renditions=renditions,
             state=VersionState.READY,
         )
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id = await store_book(
-            uow, make_record(), page, versions=[base, version], owner=fx_owner_id, databases=fx_databases()
+            catalogue, make_record(), page, versions=[base, version], owner=fx_owner_id, databases=fx_databases()
         )
         assert await fx_databases().open(book_id).read(lambda repos: repos.page_versions.get(version.id)) == version
 
@@ -232,15 +232,15 @@ class TestPageVersionMapper:
     )
     async def test_every_transform_survives_the_database(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_owner_id: AccountId,
         transform: Transform,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify each kind of transform reads back with its argument.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param transform: Transform of the version.
@@ -250,9 +250,9 @@ class TestPageVersionMapper:
         """
         page = make_page()
         version = evolve(make_page_version(page_id=page.id), transform=transform)
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id = await store_book(
-            uow, make_record(), page, versions=[version], owner=fx_owner_id, databases=fx_databases()
+            catalogue, make_record(), page, versions=[version], owner=fx_owner_id, databases=fx_databases()
         )
         assert (
             await fx_databases().open(book_id).read(lambda repos: repos.page_versions.get(version.id))
@@ -263,12 +263,12 @@ class TestSourceMapper:
     """Tests for SourceMapper."""
 
     async def test_every_field_survives_the_database(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify an indirect DjVu source with its files, metadata and suggestion reads back unchanged.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -288,9 +288,9 @@ class TestSourceMapper:
         )
         # The count is read from the scans of the source, so the source is stored with as many
         scans = [make_scan(source=source, number=number) for number in range(source.scan_count)]
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id = await store_book(
-            uow, make_record(), sources=[source], scans=scans, owner=fx_owner_id, databases=fx_databases()
+            catalogue, make_record(), sources=[source], scans=scans, owner=fx_owner_id, databases=fx_databases()
         )
         assert await fx_databases().open(book_id).read(lambda repos: repos.sources.get(source.id)) == source
 
@@ -300,7 +300,7 @@ class TestSourceMapper:
     )
     async def test_a_file_of_an_unknown_type_that_was_not_imported_survives_the_database(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_owner_id: AccountId,
         status: SourceStatus,
         rejection: RejectionReason | None,
@@ -308,8 +308,8 @@ class TestSourceMapper:
     ) -> None:
         """Verify a rejected or skipped file with no kind and no type, a reason and a detail reads back unchanged.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param status: Whether the file was rejected or skipped.
@@ -328,8 +328,10 @@ class TestSourceMapper:
             rejection=rejection,
             detail=SOURCE_DETAIL,
         )
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), sources=[source], owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(
+            catalogue, make_record(), sources=[source], owner=fx_owner_id, databases=fx_databases()
+        )
         assert await fx_databases().open(book_id).read(lambda repos: repos.sources.get(source.id)) == source
 
 
@@ -337,12 +339,12 @@ class TestScanMapper:
     """Tests for ScanMapper."""
 
     async def test_every_field_survives_the_database(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a scan with every fact, a label and ready renditions reads back equal to what was stored.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -355,8 +357,8 @@ class TestScanMapper:
             facts=FULL_SCAN_FACTS,
             renditions=Renditions(ready=True, version=3, full=Rendition.FULL_PNG),
         )
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id = await store_book(
-            uow, make_record(), sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
+            catalogue, make_record(), sources=[source], scans=[scan], owner=fx_owner_id, databases=fx_databases()
         )
         assert await fx_databases().open(book_id).read(lambda repos: repos.scans.get(scan.id)) == scan

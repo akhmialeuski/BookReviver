@@ -27,17 +27,17 @@ if TYPE_CHECKING:
 class StepRows:
     """Places one step of one stage on pages."""
 
-    def __init__(self, *, catalogue: ProcessorCatalog, stage: Stage, step_id: StepId) -> None:
+    def __init__(self, *, processors: ProcessorCatalog, stage: Stage, step_id: StepId) -> None:
         """Place the step over the ports of one request.
 
-        :param catalogue: The processors the application can run, which say what a step measures.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, which say what a step measures.
+        :type processors: ProcessorCatalog
         :param stage: The stage.
         :type stage: Stage
         :param step_id: The step, which a recipe of the stage must have.
         :type step_id: StepId
         """
-        self._catalogue = catalogue
+        self._processors = processors
         self._stage = stage
         self._step_id = step_id
 
@@ -76,7 +76,7 @@ class StepRows:
         )
         if key is None:
             raise NotFoundError(self._step_id)
-        measure = next((spec.measure for spec in self._catalogue.specs() if spec.key == key), None)
+        measure = next((spec.measure for spec in self._processors.specs() if spec.key == key), None)
         if measure is None:
             placed = self._place(repos, [page.id for page in pages], recipes, records, heads)
             return {page.id: placed[page.id] for page in pages}

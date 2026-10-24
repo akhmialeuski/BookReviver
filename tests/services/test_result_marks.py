@@ -27,7 +27,7 @@ PREVIEW_ID: PageVersionId = PageVersionId('abcdabcdabcdabcd')
 
 
 def _marks() -> ResultMarksService:
-    """Build the result marks service over a new unit of work of the kit.
+    """Build the result marks service over a new catalogue database of the kit.
 
     :returns: The service.
     :rtype: ResultMarksService

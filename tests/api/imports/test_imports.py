@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import BookId
     from tests.api.imports.watch import ImportWatch
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -292,7 +292,7 @@ class TestUploadSources:
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         tmp_path: Path,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -302,15 +302,15 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         stranger_record_id = await commit_record(
-            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
 
         response = await fx_client.post(
@@ -408,7 +408,7 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         tmp_path: Path,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -418,15 +418,15 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         stranger_record_id = await commit_record(
-            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
 
         response = await fx_client.post(

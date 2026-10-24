@@ -81,7 +81,7 @@ def fx_probe_kit(
 
 
 def pages_of(kit: ProcessingKit) -> PageService:
-    """Build the page service over a new unit of work and the board, and the events of the kit.
+    """Build the page service over a new catalogue database and the board, and the events of the kit.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -63,11 +63,11 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
+async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
     """Commit a book of four text pages for the signed-in account.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -77,7 +77,9 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     """
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
     pages = [make_page(order_key=key) for key in keys]
-    book_id = await store_book(fx_uow(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases())
+    book_id = await store_book(
+        fx_catalogue(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases()
+    )
     return Book(book_id=book_id, pages=pages)
 
 
@@ -220,7 +222,7 @@ class TestCreateSection:
         fx_client: httpx.AsyncClient,
         fx_book: Book,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a first page that is another book's, and a book of another account, both answer 404.
@@ -231,14 +233,14 @@ class TestCreateSection:
         :type fx_book: Book
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         page = make_page()
         stranger_id = await commit_record(
-            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), page, owner=new_account_id(), databases=fx_databases()
         )
 
         foreign_page = await fx_client.post(
@@ -279,7 +281,7 @@ class TestListSections:
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the sections of another account's book are answered not found.
@@ -288,13 +290,13 @@ class TestListSections:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         stranger_id = await commit_record(
-            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
 
         response = await fx_client.get(f'{BOOKS_PATH}/{stranger_id}/pagination-sections')

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -34,12 +34,12 @@ SECOND_PAGE: int = 1
 
 
 async def _store_book(
-    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
+    catalogue_factory: CatalogueDatabaseFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, list[Page]]:
     """Store a book of three pages in the changes that own them.
 
-    :param uow_factory: Function opening a new unit of work over the database of the test.
-    :type uow_factory: UnitOfWorkFactory
+    :param catalogue_factory: Function opening a new catalogue database over the database of the test.
+    :type catalogue_factory: CatalogueDatabaseFactory
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
@@ -48,7 +48,7 @@ async def _store_book(
     :rtype: tuple[BookId, list[Page]]
     """
     pages = [make_page(order_key=f'a{index}') for index in range(THREE_PAGES)]
-    book_id = await store_book(uow_factory(), make_record(), *pages, owner=await new_owner(), databases=databases)
+    book_id = await store_book(catalogue_factory(), make_record(), *pages, owner=await new_owner(), databases=databases)
     return book_id, pages
 
 
@@ -56,18 +56,18 @@ class TestPaginationSectionRepository:
     """Tests for the pagination sections of the books."""
 
     async def test_sections_are_listed_in_the_order_they_were_made(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a listing holds the sections of its book by their creation time, whatever order they were stored in.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         later = make_section(page=pages[SECOND_PAGE], minutes=THIRD_MINUTE)
         earlier = make_section(page=pages[0], minutes=FIRST_MINUTE)
         middle = make_section(page=pages[2], minutes=SECOND_MINUTE)
@@ -80,21 +80,21 @@ class TestPaginationSectionRepository:
         assert listed == [earlier, middle, later]
 
     async def test_sections_of_another_book_are_left_out(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a listing never holds the sections of another book.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         foreign_page = make_page()
         other_id = await store_book(
-            fx_uow(), make_record(), foreign_page, owner=await fx_new_owner(), databases=fx_databases()
+            fx_catalogue(), make_record(), foreign_page, owner=await fx_new_owner(), databases=fx_databases()
         )
         own = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(own))
@@ -107,18 +107,18 @@ class TestPaginationSectionRepository:
         assert listed == [own]
 
     async def test_every_field_of_a_section_survives_the_store(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the style, the first number, the prefix, the display and the kinds of a series read back unchanged.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         section = evolve(
             make_section(
                 page=pages[SECOND_PAGE],
@@ -136,18 +136,18 @@ class TestPaginationSectionRepository:
         )
 
     async def test_a_section_is_replaced_whole(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify an update changes the page, the rule and the kinds of a section, and keeps its identifier.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         section = make_section(page=pages[0])
         changed = evolve(
             section,
@@ -173,36 +173,36 @@ class TestPaginationSectionRepository:
         assert listed == [changed]
 
     async def test_a_section_needs_its_first_page(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Reject a section whose first page is not stored.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         section = make_section(page=pages[0])
         orphan = evolve(section, first_page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(orphan))
 
     async def test_deleting_the_first_page_deletes_the_section(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a section goes with the page it starts at, and the sections of other pages stay.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         doomed, kept = make_section(page=pages[0]), make_section(page=pages[SECOND_PAGE], minutes=FIRST_MINUTE)
         await (
             fx_databases()
@@ -214,18 +214,18 @@ class TestPaginationSectionRepository:
         assert listed == [kept]
 
     async def test_deleting_the_book_deletes_its_sections(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the sections go with their book.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         section = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(section))
         await fx_databases().delete_book(book_id)
@@ -233,18 +233,18 @@ class TestPaginationSectionRepository:
             await fx_databases().open(book_id).read(lambda repos: repos.pagination_sections.get(section.id))
 
     async def test_a_section_is_removed_by_its_identifier(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a deleted section is gone and deleting it again reports it missing.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
+        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
         section = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(section))
         await (

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Page, PageVersion, Scan, Source
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.database import LocatedBookDatabases
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
@@ -85,7 +85,7 @@ async def ensure_account(database: SqlDatabase, account_id: AccountId) -> None:
 
 
 async def store_book(
-    uow: UnitOfWork,
+    catalogue: CatalogueDatabase,
     book_record: BookRecord,
     *pages: Page,
     owner: AccountId,
@@ -99,8 +99,8 @@ async def store_book(
     entry of the owner is added last, as the creation of a book does. The entry names an account, so the catalogue must
     store the owner.
 
-    :param uow: Unit of work to store through, over a catalogue that stores the account owning the book.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to store through, over a catalogue that stores the account owning the book.
+    :type catalogue: CatalogueDatabase
     :param book_record: Record of the book to store.
     :type book_record: BookRecord
     :param pages: Pages of the book, which may show the given scans.
@@ -138,13 +138,13 @@ async def store_book(
     entry = LibraryEntry(
         book_id=book_id, owner_id=owner, directory=directory_of(book_id), added_at=book_record.created_at
     )
-    await uow.change(lambda repos: repos.library.add(entry))
+    await catalogue.change(lambda repos: repos.library.add(entry))
     return book_id
 
 
 async def commit_record(
     database: SqlDatabase,
-    uow: UnitOfWork,
+    catalogue: CatalogueDatabase,
     book_record: BookRecord,
     *pages: Page,
     owner: AccountId,
@@ -155,8 +155,8 @@ async def commit_record(
 
     :param database: Catalogue to commit the owner account into.
     :type database: SqlDatabase
-    :param uow: Unit of work to store the book through, over the same catalogue.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to store the book through, over the same catalogue.
+    :type catalogue: CatalogueDatabase
     :param book_record: Record of the book to store.
     :type book_record: BookRecord
     :param pages: Pages of the book, which may show the given scans.
@@ -171,4 +171,4 @@ async def commit_record(
     :rtype: BookId
     """
     await ensure_account(database, owner)
-    return await store_book(uow, book_record, *pages, owner=owner, databases=databases, **content)
+    return await store_book(catalogue, book_record, *pages, owner=owner, databases=databases, **content)

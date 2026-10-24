@@ -75,7 +75,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import BookDatabases
     from bookreviver.ports.storage import BookDirectories
-    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.storage import SharedBookDirectories
 from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
@@ -193,14 +193,14 @@ class BookOpener:
     """Opens the books of a test with their databases, as the access dependencies open them for a request.
 
     A test that opens a book also seeds the catalogue and reads and writes the databases and the files of the books, so
-    the opener hands out the units of work, the databases and the file stores of the test too.
+    the opener hands out the catalogue databases, the databases and the file stores of the test too.
 
-    :ivar uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :ivar catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
     :ivar databases: Opens the databases of the books of the test.
     :ivar files: The directories of the books of the test, with their source stores and asset stores.
     """
 
-    uow: UnitOfWorkFactory
+    catalogue: CatalogueDatabaseFactory
     databases: LocatedBookDatabases
     files: SharedBookDirectories
 

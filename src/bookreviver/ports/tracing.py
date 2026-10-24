@@ -11,7 +11,7 @@ spans opened there become its children, and it ends when the block ends, with th
 transaction in two places: the span is not made current, and its owner ends it.
 
 Both operations take the parent of the new span: by default the span that is current where it is opened, or none, which
-starts a trace of its own. A unit of work that is its own, such as a background job, asks for none, so its span has the
+starts a trace of its own. Work that is its own, such as a background job, asks for none, so its span has the
 same place in a trace whichever component happened to start it from inside a request.
 """
 

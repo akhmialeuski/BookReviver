@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, PageStage, Recipe
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.page_stage_writes import PageStageWrites
 
 pytestmark = pytest.mark.anyio
@@ -59,7 +59,7 @@ class TestMarkRecipeStale:
     async def test_the_records_of_the_recipe_are_written_by_one_save_many_and_never_by_save(
         self,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_stage_writes: PageStageWrites,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -70,8 +70,8 @@ class TestMarkRecipeStale:
 
         :param fx_database: Database of the test, holding no book yet.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_stage_writes: Record of the writes of the page stage repository, not yet started.
         :type fx_page_stage_writes: PageStageWrites
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -79,7 +79,7 @@ class TestMarkRecipeStale:
         """
         pages = [make_page(order_key=key) for key in PAGE_ORDER_KEYS]
         book_id = await commit_record(
-            fx_database, fx_uow(), make_record(), *pages, owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), *pages, owner=new_account_id(), databases=fx_databases()
         )
         recipe = make_recipe()
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]

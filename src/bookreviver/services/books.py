@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import StorageKey
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase, PageRepository
     from bookreviver.ports.storage import BookDirectories
 
 # How many pages are read from the book at a time, when a use case needs all of them
@@ -65,21 +65,21 @@ class BooksService:
     def __init__(
         self,
         *,
-        uow: UnitOfWork,
+        catalogue: CatalogueDatabase,
         databases: BookDatabases,
         directories: BookDirectories,
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, which runs the work of every use case on the catalogue in one
-                    transaction.
-        :type uow: UnitOfWork
+        :param catalogue: Catalogue database of the request, which runs the work of every use case on the catalogue in
+            one         transaction.
+        :type catalogue: CatalogueDatabase
         :param databases: Opens the database of a book from its file, which runs the transactions of that book.
         :type databases: BookDatabases
         :param directories: The directories of the books, which make, unpack and open the directory of a book.
         :type directories: BookDirectories
         """
-        self._uow = uow
+        self._catalogue = catalogue
         self._databases = databases
         self._directories = directories
 
@@ -111,7 +111,7 @@ class BooksService:
         :rtype: Book
         :raises NotFoundError: If the library has no such book.
         """
-        return self.book(await self._uow.read(lambda repos: repos.library.get(book_id)))
+        return self.book(await self._catalogue.read(lambda repos: repos.library.get(book_id)))
 
     @asynccontextmanager
     async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
@@ -132,7 +132,7 @@ class BooksService:
         """
         if not BookKeys.is_asset(key):
             raise NotFoundError(key)
-        entry = await self._uow.read(lambda repos: repos.library.get(book_id))
+        entry = await self._catalogue.read(lambda repos: repos.library.get(book_id))
         async with self._directories.directory(entry.directory).assets.readable(key) as path:
             yield path
 
@@ -142,7 +142,7 @@ class BooksService:
         :returns: The open books, one for each entry of the library.
         :rtype: list[Book]
         """
-        entries = await self._uow.read(lambda repos: repos.library.list_all())
+        entries = await self._catalogue.read(lambda repos: repos.library.list_all())
         return [self.book(entry) for entry in entries]
 
     async def create(self, owner: Actor, details: BookDetails) -> Book:
@@ -159,7 +159,7 @@ class BooksService:
         await self._directories.create(entry.directory, await self._databases.blank())
         book = self.book(entry)
         await book.describe(details)
-        await self._uow.change(lambda repos: repos.library.add(entry))
+        await self._catalogue.change(lambda repos: repos.library.add(entry))
         return book
 
     async def import_archive(self, owner: Actor, archive: BinaryIO) -> Book:
@@ -186,7 +186,7 @@ class BooksService:
         except Exception:
             await book.delete()
             raise
-        await self._uow.change(lambda repos: repos.library.add(entry))
+        await self._catalogue.change(lambda repos: repos.library.add(entry))
         return book
 
     def _new_entry(self, owner: Actor) -> LibraryEntry:
@@ -214,7 +214,7 @@ class BooksService:
         :param book: The open book.
         :type book: Book
         """
-        await self._uow.change(lambda repos: repos.library.delete(book.id))
+        await self._catalogue.change(lambda repos: repos.library.delete(book.id))
         await book.delete()
 
     async def delete_all(self, books: Iterable[Book]) -> None:

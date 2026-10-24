@@ -9,7 +9,7 @@ Moving a page writes a new order key to the moved pages alone: the key lies betw
 place and the key of the page after it, which the repository finds while leaving the moved pages out, so the pages that
 stay never change. A group of pages, or every page of one source, is placed as one run that keeps its order in the
 book. Every change of a book is the work of one ``Book.change``, which waits for any other change of that book, and
-the unit of work announces it once it committed. The labels the pagination sections give the pages are computed when
+it is announced once it committed. The labels the pagination sections give the pages are computed when
 the pages are read, so a change that adds, deletes or moves pages, or changes the kind or the inclusion of one, writes
 no label: it settles the sections in the same work, which hands on the sections of the pages it deletes and refuses a
 number a section cannot write, and the browser reads the pages and their labels again for the change. The work is

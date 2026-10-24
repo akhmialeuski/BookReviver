@@ -43,9 +43,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalSourceStore
     from bookreviver.domain.entities import Actor, BookOverview, BookRecord, Page
     from bookreviver.domain.ids import BookDirectoryName, BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -65,14 +65,16 @@ def _stages() -> StageSummaries:
     :rtype: StageSummaries
     """
     board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
-    return StageSummaries(catalogue=FakeCatalogue([]), board=board)
+    return StageSummaries(processors=FakeCatalogue([]), board=board)
 
 
-def _service(uow: UnitOfWork, stores: SharedBookDirectories, *, databases: LocatedBookDatabases) -> BooksService:
-    """Build the book service for one request, over a unit of work.
+def _service(
+    catalogue: CatalogueDatabase, stores: SharedBookDirectories, *, databases: LocatedBookDatabases
+) -> BooksService:
+    """Build the book service for one request, over a catalogue database.
 
-    :param uow: Unit of work of the request.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database of the request.
+    :type catalogue: CatalogueDatabase
     :param stores: The directories of the books of the test.
     :type stores: SharedBookDirectories
     :param databases: Opens the databases of the books of the test.
@@ -80,25 +82,25 @@ def _service(uow: UnitOfWork, stores: SharedBookDirectories, *, databases: Locat
     :returns: The service.
     :rtype: BooksService
     """
-    return BooksService(uow=uow, databases=databases, directories=stores)
+    return BooksService(catalogue=catalogue, databases=databases, directories=stores)
 
 
 @pytest.fixture
 def fx_service(
-    fx_uow: UnitOfWorkFactory, fx_directories: SharedBookDirectories, fx_databases: BookDatabasesFactory
+    fx_catalogue: CatalogueDatabaseFactory, fx_directories: SharedBookDirectories, fx_databases: BookDatabasesFactory
 ) -> Callable[[], BooksService]:
     """Return a function building the service for one request.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_directories: The directories of the books of the test.
     :type fx_directories: SharedBookDirectories
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
-    :returns: Function building a service over a new unit of work.
+    :returns: Function building a service over a new catalogue database.
     :rtype: Callable[[], BooksService]
     """
-    return lambda: _service(fx_uow(), fx_directories, databases=fx_databases())
+    return lambda: _service(fx_catalogue(), fx_directories, databases=fx_databases())
 
 
 class StoreFailedError(OSError):
@@ -180,7 +182,7 @@ class TestList:
         self,
         fx_service: Callable[[], BooksService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -190,8 +192,8 @@ class TestList:
         :type fx_service: Callable[[], BooksService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -199,12 +201,12 @@ class TestList:
         """
         older_id, newer_id, _ = [
             await commit_record(
-                fx_database, fx_uow(), make_record(minutes=minutes), owner=owner, databases=fx_databases()
+                fx_database, fx_catalogue(), make_record(minutes=minutes), owner=owner, databases=fx_databases()
             )
             for minutes, owner in ((1, fx_actor.account_id), (2, fx_actor.account_id), (3, new_account_id()))
         ]
 
-        result = await _listed(fx_service(), fx_uow(), fx_actor)
+        result = await _listed(fx_service(), fx_catalogue(), fx_actor)
 
         expect([item.book_id for item in result.items] == [newer_id, older_id])
         expect(result.total == 2)
@@ -217,7 +219,7 @@ class TestOpenAsset:
     async def test_gives_the_path_of_a_stored_file(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
@@ -226,8 +228,8 @@ class TestOpenAsset:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
@@ -235,7 +237,7 @@ class TestOpenAsset:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
         key = BookKeys().book
         async with fx_directories.assets(book_id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
@@ -265,7 +267,7 @@ class TestOpenAsset:
         self,
         fx_service: Callable[[], BooksService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_directories: SharedBookDirectories,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -275,15 +277,15 @@ class TestOpenAsset:
         :type fx_service: Callable[[], BooksService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_directories: Opens the source store and the asset store of a book of the test.
         :type fx_directories: SharedBookDirectories
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_id = await commit_record(
-            fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
         key = BookKeys().book
         async with fx_directories.assets(book_id).writable(key) as target:
@@ -298,7 +300,7 @@ class TestOpenAsset:
     async def test_key_outside_the_assets_is_not_found(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         area: str,
         fx_databases: BookDatabasesFactory,
@@ -307,8 +309,8 @@ class TestOpenAsset:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param area: Directory of the book the key lies in.
@@ -316,7 +318,7 @@ class TestOpenAsset:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(book_id, StorageKey(f'{area}/{uuid4()}')):
@@ -325,7 +327,7 @@ class TestOpenAsset:
     async def test_key_without_a_file_is_not_found(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -333,14 +335,14 @@ class TestOpenAsset:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(book_id, BookKeys().book):
@@ -353,7 +355,7 @@ class TestDelete:
     async def test_removes_the_entry_then_the_book_with_all_its_files(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -362,8 +364,8 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -373,7 +375,9 @@ class TestDelete:
         """
         doomed_page, kept_page = make_page(), make_page()
         doomed_id, kept_id = [
-            await store_book(fx_uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases)
+            await store_book(
+                fx_catalogue(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases
+            )
             for page in (doomed_page, kept_page)
         ]
         for book_id, page in ((doomed_id, doomed_page), (kept_id, kept_page)):
@@ -381,7 +385,9 @@ class TestDelete:
 
         await fx_service().delete(fx_open_book(fx_actor, doomed_id))
 
-        remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
+        remaining = await fx_catalogue().read(
+            lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest())
+        )
         expect([entry.book_id for entry in remaining.items] == [kept_id])
         expect(fx_files.gone(doomed_id))
         expect(fx_files.kept(kept_page))
@@ -410,7 +416,7 @@ class TestDelete:
         """
         page = make_page()
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         await fx_files.store(book_id, page)
         book = open_for(fx_actor, book_id, databases=fx_open_book.databases, files=fx_flaky_directories)
@@ -418,7 +424,7 @@ class TestDelete:
         with pytest.raises(StoreFailedError):
             await fx_service().delete(book)
 
-        expect(await fx_open_book.uow().read(lambda repos: repos.library.list_all()) == [])
+        expect(await fx_open_book.catalogue().read(lambda repos: repos.library.list_all()) == [])
         expect(fx_files.kept(page))
         assert_expectations()
         await book.delete()
@@ -455,15 +461,15 @@ class TestDeleteAll:
             owner = new_account_id() if book_record is kept else fx_actor.account_id
             page = make_page()
             book_id = await commit_record(
-                fx_database, fx_open_book.uow(), book_record, page, owner=owner, databases=fx_open_book.databases
+                fx_database, fx_open_book.catalogue(), book_record, page, owner=owner, databases=fx_open_book.databases
             )
             pages[book_id] = page
             await fx_files.store(book_id, page)
         *owned, kept_id = pages
 
-        await AccountBooks(uow=fx_open_book.uow(), books=fx_service()).delete_all(fx_actor.account_id)
+        await AccountBooks(catalogue=fx_open_book.catalogue(), books=fx_service()).delete_all(fx_actor.account_id)
 
-        remaining = await fx_open_book.uow().read(
+        remaining = await fx_open_book.catalogue().read(
             lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest())
         )
         expect(remaining.total == 0)
@@ -473,33 +479,33 @@ class TestDeleteAll:
         assert_expectations()
 
     async def test_actor_without_books_is_not_an_error(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self, fx_service: Callable[[], BooksService], fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor
     ) -> None:
         """Verify deleting the books of an account that has none succeeds, as for a fresh account.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        await AccountBooks(uow=fx_uow(), books=fx_service()).delete_all(fx_actor.account_id)
+        await AccountBooks(catalogue=fx_catalogue(), books=fx_service()).delete_all(fx_actor.account_id)
 
 
-async def _listed(service: BooksService, uow: UnitOfWork, actor: Actor) -> Slice[BookOverview]:
+async def _listed(service: BooksService, catalogue: CatalogueDatabase, actor: Actor) -> Slice[BookOverview]:
     """List the books of the actor as the list route does: the books the access dependencies read, then their overviews.
 
     :param service: The book service of the request.
     :type service: BooksService
-    :param uow: Unit of work the books of the actor are read through.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database the books of the actor are read through.
+    :type catalogue: CatalogueDatabase
     :param actor: Account whose books are listed.
     :type actor: Actor
     :returns: The overviews of the actor's books, the latest added first, and their number.
     :rtype: Slice[BookOverview]
     """
-    books = await books_of(uow, service, actor.account_id)
+    books = await books_of(catalogue, service, actor.account_id)
     stages = _stages()
     return Slice(items=[await stages.overview(book) for book in books], total=len(books))
 
@@ -524,7 +530,7 @@ class TestExportAndImport:
     async def test_an_imported_book_is_a_new_book_of_the_actor_with_the_pages_and_files_of_the_archive(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
@@ -533,8 +539,8 @@ class TestExportAndImport:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_files: Files of imported books in the stores the service works on.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -543,7 +549,9 @@ class TestExportAndImport:
         :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        book_id = await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_catalogue(), book_record, page, owner=fx_actor.account_id, databases=fx_databases()
+        )
         await fx_files.store(book_id, page)
         archive = await _archive(fx_service(), book_id)
 
@@ -551,7 +559,7 @@ class TestExportAndImport:
 
         copy_id = imported.book_id
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)
-        listed = await _listed(fx_service(), fx_uow(), fx_actor)
+        listed = await _listed(fx_service(), fx_catalogue(), fx_actor)
         expect(copy_id != book_id)
         expect(imported.book_record.details == book_record.details)
         expect([stored.id for stored in pages] == [page.id])
@@ -562,7 +570,7 @@ class TestExportAndImport:
     async def test_an_imported_book_reads_the_mask_of_its_edit(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
         fx_directories: SharedBookDirectories,
@@ -574,8 +582,8 @@ class TestExportAndImport:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -584,7 +592,9 @@ class TestExportAndImport:
         :type fx_directories: SharedBookDirectories
         """
         book_record, page = make_record(), make_page()
-        book_id = await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        book_id = await store_book(
+            fx_catalogue(), book_record, page, owner=fx_actor.account_id, databases=fx_databases()
+        )
         directory = BookKeys().page_edit(page.id, DESKEW_STEP_ID, MASK_EDIT_HASH)
         edit = evolve(make_page_edit(page_id=page.id), mask_key=StorageKey(f'{directory}/{Rendition.MASK}'))
         await (
@@ -613,7 +623,7 @@ class TestExportAndImport:
     async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_storage_root: Path,
     ) -> None:
@@ -621,8 +631,8 @@ class TestExportAndImport:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_storage_root: Storage root the archive is unpacked under.
@@ -637,7 +647,7 @@ class TestExportAndImport:
             await fx_service().import_archive(fx_actor, written)
 
         expect(list((fx_storage_root / KeySegment.BOOKS).glob('*')) == [])
-        expect((await _listed(fx_service(), fx_uow(), fx_actor)).total == 0)
+        expect((await _listed(fx_service(), fx_catalogue(), fx_actor)).total == 0)
         assert_expectations()
 
 
@@ -647,7 +657,7 @@ class TestDeleteWaitsForTheTransactionInProgress:
     async def test_the_directory_goes_once_the_change_in_progress_has_committed(
         self,
         fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -656,8 +666,8 @@ class TestDeleteWaitsForTheTransactionInProgress:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -665,7 +675,9 @@ class TestDeleteWaitsForTheTransactionInProgress:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         entered, release = anyio.Event(), anyio.Event()
         committed = False
 

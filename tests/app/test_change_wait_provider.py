@@ -1,4 +1,4 @@
-"""Tests for the limit of a unit of work the container chooses by the context of the scope the unit of work lives in."""
+"""Tests for the limit of a catalogue database the container chooses by the context of the scope the catalogue database lives in."""
 
 from typing import TYPE_CHECKING, Any
 

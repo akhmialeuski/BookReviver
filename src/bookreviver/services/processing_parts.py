@@ -1,8 +1,8 @@
 """The collaborators every processing use case is built from, and the starting of the jobs that do the heavy work.
 
 A use case of processing writes recipes and stage records, follows jobs and starts new ones. ``ProcessingParts`` gathers
-the objects that do these over one unit of work, so ``ProcessingService`` and ``ProcessingJobs`` take one value for them
-and are built the same way.
+the objects that do these over one catalogue database, so ``ProcessingService`` and ``ProcessingJobs`` take one value
+for them and are built the same way.
 
 A job is put on the job board of the process, which queues it behind the jobs its book has already and runs one job of a
 book at a time. A book processes one thing at a time. The user asks for a run, a preview or a measure of the book, of
@@ -283,15 +283,15 @@ class ProcessingParts:
     @classmethod
     def build(
         cls,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         defaults: DefaultRecipes,
         runtime: ProcessingRuntime,
         config: ProcessingConfig,
     ) -> ProcessingParts:
         """Build the parts of one request or job.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
         :param runtime: The publisher and the board.
@@ -302,7 +302,7 @@ class ProcessingParts:
         :rtype: ProcessingParts
         """
         return cls(
-            recipes=RecipeBook(catalogue=catalogue, defaults=defaults, order=RecipeOrder(catalogue)),
+            recipes=RecipeBook(processors=processors, defaults=defaults, order=RecipeOrder(processors)),
             records=StageRecords(),
             starter=JobStarter(runtime=runtime, config=config),
         )

@@ -109,17 +109,17 @@ class DefaultRecipes:
 class RecipeBook:
     """Finds the recipes of a book, creates the default ones, and checks the steps of a recipe."""
 
-    def __init__(self, *, catalogue: ProcessorCatalog, defaults: DefaultRecipes, order: RecipeOrder) -> None:
+    def __init__(self, *, processors: ProcessorCatalog, defaults: DefaultRecipes, order: RecipeOrder) -> None:
         """Work over the ports of one request or job.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
         :param order: The check of the order of the steps.
         :type order: RecipeOrder
         """
-        self._catalogue = catalogue
+        self._processors = processors
         self._defaults = defaults
         self._order = order
 
@@ -128,7 +128,7 @@ class RecipeBook:
     ) -> list[Recipe]:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
-        Called outside any work, since it runs on the unit of work itself. It reads in a transaction that only reads,
+        Called outside any work, since it runs the transactions itself. It reads in a transaction that only reads,
         and opens a ``Book.change`` of its own only when the stage has no recipes yet, where it reads again, since a
         task that ran at the same time may have stored them first, and adds the defaults only if they are still missing.
 
@@ -354,7 +354,7 @@ class RecipeBook:
                                         wrong.
         """
         try:
-            processor = self._catalogue.get(step.processor_key)
+            processor = self._processors.get(step.processor_key)
         except NotFoundError as error:
             raise InvalidParametersError(UNKNOWN_PROCESSOR.format(key=step.processor_key)) from error
         if processor.spec.stage is not stage:
@@ -401,7 +401,7 @@ class RecipeBook:
         return tuple(
             Step(
                 processor_key=key,
-                params=self._catalogue.get(key).validate_params(template.params.get(key, {})),
+                params=self._processors.get(key).validate_params(template.params.get(key, {})),
                 enabled=key not in template.off,
             )
             for key in template.processor_keys
@@ -440,7 +440,7 @@ class RecipeBook:
         :rtype: bool
         """
         try:
-            self._catalogue.get(key)
+            self._processors.get(key)
         except NotFoundError:
             return False
         return True

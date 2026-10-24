@@ -1,4 +1,4 @@
-"""Persistence ports: repositories per aggregate and the unit of work that runs a use case's work on them.
+"""Persistence ports: repositories per aggregate and the catalogue database that runs a use case's work on them.
 
 The data lives in two kinds of store. The catalogue is one for the application and holds what belongs to the
 accounts: the library, which says which account owns which book, and the recipe profiles. Each book has a store of its
@@ -6,7 +6,7 @@ own that holds everything of the book and nothing of any account, so a book move
 refers across two stores by a key the store checks, and every list of books goes through the library.
 
 Services never see a database. They hand a function over the repositories of one store, and the store runs that
-function whole on one transaction: the ``UnitOfWork`` does so with ``read`` and ``change`` over the
+function whole on one transaction: the ``CatalogueDatabase`` does so with ``read`` and ``change`` over the
 ``CatalogueRepositories``, and the ``BookDatabase`` that ``BookDatabases.open`` returns for a book does so with
 ``read`` and ``change`` over the ``BookRepositories`` of that book alone, beside ``version`` and ``snapshot``. A read
 only reads, and a change commits when the function returns. The repositories are synchronous, because the function
@@ -71,14 +71,14 @@ if TYPE_CHECKING:
 
 # How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
 DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0
-# The dependency key of the limit, in seconds, that one unit of work waits for a change with before it gives up with
-# ``BookBusyError``. The container chooses it per scope, a shorter one for a unit of work that serves an HTTP request
-# than for one of a job, and hands it to the adapter that builds the unit of work
+# The dependency key of the limit, in seconds, that one catalogue database waits for a change with before it gives up
+# with ``BookBusyError``. The container chooses it per scope, a shorter one for a catalogue database that serves an HTTP
+# request than for one of a job, and hands it to the adapter that builds the catalogue database
 ChangeWaitSeconds = NewType('ChangeWaitSeconds', float)
 
 
 class NoChangeOpenError(RuntimeError):
-    """A repository wrote inside the work of ``UnitOfWork.read``.
+    """A repository wrote inside the work of ``CatalogueDatabase.read``.
 
     It is a programming error and not a ``DomainError``, so it reaches the caller as a failure and no request can
     cause it.
@@ -975,19 +975,19 @@ class BookRepositories(ABC):
     book_places: BookPlaceRepository
 
 
-class UnitOfWork(ABC):
+class CatalogueDatabase(ABC):
     """Runs the work of a use case on the repositories of the catalogue, one transaction for each call.
 
-    The work is a synchronous function over the repositories of the catalogue, and the unit of work runs it whole: the
-    transaction begins before its first statement and ends when it returns or raises, and nothing of it is visible to
-    others before it commits. A change commits when the work returns and rolls back when it raises, and the exception
+    The work is a synchronous function over the repositories of the catalogue, and the catalogue database runs it whole:
+    the transaction begins before its first statement and ends when it returns or raises, and nothing of it is visible
+    to others before it commits. A change commits when the work returns and rolls back when it raises, and the exception
     goes on to the caller. Nothing holds a connection between two calls, so a caller may wait as long as it needs
     between them.
 
-    A unit of work keeps no state between calls, so coroutines may share one and call it at once. Changes of one
+    A catalogue database keeps no state between calls, so coroutines may share one and call it at once. Changes of one
     process that wait for the same store enter in the order they asked for it, so one that came early is never
-    overtaken by one that came later, and each waits at most the wait limit of the unit of work before it gives up with
-    ``BookBusyError``. Changes of different stores never wait for each other. The transactions of one book are the
+    overtaken by one that came later, and each waits at most the wait limit of the catalogue database before it gives up
+    with ``BookBusyError``. Changes of different stores never wait for each other. The transactions of one book are the
     work of its ``BookDatabase``.
     """
 
@@ -1016,7 +1016,7 @@ class UnitOfWork(ABC):
         :type work: Callable[[CatalogueRepositories], T]
         :returns: What the work returns.
         :rtype: T
-        :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
+        :raises BookBusyError: If the write did not begin within the wait limit of the catalogue database.
         """
 
 

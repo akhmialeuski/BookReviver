@@ -2,7 +2,7 @@
 
 The helpers go through the services as a request and a worker would: the recipe of the stage is saved through the
 processing service, a run is started, and the jobs of the worker take it from there. What a test reads afterwards it
-reads through a unit of work of its own, as committed.
+reads through a catalogue database of its own, as committed.
 """
 
 from typing import TYPE_CHECKING

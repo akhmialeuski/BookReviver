@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Job
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -67,14 +67,14 @@ ITEMS_FIELD: str = 'items'
 
 @pytest.fixture
 async def fx_queued_job(
-    fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+    fx_fakes: JobFakes, fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
 ) -> Job:
     """Store a book of the signed-in account with a queued job that nothing runs.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -82,13 +82,16 @@ async def fx_queued_job(
     :returns: The queued job.
     :rtype: Job
     """
-    book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+    book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
     return fx_fakes.board.put(make_job(book_id=book_id))
 
 
 @pytest.fixture
 async def fx_strangers_job(
-    fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
+    fx_fakes: JobFakes,
+    fx_database: SqlDatabase,
+    fx_catalogue: CatalogueDatabaseFactory,
+    fx_databases: BookDatabasesFactory,
 ) -> Job:
     """Store a book of another account with a queued job.
 
@@ -96,15 +99,15 @@ async def fx_strangers_job(
     :type fx_fakes: JobFakes
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
     :returns: The queued job of the other account.
     :rtype: Job
     """
     book_id = await commit_record(
-        fx_database, fx_uow(), make_record(), owner=new_account_id(), databases=fx_databases()
+        fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
     )
     return fx_fakes.board.put(make_job(book_id=book_id))
 
@@ -149,7 +152,7 @@ class TestReadJob:
         :type fx_open_book: BookOpener
         """
         book_id = await store_book(
-            fx_open_book.uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
+            fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         run = fx_fakes.board.put(
             make_job(book_id=book_id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())

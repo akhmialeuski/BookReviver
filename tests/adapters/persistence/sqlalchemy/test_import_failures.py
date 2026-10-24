@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.ids import AccountId
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory
     from tests.helpers.fakes_imports import ImportRig
 
 pytestmark = pytest.mark.anyio
@@ -32,7 +32,7 @@ class TestFailedImportOnSqlAlchemy:
 
     async def test_source_whose_files_cannot_be_promoted_leaves_no_row_of_it(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_owner_id: AccountId,
         fx_import_rig: Callable[..., ImportRig],
         tmp_path: Path,
@@ -44,8 +44,8 @@ class TestFailedImportOnSqlAlchemy:
         leave the pages of the book without a scan, and a source that was committed without its files. The withdrawn
         source is no rejected one either, since the job failed and nobody reads a report of it.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
@@ -58,9 +58,9 @@ class TestFailedImportOnSqlAlchemy:
         rig = fx_import_rig()
         samples = tmp_path / 'samples'
         samples.mkdir()
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
-        job = await rig.service(uow=uow).start_import(
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
+        job = await rig.service(catalogue=catalogue).start_import(
             open_for(Actor(account_id=fx_owner_id), book_id, databases=rig.databases, files=rig.files),
             [pdf_upload(samples, 'a.pdf', pages=PAGES)],
         )

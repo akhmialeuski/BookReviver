@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Source
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -68,11 +68,11 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
+async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
     """Commit a book of five pages of two sources for the signed-in account.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -91,7 +91,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: Book
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
     book_id = await store_book(
-        fx_uow(),
+        fx_catalogue(),
         make_record(),
         *pages,
         owner=fx_actor.account_id,
@@ -234,7 +234,7 @@ class TestMovePage:
         fx_client: httpx.AsyncClient,
         fx_book: Book,
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify an unknown anchor, and a book of another account, answer 404.
@@ -245,14 +245,14 @@ class TestMovePage:
         :type fx_book: Book
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         page = make_page()
         stranger_id = await commit_record(
-            fx_database, fx_uow(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+            fx_database, fx_catalogue(), make_record(), page, owner=new_account_id(), databases=fx_databases()
         )
 
         unknown = await fx_client.post(
@@ -340,7 +340,7 @@ class TestMovePages:
         self,
         fx_client: httpx.AsyncClient,
         fx_book: Book,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -350,15 +350,15 @@ class TestMovePages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         page = make_page()
-        await store_book(fx_uow(), make_record(), page, owner=fx_actor.account_id, databases=fx_databases())
+        await store_book(fx_catalogue(), make_record(), page, owner=fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.post(
             f'{fx_book.path}/pages/move',

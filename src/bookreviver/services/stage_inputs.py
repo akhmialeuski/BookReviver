@@ -5,7 +5,7 @@ and when no earlier stage has one, the latest base version that is ready. The pa
 has no input version. The rule only reads: a run that finds an earlier stage out of date brings it up to date first and
 then asks here, and the rows of a stage ask here for the pages of a window, so the workspace draws a page from the very
 version a run of the stage would read. The rule is synchronous and takes the repositories of the transaction its caller
-runs in, so it is called from the work of ``UnitOfWork.read`` or ``Book.change``.
+runs in, so it is called from the work of ``CatalogueDatabase.read`` or ``Book.change``.
 """
 
 from collections import defaultdict

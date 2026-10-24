@@ -19,11 +19,11 @@ are laid over its parameters from the content boxes the book has: a run of the w
 boxes its pages were just placed by, and a run of a page or a preview works them out from the box of that page and the
 boxes the other pages hold. The version holds the parameters the step ran with, so the size reaches its identifier.
 
-Both classes read through one unit of work and hold no transaction while a processor computes. Each version is stored by
-two short ``Book.change`` calls, the mark that it is running and then its result, so the viewer shows the first results
-while the rest are made. Each of them reads the page again, so a page that was deleted while its steps ran gets nothing
-written, and the files of a version whose ``Book.change`` failed are discarded. A page deleted before a run ends is
-reported as skipped, and nothing of the run is stored.
+Both classes hold no transaction while a processor computes. Each version is
+stored by two short ``Book.change`` calls, the mark that it is running and then its result, so the viewer shows the
+first results while the rest are made. Each of them reads the page again, so a page that was deleted while its steps ran
+gets nothing written, and the files of a version whose ``Book.change`` failed are discarded. A page deleted before a run
+ends is reported as skipped, and nothing of the run is stored.
 
 A step on a page is a task of the job, which tells its control that the task is done once the version is stored,
 outside any transaction. The control raises ``JobCancelledError`` there when the job was cancelled, which is no failure
@@ -129,10 +129,10 @@ class RunBasis:
 
 @frozen(kw_only=True)
 class StageRuntime:
-    """What a run of a stage works with, apart from the book and the unit of work of the job.
+    """What a run of a stage works with, apart from the book of the job.
 
     :ivar runner: Runner of processors and writer of their files.
-    :ivar catalogue: The processors the application can run.
+    :ivar processors: The processors the application can run.
     :ivar publisher: Publisher of the events the browser follows.
     :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
     :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
@@ -140,7 +140,7 @@ class StageRuntime:
     """
 
     runner: StepRunner
-    catalogue: ProcessorCatalog
+    processors: ProcessorCatalog
     publisher: EventPublisher
     order_keys: OrderKeys
     preview_long_side_px: int
@@ -166,7 +166,7 @@ class StageWork:
         self._book_record = book_record
         self._control = control
         self._runner = runtime.runner
-        self._catalogue = runtime.catalogue
+        self._processors = runtime.processors
         self._publisher = runtime.publisher
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
@@ -400,7 +400,7 @@ class StageWork:
         step = next((step for step in steps if step.processor_key == NORMALIZE_KEY), None)
         if step is None:
             return None
-        params = self._catalogue.get(NORMALIZE_KEY).validate_params(step.params)
+        params = self._processors.get(NORMALIZE_KEY).validate_params(step.params)
         return params if wants_the_book(params) else None
 
     async def _measure(
@@ -540,7 +540,7 @@ class StageWork:
         :raises InvalidParametersError: If the parameters do not fit the processor.
         :raises ConflictError: If the step is one that splits a scan, which this run cannot apply.
         """
-        processor = self._catalogue.get(step.processor_key)
+        processor = self._processors.get(step.processor_key)
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         with self._tracer.span(

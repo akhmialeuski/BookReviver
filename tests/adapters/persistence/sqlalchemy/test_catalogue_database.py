@@ -1,4 +1,4 @@
-"""Tests of what the SQLAlchemy unit of work promises beyond the contract suite: its threads and its readers.
+"""Tests of what the SQLAlchemy catalogue database promises beyond the contract suite: its threads and its readers.
 
 The contract suite runs the promises of the port, the order of the changes that wait for the writer included. These
 tests show how this adapter keeps them: a read refuses every form of write the repositories use, and sees one committed
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, PageVersion
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -77,15 +77,15 @@ class TestRead:
     @pytest.mark.parametrize(WRITE_ARG, list(WRITES.values()), ids=list(WRITES))
     async def test_every_form_of_write_is_refused_and_leaves_the_book_as_it_was(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_owner_id: AccountId,
         write: Callable[[BookRepositories, BookRecord], object],
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a read refuses a write through the session and a bulk statement alike, and stores nothing.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param write: A write the work of the read attempts.
@@ -94,8 +94,8 @@ class TestRead:
         :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        uow = fx_uow()
-        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, owner=fx_owner_id, databases=fx_databases())
 
         with pytest.raises(NoChangeOpenError):
             await fx_databases().open(book_id).read(lambda repos: write(repos, book_record))
@@ -110,7 +110,7 @@ class TestRead:
         assert_expectations()
 
     async def test_read_sees_one_committed_state_while_a_change_commits_meanwhile(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify two reads of one work see the same pages although a change commits another between them.
 
@@ -118,17 +118,17 @@ class TestRead:
         Its second read is of the state its first one saw, which the write-ahead log keeps for a reader, and a read
         that begins after the commit sees the new page.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         book_id = await store_book(
-            uow, book_record, make_page(order_key='a0'), owner=fx_owner_id, databases=fx_databases()
+            catalogue, book_record, make_page(order_key='a0'), owner=fx_owner_id, databases=fx_databases()
         )
         written = make_page(order_key='a1')
         snapshot_taken, change_committed = threading.Event(), threading.Event()
@@ -148,7 +148,7 @@ class TestRead:
             return before, count_pages(repos, book_record)
 
         async def read_twice() -> None:
-            """Run the work of the two reads in a read of the unit of work, and keep what it saw."""
+            """Run the work of the two reads in a read of the catalogue database, and keep what it saw."""
             seen.append(await fx_databases().open(book_id).read(count_twice))
 
         async with anyio.create_task_group() as group:
@@ -180,24 +180,24 @@ class TestBookVersion:
 
     async def test_a_change_of_the_pages_raises_the_version_and_names_the_pages(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
         fx_owner_id: AccountId,
         fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify adding a page raises the version by one and announces it with the pages, after the change.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening an opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=fx_owner_id, databases=fx_databases())
         database = fx_databases().open(book_id)
         before = await database.version()
         fx_book_changes.published.clear()
@@ -214,24 +214,24 @@ class TestBookVersion:
 
     async def test_a_change_that_writes_nothing_or_only_the_place_leaves_the_version(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
         fx_owner_id: AccountId,
         fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a change that reads, and one that writes only the place of the reader, announce nothing.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening an opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        uow = fx_uow()
-        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=fx_owner_id, databases=fx_databases())
         database = fx_databases().open(book_id)
         before = await database.version()
         fx_book_changes.published.clear()
@@ -245,26 +245,26 @@ class TestBookVersion:
 
     async def test_a_bulk_delete_names_its_part_only_when_it_deleted_a_row(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_databases: BookDatabasesFactory,
         fx_owner_id: AccountId,
         fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a delete of versions that finds none is no change, and one that deletes a version names the versions.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_databases: Function opening an opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         book_record, page = make_record(), make_page()
         version = make_page_version(page_id=page.id)
-        uow = fx_uow()
-        book_id = await store_book(uow, book_record, page, owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, page, owner=fx_owner_id, databases=fx_databases())
         database = fx_databases().open(book_id)
         await database.change(lambda repos, _book_record: repos.page_versions.add(version))
         fx_book_changes.published.clear()
@@ -281,20 +281,20 @@ class TestGroups:
     """Tests for the rows of the groups of the pages, which a change makes and prunes."""
 
     async def test_a_group_is_made_by_its_first_page_and_removed_with_its_last(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify putting a page in a group makes the row of the group, and taking it out removes the row.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        uow = fx_uow()
-        book_id = await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, owner=fx_owner_id, databases=fx_databases())
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(page))
 
         grouped = (

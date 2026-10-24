@@ -115,8 +115,8 @@ class LeafBook(NamedTuple):
 class LeafDesk:
     """What the tests of the choice of leaves share: the database, the stores, the services and what they reported.
 
-    :ivar stores: Opens the units of work, the databases and the file stores of the books of the test.
-    :ivar open_uow: Function opening a new unit of work over the database the requests and the jobs share.
+    :ivar stores: Opens the catalogue databases, the databases and the file stores of the books of the test.
+    :ivar open_catalogue: Function opening a new catalogue database over the database the requests and the jobs share.
     :ivar databases: Opens the databases of the books of the test.
     :ivar files: Opens the source store and the asset store of a book of the test.
     :ivar actor: Account acting.
@@ -134,7 +134,7 @@ class LeafDesk:
     ) -> None:
         """Keep the parts a request is built from.
 
-        :param stores: Opens the units of work and the databases of the books of the test.
+        :param stores: Opens the catalogue databases and the databases of the books of the test.
         :type stores: BookOpener
         :param actor: Account the service acts for.
         :type actor: Actor
@@ -144,7 +144,7 @@ class LeafDesk:
         :type storage_root: Path
         """
         self.stores = stores
-        self.open_uow = stores.uow
+        self.open_catalogue = stores.catalogue
         self.databases = stores.databases
         self.storage_root = storage_root
         self.files = stores.files
@@ -157,7 +157,7 @@ class LeafDesk:
 
         :param renditions: Writer of the files of a version, or None for the one that copies the image.
         :type renditions: RenditionWriter | None
-        :returns: A service over a new unit of work.
+        :returns: A service over a new catalogue database.
         :rtype: PageService
         """
         return make_page_service(self.stores, self._runtime, renditions=renditions)
@@ -181,7 +181,7 @@ class LeafDesk:
             pages.append(page)
             versions.append(BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH))
         book_id = await store_book(
-            self.open_uow(),
+            self.open_catalogue(),
             make_record(),
             *pages,
             owner=self.actor.account_id,
@@ -459,7 +459,7 @@ class TestChooseALeaf:
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         book = await fx_desk.book([PageKind.BLANK, PageKind.TEXT, PageKind.BLANK])
@@ -482,7 +482,7 @@ class TestChooseALeaf:
         :type fx_desk: LeafDesk
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
@@ -918,7 +918,7 @@ class TestRefusals:
         book = await fx_desk.book([PageKind.BLANK])
         stranger = make_page(kind=PageKind.BLANK)
         await store_book(
-            fx_desk.open_uow(),
+            fx_desk.open_catalogue(),
             make_record(),
             stranger,
             owner=fx_desk.actor.account_id,
@@ -997,7 +997,7 @@ class TestJobsReCheckWhatTheyApply:
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
-        :param monkeypatch: Fixture that restores the patched unit of work after the test.
+        :param monkeypatch: Fixture that restores the patched catalogue database after the test.
         :type monkeypatch: pytest.MonkeyPatch
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK, PageKind.TEXT])

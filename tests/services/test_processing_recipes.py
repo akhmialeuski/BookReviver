@@ -648,7 +648,7 @@ class TestDefaultRecipesInChanges:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the units of work and the repository.
+        :param monkeypatch: Fixture that restores the catalogue databases and the repository.
         :type monkeypatch: pytest.MonkeyPatch
         """
         _, book_id = await fx_kit.seed_book()

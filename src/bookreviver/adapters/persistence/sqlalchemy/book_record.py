@@ -36,7 +36,7 @@ class SqlAlchemyBookRecordRepository(BookRecordRepository):
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``projects`` table.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         self._rows = BookRecordRows(session=session)

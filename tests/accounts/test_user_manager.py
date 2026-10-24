@@ -14,7 +14,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
-from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
 from bookreviver.ports.storage import BookDirectories
 from tests.helpers.builders import directory_of, make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
@@ -100,10 +100,10 @@ class TestDelete:
         owner_id, neighbour_id = await commit_account(database), await commit_account(database)
         pages: dict[BookId, Page] = {}
         async with fx_container() as scope:
-            uow = await scope.get(UnitOfWork)
+            catalogue = await scope.get(CatalogueDatabase)
             for owner in (*[owner_id] * OWNED_BOOKS, neighbour_id):
                 page = make_page()
-                pages[await store_book(uow, make_record(), page, owner=owner, databases=fx_databases())] = page
+                pages[await store_book(catalogue, make_record(), page, owner=owner, databases=fx_databases())] = page
         *owned, kept = pages
         files = BookFiles(
             stores=await fx_container.get(BookDirectories),

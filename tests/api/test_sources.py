@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Source
     from tests.helpers.books import Book
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -483,7 +483,7 @@ class TestListScans:
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_scan(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         full: Rendition,
         fx_databases: BookDatabasesFactory,
@@ -494,8 +494,8 @@ class TestListScans:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param full: Format the scan records for its full image.
@@ -507,7 +507,7 @@ class TestListScans:
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
         book_id = await store_book(
-            fx_uow(),
+            fx_catalogue(),
             evolve(make_record(), image_policy=policy),
             owner=fx_actor.account_id,
             sources=[source],
@@ -524,7 +524,7 @@ class TestListScans:
     async def test_scan_without_ready_renditions_has_no_images(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -532,8 +532,8 @@ class TestListScans:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -541,7 +541,7 @@ class TestListScans:
         """
         source = make_source()
         book_id = await store_book(
-            fx_uow(),
+            fx_catalogue(),
             make_record(),
             owner=fx_actor.account_id,
             sources=[source],

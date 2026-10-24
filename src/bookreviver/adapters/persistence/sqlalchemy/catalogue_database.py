@@ -1,9 +1,9 @@
-"""Unit of work that runs the work of a use case whole in a worker thread, on one SQLite transaction of one file.
+"""Catalogue database that runs the work of a use case whole in a worker thread, on one SQLite transaction of one file.
 
-The unit of work holds the :class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the catalogue
-and a wait limit, and nothing else, so it keeps no state between calls and coroutines may share one. Each call hands a
-synchronous function to one database, which runs it in a thread of its own on a session of a transaction that the call
-opens and ends:
+The catalogue database holds the :class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the
+catalogue and a wait limit, and nothing else, so it keeps no state between calls and coroutines may share one. Each call
+hands a synchronous function to one database, which runs it in a thread of its own on a session of a transaction that
+the call opens and ends:
 
 - ``read`` runs on a reader connection of the catalogue. Every statement of the work sees one committed state of the
   file, a write of another transaction in the meantime stays invisible to it, and the transaction ends by rollback when
@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, override
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyCatalogueRepositories
 from bookreviver.domain.enums import BlockKind
-from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, UnitOfWork
+from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, CatalogueDatabase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import CatalogueRepositories
 
 
-class SqlAlchemyUnitOfWork(UnitOfWork):
+class SqlAlchemyCatalogueDatabase(CatalogueDatabase):
     """Runs the work of a use case on the repositories of one transaction of the catalogue.
 
     :ivar _catalogue: The database of the catalogue.
@@ -50,7 +50,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     ) -> None:
         """Run the transactions of the catalogue with the given wait limit for its writer.
 
-        :param catalogue: The database of the catalogue, shared by every unit of work.
+        :param catalogue: The database of the catalogue, shared by every catalogue database.
         :type catalogue: SqlDatabase
         :param wait_seconds: How long a change waits for the writer of its file before it gives up with
                              ``BookBusyError``; :mod:`bookreviver.adapters.persistence.sqlalchemy.database` says what it

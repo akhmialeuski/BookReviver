@@ -24,10 +24,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.page_writes import PageWrites
 
 pytestmark = pytest.mark.anyio
@@ -47,11 +47,13 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 ]
 
 
-async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: LocatedBookDatabases) -> tuple[BookId, list[Page]]:
+async def _commit_book(
+    catalogue: CatalogueDatabase, owner: Actor, *, databases: LocatedBookDatabases
+) -> tuple[BookId, list[Page]]:
     """Commit a book of seven pages of the kinds in ``LAYOUT``, each labelled by hand with a stale number.
 
-    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
+    :type catalogue: CatalogueDatabase
     :param owner: Account owning the book.
     :type owner: Actor
     :param databases: Opens the databases of the books of the test.
@@ -69,7 +71,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: LocatedBookD
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
-    book_id = await store_book(uow, make_record(), *pages, owner=owner.account_id, databases=databases)
+    book_id = await store_book(catalogue, make_record(), *pages, owner=owner.account_id, databases=databases)
     return book_id, pages
 
 
@@ -130,7 +132,7 @@ class TestUpdate:
     async def test_an_update_writes_only_the_row_of_its_page(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -139,8 +141,8 @@ class TestUpdate:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
@@ -148,7 +150,7 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         await fx_service().update(
@@ -162,7 +164,7 @@ class TestUpdate:
     async def test_a_field_left_as_none_keeps_its_value(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -170,14 +172,14 @@ class TestUpdate:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
 
         await fx_service().update(fx_open_book(fx_actor, book_id), pages[3].id, PageChanges(label=''))
 
@@ -189,7 +191,7 @@ class TestUpdate:
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -199,17 +201,17 @@ class TestUpdate:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
         strangers_account = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, strangers_account.account_id)
-        _, strangers_pages = await _commit_book(fx_uow(), strangers_account, databases=fx_open_book.databases)
+        _, strangers_pages = await _commit_book(fx_catalogue(), strangers_account, databases=fx_open_book.databases)
         other = make_page(order_key='z0')
 
         with pytest.raises(NotFoundError):
@@ -225,7 +227,7 @@ class TestConcurrentWrites:
 
     async def test_a_job_writing_a_moved_page_after_a_group_move_keeps_both_changes(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_service: Callable[[], PageService],
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -236,8 +238,8 @@ class TestConcurrentWrites:
         the job's write second, so the job's change has to wait for the move and then read the new order. Ordering is
         proved with ``wait_all_tasks_blocked``, never by waiting for a time.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
         :param fx_actor: Account the service acts for.
@@ -245,7 +247,7 @@ class TestConcurrentWrites:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
         moved = [pages[0].id, pages[1].id]
         anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
         seen_by_job: list[PageId] = []
@@ -303,7 +305,7 @@ class TestConcurrentWrites:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
+        book_id, pages = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
         ids = [page.id for page in pages]
         fx_page_writes.start()
 

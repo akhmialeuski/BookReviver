@@ -67,7 +67,7 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> BookId:
     :rtype: BookId
     """
     book_id = await store_book(
-        kit.uow(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
+        kit.catalogue(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
     )
     return book_id
 
@@ -197,7 +197,7 @@ class TestDuplicateProfile:
         actor, _ = await fx_kit.seed_book()
         profile = await save_profile(fx_kit, actor)
         copy = await fx_kit.profiles().duplicate(profile)
-        stored = await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(copy.id))
+        stored = await fx_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(copy.id))
         expect(stored.id != profile.id)
         expect(stored.name == COPY_NAME.format(name=PROFILE_NAME))
         expect(stored.steps == profile.steps)
@@ -221,7 +221,7 @@ class TestImportProfile:
             steps=[Step(processor_key=FAKE_KEY, params={STRENGTH: 3}, enabled=False), Step(processor_key=FAKE_KEY)],
         )
         imported = await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
-        stored = await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(imported.id))
+        stored = await fx_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(imported.id))
         expect(stored.name == FILE_NAME)
         expect([(step.params[STRENGTH], step.enabled) for step in stored.steps] == [(3, False), (1, True)])
         expect(stored.id != source.id)
@@ -291,7 +291,7 @@ class TestImportProfile:
             await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, usual)
         free = ProfileDraft(name='Free', steps=BROKEN_ORDER, order=OrderMode.FREE)
         imported = await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, free)
-        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(imported.id))
+        stored = await fx_ordered_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(imported.id))
         assert ([step.processor_key for step in stored.steps], stored.order) == (
             [THIRD_KEY, SECOND_KEY],
             OrderMode.FREE,

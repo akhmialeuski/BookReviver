@@ -44,7 +44,7 @@ async def store_profile(kit: ProcessingKit, profile: RecipeProfile) -> RecipePro
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
-    return await kit.uow().change(lambda repos: repos.recipe_profiles.add(profile))
+    return await kit.catalogue().change(lambda repos: repos.recipe_profiles.add(profile))
 
 
 async def second_record(kit: ProcessingKit, actor: Actor) -> BookId:
@@ -58,7 +58,7 @@ async def second_record(kit: ProcessingKit, actor: Actor) -> BookId:
     :rtype: BookId
     """
     book_id = await store_book(
-        kit.uow(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
+        kit.catalogue(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
     )
     return book_id
 
@@ -130,7 +130,7 @@ class TestChangeProfile:
         profile = await saved(fx_kit, actor)
         renamed = await fx_kit.profiles().rename(profile, OTHER_NAME)
         assert (renamed.name, renamed.steps) == (OTHER_NAME, profile.steps)
-        assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == renamed
+        assert await fx_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(profile.id)) == renamed
 
     async def test_delete_removes_the_profile_and_no_recipe(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener

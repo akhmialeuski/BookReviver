@@ -5,15 +5,17 @@ from typing import TYPE_CHECKING
 from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
     from bookreviver.ports.storage import BookDirectories
 
 
-def make_books_service(uow: UnitOfWork, *, databases: BookDatabases, files: BookDirectories) -> BooksService:
+def make_books_service(
+    catalogue: CatalogueDatabase, *, databases: BookDatabases, files: BookDirectories
+) -> BooksService:
     """Build the books service a job opens its book through, over the given book databases and book directories.
 
-    :param uow: Unit of work whose catalogue holds the library the books are opened from.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database whose catalogue holds the library the books are opened from.
+    :type catalogue: CatalogueDatabase
     :param databases: Opens the databases of the books.
     :type databases: BookDatabases
     :param files: The directories of the books.
@@ -21,4 +23,4 @@ def make_books_service(uow: UnitOfWork, *, databases: BookDatabases, files: Book
     :returns: The books service.
     :rtype: BooksService
     """
-    return BooksService(uow=uow, databases=databases, directories=files)
+    return BooksService(catalogue=catalogue, databases=databases, directories=files)

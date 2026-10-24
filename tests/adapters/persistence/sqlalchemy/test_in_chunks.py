@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -76,12 +76,12 @@ class Statements:
 
 
 async def _seed_book(
-    uow: UnitOfWork, owner_id: AccountId, *, databases: LocatedBookDatabases
+    catalogue: CatalogueDatabase, owner_id: AccountId, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, list[Page], list[PageVersion]]:
     """Commit a book of seven pages in book order, each with one version created a minute after the one before.
 
-    :param uow: Unit of work to commit through.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through.
+    :type catalogue: CatalogueDatabase
     :param owner_id: Account owning the book.
     :type owner_id: AccountId
     :param databases: Opens the databases of the books of the test.
@@ -91,7 +91,7 @@ async def _seed_book(
     """
     pages = [make_page(order_key=f'a{number}') for number in range(COUNT)]
     versions = [make_page_version(page_id=page.id, minutes=number) for number, page in enumerate(pages)]
-    book_id = await store_book(uow, make_record(), *pages, owner=owner_id, versions=versions, databases=databases)
+    book_id = await store_book(catalogue, make_record(), *pages, owner=owner_id, versions=versions, databases=databases)
 
     def save_stages(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save a record of a stage for every page of the book.
@@ -123,21 +123,21 @@ class TestListsLongerThanAChunk:
     """Tests for the reads that take more identifiers than one chunk holds."""
 
     async def test_every_row_comes_back_in_the_order_one_statement_would_give_it(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the pages come in book order and the versions earliest first, whichever chunk each is read in.
 
         The identifiers are given in reverse, so no chunk holds a run of the order.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Account that may own books.
         :type fx_owner_id: AccountId
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
-        book_id, pages, versions = await _seed_book(uow, fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id, pages, versions = await _seed_book(catalogue, fx_owner_id, databases=fx_databases())
         listed_pages, listed_versions, listed_stages = (
             await fx_databases()
             .open(book_id)
@@ -156,15 +156,15 @@ class TestListsLongerThanAChunk:
 
     async def test_no_statement_binds_more_values_than_a_chunk(
         self,
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_books: BookRegistry,
         fx_owner_id: AccountId,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a read of seven identifiers is three statements of at most three values, and so is a deletion.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_books: Registry of the books of the test, whose engines of the book are listened to.
         :type fx_books: BookRegistry
         :param fx_owner_id: Account that may own books.
@@ -172,8 +172,8 @@ class TestListsLongerThanAChunk:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
-        book_id, pages, versions = await _seed_book(uow, fx_owner_id, databases=fx_databases())
+        catalogue = fx_catalogue()
+        book_id, pages, versions = await _seed_book(catalogue, fx_owner_id, databases=fx_databases())
         version_ids = [version.id for version in versions]
 
         def list_versions(repos: BookRepositories) -> Statements:

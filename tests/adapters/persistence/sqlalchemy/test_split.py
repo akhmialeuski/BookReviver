@@ -21,13 +21,13 @@ from sqlalchemy.orm import Session
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookRepositories,
     SqlAlchemyCatalogueRepositories,
 )
 from bookreviver.adapters.persistence.sqlalchemy.split import SHARED_REVISION, SharedDatabaseSplit, SplitRefusedError
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import (
@@ -297,11 +297,11 @@ class TestSplit:
         :type fx_databases: BookDatabasesFactory
         """
         report = await SharedDatabaseSplit(
-            fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
         ).run()
-        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue)
-        entries = await uow.read(lambda repos: repos.library.list_for_owner(fx_shared.owner_id, SliceRequest()))
-        profiles = await uow.read(lambda repos: repos.recipe_profiles.list_for_account(fx_shared.owner_id))
+        catalogue = SqlAlchemyCatalogueDatabase(fx_empty_catalogue)
+        entries = await catalogue.read(lambda repos: repos.library.list_for_owner(fx_shared.owner_id, SliceRequest()))
+        profiles = await catalogue.read(lambda repos: repos.recipe_profiles.list_for_account(fx_shared.owner_id))
         first = (
             await fx_databases()
             .open(fx_shared.first_id)
@@ -353,7 +353,7 @@ class TestSplit:
         :type fx_databases: BookDatabasesFactory
         """
         await SharedDatabaseSplit(
-            fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
         ).run()
 
         page = await fx_databases().open(fx_shared.first_id).read(lambda repos: repos.pages.get(fx_shared.labelled))
@@ -379,7 +379,7 @@ class TestSplit:
         """
         before = fx_shared.path.read_bytes()
         await SharedDatabaseSplit(
-            fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
         ).run()
         assert fx_shared.path.read_bytes() == before
 
@@ -409,7 +409,7 @@ class TestRefusal:
         shared = await _build_shared(fx_settings.data_dir, revision=OLDER_REVISION)
         with pytest.raises(SplitRefusedError, match=OLDER_REVISION):
             await SharedDatabaseSplit(
-                shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+                shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
             ).run()
 
     async def test_a_missing_shared_database_is_refused(
@@ -433,7 +433,7 @@ class TestRefusal:
         missing = fx_settings.data_dir / SHARED_FILE
         with pytest.raises(SplitRefusedError, match=SHARED_FILE):
             await SharedDatabaseSplit(
-                missing, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+                missing, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
             ).run()
 
     async def test_a_catalogue_that_holds_accounts_is_refused(
@@ -455,11 +455,11 @@ class TestRefusal:
         :type fx_directories: SharedBookDirectories
         """
         await SharedDatabaseSplit(
-            fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
         ).run()
         with pytest.raises(SplitRefusedError, match=AccountTable.__tablename__):
             await SharedDatabaseSplit(
-                fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+                fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
             ).run()
 
     async def test_a_book_that_has_a_file_already_is_refused(
@@ -483,5 +483,5 @@ class TestRefusal:
         await fx_directories.create(directory_of(fx_shared.first_id), await fx_books.blank())
         with pytest.raises(SplitRefusedError, match=str(fx_shared.first_id)):
             await SharedDatabaseSplit(
-                fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories
+                fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, directories=fx_directories
             ).run()

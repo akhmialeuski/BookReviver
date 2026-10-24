@@ -18,13 +18,13 @@ if TYPE_CHECKING:
 class InProcessStepExecutor(StepExecutor):
     """Runs the processors of a catalogue in a worker thread, so a step does not block the event loop by itself."""
 
-    def __init__(self, catalogue: ProcessorCatalog) -> None:
+    def __init__(self, processors: ProcessorCatalog) -> None:
         """Run the processors of the catalogue.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         """
-        self._catalogue = catalogue
+        self._processors = processors
 
     @override
     async def run(self, *, processor_key: str, scale: VersionScale, step_input: StepInput) -> StepResult:
@@ -41,6 +41,6 @@ class InProcessStepExecutor(StepExecutor):
         :raises NotFoundError: If the catalogue has no processor with this key.
         :raises DomainError: If the processor cannot run on this input.
         """
-        processor = self._catalogue.get(processor_key)
+        processor = self._processors.get(processor_key)
         work = processor.run if scale is VersionScale.FULL else processor.preview
         return await anyio.to_thread.run_sync(work, step_input)

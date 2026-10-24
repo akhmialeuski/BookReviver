@@ -4,7 +4,7 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.storage import BookDirectories
@@ -25,17 +25,17 @@ class BooksProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    def stage_summaries(self, catalogue: ProcessorCatalog, board: JobBoard) -> StageSummaries:
+    def stage_summaries(self, processors: ProcessorCatalog, board: JobBoard) -> StageSummaries:
         """Build the sums of the stages of books, which read through the repositories their caller passes.
 
-        :param catalogue: The processors of the application, which say which stages are available.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors of the application, which say which stages are available.
+        :type processors: ProcessorCatalog
         :param board: Board holding the jobs of every book, which tells the stages that are running.
         :type board: JobBoard
         :returns: The stage summaries of the request.
         :rtype: StageSummaries
         """
-        return StageSummaries(catalogue=catalogue, board=board)
+        return StageSummaries(processors=processors, board=board)
 
     @provide
     def freshness(self, board: JobBoard) -> BookFreshness:
@@ -49,11 +49,13 @@ class BooksProvider(Provider):
         return BookFreshness(board=board)
 
     @provide
-    def books(self, uow: UnitOfWork, databases: BookDatabases, directories: BookDirectories) -> BooksService:
-        """Build the books service over the request's unit of work, book databases and book directories.
+    def books(
+        self, catalogue: CatalogueDatabase, databases: BookDatabases, directories: BookDirectories
+    ) -> BooksService:
+        """Build the books service over the request's catalogue database, book databases and book directories.
 
-        :param uow: Unit of work of the current request, which runs the transactions of the catalogue.
-        :type uow: UnitOfWork
+        :param catalogue: Catalogue database of the current request, which runs the transactions of the catalogue.
+        :type catalogue: CatalogueDatabase
         :param databases: Opens the database of a book from its file, which runs the transactions of that book.
         :type databases: BookDatabases
         :param directories: The directories of the books.
@@ -61,7 +63,7 @@ class BooksProvider(Provider):
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(uow=uow, databases=databases, directories=directories)
+        return BooksService(catalogue=catalogue, databases=databases, directories=directories)
 
     @provide(scope=Scope.APP)
     def page_runtime(self, publisher: EventPublisher, order_keys: OrderKeys, board: JobBoard) -> PageRuntime:
@@ -109,7 +111,7 @@ class BooksProvider(Provider):
 
     @provide
     def pagination(self) -> PaginationService:
-        """Build the pagination service over the request's unit of work.
+        """Build the pagination service over the request's catalogue database.
 
         :returns: The pagination service of the request.
         :rtype: PaginationService
@@ -118,7 +120,7 @@ class BooksProvider(Provider):
 
     @provide
     def places(self) -> PlaceService:
-        """Build the place service over the request's unit of work.
+        """Build the place service over the request's catalogue database.
 
         :returns: The place service of the request.
         :rtype: PlaceService

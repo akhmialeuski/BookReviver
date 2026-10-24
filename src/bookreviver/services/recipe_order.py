@@ -26,13 +26,13 @@ if TYPE_CHECKING:
 class RecipeOrder:
     """Finds the steps of a recipe that stand off their processors' places, and refuses the impossible ones."""
 
-    def __init__(self, catalogue: ProcessorCatalog) -> None:
+    def __init__(self, processors: ProcessorCatalog) -> None:
         """Read the rules from the specs of a catalogue.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         """
-        self._specs = {spec.key: spec for spec in catalogue.specs()}
+        self._specs = {spec.key: spec for spec in processors.specs()}
 
     def issues(self, steps: Sequence[Step]) -> tuple[OrderIssue, ...]:
         """Find the steps that stand where their processor does not want them.

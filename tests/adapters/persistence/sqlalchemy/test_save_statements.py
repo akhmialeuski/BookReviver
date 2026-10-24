@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -46,12 +46,12 @@ SAVES: dict[str, Callable[[BookRepositories, Page], object]] = {
 
 @pytest.fixture
 async def fx_stored_book(
-    fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
+    fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
 ) -> tuple[BookId, list[Page]]:
     """Commit a book of five pages, which the writes of a test change.
 
-    :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_owner_id: Committed account owning the book.
     :type fx_owner_id: AccountId
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -60,7 +60,7 @@ async def fx_stored_book(
     :rtype: tuple[BookId, list[Page]]
     """
     pages = [make_page(order_key=f'a{index}') for index in range(BATCH)]
-    return await store_book(fx_uow(), make_record(), *pages, owner=fx_owner_id, databases=fx_databases()), pages
+    return await store_book(fx_catalogue(), make_record(), *pages, owner=fx_owner_id, databases=fx_databases()), pages
 
 
 async def _statements_of(

@@ -216,7 +216,7 @@ def fx_rig(fx_storage_root: Path, fx_database: SqlDatabase, fx_open_book: BookOp
     :type fx_storage_root: Path
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
     :type fx_open_book: BookOpener
     :returns: The rig with an empty database and nothing stored.
     :rtype: ImportRig
@@ -260,7 +260,7 @@ async def fx_book(fx_rig: ImportRig, fx_owner: Actor) -> BookId:
     :rtype: BookId
     """
     book_id = await commit_record(
-        fx_rig.database, fx_rig.open_uow(), make_record(), owner=fx_owner.account_id, databases=fx_rig.databases
+        fx_rig.database, fx_rig.open_catalogue(), make_record(), owner=fx_owner.account_id, databases=fx_rig.databases
     )
     return book_id
 
@@ -528,7 +528,7 @@ async def _record_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> Boo
     """
     book_id = await commit_record(
         rig.database,
-        rig.open_uow(),
+        rig.open_catalogue(),
         evolve(make_record(), image_policy=policy),
         owner=owner.account_id,
         databases=rig.databases,
@@ -567,7 +567,7 @@ def _events_of[EventT: DomainEvent](rig: ImportRig, kind: type[EventT]) -> list[
 def _cuts_a_scan(event: DomainEvent) -> bool:
     """Tell whether an event is the committed change that stored the images of a scan, the one change that writes versions.
 
-    :param event: An event the unit of work announced.
+    :param event: An event that a change announced.
     :type event: DomainEvent
     :returns: Whether it is such a change.
     :rtype: bool
@@ -1301,7 +1301,7 @@ class TestRunImport:
         :type fx_book: BookId
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         fx_book_changes.published.clear()
@@ -1786,7 +1786,7 @@ class TestRunImportChecks:
         :type fx_book: BookId
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         fx_book_changes.published.clear()
@@ -1824,7 +1824,7 @@ class TestRunImportChecks:
         :type fx_book: BookId
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         packet = xmp_packet(
@@ -1855,14 +1855,14 @@ class TestRunImportChecks:
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         book_record = make_record()
         owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
         described = evolve(book_record, details=evolve(book_record.details, contributors=owner_author))
         book_id = await commit_record(
-            fx_rig.database, fx_rig.open_uow(), described, owner=fx_owner.account_id, databases=fx_rig.databases
+            fx_rig.database, fx_rig.open_catalogue(), described, owner=fx_owner.account_id, databases=fx_rig.databases
         )
         fx_book_changes.published.clear()
 
@@ -2037,7 +2037,7 @@ class TestRunImportLifecycle:
         :type fx_book: BookId
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         one_at_a_time = _tuned(fx_rig, parallel_scans=1)
@@ -2251,7 +2251,7 @@ class TestRunImportFailures:
 
 
 class TestRunImportQueue:
-    """Tests for the scans cut at once, whose changes of the book queue in front of one unit of work of the job."""
+    """Tests for the scans cut at once, whose changes of the book queue in front of one job."""
 
     async def test_job_cancelled_while_scans_are_cut_stops_every_cutter_and_keeps_the_scans_written(
         self,
@@ -2276,7 +2276,7 @@ class TestRunImportQueue:
         :type fx_book: BookId
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :param fx_book_changes: Where the test collects the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
         job = await fx_rig.service().start_import(

@@ -153,10 +153,10 @@ async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
     :returns: The records that became stale.
     :rtype: list[PageStage]
     """
-    uow = kit.uow()
+    catalogue = kit.catalogue()
     return await OutdatedResults(
-        books=make_books_service(uow, databases=kit.databases, files=kit.files),
-        catalogue=kit.catalogue,
+        books=make_books_service(catalogue, databases=kit.databases, files=kit.files),
+        processors=kit.processors,
     ).mark_stale()
 
 
@@ -187,7 +187,7 @@ class TestMarkStale:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the patched unit of work after the test.
+        :param monkeypatch: Fixture that restores the patched catalogue database after the test.
         :type monkeypatch: pytest.MonkeyPatch
         :param meanwhile: The record a request leaves after it was found outdated, or None when it deletes it.
         :type meanwhile: Callable[[PageStage, PageVersionId], PageStage | None]
@@ -196,7 +196,7 @@ class TestMarkStale:
         await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY)
         record = await page.stored(Stage.GEOMETRY)
         left = meanwhile(record, (await page.base()).id)
-        uow = fx_kit.uow()
+        catalogue = fx_kit.catalogue()
         read = SqlAlchemyBookDatabase.read
         changed = False
 
@@ -232,8 +232,8 @@ class TestMarkStale:
 
         monkeypatch.setattr(SqlAlchemyBookDatabase, 'read', read_then_change)
         marked = await OutdatedResults(
-            books=make_books_service(uow, databases=fx_kit.databases, files=fx_kit.files),
-            catalogue=fx_kit.catalogue,
+            books=make_books_service(catalogue, databases=fx_kit.databases, files=fx_kit.files),
+            processors=fx_kit.processors,
         ).mark_stale()
 
         stored = await fx_kit.databases.open(page.book_id).read(lambda repos: repos.page_stages.find(record.key))
@@ -364,10 +364,10 @@ class TestMarkStale:
 
         monkeypatch.setattr(SqlAlchemyPageVersionRepository, 'list_by_ids', counting_list_by_ids)
 
-        uow = fx_kit.uow()
+        catalogue = fx_kit.catalogue()
         await OutdatedResults(
-            books=make_books_service(uow, databases=fx_kit.databases, files=fx_kit.files),
-            catalogue=fx_kit.catalogue,
+            books=make_books_service(catalogue, databases=fx_kit.databases, files=fx_kit.files),
+            processors=fx_kit.processors,
         ).mark_stale()
 
         assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}

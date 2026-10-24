@@ -73,7 +73,7 @@ class ContentDetector:
         """
         self._books = books
         self._runner = runtime.runner
-        self._catalogue = runtime.catalogue
+        self._processors = runtime.processors
         self._records = records
 
     async def run(self, job: Job, control: JobControl) -> tuple[int, int]:
@@ -93,7 +93,7 @@ class ContentDetector:
         """
         detection = ContentDetection.from_map(job.params)
         # A machine without OpenCV offers no such processor, and then the kind of a page is all that says what it shows
-        if all(spec.key != PROBE_KEY for spec in self._catalogue.specs()):
+        if all(spec.key != PROBE_KEY for spec in self._processors.specs()):
             return 0, 0
         book = await self._books.open(job.book_id)
         pages = await self._pages(book, detection)

@@ -7,8 +7,8 @@ import pytest
 from starlette.requests import Request
 
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.api.auth import current_actor
 from bookreviver.app.main import create_app
@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from httpx_oauth.oauth2 import BaseOAuth2
 
-    from bookreviver.ports.persistence import UnitOfWork
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from bookreviver.ports.persistence import CatalogueDatabase
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 TEST_BASE_URL: str = 'http://testserver'
 TEST_SECRET: str = 'test-secret-that-is-long-enough-for-signing'
@@ -105,9 +105,9 @@ def fx_settings(tmp_path: Path) -> Settings:
 
 @pytest.fixture
 def fx_book_changes() -> RecordingEventBus:
-    """Record the changes of the books the units of work of the test announce, apart from the events of the services.
+    """Record the changes of the books that the test announces, apart from the events of the services.
 
-    :returns: The bus every unit of work of the test publishes to.
+    :returns: The bus every catalogue database of the test publishes to.
     :rtype: RecordingEventBus
     """
     return RecordingEventBus()
@@ -212,29 +212,29 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
 
 
 @pytest.fixture
-def fx_uow(fx_database: SqlDatabase, fx_settings: Settings) -> UnitOfWorkFactory:
-    """Return a function opening a new unit of work over the catalogue of the test, as a request would get.
+def fx_catalogue(fx_database: SqlDatabase, fx_settings: Settings) -> CatalogueDatabaseFactory:
+    """Return a function opening a new catalogue database over the catalogue of the test, as a request would get.
 
     :param fx_database: Catalogue of the test.
     :type fx_database: SqlDatabase
-    :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
+    :param fx_settings: Settings of the test, whose job limit is the wait of a catalogue database opened with none.
     :type fx_settings: Settings
-    :returns: Function opening a unit of work over ``fx_database``.
-    :rtype: UnitOfWorkFactory
+    :returns: Function opening a catalogue database over ``fx_database``.
+    :rtype: CatalogueDatabaseFactory
     """
 
-    def open_unit_of_work(*, wait_seconds: float | None = None) -> UnitOfWork:
-        """Open a unit of work over the catalogue of the test.
+    def open_catalogue_database(*, wait_seconds: float | None = None) -> CatalogueDatabase:
+        """Open a catalogue database over the catalogue of the test.
 
         :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
         :type wait_seconds: float | None
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
+        :returns: A new catalogue database.
+        :rtype: CatalogueDatabase
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyUnitOfWork(fx_database, wait_seconds=seconds)
+        return SqlAlchemyCatalogueDatabase(fx_database, wait_seconds=seconds)
 
-    return open_unit_of_work
+    return open_catalogue_database
 
 
 @pytest.fixture
@@ -276,12 +276,12 @@ def fx_databases(
 
 @pytest.fixture
 def fx_open_book(
-    fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory, fx_directories: SharedBookDirectories
+    fx_catalogue: CatalogueDatabaseFactory, fx_databases: BookDatabasesFactory, fx_directories: SharedBookDirectories
 ) -> BookOpener:
     """Return the opener of the books of the test, which opens a book of an account with its database.
 
-    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
     :param fx_directories: Opens the source store and the asset store of a book of the test.
@@ -289,7 +289,7 @@ def fx_open_book(
     :returns: The opener, called with the actor and the identifier of the book.
     :rtype: BookOpener
     """
-    return BookOpener(uow=fx_uow, databases=fx_databases(), files=fx_directories)
+    return BookOpener(catalogue=fx_catalogue, databases=fx_databases(), files=fx_directories)
 
 
 @pytest.fixture
@@ -337,7 +337,7 @@ async def fx_app(
     """Run the application lifespan with ``fx_actor`` signed in and ``fx_extra_providers`` applied.
 
     The application runs on ``fx_database`` and ``fx_books`` themselves, the catalogue storing the account of the actor,
-    so a test that opens a unit of work with ``fx_uow`` and the requests of the application share the write queue of
+    so a test that opens a catalogue database with ``fx_catalogue`` and the requests of the application share the write queue of
     every file. The steps run in threads
     instead of the pool of processes the lifespan would start, unless a provider of the test replaces the executor
     itself.

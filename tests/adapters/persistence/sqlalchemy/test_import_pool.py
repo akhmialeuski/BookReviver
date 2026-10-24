@@ -1,6 +1,6 @@
 """Test of the connection pools during an import that cuts several scans at once, on the SQLite file of a book.
 
-Up to ``parallel_scans`` coroutines cut the scans of a job, and all of them write through the one unit of work of the
+Up to ``parallel_scans`` coroutines cut the scans of a job, and all of them write through the one catalogue database of the
 job. A change takes its connection only when it has the writer, and a change that waits for the writer holds none, so
 the pool of the writer, which holds one connection, is never asked for a second and no connection is left behind.
 """
@@ -120,7 +120,7 @@ class TestRunImportConnections:
         """Verify an import with four cutters at once checks out one writer connection at a time, with all scans ready.
 
         The rasterizer holds every write until all four cutters are writing, so they leave their writes together and
-        each of them then asks for its change of the one unit of work at the same moment. A pause would not do: a
+        each of them then asks for its change of the one catalogue database at the same moment. A pause would not do: a
         change on a SQLite file outlasts it, and the cutters would pass their writes one after another. The changes
         queue for the writer of the book, and a change that waits holds no connection, so the writer pool of the book
         shows one connection in use at a time. A change that opened its session before it had the writer would hold a
@@ -154,11 +154,11 @@ class TestRunImportConnections:
         samples = tmp_path / SAMPLES_DIRECTORY
         samples.mkdir()
         owner = Actor(account_id=fx_owner_id)
-        uow = fx_open_book.uow()
-        book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
+        catalogue = fx_open_book.catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
         async with fx_books.use(book_id, fx_open_book.files.directory(directory_of(book_id)).database) as book:
             with _counting_connections(book) as peak:
-                job = await rig.service(uow=uow).start_import(
+                job = await rig.service(catalogue=catalogue).start_import(
                     open_for(owner, book_id, databases=rig.databases, files=rig.files),
                     [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)],
                 )

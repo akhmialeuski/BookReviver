@@ -1,7 +1,7 @@
 """Tests for the ``write.block`` spans SqlDatabase makes around the changes that hold the writer.
 
-The recording tracer is given to the database, so each change of a unit of work leaves one span with the kind of the
-block, the book it held, the wait for the writer, the holding, the commit and how it ended. Two units of work over one
+The recording tracer is given to the database, so each change of a catalogue database leaves one span with the kind of the
+block, the book it held, the wait for the writer, the holding, the commit and how it ended. Two catalogue databases over one
 file show the wait. They are ordered by events and never by a sleep: the second change asks for the writer while the
 first holds it in a blocked thread, and only then is the first let go. A change refused the writer ends its span as not
 begun, whether the queue of its process or SQLite refused it.
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, CatalogueRepositories
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.recording_tracer import RecordingSpan
     from tests.helpers.tracers import AskingTracer
@@ -67,7 +67,7 @@ def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
 
 
 class TestWriteBlockSpan:
-    """Tests for the span of one change of one unit of work."""
+    """Tests for the span of one change of one catalogue database."""
 
     async def test_book_change_makes_one_span_of_its_book_with_its_timings(
         self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
@@ -151,16 +151,16 @@ class TestWriteBlockSpan:
         assert_expectations()
 
     async def test_change_is_of_the_other_kind_and_names_no_book(
-        self, fx_traced_uow: Callable[..., UnitOfWork], fx_tracer: AskingTracer
+        self, fx_traced_catalogue: Callable[..., CatalogueDatabase], fx_tracer: AskingTracer
     ) -> None:
         """Verify a change outside the content of a book is marked as the other kind, with no book.
 
-        :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
-        :type fx_traced_uow: Callable[..., UnitOfWork]
+        :param fx_traced_catalogue: Function opening a catalogue database over the traced catalogue and books.
+        :type fx_traced_catalogue: Callable[..., CatalogueDatabase]
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
         """
-        await fx_traced_uow().change(lambda _repos: None)
+        await fx_traced_catalogue().change(lambda _repos: None)
         (span,) = fx_tracer.named(SpanName.WRITE_BLOCK)
         expect(span.attributes[SpanAttribute.BLOCK_KIND] is BlockKind.OTHER)
         expect(SpanAttribute.BOOK not in span.attributes)
@@ -182,15 +182,15 @@ class TestWriteBlockSpan:
         assert fx_tracer.named(SpanName.WRITE_BLOCK) == []
 
     async def test_limit_bounds_the_wait_for_the_writer_and_never_the_work(
-        self, fx_traced_uow: Callable[..., UnitOfWork], fx_tracer: AskingTracer
+        self, fx_traced_catalogue: Callable[..., CatalogueDatabase], fx_tracer: AskingTracer
     ) -> None:
         """Verify a work that lasts several times the limit of its change still commits, with its holding on the span.
 
         The writer is free when the change asks, so it waits for nothing. Its work then blocks the thread for longer
         than the limit, which would give up a change whose limit covered the work.
 
-        :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
-        :type fx_traced_uow: Callable[..., UnitOfWork]
+        :param fx_traced_catalogue: Function opening a catalogue database over the traced catalogue and books.
+        :type fx_traced_catalogue: Callable[..., CatalogueDatabase]
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
         """
@@ -204,7 +204,7 @@ class TestWriteBlockSpan:
             """
             threading.Event().wait(work_seconds)
 
-        await fx_traced_uow(wait_seconds=IMPATIENT_SECONDS).change(last_longer_than_the_limit)
+        await fx_traced_catalogue(wait_seconds=IMPATIENT_SECONDS).change(last_longer_than_the_limit)
         (span,) = fx_tracer.named(SpanName.WRITE_BLOCK)
         expect(span.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
         expect(milliseconds(span, SpanAttribute.HOLD_MS) > IMPATIENT_SECONDS * MILLISECONDS_PER_SECOND)
@@ -212,7 +212,7 @@ class TestWriteBlockSpan:
 
 
 class TestWaitForTheWriter:
-    """Tests for changes of two units of work, of which the second asks while the first holds the writer."""
+    """Tests for changes of two catalogue databases, of which the second asks while the first holds the writer."""
 
     async def test_second_block_waits_at_least_as_long_as_the_first_held_the_writer_after_it_began_to_wait(
         self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
@@ -261,7 +261,7 @@ class TestWaitForTheWriter:
     ) -> None:
         """Verify a change refused the writer ends its span as not begun, with no holding, and the holder commits.
 
-        The asker's unit of work has a limit of a few milliseconds. When the holder belongs to the other registry over
+        The asker's catalogue database has a limit of a few milliseconds. When the holder belongs to the other registry over
         the same books, each registry has its own queue for the book, as two processes would, so the asker has its
         writer at once and meets the holder at the write lock of SQLite, where it waits the busy timeout, which is that
         limit too, since the impatient registry opens with it. When both belong to the impatient registry, the asker

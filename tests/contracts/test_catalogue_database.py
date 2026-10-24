@@ -1,6 +1,6 @@
-"""Contract of the calls of the unit of work and of the database of a book, run against the SQL adapter.
+"""Contract of the calls of the catalogue database and of the database of a book, run against the SQL adapter.
 
-A change of the catalogue by the unit of work and a change of a book by its database run their work on one transaction
+A change of the catalogue by the catalogue database and a change of a book by its database run their work on one transaction
 of one store, commit it when the work returns, roll it back when the work raises, and wait for any other change of the
 same store: the same book, or the catalogue. A change of one book never waits for a change of another book or of the
 catalogue. A read of either runs its work on one committed state and refuses every write. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held
@@ -50,18 +50,18 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.ports.persistence import BookDatabase, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase
     from tests.contracts.conftest import Book
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
-# The limit of a unit of work of a request, short enough for a test of a refused wait to take a fraction of a second
+# The limit of a catalogue database of a request, short enough for a test of a refused wait to take a fraction of a second
 REQUEST_WAIT_SECONDS: float = 0.2
-# The limit of every other unit of work, long enough that a wait the test ends by itself never reaches it
+# The limit of every other catalogue database, long enough that a wait the test ends by itself never reaches it
 JOB_WAIT_SECONDS: float = 5.0
 # What a refusal under the limit of a request must be quicker than, well over that limit and well under the limit of a
-# job, so that a unit of work given the limit of a job fails the test
+# job, so that a catalogue database given the limit of a job fails the test
 REFUSAL_BOUND_SECONDS: float = 2.0
 ONE_MINUTE: timedelta = timedelta(minutes=1)
 LEFT_THE_WORK: str = 'left the work'
@@ -95,13 +95,13 @@ WRITE_METHODS: tuple[str, ...] = (
 
 
 class Stores(NamedTuple):
-    """The unit of work of the catalogue and the opener of the books, which a test opens together.
+    """The catalogue database of the catalogue and the opener of the books, which a test opens together.
 
-    :ivar uow: Unit of work whose changes and reads are those of the catalogue.
+    :ivar catalogue: Catalogue database whose changes and reads are those of the catalogue.
     :ivar databases: Opener of the databases of the books, whose changes and reads are those of a book.
     """
 
-    uow: UnitOfWork
+    catalogue: CatalogueDatabase
     databases: LocatedBookDatabases
 
 
@@ -122,7 +122,7 @@ class ChangeKind(NamedTuple):
     async def run[T](self, stores: Stores, book: Book, work: Callable[[Any], T]) -> T:
         """Run a work over the repositories of the store as a change of this kind.
 
-        :param stores: Unit of work and opener of the books to run the work on.
+        :param stores: Catalogue database and opener of the books to run the work on.
         :type stores: Stores
         :param book: The book of the test.
         :type book: Book
@@ -133,12 +133,12 @@ class ChangeKind(NamedTuple):
         """
         if self.of_book:
             return await stores.databases.open(book.book_id).change(lambda repos, _book_record: work(repos))
-        return await stores.uow.change(work)
+        return await stores.catalogue.change(work)
 
     async def read[T](self, stores: Stores, book: Book, work: Callable[[Any], T]) -> T:
         """Run a work over the repositories of the store as a read of this kind.
 
-        :param stores: Unit of work and opener of the books to run the work on.
+        :param stores: Catalogue database and opener of the books to run the work on.
         :type stores: Stores
         :param book: The book of the test.
         :type book: Book
@@ -149,20 +149,20 @@ class ChangeKind(NamedTuple):
         """
         if self.of_book:
             return await stores.databases.open(book.book_id).read(work)
-        return await stores.uow.read(work)
+        return await stores.catalogue.read(work)
 
-    def lock_of(self, stores: Stores, book: Book) -> BookDatabase | UnitOfWork:
+    def lock_of(self, stores: Stores, book: Book) -> BookDatabase | CatalogueDatabase:
         """Name what a holder holds to stop a change of this kind.
 
-        :param stores: Unit of work and opener of the books of the holder.
+        :param stores: Catalogue database and opener of the books of the holder.
         :type stores: Stores
         :param book: The book of the test.
         :type book: Book
-        :returns: The database of the book whose store the change takes, or the unit of work for a change of the
+        :returns: The database of the book whose store the change takes, or the catalogue database for a change of the
                   catalogue.
-        :rtype: BookDatabase | UnitOfWork
+        :rtype: BookDatabase | CatalogueDatabase
         """
-        return stores.databases.open(book.book_id) if self.of_book else stores.uow
+        return stores.databases.open(book.book_id) if self.of_book else stores.catalogue
 
     def rows(self, book: Book, number: int) -> tuple[Any, Any]:
         """Build two rows of two repositories of the store, which differ from those of any other number.
@@ -302,11 +302,11 @@ def fx_settings(fx_settings: Settings) -> Settings:
 
 
 @pytest.fixture
-def fx_stores(fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory) -> StoresFactory:
-    """Return a function opening a new unit of work and a new opener of the books over the stores of the test.
+def fx_stores(fx_catalogue: CatalogueDatabaseFactory, fx_databases: BookDatabasesFactory) -> StoresFactory:
+    """Return a function opening a new catalogue database and a new opener of the books over the stores of the test.
 
-    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
     :returns: Function opening both, with the same wait limit.
@@ -314,14 +314,14 @@ def fx_stores(fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory) -> 
     """
 
     def open_stores(*, wait_seconds: float | None = None) -> Stores:
-        """Open a unit of work and an opener of the books with the same wait limit.
+        """Open a catalogue database and an opener of the books with the same wait limit.
 
         :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
         :type wait_seconds: float | None
-        :returns: The unit of work and the opener of the books.
+        :returns: The catalogue database and the opener of the books.
         :rtype: Stores
         """
-        return Stores(fx_uow(wait_seconds=wait_seconds), fx_databases(wait_seconds=wait_seconds))
+        return Stores(fx_catalogue(wait_seconds=wait_seconds), fx_databases(wait_seconds=wait_seconds))
 
     return open_stores
 
@@ -432,11 +432,13 @@ async def fx_book_rows(fx_databases: BookDatabasesFactory, fx_book: Book) -> dic
 
 
 @pytest.fixture
-async def fx_rows(fx_uow: UnitOfWorkFactory, fx_book: Book, fx_book_rows: dict[str, Row]) -> dict[str, Row]:
+async def fx_rows(
+    fx_catalogue: CatalogueDatabaseFactory, fx_book: Book, fx_book_rows: dict[str, Row]
+) -> dict[str, Row]:
     """Store one row in every repository of the catalogue too, and build a changed copy and a new row beside each.
 
-    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_book: Stored book, whose library entry is the row of the library.
     :type fx_book: Book
     :param fx_book_rows: Rows of the repositories that hold the content of the book.
@@ -446,8 +448,8 @@ async def fx_rows(fx_uow: UnitOfWorkFactory, fx_book: Book, fx_book_rows: dict[s
     """
     owner_id = fx_book.owner_id
     profile = make_recipe_profile(account_id=owner_id)
-    entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_id))
-    await fx_uow().change(lambda repos: repos.recipe_profiles.add(profile))
+    entry = await fx_catalogue().read(lambda repos: repos.library.get(fx_book.book_id))
+    await fx_catalogue().change(lambda repos: repos.recipe_profiles.add(profile))
     return {
         **fx_book_rows,
         'library': Row(
@@ -477,9 +479,9 @@ class TestChangeEnd:
     async def test_change_commits_when_the_work_returns(
         self, fx_stores: StoresFactory, fx_book: Book, kind: ChangeKind
     ) -> None:
-        """Verify what the work wrote is visible to another unit of work once the change has returned.
+        """Verify what the work wrote is visible to another catalogue database once the change has returned.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the change belongs to.
@@ -498,7 +500,7 @@ class TestChangeEnd:
     ) -> None:
         """Verify the change hands back the value of its work, which is what a use case reads as its result.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the change belongs to.
@@ -530,10 +532,10 @@ class TestChangeEnd:
     ) -> None:
         """Verify an exception raised by the work discards every write of the work and reaches the caller as it is.
 
-        The work writes in two repositories before it raises. The same unit of work then writes the same rows in a new
+        The work writes in two repositories before it raises. The same catalogue database then writes the same rows in a new
         change, which proves that the store is free again and that nothing of the first change was kept.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the change belongs to.
@@ -546,7 +548,7 @@ class TestChangeEnd:
         rows = kind.rows(fx_book, 1)
         wanted = {row.id for row in rows}
         error = error_type(LEFT_THE_WORK)
-        uow = fx_stores()
+        catalogue = fx_stores()
         before = await kind.read(fx_stores(), fx_book, lambda repos: kind.found(repos, fx_book))
 
         def write_and_raise(repos: Any) -> None:
@@ -560,10 +562,10 @@ class TestChangeEnd:
             raise error
 
         with pytest.raises(error_type, match=LEFT_THE_WORK) as raised:
-            await kind.run(uow, fx_book, write_and_raise)
+            await kind.run(catalogue, fx_book, write_and_raise)
         expect(raised.value is error)
         expect(await kind.read(fx_stores(), fx_book, lambda repos: kind.found(repos, fx_book)) == before)
-        await kind.run(uow, fx_book, lambda repos: kind.add(repos, rows))
+        await kind.run(catalogue, fx_book, lambda repos: kind.add(repos, rows))
         expect(await kind.read(fx_stores(), fx_book, lambda repos: kind.found(repos, fx_book)) == before | wanted)
         assert_expectations()
 
@@ -571,15 +573,17 @@ class TestChangeEnd:
 class TestRead:
     """Contract of the reads of the catalogue and of a book on what they return and what they see."""
 
-    async def test_read_returns_what_the_work_returns(self, fx_uow: UnitOfWorkFactory, fx_book: Book) -> None:
+    async def test_read_returns_what_the_work_returns(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_book: Book
+    ) -> None:
         """Verify ``read`` hands back the value of its work.
 
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_book: Stored book whose library entry is read.
         :type fx_book: Book
         """
-        entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_id))
+        entry = await fx_catalogue().read(lambda repos: repos.library.get(fx_book.book_id))
         assert (entry.book_id, entry.owner_id) == (fx_book.book_id, fx_book.owner_id)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
@@ -588,7 +592,7 @@ class TestRead:
     ) -> None:
         """Verify a read sees the two rows of a change that committed, and nothing of a change that rolled back.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the rows belong to.
@@ -598,7 +602,7 @@ class TestRead:
         """
         kept, lost = kind.rows(fx_book, 1), kind.rows(fx_book, 2)
         before = await kind.read(fx_stores(), fx_book, lambda repos: kind.found(repos, fx_book))
-        uow = fx_stores()
+        catalogue = fx_stores()
 
         def add_lost(repos: Any) -> None:
             """Add the other two rows and raise, so the change rolls back.
@@ -610,9 +614,9 @@ class TestRead:
             kind.add(repos, lost)
             raise DomainError
 
-        await kind.run(uow, fx_book, lambda repos: kind.add(repos, kept))
+        await kind.run(catalogue, fx_book, lambda repos: kind.add(repos, kept))
         with pytest.raises(DomainError):
-            await kind.run(uow, fx_book, add_lost)
+            await kind.run(catalogue, fx_book, add_lost)
         found = await kind.read(fx_stores(), fx_book, lambda repos: kind.found(repos, fx_book))
         assert found == before | {row.id for row in kept}
 
@@ -635,7 +639,7 @@ class TestChangeWait:
 
         The test lets every task block, and checks that the work has not run, before it frees the store.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the changes belong to.
@@ -667,7 +671,7 @@ class TestChangeWait:
         The changes have the limit of a request, so one that wrongly waited for the held book would be refused with
         ``BookBusyError`` within a fraction of a second and fail the test, instead of passing for a slow one.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the holder holds.
@@ -681,7 +685,7 @@ class TestChangeWait:
             await impatient.databases.open(fx_other_book.book_id).change(
                 lambda _repos, _book_record: ran.append(OTHER_BOOK)
             )
-            await impatient.uow.change(lambda _repos: ran.append(CATALOGUE))
+            await impatient.catalogue.change(lambda _repos: ran.append(CATALOGUE))
             ran_while_held = list(ran)
         assert ran_while_held == [OTHER_BOOK, CATALOGUE]
 
@@ -690,7 +694,7 @@ class TestChangeWait:
     ) -> None:
         """Verify the catalogue held by a change leaves a change of a book free to run.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book that is changed.
@@ -698,7 +702,7 @@ class TestChangeWait:
         """
         holder, impatient = fx_stores(), fx_stores(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with hold_book_in_thread(holder.uow):
+        async with hold_book_in_thread(holder.catalogue):
             await impatient.databases.open(fx_book.book_id).change(lambda _repos, _book_record: ran.append(OTHER_BOOK))
             ran_while_held = list(ran)
         assert ran_while_held == [OTHER_BOOK]
@@ -714,7 +718,7 @@ class TestChangeWait:
 
         Each change is started only once every task is blocked, so the first asked before the second.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the changes belong to.
@@ -756,7 +760,7 @@ class TestChangeWait:
 
         Each waiter is started only once every task is blocked, so it asks after the one before it.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book every change belongs to.
@@ -789,13 +793,13 @@ class TestChangeWait:
         fx_book: Book,
         kind: ChangeKind,
     ) -> None:
-        """Verify a change gives up with ``BookBusyError`` after the limit of its unit of work, and runs no work.
+        """Verify a change gives up with ``BookBusyError`` after the limit of its catalogue database, and runs no work.
 
-        The unit of work has the limit of a request, so the wait ends in a fraction of a second whatever the holder
-        does. The refusal leaves the store of the holder as it was, and once the holder has let go, the same unit of
-        work runs the change at once.
+        The catalogue database has the limit of a request, so the wait ends in a fraction of a second whatever the holder
+        does. The refusal leaves the store of the holder as it was, and once the holder has let go, the same catalogue
+        database runs the change at once.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book the changes belong to.
@@ -827,14 +831,14 @@ class TestChangeWait:
         fx_book: Book,
         kind: ChangeKind,
     ) -> None:
-        """Verify a unit of work with the limit of a job waits for the holder past the limit of a request.
+        """Verify a catalogue database with the limit of a job waits for the holder past the limit of a request.
 
-        A unit of work with the limit of a request gives up while the holder still holds the store, which proves that
-        more than that limit has passed, and only then is the holder let go. The unit of work of the job asked before
+        A catalogue database with the limit of a request gives up while the holder still holds the store, which proves that
+        more than that limit has passed, and only then is the holder let go. The catalogue database of the job asked before
         the request one, so it has waited at least as long, and runs after the holder instead of raising
         ``BookBusyError``.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book every change belongs to.
@@ -880,7 +884,7 @@ class TestWriteGuard:
     ) -> None:
         """Verify a repository refuses a write in the work of a read of the catalogue or of a book.
 
-        :param fx_stores: Function opening a new unit of work and a new opener of the books, both over the
+        :param fx_stores: Function opening a new catalogue database and a new opener of the books, both over the
                           catalogue and the books of the test.
         :type fx_stores: StoresFactory
         :param fx_book: Stored book whose rows are written.

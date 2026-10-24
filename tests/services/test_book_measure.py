@@ -674,7 +674,7 @@ class TestMeasureApplyStep:
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the unit of work.
+        :param monkeypatch: Fixture that restores the catalogue database.
         :type monkeypatch: pytest.MonkeyPatch
         :param kind: The kind of page whose recipe the user saves meanwhile.
         :type kind: RecipeKind

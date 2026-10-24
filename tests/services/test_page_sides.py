@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -128,12 +128,16 @@ REORDERINGS: dict[str, Reordering] = {
 
 
 async def _commit_book(
-    uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, Stage] | None, *, databases: LocatedBookDatabases
+    catalogue: CatalogueDatabase,
+    actor: Actor,
+    valued: tuple[ValueScope, Stage] | None,
+    *,
+    databases: LocatedBookDatabases,
 ) -> Book:
     """Commit a book of four pages with a fresh record of each checked stage, and one value for a step of a stage.
 
-    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
+    :type catalogue: CatalogueDatabase
     :param actor: Owner of the book.
     :type actor: Actor
     :param valued: The part of the pages and the stage of the one value the book has for a step, or None for no value.
@@ -144,7 +148,7 @@ async def _commit_book(
     :rtype: Book
     """
     pages = [make_page(order_key=f'a{number}') for number in range(PAGE_COUNT)]
-    book_id = await store_book(uow, make_record(), *pages, owner=actor.account_id, databases=databases)
+    book_id = await store_book(catalogue, make_record(), *pages, owner=actor.account_id, databases=databases)
 
     def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save a record for every checked stage of every page, and the value of the part of the pages when given.
@@ -189,7 +193,7 @@ class TestPagesTurnedOver:
     async def test_the_pages_that_turned_over_go_stale_where_the_odd_pages_have_a_value(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         reordering: Reordering,
         fx_open_book: BookOpener,
@@ -198,8 +202,8 @@ class TestPagesTurnedOver:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param reordering: The change of the places and the pages it turns over.
@@ -208,7 +212,7 @@ class TestPagesTurnedOver:
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(
-            fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY), databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY), databases=fx_open_book.databases
         )
         await reordering.act(fx_service(), fx_actor, book, fx_open_book)
         assert await _stale(book, databases=fx_open_book.databases) == {
@@ -218,7 +222,7 @@ class TestPagesTurnedOver:
     async def test_only_the_stages_that_have_a_value_for_a_side_go_stale(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -226,15 +230,15 @@ class TestPagesTurnedOver:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(
-            fx_uow(), fx_actor, (ValueScope.EVEN, Stage.CLEANUP), databases=fx_open_book.databases
+            fx_catalogue(), fx_actor, (ValueScope.EVEN, Stage.CLEANUP), databases=fx_open_book.databases
         )
         await _move(fx_service(), fx_actor, book, opener=fx_open_book)
         assert await _stale(book, databases=fx_open_book.databases) == {(1, Stage.CLEANUP), (2, Stage.CLEANUP)}
@@ -243,7 +247,7 @@ class TestPagesTurnedOver:
     async def test_a_book_with_no_value_for_a_side_marks_nothing(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
+        fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         valued: tuple[ValueScope, Stage] | None,
         fx_open_book: BookOpener,
@@ -252,8 +256,8 @@ class TestPagesTurnedOver:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param valued: The one value the book has, or None.
@@ -261,6 +265,6 @@ class TestPagesTurnedOver:
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor, valued, databases=fx_open_book.databases)
+        book = await _commit_book(fx_catalogue(), fx_actor, valued, databases=fx_open_book.databases)
         await _move(fx_service(), fx_actor, book, opener=fx_open_book)
         assert await _stale(book, databases=fx_open_book.databases) == set()
