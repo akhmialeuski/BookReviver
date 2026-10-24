@@ -86,7 +86,9 @@ class PageValues:
         :rtype: ValueChanges
         """
         return await self.kit.page_settings().change(
-            open_for(self.actor, self.book_id, databases=self.kit.databases), _page_field(key, name), value
+            open_for(self.actor, self.book_id, databases=self.kit.databases, files=self.kit.files),
+            _page_field(key, name),
+            value,
         )
 
     async def take_back(self, key: PageStepKey, name: str) -> ValueChanges:
@@ -100,5 +102,6 @@ class PageValues:
         :rtype: ValueChanges
         """
         return await self.kit.page_settings().reset(
-            open_for(self.actor, self.book_id, databases=self.kit.databases), _page_field(key, name)
+            open_for(self.actor, self.book_id, databases=self.kit.databases, files=self.kit.files),
+            _page_field(key, name),
         )

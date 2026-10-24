@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import BookDatabases
+    from bookreviver.ports.storage import BookFileStores
     from tests.helpers.database import UnitOfWorkFactory
 from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
@@ -184,15 +185,17 @@ def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
 class BookOpener:
     """Opens the books of a test with their databases, as the access dependencies open them for a request.
 
-    A test that opens a book also seeds the catalogue and reads and writes the databases of the books, so the opener
-    hands out the units of work and the databases of the test too.
+    A test that opens a book also seeds the catalogue and reads and writes the databases and the files of the books, so
+    the opener hands out the units of work, the databases and the file stores of the test too.
 
     :ivar uow: Function opening a new unit of work over the catalogue and the books of the test.
     :ivar databases: Opens the databases of the books of the test.
+    :ivar files: Opens the source store and the asset store of a book of the test.
     """
 
     uow: UnitOfWorkFactory
     databases: BookDatabases
+    files: BookFileStores
 
     def __call__(self, actor: Actor, book_id: BookId) -> Book:
         """Open a book for the actor, without reading the library.
@@ -204,10 +207,10 @@ class BookOpener:
         :returns: The open book.
         :rtype: Book
         """
-        return open_for(actor, book_id, databases=self.databases)
+        return open_for(actor, book_id, databases=self.databases, files=self.files)
 
 
-def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases) -> Book:
+def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: BookFileStores) -> Book:
     """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
 
     :param actor: Account the book is opened for, which the test made its owner.
@@ -216,10 +219,19 @@ def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases) -> Book
     :type book_id: BookId
     :param databases: Opens the database of the book.
     :type databases: BookDatabases
+    :param files: Opens the source store and the asset store of the book.
+    :type files: BookFileStores
     :returns: The open book, with the tools of ``make_book_tools``.
     :rtype: Book
     """
-    return Book(book_id, actor.account_id, databases.open(book_id), make_book_tools())
+    return Book(
+        book_id,
+        actor.account_id,
+        database=databases.open(book_id),
+        sources=files.sources(book_id),
+        assets=files.assets(book_id),
+        tools=make_book_tools(),
+    )
 
 
 def make_book_tools() -> BookTools:

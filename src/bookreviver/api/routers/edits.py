@@ -91,7 +91,7 @@ async def list_edits(
         :returns: The schema.
         :rtype: PageEditSchema
         """
-        return PageEditSchema.of(edit, request)
+        return PageEditSchema.of(edit, book.id, request)
 
     pager = Pager[PageEdit, PageEditSchema](params, to_schema)
     found = await edits.list(book, address.page_id, address.stage)
@@ -127,7 +127,7 @@ async def put_edit(
     :rtype: PageEditSchema
     """
     stored = await edits.save(book, address.key, form.to_edit(), form.mask)
-    return PageEditSchema.of(stored, request)
+    return PageEditSchema.of(stored, book.id, request)
 
 
 @router.delete('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)

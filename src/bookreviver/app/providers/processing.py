@@ -24,7 +24,6 @@ from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-from bookreviver.ports.storage import AssetStore
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
@@ -153,13 +152,9 @@ class ProcessingProvider(Provider):
         return ProcessingRuntime(publisher=publisher, clock=clock, board=board, tracer=tracer)
 
     @provide(scope=Scope.APP)
-    def step_runner(
-        self, assets: AssetStore, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler
-    ) -> StepRunner:
-        """Build the runner of processors over the asset store and the imaging ports.
+    def step_runner(self, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler) -> StepRunner:
+        """Build the runner of processors over the imaging ports.
 
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param executor: Executor that runs the steps of the processors.
         :type executor: StepExecutor
         :param renditions: Writer of the files of a page version.
@@ -169,7 +164,7 @@ class ProcessingProvider(Provider):
         :returns: The runner.
         :rtype: StepRunner
         """
-        return StepRunner(assets=assets, executor=executor, renditions=renditions, tiler=tiler)
+        return StepRunner(executor=executor, renditions=renditions, tiler=tiler)
 
     @provide(scope=Scope.REQUEST)
     def processing_parts(
@@ -198,13 +193,9 @@ class ProcessingProvider(Provider):
         return ProcessingParts.build(uow, catalogue, defaults, runtime, config)
 
     @provide(scope=Scope.REQUEST)
-    def processing_service(
-        self, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
-    ) -> ProcessingService:
+    def processing_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:
         """Build the processing service of a request.
 
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share.
@@ -212,7 +203,7 @@ class ProcessingProvider(Provider):
         :returns: The processing service.
         :rtype: ProcessingService
         """
-        return ProcessingService(assets=assets, catalogue=catalogue, parts=parts)
+        return ProcessingService(catalogue=catalogue, parts=parts)
 
     @provide(scope=Scope.REQUEST)
     def recipe_profiles(
@@ -269,14 +260,12 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def processing_jobs(
-        self, books: BooksService, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts, pages: PageService
+        self, books: BooksService, runtime: StageRuntime, parts: ProcessingParts, pages: PageService
     ) -> ProcessingJobs:
         """Build the work of the processing jobs over the books service of a job.
 
         :param books: Books service of the current job, which opens the book the job runs on.
         :type books: BooksService
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param runtime: What a run of a stage works with.
         :type runtime: StageRuntime
         :param parts: The parts the processing use cases share.
@@ -286,16 +275,12 @@ class ProcessingProvider(Provider):
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        return ProcessingJobs(books=books, assets=assets, runtime=runtime, parts=parts, pages=pages)
+        return ProcessingJobs(books=books, runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
-    def edit_service(
-        self, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
-    ) -> EditService:
+    def edit_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock) -> EditService:
         """Build the edit service of a request.
 
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
@@ -305,7 +290,7 @@ class ProcessingProvider(Provider):
         :returns: The edit service.
         :rtype: EditService
         """
-        return EditService(assets=assets, catalogue=catalogue, records=parts.records, clock=clock)
+        return EditService(catalogue=catalogue, records=parts.records, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def page_settings_service(
@@ -349,11 +334,9 @@ class ProcessingProvider(Provider):
         return CarryOverService(records=parts.records, clock=clock)
 
     @provide(scope=Scope.REQUEST)
-    def page_history_service(self, assets: AssetStore, parts: ProcessingParts, clock: Clock) -> PageHistoryService:
+    def page_history_service(self, parts: ProcessingParts, clock: Clock) -> PageHistoryService:
         """Build the page history service of a request.
 
-        :param assets: Asset store of the application, from which a clear removes the files of the versions it deletes.
-        :type assets: AssetStore
         :param parts: The parts the processing use cases share, of which the stage records and the job starter are used.
         :type parts: ProcessingParts
         :param clock: Clock of the application.
@@ -361,7 +344,7 @@ class ProcessingProvider(Provider):
         :returns: The page history service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(records=parts.records, starter=parts.starter, assets=assets, clock=clock)
+        return PageHistoryService(records=parts.records, starter=parts.starter, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def result_marks_service(self) -> ResultMarksService:

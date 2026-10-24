@@ -157,7 +157,9 @@ class TestSave:
         actor, book_record, page = await prepared(fx_kit)
         key = await fx_kit.edit_key(book_record.id, page, key_stage, processor)
         with pytest.raises(InvalidParametersError, match=match):
-            await fx_kit.edits().save(open_for(actor, book_record.id, databases=fx_kit.databases), key, edit, None)
+            await fx_kit.edits().save(
+                open_for(actor, book_record.id, databases=fx_kit.databases, files=fx_kit.files), key, edit, None
+            )
 
     async def test_edit_of_a_step_that_no_recipe_of_the_stage_has_is_not_found(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -216,12 +218,12 @@ class TestSave:
             fx_open_book(actor, book_record.id), key, edit, upload(MASK_NAME, content=MASK_CONTENT)
         )
         assert stored.mask_key is not None
-        async with fx_kit.assets.readable(stored.mask_key) as mask:
+        async with fx_kit.files.assets(book_record.id).readable(stored.mask_key) as mask:
             content = mask.read_bytes()
-        directory = BookKeys(book_record.id).page_edit(page.id, key.step_id, stored.edit_hash)
+        directory = BookKeys().page_edit(page.id, key.step_id, stored.edit_hash)
         expect(content == MASK_CONTENT)
         expect(stored.mask_key == f'{directory}/{Rendition.MASK}')
-        async with fx_kit.assets.readable(BookKeys(book_record.id).page_edits(page.id, key.step_id)) as folder:
+        async with fx_kit.files.assets(book_record.id).readable(BookKeys().page_edits(page.id, key.step_id)) as folder:
             expect(sorted(entry.name for entry in folder.iterdir()) == [stored.edit_hash])
         assert_expectations()
 

@@ -15,7 +15,7 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.books import book_pages
 from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id, open_for
+from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
 from tests.helpers.seeding import ensure_account, store_book
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ async def _stored(book_id: BookId, *, databases: BookDatabases) -> dict[PageId, 
 
 
 async def _update_kind(
-    service: PageService, actor: Actor, book_id: BookId, page_ids: list[PageId], databases: BookDatabases
+    service: PageService, actor: Actor, book_id: BookId, page_ids: list[PageId], opener: BookOpener
 ) -> None:
     """Change the kind of the third page, as a request to edit a page does.
 
@@ -105,14 +105,14 @@ async def _update_kind(
     :type book_id: BookId
     :param page_ids: Identifiers of the pages of the book in book order.
     :type page_ids: list[PageId]
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     """
-    await service.update(open_for(actor, book_id, databases=databases), page_ids[2], PageChanges(kind=PageKind.OTHER))
+    await service.update(opener(actor, book_id), page_ids[2], PageChanges(kind=PageKind.OTHER))
 
 
 async def _delete_page(
-    service: PageService, actor: Actor, book_id: BookId, page_ids: list[PageId], databases: BookDatabases
+    service: PageService, actor: Actor, book_id: BookId, page_ids: list[PageId], opener: BookOpener
 ) -> None:
     """Delete the third page, as a request to delete a page does.
 
@@ -124,10 +124,10 @@ async def _delete_page(
     :type book_id: BookId
     :param page_ids: Identifiers of the pages of the book in book order.
     :type page_ids: list[PageId]
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     """
-    await service.delete(open_for(actor, book_id, databases=databases), page_ids[2])
+    await service.delete(opener(actor, book_id), page_ids[2])
 
 
 class TestUpdate:
@@ -333,7 +333,7 @@ class TestConcurrentWrites:
     @pytest.mark.parametrize('write', [_update_kind, _delete_page], ids=['update', 'delete'])
     async def test_a_use_case_started_while_the_book_is_held_writes_after_the_one_asked_before_it(
         self,
-        write: Callable[[PageService, Actor, BookId, list[PageId], BookDatabases], Coroutine[Any, Any, None]],
+        write: Callable[[PageService, Actor, BookId, list[PageId], BookOpener], Coroutine[Any, Any, None]],
         fx_page_writes: PageWrites,
         fx_service: Callable[[], PageService],
         fx_actor: Actor,
@@ -345,7 +345,7 @@ class TestConcurrentWrites:
         the book is held, and after it is freed the move has written and the other use case ran on the book it left.
 
         :param write: The use case that starts second, given the service, the actor, the book and the page ids.
-        :type write: Callable[[PageService, Actor, BookId, list[PageId], BookDatabases], Coroutine[Any, Any, None]]
+        :type write: Callable[[PageService, Actor, BookId, list[PageId], BookOpener], Coroutine[Any, Any, None]]
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_service: Function building the service for one request.
@@ -368,7 +368,7 @@ class TestConcurrentWrites:
                 PageAnchor(page_id=ids[3], side=Side.AFTER),
             )
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(write, fx_service(), fx_actor, book_record.id, ids, fx_open_book.databases)
+            group.start_soon(write, fx_service(), fx_actor, book_record.id, ids, fx_open_book)
             await anyio.wait_all_tasks_blocked()
             expect(fx_page_writes.page_ids == set())
 

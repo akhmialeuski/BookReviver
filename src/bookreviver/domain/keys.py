@@ -1,6 +1,8 @@
 """Layout of storage keys, the one place that builds the key of any stored file of a book.
 
-Every file of a book lives under ``projects/<book_id>/``, divided between the two storage ports:
+A key names a file relative to the directory of its book, so a key stays true when the book moves under another
+identifier, as an imported book does, and the stores of one book alone place it under ``projects/<book_id>/``. The files
+are divided between the two storage ports:
 
 - ``incoming/<job_id>/`` holds the upload of one import job while it is received and checked.
 - ``sources/<source_id>/`` holds the files of one source exactly as uploaded.
@@ -12,16 +14,15 @@ Every file of a book lives under ``projects/<book_id>/``, divided between the tw
 The ``SourceStore`` owns ``incoming/`` and ``sources/`` and the ``AssetStore`` owns ``assets/``, so each port removes
 everything of a book it holds with one prefix. Keys name sources, scans and pages by identifier and never by
 position, so moving a page keeps its keys. A key never holds an empty, ``.`` or ``..`` segment, so no key built here or
-accepted by ``BookKeys.owning`` climbs out of its book.
+accepted by ``BookKeys.is_asset`` climbs out of its book.
 """
 
-from typing import TYPE_CHECKING, ClassVar, Self
-from uuid import UUID
+from typing import TYPE_CHECKING, ClassVar
 
 from attrs import frozen
 
 from bookreviver.domain.enums import LabeledStrEnum
-from bookreviver.domain.ids import BookId, StorageKey
+from bookreviver.domain.ids import StorageKey
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import PageVersion, Scan
@@ -45,27 +46,17 @@ class KeySegment(LabeledStrEnum):
 
 @frozen
 class BookKeys:
-    """The part of the storage key space that belongs to one book.
-
-    :ivar book_id: Book whose keys are built.
-    """
-
-    book_id: BookId
+    """The keys of the files of a book, each relative to the directory of the book."""
 
     SEPARATOR: ClassVar[str] = '/'
     # Prefix of the directory of one version of a scan's renditions, as in ``v1``
     VERSION_PREFIX: ClassVar[str] = 'v'
-    # A key of a derived file: the root, the book, ``assets`` and at least one name inside it
-    MIN_SEGMENTS: ClassVar[int] = 4
+    # A key of a derived file: ``assets`` and at least one name inside it
+    MIN_SEGMENTS: ClassVar[int] = 2
     # Segments that would address the parent of a key or climb out of it
     UNSAFE_SEGMENTS: ClassVar[frozenset[str]] = frozenset({'', '.', '..'})
     # What the archive of a book carries: its database, its sources and its derived files, and no upload in progress
     ARCHIVED: ClassVar[frozenset[str]] = frozenset({KeySegment.DATABASE, KeySegment.SOURCES, KeySegment.ASSETS})
-
-    @property
-    def prefix(self) -> StorageKey:
-        """The prefix shared by every key of the book, ending with the separator."""
-        return StorageKey(f'{self._key()}{self.SEPARATOR}')
 
     @property
     def incoming_area(self) -> StorageKey:
@@ -222,32 +213,23 @@ class BookKeys:
         return StorageKey(f'{self.page_edits(page_id, step_id)}{self.SEPARATOR}{edit_hash}')
 
     @classmethod
-    def owning(cls, key: StorageKey) -> Self | None:
-        """Return the key space that a derived file at ``key`` belongs to, or None when it is not a well-formed one.
+    def is_asset(cls, key: StorageKey) -> bool:
+        """Tell whether ``key`` names a derived file of a book, which is what the ``AssetStore`` serves.
 
-        Only keys under ``assets/`` are attributed, since those are the files the ``AssetStore`` serves. A key under
-        ``incoming/`` or ``sources/`` belongs to the ``SourceStore`` and to no client, so it belongs to no one here.
+        A key under ``incoming/`` or ``sources/`` belongs to the ``SourceStore`` and to no client, so it is no derived
+        file.
 
-        :param key: Key to attribute, such as one a client sent.
+        :param key: Storage key with ``/`` separating its segments.
         :type key: StorageKey
-        :returns: The keys of the book holding ``key``, or None for a key outside every book, naming a book
-                  or its ``assets`` directory itself, lying outside ``assets``, or holding an empty, ``.`` or ``..``
-                  segment.
-        :rtype: Self | None
+        :returns: True when the key lies strictly inside ``assets/`` and holds no empty, ``.`` or ``..`` segment.
+        :rtype: bool
         """
         segments = key.split(cls.SEPARATOR)
-        if (
-            len(segments) < cls.MIN_SEGMENTS
-            or segments[0] != KeySegment.BOOKS
-            or segments[2] != KeySegment.ASSETS
-            or cls.UNSAFE_SEGMENTS.intersection(segments)
-        ):
-            return None
-        try:
-            book_id = UUID(segments[1])
-        except ValueError:
-            return None
-        return cls(BookId(book_id))
+        return (
+            len(segments) >= cls.MIN_SEGMENTS
+            and segments[0] == KeySegment.ASSETS
+            and not cls.UNSAFE_SEGMENTS.intersection(segments)
+        )
 
     def archived(self, name: str) -> StorageKey | None:
         """Return the key of a file of the archive of a book, which names it relative to the directory of the book.
@@ -266,26 +248,16 @@ class BookKeys:
             return None
         return self._key(*segments)
 
-    def relative(self, key: StorageKey) -> str:
-        """Return a key of this book relative to its directory, as an archive of the book names it.
-
-        :param key: Key of a file of the book.
-        :type key: StorageKey
-        :returns: The key without the prefix of the book.
-        :rtype: str
-        """
-        return key.removeprefix(self.prefix)
-
     def _key(self, *segments: str) -> StorageKey:
-        """Join ``segments`` under the book's directory into a key.
+        """Join ``segments`` into a key relative to the directory of the book.
 
-        :param segments: Names below ``projects/<book_id>``, outermost first.
+        :param segments: Names below the directory of the book, outermost first.
         :type segments: str
-        :returns: The key of ``projects/<book_id>/<segments>``.
+        :returns: The key of ``<segments>``.
         :rtype: StorageKey
         :raises ValueError: If a segment is empty, ``.`` or ``..``, or holds the separator.
         """
         if unsafe := [segment for segment in segments if segment in self.UNSAFE_SEGMENTS or self.SEPARATOR in segment]:
             err_msg = f'Storage key segments may not be empty, "." or "..", or hold "{self.SEPARATOR}": {unsafe}.'
             raise ValueError(err_msg)
-        return StorageKey(self.SEPARATOR.join((KeySegment.BOOKS, str(self.book_id), *segments)))
+        return StorageKey(self.SEPARATOR.join(segments))

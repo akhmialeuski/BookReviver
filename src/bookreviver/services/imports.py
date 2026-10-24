@@ -57,6 +57,7 @@ from bookreviver.domain.errors import (
     ConflictError,
     DomainError,
     JobCancelledError,
+    NotFoundError,
     UnsupportedSourceError,
     UploadRejectedError,
 )
@@ -80,7 +81,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, JobBoard, JobControl
-    from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
+    from bookreviver.ports.storage import IncomingFile
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
     from bookreviver.services.processing_parts import ProcessingParts
@@ -108,18 +109,6 @@ class ImportLimits:
     max_files: int
     max_bytes: int
     parallel_scans: int
-
-
-@frozen(kw_only=True)
-class ImportStorage:
-    """The two stores an import reads and writes.
-
-    :ivar sources: Store of the uploads being received and of the sources.
-    :ivar assets: Store of the derived files.
-    """
-
-    sources: SourceStore
-    assets: AssetStore
 
 
 @frozen(kw_only=True)
@@ -183,8 +172,7 @@ class ImportRun:
         self,
         *,
         running: RunningImport,
-        books: BooksService,
-        storage: ImportStorage,
+        book: Book,
         imaging: ImportImaging,
         runtime: ImportRuntime,
     ) -> None:
@@ -192,10 +180,8 @@ class ImportRun:
 
         :param running: The running job, whose request lists the files to import, and its control.
         :type running: RunningImport
-        :param books: Books service of the job, which opens the book the job imports into.
-        :type books: BooksService
-        :param storage: The source store and the asset store.
-        :type storage: ImportStorage
+        :param book: The open book the job imports into, whose stores hold the upload, the sources and their scans.
+        :type book: Book
         :param imaging: The inspector, the rasterizer, the tiler and the runner of processors.
         :type imaging: ImportImaging
         :param runtime: The clock, the order keys and the limits.
@@ -203,23 +189,22 @@ class ImportRun:
         """
         job = running.job
         self.imported: list[SourceId] = []
-        self.book: Book
-        self._books = books
+        self.book = book
         self._job = job
         self._control = running.control
         self._files = {file.name: file for file in (job.request.files if job.request else ())}
-        self._sources = storage.sources
-        self._assets = storage.assets
+        self._sources = book.sources
+        self._assets = book.assets
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
         self._runner = imaging.runner
         self._records = StageRecords(clock=runtime.clock)
         self._labels = PageLabels(clock=runtime.clock)
-        self._base_versions = BaseVersions(assets=storage.assets, tiler=imaging.tiler)
+        self._base_versions = BaseVersions(tiler=imaging.tiler)
         self._order_keys = runtime.order_keys
         self._clock = runtime.clock
         self._limits = runtime.limits
-        self._keys = BookKeys(job.book_id)
+        self._keys = BookKeys()
         self._handled: set[str] = set()
         self._done = 0
         self._total = len(self._files)
@@ -227,10 +212,8 @@ class ImportRun:
     async def execute(self) -> None:
         """Import the staged files as sources, then cut the images of every scan of the book that has none.
 
-        :raises NotFoundError: If the book of the job is gone.
         :raises JobCancelledError: If the job was cancelled, which the first report after it finds out.
         """
-        self.book = await self._books.open(self._job.book_id)
         unready = await self.book.read(lambda repos: repos.scans.list_unready())
         await self._report(total=len(unready))
         await self._import_sources(list(self._files))
@@ -282,7 +265,7 @@ class ImportRun:
                 supported.append(name)
         if not supported:
             return
-        async with self._sources.staged_files(self._job.book_id, self._job.id) as paths:
+        async with self._sources.staged_files(self._job.id) as paths:
             grouped = await self._inspector.group({name: paths[name] for name in supported})
         for uploaded in grouped:
             await self._import_source(uploaded)
@@ -309,7 +292,7 @@ class ImportRun:
                 uploaded=uploaded,
             )
             return
-        async with self._sources.staged_files(self._job.book_id, self._job.id) as paths:
+        async with self._sources.staged_files(self._job.id) as paths:
             try:
                 analysis = await self._inspector.inspect(uploaded.kind, [paths[name] for name in uploaded.names])
             except UnsupportedSourceError as error:
@@ -397,7 +380,7 @@ class ImportRun:
             repos.sources.delete(source.id)
 
         try:
-            await self._sources.promote(self._job.book_id, self._job.id, source.id, names=list(uploaded.names))
+            await self._sources.promote(self._job.id, source.id, names=list(uploaded.names))
         except Exception:
             # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
             # is taken back whole. Its pages go first, since deleting the source only empties their scan.
@@ -504,11 +487,11 @@ class ImportRun:
         of_scan = partial(self._keys.scan_rendition, ready)
         await self._assets.delete_prefix(self._keys.scan_directory(scan))
         async with (
-            self._sources.source_files(self._job.book_id, scan.source_id) as files,
+            self._sources.source_files(scan.source_id) as files,
             self._assets.writable(of_scan(full)) as target,
         ):
             await self._rasterizer.extract(kind, files, scan.number, target, full=full)
-        await self._base_versions.derive(of_scan, full=full)
+        await self._base_versions.derive(of_scan, assets=self._assets, full=full)
         versions = []
         run = StepRun(
             processor_key=SPLIT_NONE.key,
@@ -518,10 +501,10 @@ class ImportRun:
         )
         for page in pages:
             version = BaseVersions.split_none(page=page, scan=ready, state=VersionState.READY, moment=self._clock.now())
-            async with self._runner.execute(run) as result:
+            async with self._runner.execute(self.book, run) as result:
                 versions.append(
                     await self._runner.store(
-                        self._keys, version, result.outputs[0], policy=book_record.image_policy, tiles=True
+                        self.book, version, result.outputs[0], policy=book_record.image_policy, tiles=True
                     )
                 )
 
@@ -620,7 +603,6 @@ class ImportService:
         self,
         *,
         books: BooksService,
-        storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
         parts: ProcessingParts,
@@ -629,8 +611,6 @@ class ImportService:
 
         :param books: Books service of the current job, which opens the book the job imports into.
         :type books: BooksService
-        :param storage: The source store and the asset store.
-        :type storage: ImportStorage
         :param imaging: The inspector, the rasterizer and the tiler.
         :type imaging: ImportImaging
         :param runtime: The clock, the order keys, the limits and the board.
@@ -639,7 +619,6 @@ class ImportService:
         :type parts: ProcessingParts
         """
         self._books = books
-        self._storage = storage
         self._imaging = imaging
         self._runtime = runtime
         self._board = runtime.board
@@ -699,7 +678,7 @@ class ImportService:
         for file in files:
             UploadPath.parse(file.filename or '')
         job_id = JobId(uuid4())
-        staged = await self._storage.sources.stage(book.id, job_id, files, max_bytes=self._limits.max_bytes)
+        staged = await book.sources.stage(job_id, files, max_bytes=self._limits.max_bytes)
         try:
             self._refuse_active_import(book.id)
             return self._board.put(
@@ -712,7 +691,7 @@ class ImportService:
                 )
             )
         except BaseException:
-            await self._storage.sources.discard(book.id, job_id)
+            await book.sources.discard(job_id)
             raise
 
     async def run_import(self, job: Job, control: JobControl) -> JobEnd:
@@ -730,12 +709,13 @@ class ImportService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled.
         """
+        try:
+            book = await self._books.open(job.book_id)
+        except NotFoundError as error:
+            await self._books.discard_upload(job.book_id, job.id)
+            return JobEnd(state=JobState.FAILED, error=str(error))
         run = ImportRun(
-            running=RunningImport(job=job, control=control),
-            books=self._books,
-            storage=self._storage,
-            imaging=self._imaging,
-            runtime=self._runtime,
+            running=RunningImport(job=job, control=control), book=book, imaging=self._imaging, runtime=self._runtime
         )
         try:
             await run.execute()
@@ -745,7 +725,7 @@ class ImportService:
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         finally:
-            await self._storage.sources.discard(job.book_id, job.id)
+            await book.sources.discard(job.id)
         if not run.imported:
             return JobEnd(state=JobState.FAILED, error=NO_SOURCE_IMPORTED)
         await self._queue_split(job, run)

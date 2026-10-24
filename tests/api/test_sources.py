@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Source
     from bookreviver.ports.persistence import BookDatabases
-    from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.books import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
@@ -58,8 +57,6 @@ SOURCE_ID_PARAM: str = 'source_id'
 @pytest.fixture
 async def fx_book(
     fx_database: SqlDatabase,
-    fx_source_store: SourceStore,
-    fx_asset_store: AssetStore,
     fx_actor: Actor,
     fx_open_book: BookOpener,
 ) -> Book:
@@ -67,10 +64,6 @@ async def fx_book(
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_source_store: Source store of the application.
-    :type fx_source_store: SourceStore
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_open_book: Opens the books of the test with their databases.
@@ -78,30 +71,24 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_open_book, fx_actor)
 
 
 @pytest.fixture
 async def fx_strangers_book(
     fx_database: SqlDatabase,
-    fx_source_store: SourceStore,
-    fx_asset_store: AssetStore,
     fx_open_book: BookOpener,
 ) -> Book:
     """Commit and store a book of an account that is not signed in.
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_source_store: Source store of the application.
-    :type fx_source_store: SourceStore
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_open_book, None)
 
 
 def _sources_path(book: Book) -> str:
@@ -486,12 +473,12 @@ class TestListScans:
         response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/scans')
 
         scans = Page[ScanSchema].model_validate_json(response.content)
-        keys = BookKeys(fx_book.book_record.id)
         expect(response.status_code == status.HTTP_200_OK)
         expect([item.id for item in scans.items] == [scan.id for scan in fx_book.scans])
         expect(scans.total == len(fx_book.scans))
         expect(all(item.images is not None for item in scans.items))
-        expect(all(item.images.full.startswith(f'{IIIF_PATH}/{keys.prefix}') for item in scans.items if item.images))
+        prefix = f'{IIIF_PATH}/{fx_book.book_record.id}/assets/'
+        expect(all(item.images.full.startswith(prefix) for item in scans.items if item.images))
         assert_expectations()
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
@@ -530,7 +517,7 @@ class TestListScans:
 
         images = Page[ScanSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        assert images.full == f'{IIIF_PATH}/{BookKeys(book_record.id).scan_rendition(scan, full)}'
+        assert images.full == f'{IIIF_PATH}/{book_record.id}/{BookKeys().scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
         self,

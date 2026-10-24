@@ -13,9 +13,9 @@ from bookreviver.domain.values import ProcessorRef, Renditions
 from tests.helpers.builders import make_page_version, make_scan, make_source
 
 BOOK_ID: BookId = BookId(uuid4())
-OTHER_BOOK_ID: BookId = BookId(uuid4())
-KEYS: BookKeys = BookKeys(BOOK_ID)
-PREFIX: StorageKey = KEYS.prefix
+KEYS: BookKeys = BookKeys()
+# The areas a key of a book starts at
+AREAS: frozenset[str] = frozenset({'incoming', 'sources', 'assets'})
 PAGE_ID: PageId = PageId(uuid4())
 STEP_ID: StepId = StepId(uuid4())
 JOB_ID: JobId = JobId(uuid4())
@@ -23,11 +23,11 @@ SCAN_NUMBER: int = 12
 RENDITION_ARG: str = 'rendition'
 
 
-class TestPrefix:
-    """Tests for BookKeys.prefix."""
+class TestRelative:
+    """Tests for the keys of a book, which name every file from the directory of the book."""
 
-    def test_every_built_key_lies_under_the_prefix(self) -> None:
-        """Verify every area, source, scan and page key of the book starts with its prefix."""
+    def test_no_built_key_names_the_directory_of_its_book(self) -> None:
+        """Verify every area, source, scan and page key starts at an area of the book, never at ``projects/``."""
         source = make_source()
         keys = [
             KEYS.incoming_area,
@@ -42,11 +42,7 @@ class TestPrefix:
             KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES),
             KEYS.page_edits(PAGE_ID, STEP_ID),
         ]
-        assert [key for key in keys if not key.startswith(PREFIX)] == []
-
-    def test_prefix_does_not_cover_a_book_whose_id_extends_it(self) -> None:
-        """Verify the prefix ends with the separator, so it never matches a longer sibling name."""
-        assert not StorageKey(f'{PREFIX[:-1]}x/assets').startswith(PREFIX)
+        assert [key for key in keys if key.split('/')[0] not in AREAS] == []
 
 
 class TestAreas:
@@ -76,7 +72,7 @@ class TestScanRendition:
         """
         source = make_source()
         scan = make_scan(source=source, number=SCAN_NUMBER)
-        expected = f'{PREFIX}assets/scans/{source.id}/{SCAN_NUMBER}/v1/{rendition}'
+        expected = f'assets/scans/{source.id}/{SCAN_NUMBER}/v1/{rendition}'
         assert KEYS.scan_rendition(scan, rendition) == expected
 
     def test_key_changes_with_renditions_version(self) -> None:
@@ -94,7 +90,7 @@ class TestScanDirectory:
         """Verify the directory of a scan's renditions is the parent of each rendition's key, so one prefix removes them."""
         scan = make_scan(source=make_source(), number=SCAN_NUMBER)
         directory = KEYS.scan_directory(scan)
-        expect(directory == f'{PREFIX}assets/scans/{scan.source_id}/{SCAN_NUMBER}/v1')
+        expect(directory == f'assets/scans/{scan.source_id}/{SCAN_NUMBER}/v1')
         expect(all(KEYS.scan_rendition(scan, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
         assert_expectations()
 
@@ -106,7 +102,7 @@ class TestVersionDirectory:
         """Verify the directory of a version is the parent of each rendition's key, so one prefix removes them."""
         version = make_page_version(page_id=PAGE_ID)
         directory = KEYS.version_directory(version)
-        expect(directory == f'{PREFIX}assets/pages/{PAGE_ID}/page-split/split.none/{version.id}')
+        expect(directory == f'assets/pages/{PAGE_ID}/page-split/split.none/{version.id}')
         expect(all(KEYS.version_rendition(version, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
         assert_expectations()
 
@@ -118,7 +114,7 @@ class TestVersionRendition:
         """Verify a version's rendition lies under its page, stage, processor and identifier, not under a position."""
         version = make_page_version(page_id=PAGE_ID)
         key = KEYS.version_rendition(version, Rendition.PREVIEW)
-        assert key == f'{PREFIX}assets/pages/{PAGE_ID}/page-split/split.none/{version.id}/preview.jpg'
+        assert key == f'assets/pages/{PAGE_ID}/page-split/split.none/{version.id}/preview.jpg'
 
     @pytest.mark.parametrize('processor_key', ['..', '.', 'geometry/deskew'], ids=['parent', 'self', 'separator'])
     def test_unsafe_processor_key_is_refused(self, processor_key: str) -> None:
@@ -139,45 +135,41 @@ class TestPageEdits:
         """Verify the edits of a page are removed with the page's directory."""
         key = KEYS.page_edits(PAGE_ID, STEP_ID)
         assert (key, key.startswith(f'{KEYS.page(PAGE_ID)}/')) == (
-            f'{PREFIX}assets/pages/{PAGE_ID}/edits/{STEP_ID}',
+            f'assets/pages/{PAGE_ID}/edits/{STEP_ID}',
             True,
         )
 
 
-class TestOwning:
-    """Tests for BookKeys.owning()."""
+class TestIsAsset:
+    """Tests for BookKeys.is_asset()."""
 
     @pytest.mark.parametrize(RENDITION_ARG, list(Rendition))
-    def test_built_key_belongs_to_its_book(self, rendition: Rendition) -> None:
-        """Verify the key of every rendition of a scan is recognised as the book's.
+    def test_built_key_is_a_derived_file(self, rendition: Rendition) -> None:
+        """Verify the key of every rendition of a scan is recognised as a derived file.
 
         :param rendition: Derived file of the scan.
         :type rendition: Rendition
         """
         scan = make_scan(source=make_source(), number=0)
-        assert BookKeys.owning(KEYS.scan_rendition(scan, rendition)) == KEYS
+        assert BookKeys.is_asset(KEYS.scan_rendition(scan, rendition))
 
     @pytest.mark.parametrize(
         'key',
         [
             f'sources/{BOOK_ID}/book.pdf',
-            'projects/not-an-id/assets/book',
-            PREFIX[:-1],
-            PREFIX,
-            f'{PREFIX}../{OTHER_BOOK_ID}/assets/book',
-            f'{PREFIX}./assets/book',
-            f'{PREFIX}/assets',
-            f'{PREFIX}assets',
+            f'projects/{BOOK_ID}/assets/book',
+            'assets/../sources/book.pdf',
+            'assets/./book',
+            'assets//book',
+            'assets',
             f'{KEYS.source(SourceId(uuid4()))}/book.pdf',
             f'{KEYS.incoming(JOB_ID)}/book.pdf',
-            f'{PREFIX}notes/assets/book',
+            'notes/assets/book',
             '',
         ],
         ids=[
-            'other-root',
-            'bad-id',
-            'project-itself',
-            'trailing-slash',
+            'source-area',
+            'with-the-book-directory',
             'climbs-out',
             'dot-segment',
             'empty-segment',
@@ -188,13 +180,13 @@ class TestOwning:
             'empty',
         ],
     )
-    def test_malformed_key_belongs_to_no_book(self, key: str) -> None:
-        """Verify a key that is not safely inside a book's derived files is not attributed to any book.
+    def test_key_outside_the_derived_files_is_no_asset(self, key: str) -> None:
+        """Verify a key that is not safely inside the derived files of a book is no asset.
 
         A source file and a staged upload lie inside the book but belong to the source store, so they are refused
-        like a key that climbs out of it.
+        like a key that climbs out of it, and so is a key that still names the directory of its book.
 
         :param key: Key that is not a well-formed key of a derived file.
         :type key: str
         """
-        assert BookKeys.owning(StorageKey(key)) is None
+        assert not BookKeys.is_asset(StorageKey(key))

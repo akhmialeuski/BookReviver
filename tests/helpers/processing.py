@@ -75,7 +75,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, PageVersionRepository, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
@@ -110,9 +109,9 @@ class ProcessingKit:
     """What the processing services of one test share, and a builder of the services over a new unit of work.
 
     :ivar database: Catalogue of the test, which stores the account of the actor and every unit of work opens over.
-    :ivar stores: Opens the units of work and the databases of the books of the test.
+    :ivar stores: Opens the units of work, the databases and the file stores of the books of the test.
     :ivar databases: Opens the databases of the books of the test.
-    :ivar assets: Asset store over a temporary directory.
+    :ivar files: Opens the source store and the asset store of a book of the test.
     :ivar events: Event bus recording what is published.
     :ivar clock: Clock stopped at the epoch, which a test moves.
     :ivar board: Board the jobs are put on, which records them and runs them when a test calls ``work_queue``.
@@ -128,22 +127,20 @@ class ProcessingKit:
         self,
         database: SqlDatabase,
         stores: BookOpener,
-        assets: AssetStore,
         *,
         processors: Sequence[Processor] | None = None,
         defaults: DefaultRecipes = DEFAULTS,
     ) -> None:
-        """Build the kit over the catalogue and the books of the test and an asset store.
+        """Build the kit over the catalogue, the books and the files of the test.
 
-        A second kit over the databases and the assets of a first stands for the same process after a restart: its
-        board is new and empty, and its databases and files are the ones the first left.
+        A second kit over the opener of a first stands for the same process after a restart: its board is new and
+        empty, and its databases and files are the ones the first left.
 
         :param database: Catalogue of the test, such as ``fx_database``.
         :type database: SqlDatabase
-        :param stores: Opens the units of work and the databases of the books of the test, such as ``fx_open_book``.
+        :param stores: Opens the units of work, the databases and the file stores of the books of the test, such as
+                       ``fx_open_book``.
         :type stores: BookOpener
-        :param assets: Asset store of the test.
-        :type assets: AssetStore
         :param processors: The processors of the catalogue, or None for the real ``split.none`` and the two fakes.
         :type processors: Sequence[Processor] | None
         :param defaults: The recipes the stages start with.
@@ -154,7 +151,7 @@ class ProcessingKit:
         self.stores = stores
         self._new_uow = stores.uow
         self.databases = stores.databases
-        self.assets = assets
+        self.files = stores.files
         self.events = RecordingEventBus()
         self.clock = FixedClock(EPOCH)
         self.board = FakeJobBoard(runner=self._run_job, publisher=self.events, clock=self.clock)
@@ -165,7 +162,6 @@ class ProcessingKit:
         self.tracer = RecordingTracer()
         self.catalogue = FakeCatalogue(processors or [SplitNone(), self.fake, self.cleanup])
         self._runner = StepRunner(
-            assets=assets,
             executor=InProcessStepExecutor(self.catalogue),
             renditions=self.writer,
             tiler=self.tiler,
@@ -192,7 +188,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: ProcessingService
         """
-        return ProcessingService(assets=self.assets, catalogue=self.catalogue, parts=self.parts(self.uow()))
+        return ProcessingService(catalogue=self.catalogue, parts=self.parts(self.uow()))
 
     def profiles(self) -> RecipeProfiles:
         """Build the service of the recipe profiles over a new unit of work.
@@ -202,7 +198,7 @@ class ProcessingKit:
         """
         uow = self.uow()
         parts = self.parts(uow)
-        processing = ProcessingService(assets=self.assets, catalogue=self.catalogue, parts=parts)
+        processing = ProcessingService(catalogue=self.catalogue, parts=parts)
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
     async def recipe_of(
@@ -222,7 +218,9 @@ class ProcessingKit:
         :rtype: Recipe
         """
         listed = await self.service().recipes(
-            open_for(actor, book_record.id, databases=self.databases), stage, SliceRequest(limit=len(RecipeKind))
+            open_for(actor, book_record.id, databases=self.databases, files=self.files),
+            stage,
+            SliceRequest(limit=len(RecipeKind)),
         )
         return next(recipe for recipe in listed.items if recipe.kind is kind)
 
@@ -251,7 +249,9 @@ class ProcessingKit:
         """
         recipe = await self.recipe_of(actor, book_record, stage, kind)
         return await self.service().save_recipe(
-            open_for(actor, book_record.id, databases=self.databases), RecipeKey(stage, recipe.id), draft
+            open_for(actor, book_record.id, databases=self.databases, files=self.files),
+            RecipeKey(stage, recipe.id),
+            draft,
         )
 
     def stages(self) -> StageSummaries:
@@ -279,8 +279,7 @@ class ProcessingKit:
             tracer=self.tracer,
         )
         return ProcessingJobs(
-            books=make_books_service(uow, databases=self.databases),
-            assets=self.assets,
+            books=make_books_service(uow, databases=self.databases, files=self.files),
             runtime=runtime,
             parts=self.parts(uow),
             pages=self._pages(),
@@ -314,7 +313,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageService
         """
-        return make_page_service(self.stores, self.assets, (self.events, self.clock, self.board))
+        return make_page_service(self.stores, (self.events, self.clock, self.board))
 
     def edits(self) -> EditService:
         """Build the edit service over a new unit of work.
@@ -323,9 +322,7 @@ class ProcessingKit:
         :rtype: EditService
         """
         uow = self.uow()
-        return EditService(
-            assets=self.assets, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock
-        )
+        return EditService(catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock)
 
     def page_settings(self) -> PageSettingsService:
         """Build the page settings service over a new unit of work.
@@ -348,7 +345,7 @@ class ProcessingKit:
         """
         uow = self.uow()
         parts = self.parts(uow)
-        return PageHistoryService(records=parts.records, starter=parts.starter, assets=self.assets, clock=self.clock)
+        return PageHistoryService(records=parts.records, starter=parts.starter, clock=self.clock)
 
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
@@ -429,9 +426,9 @@ class ProcessingKit:
             repos.pages.add(page)
 
         await self.databases.open(book_record.id).change(add_scan_page)
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-            async with self.assets.writable(keys.scan_rendition(scan, rendition)) as target:
+            async with self.files.assets(book_record.id).writable(keys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
         return page, scan
 
@@ -457,9 +454,9 @@ class ProcessingKit:
             tiles_ready=True,
             data={'width_px': IMAGE_SIZE_PX, 'height_px': IMAGE_SIZE_PX},
         )
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
+            async with self.files.assets(book_id).writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
 
         def add_base_version(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -492,9 +489,9 @@ class ProcessingKit:
         :param book_id: Book owning the page.
         :type book_id: BookId
         """
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
+            async with self.files.assets(book_id).writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)
 
     async def stored_version(self, book_id: BookId, version_id: PageVersionId) -> PageVersion:
@@ -546,7 +543,7 @@ async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
     :rtype: Book
     :raises NotFoundError: If the library has no such book.
     """
-    return await make_books_service(kit.uow(), databases=kit.databases).open(book_id)
+    return await make_books_service(kit.uow(), databases=kit.databases, files=kit.files).open(book_id)
 
 
 async def change_versions(
@@ -693,4 +690,4 @@ async def account_books(kit: ProcessingKit, actor: Actor) -> list[Book]:
     :rtype: list[Book]
     """
     uow = kit.uow()
-    return await books_of(uow, make_books_service(uow, databases=kit.databases), actor.account_id)
+    return await books_of(uow, make_books_service(uow, databases=kit.databases, files=kit.files), actor.account_id)

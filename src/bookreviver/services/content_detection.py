@@ -206,10 +206,10 @@ class ContentDetector:
             processor_key=PROBE_KEY,
             params={},
             input_data=base.data,
-            image=BookKeys(book.id).version_rendition(base, Rendition.PREVIEW),
+            image=BookKeys().version_rendition(base, Rendition.PREVIEW),
             scale=VersionScale.PREVIEW,
         )
-        async with self._runner.execute(run) as result:
+        async with self._runner.execute(book, run) as result:
             [output] = result.outputs
         return ContentType(output.data[VersionData.CONTENT_TYPE])
 

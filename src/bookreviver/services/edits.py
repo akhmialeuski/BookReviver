@@ -68,15 +68,12 @@ class EditService:
     def __init__(
         self,
         *,
-        assets: AssetStore,
         catalogue: ProcessorCatalog,
         records: StageRecords,
         clock: Clock,
     ) -> None:
         """Work over the ports of one request.
 
-        :param assets: Store of the derived files, where masks are kept.
-        :type assets: AssetStore
         :param catalogue: The processors the application can run, which say what edit each reads.
         :type catalogue: ProcessorCatalog
         :param records: Writer of the stage records, which an edit marks stale.
@@ -84,7 +81,6 @@ class EditService:
         :param clock: Clock stamping the edits.
         :type clock: Clock
         """
-        self._assets = assets
         self._catalogue = catalogue
         self._records = records
         self._clock = clock
@@ -123,14 +119,16 @@ class EditService:
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
         await book.read(check)
-        keys = BookKeys(book.id)
-        mask_digest, scratch = (None, None) if mask is None else await self._receive(keys, key, mask)
+        keys = BookKeys()
+        mask_digest, scratch = (
+            (None, None) if mask is None else await self._receive(keys, key, mask, assets=book.assets)
+        )
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
         mask_key = None
         if scratch is not None:
             directory = keys.page_edit(key.page_id, key.step_id, edit_hash)
             mask_key = StorageKey(f'{directory}{keys.SEPARATOR}{Rendition.MASK}')
-            await self._keep(scratch, mask_key)
+            await self._keep(scratch, mask_key, assets=book.assets)
         stored = PageEdit(
             page_id=key.page_id,
             stage=key.stage,
@@ -289,7 +287,9 @@ class EditService:
         if not masked and edit.geometry is None:
             raise InvalidParametersError(NEEDS_GEOMETRY.format(editor=edit.kind.label))
 
-    async def _receive(self, keys: BookKeys, key: PageStepKey, mask: IncomingFile) -> tuple[str, StorageKey]:
+    async def _receive(
+        self, keys: BookKeys, key: PageStepKey, mask: IncomingFile, *, assets: AssetStore
+    ) -> tuple[str, StorageKey]:
         """Write an uploaded mask to a scratch key, and work out its digest while it streams in.
 
         :param keys: Keys of the book.
@@ -298,26 +298,31 @@ class EditService:
         :type key: PageStepKey
         :param mask: The upload.
         :type mask: IncomingFile
+        :param assets: Store of the derived files of the book, where masks are kept.
+        :type assets: AssetStore
         :returns: The SHA-256 digest of the mask and the scratch key it was written to.
         :rtype: tuple[str, StorageKey]
         """
         scratch = keys.page_edit(key.page_id, key.step_id, f'upload-{uuid4().hex}')
         digest = hashlib.sha256()
-        async with self._assets.writable(scratch) as target, await anyio.open_file(target, 'wb') as out:
+        async with assets.writable(scratch) as target, await anyio.open_file(target, 'wb') as out:
             while chunk := await mask.read(self.UPLOAD_CHUNK_BYTES):
                 digest.update(chunk)
                 await out.write(chunk)
         return digest.hexdigest(), scratch
 
-    async def _keep(self, scratch: StorageKey, target: StorageKey) -> None:
+    @staticmethod
+    async def _keep(scratch: StorageKey, target: StorageKey, *, assets: AssetStore) -> None:
         """Move a received mask to its final key, unless an equal edit stored it there before.
 
         :param scratch: Key the mask was written to.
         :type scratch: StorageKey
         :param target: Final key, which holds the hash of the edit.
         :type target: StorageKey
+        :param assets: Store of the derived files of the book, where masks are kept.
+        :type assets: AssetStore
         """
         # A conflict means the same edit was stored before, and a stored file is never replaced
         with suppress(ConflictError):
-            await self._assets.copy(scratch, target)
-        await self._assets.delete_prefix(scratch)
+            await assets.copy(scratch, target)
+        await assets.delete_prefix(scratch)

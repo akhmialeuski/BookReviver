@@ -15,7 +15,7 @@ from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import BookDatabases, UnitOfWork
-from bookreviver.ports.storage import AssetStore, SourceStore
+from bookreviver.ports.storage import BookFileStores
 from tests.helpers.builders import make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account, store_book
@@ -105,8 +105,7 @@ class TestDelete:
                 owner = neighbour_id if book_record is kept else owner_id
                 await store_book(uow, book_record, pages[book_record.id], owner=owner, databases=fx_databases())
         files = BookFiles(
-            sources=await fx_container.get(SourceStore),
-            assets=await fx_container.get(AssetStore),
+            stores=await fx_container.get(BookFileStores),
             root=fx_settings.storage_root,
         )
         for page in pages.values():

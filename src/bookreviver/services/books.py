@@ -16,24 +16,27 @@ transaction. A start pass, ``sweep``, finishes a deletion or a creation that was
 repeated by anyone: a store without an entry, or an entry without a store.
 """
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import frozen
-
 from bookreviver.domain.entities import BookRecord, LibraryEntry
+from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import AsyncIterator, Iterable
+    from pathlib import Path
     from typing import BinaryIO
 
     from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.ids import JobId, StorageKey
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
-    from bookreviver.ports.storage import AssetStore, SourceStore
+    from bookreviver.ports.storage import BookFileStores
     from bookreviver.services.book import BookTools
 
 # How many pages are read from the book at a time, when a use case needs all of them
@@ -56,18 +59,6 @@ def book_pages(pages: PageRepository) -> list[Page]:
             return book
 
 
-@frozen(kw_only=True)
-class BookStores:
-    """The stores of the files of a book, emptied when the book is deleted.
-
-    :ivar sources: Store of the uploaded sources.
-    :ivar assets: Store of the derived files.
-    """
-
-    sources: SourceStore
-    assets: AssetStore
-
-
 class BooksService:
     """Books of the acting account, with their description and their files."""
 
@@ -77,7 +68,7 @@ class BooksService:
         uow: UnitOfWork,
         databases: BookDatabases,
         tools: BookTools,
-        files: BookStores,
+        stores: BookFileStores,
     ) -> None:
         """Work over the ports of one request.
 
@@ -89,13 +80,13 @@ class BooksService:
         :param tools: What every book the service opens works with, whose clock also sets the creation times and whose
                   archive also unpacks the imported books.
         :type tools: BookTools
-        :param files: Stores of the source files and the derived files, emptied when a book is deleted.
-        :type files: BookStores
+        :param stores: Opens the source store and the asset store of a book, emptied when the book is deleted.
+        :type stores: BookFileStores
         """
         self._uow = uow
         self._databases = databases
         self._tools = tools
-        self._files = files
+        self._stores = stores
 
     def book(self, entry: LibraryEntry) -> Book:
         """Open the book a library entry names with its database, without reading anything.
@@ -105,7 +96,14 @@ class BooksService:
         :returns: The book, whose owner is the one the entry names.
         :rtype: Book
         """
-        return Book(entry.book_id, entry.owner_id, self._databases.open(entry.book_id), self._tools)
+        return Book(
+            entry.book_id,
+            entry.owner_id,
+            database=self._databases.open(entry.book_id),
+            sources=self._stores.sources(entry.book_id),
+            assets=self._stores.assets(entry.book_id),
+            tools=self._tools,
+        )
 
     async def open(self, book_id: BookId) -> Book:
         """Open the book of an identifier with its database, whoever owns it.
@@ -120,6 +118,37 @@ class BooksService:
         :raises NotFoundError: If the library has no such book.
         """
         return self.book(await self._uow.read(lambda repos: repos.library.get(book_id)))
+
+    async def discard_upload(self, book_id: BookId, job_id: JobId) -> None:
+        """Remove what is left of the upload of an import job whose book cannot be opened.
+
+        :param book_id: The book of the job, which the library may no longer list.
+        :type book_id: BookId
+        :param job_id: The import job whose upload is removed.
+        :type job_id: JobId
+        """
+        await self._stores.sources(book_id).discard(job_id)
+
+    @asynccontextmanager
+    async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
+        """Give a local path of the derived file at ``key`` for as long as the context is open.
+
+        The derived files are read by anyone who has the identifier of their book and their key, with no owner checked.
+        A key under the book's ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found
+        without a look at the store.
+
+        :param book_id: The book of the file, such as one taken from the address of an image.
+        :type book_id: BookId
+        :param key: Storage key of a derived file relative to the directory of its book, from the same address.
+        :type key: StorageKey
+        :returns: Context manager yielding the path of the file, valid while the context is open.
+        :rtype: AsyncIterator[Path]
+        :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
+        """
+        if not BookKeys.is_asset(key):
+            raise NotFoundError(key)
+        async with self._stores.assets(book_id).readable(key) as path:
+            yield path
 
     async def listed(self) -> list[Book]:
         """Open every book the library lists, whoever owns it, for the passes of the start.
@@ -181,8 +210,8 @@ class BooksService:
         :param book_id: Identifier of the book.
         :type book_id: BookId
         """
-        await self._files.sources.delete_book(book_id)
-        await self._files.assets.delete_book(book_id)
+        await self._stores.sources(book_id).delete_all()
+        await self._stores.assets(book_id).delete_all()
         await self._uow.delete_book(book_id)
 
     async def _forget(self, book_id: BookId) -> None:

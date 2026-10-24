@@ -79,7 +79,9 @@ async def run_stage(kit: ProcessingKit, actor: Actor, book_record: BookRecord, r
     :param run: The stage, and the recipe and pages to run it on.
     :type run: StageRun
     """
-    await kit.service().start_run(open_for(actor, book_record.id, databases=kit.databases), run.stage, run)
+    await kit.service().start_run(
+        open_for(actor, book_record.id, databases=kit.databases, files=kit.files), run.stage, run
+    )
     await kit.work_queue()
 
 

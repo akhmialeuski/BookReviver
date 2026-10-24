@@ -42,7 +42,6 @@ record of the page, so the page split and the page order stage read like any oth
 
 import logging
 import statistics
-from contextlib import asynccontextmanager
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
@@ -87,18 +86,16 @@ from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
     from datetime import datetime
-    from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import BookRecord, PageVersion
-    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard, JobControl
-    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
@@ -169,21 +166,18 @@ class PageService:
     PAPER_RADIUS: ClassVar[int] = 10
     PAPER_PAGES: ClassVar[int] = 6
 
-    def __init__(self, *, books: BooksService, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> None:
+    def __init__(self, *, books: BooksService, runtime: PageRuntime, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
 
         :param books: Books service of the request or job, which opens the book a job runs on and the books of the
                       library the passes of the start go over.
         :type books: BooksService
-        :param assets: Store of the derived files, whose files a viewer reads by key.
-        :type assets: AssetStore
         :param runtime: The publisher, the clock, the order keys and the job board.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         """
         self._books = books
-        self._assets = assets
         self._order_keys = runtime.order_keys
         self._publisher = runtime.publisher
         self._clock = runtime.clock
@@ -692,7 +686,7 @@ class PageService:
             return page
 
         page = await book.change(work)
-        await self._discard_files(book.id, [page])
+        await self._discard_files(book, [page])
 
     async def attach_scan(
         self, book: Book, page_id: PageId, scan_id: ScanId, *, take_over: bool = False
@@ -773,7 +767,7 @@ class PageService:
             return self._overview(repos, page), taken
 
         overview, taken = await book.change(work)
-        await self._discard_files(book.id, taken)
+        await self._discard_files(book, taken)
         self._enqueue(book.id, JobKind.PREPARE_PAGES)
         return overview
 
@@ -907,25 +901,6 @@ class PageService:
             self._move_run(repos, repos.pages.list_for_source(source_id), anchor)
 
         await book.change(work)
-
-    @asynccontextmanager
-    async def open_asset(self, key: StorageKey) -> AsyncIterator[Path]:
-        """Give a local path of the derived file at ``key`` for as long as the context is open.
-
-        The derived files are read by anyone who has their key, with no owner checked. A key under the book's
-        ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found without a look at the
-        store.
-
-        :param key: Storage key of a derived file, such as one taken from the address of an image.
-        :type key: StorageKey
-        :returns: Context manager yielding the path of the file, valid while the context is open.
-        :rtype: AsyncIterator[Path]
-        :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
-        """
-        if BookKeys.owning(key) is None:
-            raise NotFoundError(key)
-        async with self._assets.readable(key) as path:
-            yield path
 
     def _overviews(
         self, repos: BookRepositories, pages: Sequence[Page], first_position: int, *, numbered: bool = True
@@ -1105,17 +1080,17 @@ class PageService:
             repos.pages.update_many(moved)
         self._labels.settle(repos)
 
-    async def _discard_files(self, book_id: BookId, pages: Sequence[Page]) -> None:
+    async def _discard_files(self, book: Book, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them has ended.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book the pages were deleted from.
+        :type book: Book
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
         """
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         for page in pages:
-            await self._assets.delete_prefix(keys.page(page.id))
+            await book.assets.delete_prefix(keys.page(page.id))
 
     def _enqueue(
         self, book_id: BookId, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
@@ -1339,9 +1314,9 @@ class PageService:
 
         gone, outdated = await book.change(work)
         if gone:
-            await self._discard_files(book.id, [page])
+            await self._discard_files(book, [page])
         elif outdated:
-            await self._assets.delete_prefix(BookKeys(book.id).version_directory(version))
+            await book.assets.delete_prefix(BookKeys().version_directory(version))
         elif current:
             await self._publisher.publish(PageVersionReady(book_id=book.id, version=version))
         return not (gone or outdated)
@@ -1396,18 +1371,18 @@ class PageService:
         :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
         """
 
-        def read(repos: BookRepositories) -> tuple[BookRecord, BookKeys, StepRun]:
+        def read(repos: BookRepositories) -> tuple[BookRecord, StepRun]:
             """Read the record of the book and what the processor of the version reads, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :returns: The record of the book, its keys, and the run of the processor.
-            :rtype: tuple[BookRecord, BookKeys, StepRun]
+            :returns: The record of the book and the run of the processor.
+            :rtype: tuple[BookRecord, StepRun]
             :raises ConflictError: If the scan to copy is deleted or not cut yet.
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
             book_record = repos.book_record.get(book.id)
-            keys = BookKeys(book_record.id)
+            keys = BookKeys()
             if version.processor == SPLIT_NONE:
                 if page.scan_id is None:
                     raise ConflictError(SCAN_DELETED)
@@ -1435,10 +1410,10 @@ class PageService:
             else:
                 err_msg = f'Page version {version.id} made by {version.processor.key} has no files to write.'
                 raise ValueError(err_msg)
-            return book_record, keys, run
+            return book_record, run
 
-        book_record, keys, run = await book.read(read)
-        async with self._runner.execute(run) as result:
+        book_record, run = await book.read(read)
+        async with self._runner.execute(book, run) as result:
             return await self._runner.store(
-                keys, version, result.outputs[0], policy=book_record.image_policy, tiles=True
+                book, version, result.outputs[0], policy=book_record.image_policy, tiles=True
             )

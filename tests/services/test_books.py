@@ -4,37 +4,49 @@ import io
 import zipfile
 from datetime import timedelta
 from typing import TYPE_CHECKING, override
+from uuid import uuid4
 
 import anyio
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalBookArchive, LocalSourceStore
 from bookreviver.api.access import AccountBooks, books_of
-from bookreviver.domain.enums import Orthography
+from bookreviver.domain.enums import Orthography, Rendition
 from bookreviver.domain.errors import DomainError, NotFoundError
-from bookreviver.domain.values import BookDetails, Slice, SliceRequest
+from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.keys import BookKeys, KeySegment
+from bookreviver.domain.values import BookDetails, PageStepKey, Slice, SliceRequest
 from bookreviver.services.book import BookTools
-from bookreviver.services.books import BooksService, BookStores
+from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
+from tests.helpers.builders import (
+    DESKEW_STEP_ID,
+    EPOCH,
+    make_page,
+    make_page_edit,
+    make_page_step_state,
+    make_record,
+    new_account_id,
+)
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_record, store_book
-from tests.helpers.storage import BookFiles
+from tests.helpers.storage import BookFiles, SharedBookFileStores
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookOverview, BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.storage import BookFileStores
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
@@ -44,19 +56,19 @@ NOW = EPOCH + timedelta(days=1)
 PAGE_COUNT: int = 2
 # The name of the database in the archive of a book
 DATABASE_NAME: str = 'book.db'
+# The hash an edit with a mask is stored under, and the content of its mask
+MASK_EDIT_HASH: str = 'masked-edit'
+FILE_CONTENT: bytes = b'derived file'
+MASK_CONTENT: bytes = b'mask of the edit'
 
 
-def _service(
-    uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore, root: Path, *, databases: BookDatabases
-) -> BooksService:
+def _service(uow: UnitOfWork, stores: BookFileStores, root: Path, *, databases: BookDatabases) -> BooksService:
     """Build the book service for one request, over a unit of work, a catalogue with no processors and no jobs.
 
     :param uow: Unit of work of the request.
     :type uow: UnitOfWork
-    :param sources: Source store of the test.
-    :type sources: LocalSourceStore
-    :param assets: Asset store of the test.
-    :type assets: LocalAssetStore
+    :param stores: Opens the source store and the asset store of a book of the test.
+    :type stores: BookFileStores
     :param root: Storage root of the test, which the archive of the books packs and unpacks under.
     :type root: Path
     :param databases: Opens the databases of the books of the test.
@@ -71,15 +83,14 @@ def _service(
         uow=uow,
         databases=databases,
         tools=BookTools(stages=stages, clock=clock, archive=LocalBookArchive(root=root)),
-        files=BookStores(sources=sources, assets=assets),
+        stores=stores,
     )
 
 
 @pytest.fixture
 def fx_service(
     fx_uow: UnitOfWorkFactory,
-    fx_source_store: LocalSourceStore,
-    fx_asset_store: LocalAssetStore,
+    fx_file_stores: SharedBookFileStores,
     fx_storage_root: Path,
     fx_databases: BookDatabasesFactory,
 ) -> Callable[[], BooksService]:
@@ -87,10 +98,8 @@ def fx_service(
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
-    :param fx_source_store: Local source store over the test's storage root.
-    :type fx_source_store: LocalSourceStore
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
+    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+    :type fx_file_stores: SharedBookFileStores
     :param fx_storage_root: Storage root of the test.
     :type fx_storage_root: Path
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -98,7 +107,7 @@ def fx_service(
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], BooksService]
     """
-    return lambda: _service(fx_uow(), fx_source_store, fx_asset_store, fx_storage_root, databases=fx_databases())
+    return lambda: _service(fx_uow(), fx_file_stores, fx_storage_root, databases=fx_databases())
 
 
 class StoreFailedError(OSError):
@@ -106,35 +115,34 @@ class StoreFailedError(OSError):
 
 
 class SourceStoreFailingOnce(LocalSourceStore):
-    """The local source store, whose first book deletion fails before it removes anything."""
+    """The local source store of one book, whose first deletion fails before it removes anything."""
 
-    def __init__(self, *, root: Path) -> None:
+    def __init__(self, *, root: Path, book_id: BookId) -> None:
         """Keep the sources under ``root`` and fail the first deletion.
 
         :param root: Storage root shared with the asset store.
         :type root: Path
+        :param book_id: The book whose sources the store holds.
+        :type book_id: BookId
         """
-        super().__init__(root=root)
+        super().__init__(root=root, book_id=book_id)
         self._failed = False
 
     @override
-    async def delete_book(self, book_id: BookId) -> None:
+    async def delete_all(self) -> None:
         """Fail on the first call, as a storage outage would, and remove the book's source on the later ones.
 
-        :param book_id: Book whose source files are removed.
-        :type book_id: BookId
         :raises StoreFailedError: On the first call, with nothing removed.
         """
         if not self._failed:
             self._failed = True
             raise StoreFailedError
-        await super().delete_book(book_id)
+        await super().delete_all()
 
 
 @pytest.fixture
 def fx_flaky_service(
     fx_uow: UnitOfWorkFactory,
-    fx_asset_store: LocalAssetStore,
     fx_storage_root: Path,
     fx_databases: BookDatabasesFactory,
 ) -> Callable[[], BooksService]:
@@ -142,8 +150,6 @@ def fx_flaky_service(
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :param fx_storage_root: Storage root both stores share.
     :type fx_storage_root: Path
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -151,8 +157,8 @@ def fx_flaky_service(
     :returns: Function building a service over a new unit of work and the one failing source store.
     :rtype: Callable[[], BooksService]
     """
-    sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: _service(fx_uow(), sources, fx_asset_store, fx_storage_root, databases=fx_databases())
+    stores = SharedBookFileStores(root=fx_storage_root, source_store=SourceStoreFailingOnce)
+    return lambda: _service(fx_uow(), stores, fx_storage_root, databases=fx_databases())
 
 
 async def _stored(book_record: BookRecord, *, databases: BookDatabases) -> BookRecord:
@@ -169,19 +175,18 @@ async def _stored(book_record: BookRecord, *, databases: BookDatabases) -> BookR
 
 
 @pytest.fixture
-def fx_files(fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore, fx_storage_root: Path) -> BookFiles:
+def fx_files(fx_file_stores: SharedBookFileStores, fx_storage_root: Path) -> BookFiles:
     """Return the files of imported books in the stores the service works on.
 
-    :param fx_source_store: Local source store over the test's storage root.
-    :type fx_source_store: LocalSourceStore
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
+    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+
+    :type fx_file_stores: SharedBookFileStores
     :param fx_storage_root: Storage root both stores share.
     :type fx_storage_root: Path
     :returns: Files of the test's books.
     :rtype: BookFiles
     """
-    return BookFiles(sources=fx_source_store, assets=fx_asset_store, root=fx_storage_root)
+    return BookFiles(stores=fx_file_stores, root=fx_storage_root)
 
 
 class TestList:
@@ -258,6 +263,126 @@ class TestCreate:
         expect((stored.created_at, stored.updated_at) == (NOW, NOW))
         expect(overview.page_count == 0)
         assert_expectations()
+
+
+class TestOpenAsset:
+    """Tests for BooksService.open_asset()."""
+
+    async def test_gives_the_path_of_a_stored_file(
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_file_stores: SharedBookFileStores,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the owner reads a stored derived file through the path the service hands out.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+        key = BookKeys().book
+        async with fx_file_stores.assets(book_record.id).writable(key) as target:
+            target.write_bytes(FILE_CONTENT)
+
+        async with fx_service().open_asset(book_record.id, key) as path:
+            assert path.read_bytes() == FILE_CONTENT
+
+    async def test_gives_a_file_of_another_accounts_book_with_no_owner_checked(
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_file_stores: SharedBookFileStores,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a stored derived file is read by its key alone, whoever owns its book.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
+        key = BookKeys().book
+        async with fx_file_stores.assets(book_record.id).writable(key) as target:
+            target.write_bytes(FILE_CONTENT)
+
+        async with fx_service().open_asset(book_record.id, key) as path:
+            assert path.read_bytes() == FILE_CONTENT
+
+    @pytest.mark.parametrize(
+        'area', [KeySegment.SOURCES, KeySegment.INCOMING, 'notes'], ids=['sources', 'incoming', 'unknown-area']
+    )
+    async def test_key_outside_the_assets_is_not_found(
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        area: str,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a key in the book's source area, its uploads or any other area is not found, not an error.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param area: Directory of the book the key lies in.
+        :type area: str
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+
+        with pytest.raises(NotFoundError):
+            async with fx_service().open_asset(book_record.id, StorageKey(f'{area}/{uuid4()}')):
+                pytest.fail('A key outside the assets was opened.')
+
+    async def test_key_without_a_file_is_not_found(
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a key of the actor's book with nothing stored behind it is not found.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
+
+        with pytest.raises(NotFoundError):
+            async with fx_service().open_asset(book_record.id, BookKeys().book):
+                pytest.fail('A file that is not stored was opened.')
 
 
 class TestDelete:
@@ -473,6 +598,57 @@ class TestExportAndImport:
         expect([overview.book_record.id for overview in listed.items] == [copy_id, book_record.id])
         assert_expectations()
 
+    async def test_an_imported_book_reads_the_mask_of_its_edit(
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+        fx_file_stores: SharedBookFileStores,
+    ) -> None:
+        """Verify the imported book finds the mask of a manual edit under the key its database keeps for the edit.
+
+        The database of a book keeps the key of the mask, so the key has to stay true when the book moves under a new
+        identifier.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
+        """
+        book_record, page = make_record(), make_page()
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        directory = BookKeys().page_edit(page.id, DESKEW_STEP_ID, MASK_EDIT_HASH)
+        edit = evolve(make_page_edit(page_id=page.id), mask_key=StorageKey(f'{directory}/{Rendition.MASK}'))
+        await (
+            fx_databases()
+            .open(book_record.id)
+            .change(
+                lambda repos, _book_record: repos.page_step_states.save(
+                    make_page_step_state(page_id=page.id, edit=edit)
+                )
+            )
+        )
+        async with fx_file_stores.assets(book_record.id).writable(StorageKey(f'{directory}/{Rendition.MASK}')) as path:
+            path.write_bytes(MASK_CONTENT)
+
+        imported = await fx_service().import_archive(fx_actor, await _archive(fx_service(), book_record.id))
+
+        state = await imported.read(
+            lambda repos: repos.page_step_states.find(PageStepKey(page.id, edit.stage, edit.step_id))
+        )
+        assert state is not None
+        assert state.edit is not None
+        assert state.edit.mask_key is not None
+        async with imported.assets.readable(state.edit.mask_key) as path:
+            assert path.read_bytes() == MASK_CONTENT
+
     async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
         self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
@@ -572,32 +748,30 @@ class TestSweep:
 
 
 class SourceStoreWaiting(LocalSourceStore):
-    """The local source store, whose book deletion stops until the test lets it go.
+    """The local source store of one book, whose deletion stops until the test lets it go.
 
     :ivar reached: Set when the deletion of the files of a book has begun.
     :ivar proceed: Set by the test to let the deletion carry on.
     """
 
-    def __init__(self, *, root: Path) -> None:
+    def __init__(self, *, root: Path, book_id: BookId) -> None:
         """Keep the files under ``root``, with both events unset.
 
         :param root: Storage root, created on the first write.
         :type root: Path
+        :param book_id: The book whose sources the store holds.
+        :type book_id: BookId
         """
-        super().__init__(root=root)
+        super().__init__(root=root, book_id=book_id)
         self.reached = anyio.Event()
         self.proceed = anyio.Event()
 
     @override
-    async def delete_book(self, book_id: BookId) -> None:
-        """Tell the test the deletion has begun, wait for it, and remove the files.
-
-        :param book_id: Book whose source files are removed.
-        :type book_id: BookId
-        """
+    async def delete_all(self) -> None:
+        """Tell the test the deletion has begun, wait for it, and remove the files."""
         self.reached.set()
         await self.proceed.wait()
-        await super().delete_book(book_id)
+        await super().delete_all()
 
 
 class TestDeleteHoldsNoTransactionOverTheFiles:
@@ -606,7 +780,6 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
     async def test_a_change_of_the_book_opens_while_its_files_are_being_removed(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_asset_store: LocalAssetStore,
         fx_storage_root: Path,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -615,8 +788,6 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
         :param fx_storage_root: Storage root both stores share.
         :type fx_storage_root: Path
         :param fx_actor: Account the service acts for.
@@ -626,7 +797,9 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
         """
         book_record = make_record()
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-        sources = SourceStoreWaiting(root=fx_storage_root)
+        stores = SharedBookFileStores(root=fx_storage_root, source_store=SourceStoreWaiting)
+        sources = stores.sources(book_record.id)
+        assert isinstance(sources, SourceStoreWaiting)
         opened = False
 
         def mark_opened(_repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -646,7 +819,7 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
 
         async with anyio.create_task_group() as group:
             group.start_soon(
-                _service(fx_uow(), sources, fx_asset_store, fx_storage_root, databases=fx_open_book.databases).delete,
+                _service(fx_uow(), stores, fx_storage_root, databases=fx_open_book.databases).delete,
                 fx_open_book(fx_actor, book_record.id),
             )
             await sources.reached.wait()

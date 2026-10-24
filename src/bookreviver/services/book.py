@@ -5,7 +5,8 @@ entry already read. For a request, the access dependency ``open_book`` of the AP
 after it has checked the owner, so a use case that takes a ``Book`` works on it and checks nothing itself. A job opens
 the book of its job in the same way. A use case reads the book through ``read``, changes it through ``change``, and
 asks ``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any
-transaction.
+transaction. It reaches its uploads and sources through ``sources`` and its derived files through ``assets``, the stores
+of this book alone.
 
 The use cases of one open book are methods of the book: its overview, the change of its description and settings, the
 sums and rows of its stages, and its archive. ``BookTools`` holds what every book of a request works with besides its
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookDatabase, BookRepositories
     from bookreviver.ports.runtime import Clock
-    from bookreviver.ports.storage import BookArchive
+    from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
     from bookreviver.services.stage_summaries import StageSummaries
 
 
@@ -55,12 +56,16 @@ class Book:
     :ivar owner_id: The account that owns the book.
     :ivar database: The database of the book, which runs the transactions of the book. It is no part of what makes two
                     books equal.
+    :ivar sources: The store of the uploads and sources of the book, no part of what makes two books equal.
+    :ivar assets: The store of the derived files of the book, no part of what makes two books equal.
     :ivar tools: What the use cases of the book work with besides its database, no part of what makes two books equal.
     """
 
     id: BookId
     owner_id: AccountId
     database: BookDatabase = field(eq=False, repr=False)
+    sources: SourceStore = field(eq=False, repr=False)
+    assets: AssetStore = field(eq=False, repr=False)
     tools: BookTools = field(eq=False, repr=False)
 
     async def read[T](self, work: Callable[[BookRepositories], T]) -> T:

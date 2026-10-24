@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Scan
     from bookreviver.domain.entities import Page as BookPage
-    from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -80,14 +80,14 @@ def _jpeg() -> bytes:
 
 @pytest.fixture
 async def fx_book(
-    fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor, fx_databases: BookDatabasesFactory
+    fx_uow: UnitOfWorkFactory, fx_file_stores: SharedBookFileStores, fx_actor: Actor, fx_databases: BookDatabasesFactory
 ) -> Book:
     """Commit the book and store the full image of both scans as a real JPEG.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
+    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+    :type fx_file_stores: SharedBookFileStores
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -120,9 +120,11 @@ async def fx_book(
         versions=[base],
         databases=fx_databases(),
     )
-    keys = BookKeys(book_record.id)
+    keys = BookKeys()
     for scan in scans:
-        async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+        async with fx_file_stores.assets(book_record.id).writable(
+            keys.scan_rendition(scan, Rendition.FULL_JPEG)
+        ) as path:
             path.write_bytes(_jpeg())
     return Book(book_record=book_record, shown=shown, placeholder=placeholder, spare=scans[1])
 

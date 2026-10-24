@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, PageVersion
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
 
 BEING_COLLECTED: str = 'The version is being deleted.'
@@ -36,17 +35,15 @@ logger = logging.getLogger(__name__)
 class VersionClearing:
     """Deletes batches of the versions of one book, and remembers the versions that must stay."""
 
-    def __init__(self, *, assets: AssetStore, book: Book) -> None:
+    def __init__(self, *, book: Book) -> None:
         """Work over the ports of one collection of one book.
 
-        :param assets: Store of the derived files, from which the directories of the versions are removed.
-        :type assets: AssetStore
-        :param book: The open book owning the versions, whose changes write each batch.
+        :param book: The open book owning the versions, whose changes write each batch and whose asset store loses the
+                     directories of the versions.
         :type book: Book
         """
-        self._assets = assets
         self._book = book
-        self._keys = BookKeys(book.id)
+        self._keys = BookKeys()
         self._held: set[PageVersionId] = set()
 
     async def clear(self, batch: Sequence[PageVersion]) -> int:
@@ -86,7 +83,7 @@ class VersionClearing:
         gone: list[PageVersionId] = []
         for version in going:
             try:
-                await self._assets.delete_prefix(self._keys.version_directory(version))
+                await self._book.assets.delete_prefix(self._keys.version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed, so its row stays', version.id)
                 self._hold([version])
