@@ -1,4 +1,4 @@
-"""The recipe profiles of the signed-in account: saving the steps of a recipe, applying them to a book, the default.
+"""The recipe profiles of the signed-in account: saving the steps of a recipe, applying them to a book.
 
 A profile is the account's, so these routes take no book except the ones that apply a profile to a book and that
 record which profile a recipe of a book was made from. A profile of another account answers 404 like a missing one.
@@ -39,7 +39,6 @@ from bookreviver.services.recipe_profiles import ListedProfile, RecipeProfiles
 
 PROFILES_PATH: str = '/recipe-profiles'
 PROFILE_PATH: str = PROFILES_PATH + '/{profile_id}'
-DEFAULT_PATH: str = PROFILE_PATH + '/default'
 DUPLICATE_PATH: str = PROFILE_PATH + '/duplicate'
 EXPORT_PATH: str = PROFILE_PATH + '/export'
 IMPORT_PATH: str = PROFILES_PATH + '/import'
@@ -80,7 +79,7 @@ async def list_profiles(
 async def create_profile(
     body: RecipeProfileBody, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
-    """Save the steps of a recipe as a profile, which is not the default until it is made one.
+    """Save the steps of a recipe as a profile.
 
     A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a
     step that stands where it cannot work, unless the body asks for the free order.
@@ -103,7 +102,7 @@ async def create_profile(
 async def import_profile(
     body: ProfileFile, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
-    """Save the profile a file holds, which is not the default until it is made one.
+    """Save the profile a file holds.
 
     The file is checked as a saved profile is. A file of the first version is read as well, and the condition its
     steps name is dropped. A file of another version of the format, a step whose parameters do not
@@ -141,7 +140,7 @@ async def export_profile(profile: Annotated[RecipeProfile, Depends(open_profile)
 async def duplicate_profile(
     profile: Annotated[RecipeProfile, Depends(open_profile)], profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
-    """Save a copy of a profile under its name with "(copy)" after it, which is not the default.
+    """Save a copy of a profile under its name with "(copy)" after it.
 
     \N{FORM FEED}
     :param profile: The profile to copy, which the path names, open for the signed-in account.
@@ -160,7 +159,7 @@ async def put_profile(
 ) -> RecipeProfileSchema:
     """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
 
-    The stage and the default mark stay. The recipes made from the profile are not changed. A step whose processor is
+    The stage stays. The recipes made from the profile are not changed. A step whose processor is
     unknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it
     cannot work, unless the body asks for the free order.
 
@@ -217,42 +216,6 @@ async def delete_profile(
     :type profiles: RecipeProfiles
     """
     await profiles.remove(profile, books)
-
-
-@router.put(DEFAULT_PATH)
-async def put_default_profile(
-    profile: Annotated[RecipeProfile, Depends(open_profile)], profiles: FromDishka[RecipeProfiles]
-) -> RecipeProfileSchema:
-    """Make a profile the default of its stage, so a new book starts the stage with it instead of the built-in recipe.
-
-    The profile that was the default of the stage stops being one.
-
-    \N{FORM FEED}
-    :param profile: The profile the path names, open for the signed-in account.
-    :type profile: RecipeProfile
-    :param profiles: Profiles service of the request.
-    :type profiles: RecipeProfiles
-    :returns: The profile as stored.
-    :rtype: RecipeProfileSchema
-    """
-    return RecipeProfileSchema.model_validate(await profiles.set_default(profile, is_default=True))
-
-
-@router.delete(DEFAULT_PATH)
-async def delete_default_profile(
-    profile: Annotated[RecipeProfile, Depends(open_profile)], profiles: FromDishka[RecipeProfiles]
-) -> RecipeProfileSchema:
-    """Stop a profile being the default of its stage, so a new book starts the stage with the built-in recipe again.
-
-    \N{FORM FEED}
-    :param profile: The profile the path names, open for the signed-in account.
-    :type profile: RecipeProfile
-    :param profiles: Profiles service of the request.
-    :type profiles: RecipeProfiles
-    :returns: The profile as stored.
-    :rtype: RecipeProfileSchema
-    """
-    return RecipeProfileSchema.model_validate(await profiles.set_default(profile, is_default=False))
 
 
 @router.post(APPLY_PATH, status_code=status.HTTP_201_CREATED)

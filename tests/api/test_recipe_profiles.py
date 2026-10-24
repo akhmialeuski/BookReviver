@@ -61,17 +61,6 @@ EXPORT_SUFFIX: str = 'export'
 IMPORT_PATH: str = f'{PROFILES_PATH}/import'
 
 
-def _default_path(profile_id: object) -> str:
-    """Return the path that chooses a profile as the default of its stage, or gives it up.
-
-    :param profile_id: Identifier of the profile.
-    :type profile_id: object
-    :returns: The path of the request.
-    :rtype: str
-    """
-    return f'{PROFILES_PATH}/{profile_id}/default'
-
-
 async def _text_recipe(client: httpx.AsyncClient, book_id: BookId) -> RecipeSchema:
     """Read the recipe of text pages of the geometry stage of a book, which a book creates when it is first asked.
 
@@ -191,7 +180,7 @@ async def _store(database: SqlDatabase, uow: UnitOfWork, profile: RecipeProfile)
 
 
 class TestProfiles:
-    """Tests for saving, listing, renaming, choosing the default and deleting."""
+    """Tests for saving, listing, renaming and deleting."""
 
     async def test_profile_is_created_listed_renamed_and_deleted(self, fx_client: httpx.AsyncClient) -> None:
         """Verify a profile is answered 201, listed with its steps in order, renamed by PATCH and deleted with 204.
@@ -206,7 +195,7 @@ class TestProfiles:
         deleted = await fx_client.delete(f'{PROFILES_PATH}/{profile.id}')
         after = await fx_client.get(PROFILES_PATH)
         expect(created.status_code == status.HTTP_201_CREATED)
-        expect((profile.stage, profile.name, profile.is_default) == (Stage.GEOMETRY, PROFILE_NAME, False))
+        expect((profile.stage, profile.name) == (Stage.GEOMETRY, PROFILE_NAME))
         expect([(step.params[STRENGTH], step.enabled) for step in profile.steps] == [(3, False), (2, True)])
         expect(RecipeProfileSchema.model_validate_json(renamed.content).name == OTHER_NAME)
         expect([item[NAME_FIELD] for item in listed.json()[ITEMS]] == [OTHER_NAME])
@@ -236,26 +225,6 @@ class TestProfiles:
         response = await fx_client.post(PROFILES_PATH, json=body)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-    async def test_the_default_is_chosen_and_given_up(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify PUT makes a profile the default, a second one takes the place, and DELETE gives it up.
-
-        :param fx_client: Client of the running application.
-        :type fx_client: httpx.AsyncClient
-        """
-        first = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        second = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME))).content
-        )
-        chosen = await fx_client.put(_default_path(first.id))
-        replaced = await fx_client.put(_default_path(second.id))
-        listed = await fx_client.get(PROFILES_PATH)
-        given_up = await fx_client.delete(_default_path(second.id))
-        expect(RecipeProfileSchema.model_validate_json(chosen.content).is_default)
-        expect(RecipeProfileSchema.model_validate_json(replaced.content).is_default)
-        expect([item['is_default'] for item in listed.json()[ITEMS]] == [False, True])
-        expect(RecipeProfileSchema.model_validate_json(given_up.content).is_default is False)
-        assert_expectations()
-
     async def test_a_profile_of_another_account_is_a_404_problem(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_book: BookId
     ) -> None:
@@ -282,8 +251,6 @@ class TestProfiles:
                 path, json={key: value for key, value in _body(OTHER_NAME).items() if key != STAGE_FIELD}
             ),
             await fx_client.put(_link_path(fx_book, recipe.id), json={PROFILE_ID_FIELD: str(foreign.id)}),
-            await fx_client.put(_default_path(foreign.id)),
-            await fx_client.delete(_default_path(foreign.id)),
             await fx_client.delete(path),
             await fx_client.post(_apply_path(fx_book, foreign.id), json={'kind': 'text'}),
         ]
@@ -369,33 +336,6 @@ class TestApplyProfile:
         expect(response.status_code == status.HTTP_201_CREATED)
         expect([step.processor_key for step in applied.recipe.steps] == [FAKE_KEY])
         expect(applied.missing_processors == [MISSING_KEY])
-        assert_expectations()
-
-    async def test_a_new_book_starts_with_the_default_profile(
-        self,
-        fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify the first request of a stage in a new book answers with the default profile.
-
-        :param fx_client: Client of the running application.
-        :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: The signed-in account.
-        :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        await fx_client.put(_default_path(profile.id))
-        fresh_id = await store_book(
-            fx_uow(), make_record(title='Fresh'), owner=fx_actor.account_id, databases=fx_databases()
-        )
-        recipe = await _text_recipe(fx_client, fresh_id)
-        expect((recipe.profile_id, recipe.steps) == (profile.id, profile.steps))
         assert_expectations()
 
 
@@ -607,18 +547,17 @@ class TestLibrary:
         ]
 
     async def test_a_profile_is_duplicated_with_a_201_and_a_copy_name(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify the copy has the steps of the profile, is not the default and is listed beside it.
+        """Verify the copy has the steps of the profile and is listed beside it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        await fx_client.put(_default_path(profile.id))
         response = await fx_client.post(f'{PROFILES_PATH}/{profile.id}/duplicate')
         copy = RecipeProfileSchema.model_validate_json(response.content)
         listed = LibraryProfileSchema.model_validate((await fx_client.get(PROFILES_PATH)).json()[ITEMS][1])
         expect(response.status_code == status.HTTP_201_CREATED)
-        expect((copy.name, copy.is_default, copy.stage) == (COPY_NAME, False, Stage.GEOMETRY))
+        expect((copy.name, copy.stage) == (COPY_NAME, Stage.GEOMETRY))
         expect(
             [(step.params, step.enabled) for step in copy.steps]
             == [(step.params, step.enabled) for step in profile.steps]

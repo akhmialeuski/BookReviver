@@ -12,8 +12,7 @@ import { closeStepsWindow, openStepsWindow, windowStepOf } from './support/steps
 /**
  * A recipe set up in one book is kept as a profile of the account and applied in another: the steps are put in another
  * order and one is switched off, the steps on the screen are kept as a profile from the profile menu in one go, applied
- * in a second book, made the default for new books in the settings of the account, and a third book starts the Geometry stage
- * with it.
+ * in a second book, and renamed in the settings of the account.
  */
 
 const PAGES = 2;
@@ -80,7 +79,7 @@ async function newBookWithPages(page: Page, title: string, folder: string): Prom
   return new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
 }
 
-test('a recipe is saved as a profile, applied in another book, made the default, and a new book starts with it', async ({
+test('a recipe is saved as a profile, applied in another book, and renamed in the settings of the account', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
@@ -157,7 +156,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
   });
 
-  await test.step('the profile is made the default for new books and renamed in the settings of the account', async () => {
+  await test.step('the profile is renamed in the settings of the account', async () => {
     await page.getByRole('button', { name: MESSAGES.workspace.header.accountMenu }).click();
     await page.getByTestId('account-profiles').click();
     await expect(page.getByRole('heading', { name: 'Recipe profiles' })).toBeVisible();
@@ -165,23 +164,13 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await expect(row.getByTestId('profile-steps')).toContainText(
       'Select content · Perspective (off) · Deskew',
     );
-    await row.getByTestId('profile-make-default').click();
-    await expect(row.getByTestId('profile-default-badge')).toBeVisible();
     await row.getByTestId('profile-rename').click();
     await page.getByLabel('New name').fill(RENAMED);
     await page.getByTestId('profile-rename-submit').click();
     const renamed = page.locator(`[data-testid="profile-row"][data-name="${RENAMED}"]`);
-    await expect(renamed).toHaveAttribute('data-default', 'true');
-    await expect(renamed.getByTestId('profile-default-badge')).toBeVisible();
+    await expect(renamed).toHaveCount(1);
     // The picture is taken once the dialog has faded out
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await snap(page, 'profiles-in-account-settings');
-  });
-
-  await test.step('a new book starts the Geometry stage with the default profile instead of the built-in recipe', async () => {
-    const thirdBookPath = await newBookWithPages(page, 'A third book', folder);
-    await openGeometry(page, thirdBookPath);
-    await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
-    await snap(page, 'new-book-starts-with-default-profile');
   });
 });

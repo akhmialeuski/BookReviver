@@ -237,11 +237,10 @@ class TestRecipes:
         for index, kind in enumerate((PageKind.TEXT, PageKind.PLATE, PageKind.FRONTISPIECE)):
             page, _ = await fx_cv_kit.seed_scan_page(book_id, order_key=f'a{index}', kind=kind)
             pages.append(page)
-        reader = fx_cv_kit.uow()
         stored_pages = await fx_cv_kit.databases.open(book_id).read(
             lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
-        picked = await fx_cv_kit.parts(reader).recipes.for_pages(
+        picked = await fx_cv_kit.parts().recipes.for_pages(
             await open_book(fx_cv_kit, book_id), Stage.CLEANUP, stored_pages
         )
         assert [picked[page.id].kind for page in pages] == [
@@ -562,7 +561,7 @@ class TestStartRun:
         """
         actor, book_id = await fx_kit.seed_book()
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        starter = fx_kit.parts(fx_kit.uow()).starter
+        starter = fx_kit.parts().starter
         expect(await starter.enqueue_collection(book_id) is None)
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE])
         assert_expectations()
@@ -682,7 +681,7 @@ class TestDefaultRecipesInChanges:
             :param book: The open book of the task.
             :type book: Book
             """
-            answers.append(await fx_kit.parts(fx_kit.uow()).recipes.recipes(book, Stage.GEOMETRY))
+            answers.append(await fx_kit.parts().recipes.recipes(book, Stage.GEOMETRY))
 
         async with anyio.create_task_group() as tasks:
             for book in books:

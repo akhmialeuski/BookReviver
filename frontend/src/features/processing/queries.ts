@@ -163,8 +163,8 @@ export function useSaveRecipe(bookId: string) {
 }
 
 /**
- * Put the steps a stage starts with back into a recipe, which marks the pages it processed out of date. The steps are the
- * default profile of the account or the built-in template, chosen by the server.
+ * Put the steps a stage starts with back into a recipe, which marks the pages it processed out of date. The steps are
+ * those of the built-in template.
  */
 export function useResetRecipe(bookId: string) {
   const queryClient = useQueryClient();

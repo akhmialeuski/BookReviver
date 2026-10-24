@@ -189,23 +189,19 @@ class TestDuplicateProfile:
     """Tests for the copy of a profile."""
 
     async def test_the_copy_has_the_steps_of_the_profile_and_a_name_of_its_own(self, fx_kit: ProcessingKit) -> None:
-        """Verify the steps, the order and the stage are copied, the name says it is a copy, and the default is not.
+        """Verify the steps, the order and the stage are copied, and the name says it is a copy.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_book()
         profile = await save_profile(fx_kit, actor)
-        await fx_kit.profiles().set_default(profile, is_default=True)
         copy = await fx_kit.profiles().duplicate(profile)
-        stored, original = await fx_kit.uow().read(
-            lambda repos: (repos.recipe_profiles.get(copy.id), repos.recipe_profiles.get(profile.id))
-        )
+        stored = await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(copy.id))
         expect(stored.id != profile.id)
         expect(stored.name == COPY_NAME.format(name=PROFILE_NAME))
         expect(stored.steps == profile.steps)
-        expect((stored.stage, stored.order, stored.is_default) == (Stage.GEOMETRY, OrderMode.USUAL, False))
-        expect(original.is_default)
+        expect((stored.stage, stored.order) == (Stage.GEOMETRY, OrderMode.USUAL))
         assert_expectations()
 
 
@@ -228,7 +224,6 @@ class TestImportProfile:
         stored = await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(imported.id))
         expect(stored.name == FILE_NAME)
         expect([(step.params[STRENGTH], step.enabled) for step in stored.steps] == [(3, False), (1, True)])
-        expect(stored.is_default is False)
         expect(stored.id != source.id)
         assert_expectations()
 

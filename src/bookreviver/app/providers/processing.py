@@ -165,16 +165,13 @@ class ProcessingProvider(Provider):
     @provide(scope=Scope.REQUEST)
     def processing_parts(
         self,
-        uow: UnitOfWork,
         catalogue: ProcessorCatalog,
         defaults: DefaultRecipes,
         runtime: ProcessingRuntime,
         config: ProcessingConfig,
     ) -> ProcessingParts:
-        """Build the parts the processing use cases share over the unit of work of the request or job.
+        """Build the parts the processing use cases share in the request or job.
 
-        :param uow: Unit of work of the current request or job.
-        :type uow: UnitOfWork
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
@@ -186,7 +183,7 @@ class ProcessingProvider(Provider):
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        return ProcessingParts.build(uow, catalogue, defaults, runtime, config)
+        return ProcessingParts.build(catalogue, defaults, runtime, config)
 
     @provide(scope=Scope.REQUEST)
     def processing_service(self, catalogue: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:

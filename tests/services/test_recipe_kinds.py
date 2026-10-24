@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import ContentType, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.values import PageStageKey, ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, StageRun, Step
+from bookreviver.domain.values import PageStageKey, RecipeDraft, RecipeKey, SliceRequest, StageRun, Step
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from tests.helpers.builders import open_for
 from tests.helpers.page_services import make_page_service
@@ -38,7 +38,6 @@ STRENGTHS: dict[RecipeKind, int] = {
 }
 RECIPE_STAGES: tuple[Stage, ...] = (Stage.PAGE_SPLIT, Stage.GEOMETRY, Stage.CLEANUP)
 TEMPLATE_STRENGTH: int = 7
-PROFILE_NAME: str = 'Own'
 
 
 async def seed_book(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookId, list[PageId]]:
@@ -190,35 +189,6 @@ class TestRecipesOfAStage:
         expect({step.params[STRENGTH_PARAM] for recipe in found for step in recipe.steps} == {TEMPLATE_STRENGTH})
         expect(len({step.step_id for recipe in found for step in recipe.steps}) == 1)
         assert_expectations()
-
-    async def test_the_default_profile_makes_the_recipe_of_text_pages_only(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify the steps of the default profile go to the recipe of text pages, and the other kinds keep the template.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        profile = await fx_kit.profiles().save(
-            actor,
-            Stage.GEOMETRY,
-            ProfileDraft(
-                name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]
-            ),
-        )
-        await fx_kit.profiles().set_default(profile, is_default=True)
-        found = (
-            await fx_kit.service().recipes(fx_open_book(actor, book_id), Stage.GEOMETRY, SliceRequest(limit=10))
-        ).items
-        assert {recipe.kind: (recipe.steps[0].params[STRENGTH_PARAM], recipe.profile_id) for recipe in found} == {
-            RecipeKind.TEXT: (TEMPLATE_STRENGTH, profile.id),
-            RecipeKind.COLOR_PICTURE: (1, None),
-            RecipeKind.BW_PICTURE: (1, None),
-            RecipeKind.BLANK: (1, None),
-        }
 
 
 class TestRecipeOfAPage:
@@ -390,40 +360,6 @@ class TestResetToTheDefaultSteps:
         expect(reset.steps[0].step_id != soft.steps[0].step_id)
         expect(reset.profile_id is None)
         expect((record.recipe_id, record.state) == (soft.id, StageState.STALE))
-        assert_expectations()
-
-    async def test_the_default_profile_of_the_account_comes_before_the_template_for_text_pages(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify an account with a default profile for the stage gets the steps of that profile in the recipe of text.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        profile = await fx_kit.profiles().save(
-            actor,
-            Stage.GEOMETRY,
-            ProfileDraft(
-                name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]
-            ),
-        )
-        await fx_kit.profiles().set_default(profile, is_default=True)
-        found = (
-            await fx_kit.service().recipes(fx_open_book(actor, book_id), Stage.GEOMETRY, SliceRequest(limit=10))
-        ).items
-        picture = next(recipe for recipe in found if recipe.kind is RecipeKind.BW_PICTURE)
-        text = next(recipe for recipe in found if recipe.kind is RecipeKind.TEXT)
-        reset_text = await fx_kit.profiles().reset(fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, text.id))
-        reset_picture = await fx_kit.profiles().reset(
-            fx_open_book(actor, book_id), RecipeKey(Stage.GEOMETRY, picture.id)
-        )
-        expect([step.params[STRENGTH_PARAM] for step in reset_text.steps] == [TEMPLATE_STRENGTH])
-        expect(reset_text.profile_id == profile.id)
-        expect([step.params[STRENGTH_PARAM] for step in reset_picture.steps] == [1])
-        expect(reset_picture.profile_id is None)
         assert_expectations()
 
     async def test_a_recipe_takes_the_template_of_its_own_kind(

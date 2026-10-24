@@ -132,7 +132,7 @@ class TestCutTiles:
         :type kept: tuple[VersionState, bool] | None
         """
         _, book_id, untiled = await untiled_version(fx_kit)
-        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue_tiles(book_id, [untiled.id])
+        job = await fx_kit.parts().starter.enqueue_tiles(book_id, [untiled.id])
         assert job is not None
         cut = StepRunner.cut_tiles
 

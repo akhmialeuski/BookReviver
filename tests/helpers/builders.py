@@ -466,7 +466,6 @@ def make_recipe_profile(
     account_id: AccountId,
     stage: Stage = Stage.GEOMETRY,
     steps: tuple[Step, ...] | None = None,
-    is_default: bool = False,
     minutes: int = 0,
 ) -> RecipeProfile:
     """Build a profile of an account named ``Photographed book``, saved ``minutes`` after the epoch.
@@ -477,8 +476,6 @@ def make_recipe_profile(
     :type stage: Stage
     :param steps: Steps of the profile, or None for one deskew step.
     :type steps: tuple[Step, ...] | None
-    :param is_default: Whether the profile is the default of its stage.
-    :type is_default: bool
     :param minutes: Minutes after ``EPOCH`` the profile was saved.
     :type minutes: int
     :returns: A profile with a fresh identifier.
@@ -491,7 +488,6 @@ def make_recipe_profile(
         stage=stage,
         name='Photographed book',
         steps=steps or (Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
-        is_default=is_default,
         created_at=moment,
         updated_at=moment,
     )

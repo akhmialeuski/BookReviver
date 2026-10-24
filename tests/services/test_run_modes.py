@@ -359,9 +359,8 @@ class TestApplyModeBlock:
         :type fx_kit: ProcessingKit
         """
         _, book_id, pages, keys = await worked_book(fx_kit)
-        uow = fx_kit.uow()
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
-        plan = RunPlan(recipes=fx_kit.parts(uow).recipes, book=await open_book(fx_kit, book_id), run=run)
+        plan = RunPlan(recipes=fx_kit.parts().recipes, book=await open_book(fx_kit, book_id), run=run)
         await plan.recipes()
         await fx_kit.databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(pages[1].id))
         written = await plan.apply_mode()
@@ -380,9 +379,8 @@ class TestApplyModeBlock:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _, keys = await worked_book(fx_kit)
-        uow = fx_kit.uow()
         plan = RunPlan(
-            recipes=fx_kit.parts(uow).recipes,
+            recipes=fx_kit.parts().recipes,
             book=await open_book(fx_kit, book_id),
             run=StageRun(stage=Stage.GEOMETRY, mode=RunMode.KEEP),
         )

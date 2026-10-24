@@ -683,8 +683,7 @@ class RecipeProfile:
     """The steps of a recipe of one stage that an account saved, to apply to its books.
 
     A recipe belongs to one book, and a profile to the account, so a book that is set up once can be set up again in
-    another by applying the profile. The steps keep their order, their parameters and their ``enabled`` switch. An
-    account has at most one default profile for each stage, which a new book takes as the recipe of text pages.
+    another by applying the profile. The steps keep their order, their parameters and their ``enabled`` switch.
 
     :ivar id: Identifier of the profile.
     :ivar account_id: Account owning the profile, the only one that may read or change it.
@@ -693,7 +692,6 @@ class RecipeProfile:
     :ivar steps: The steps in the order they run, each a processor with its parameters.
     :ivar order: Whether the steps were saved in the usual order, which refuses a step where it cannot work, or in the
                  free order, which lets it stand with a warning. A book opened from the profile starts in this mode.
-    :ivar is_default: Whether a new book of the account starts the stage with this profile.
     :ivar created_at: When the profile was saved.
     :ivar updated_at: When the profile was last changed.
     """
@@ -704,7 +702,6 @@ class RecipeProfile:
     name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...]
     order: OrderMode = OrderMode.USUAL
-    is_default: bool = False
     created_at: datetime
     updated_at: datetime
 

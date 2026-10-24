@@ -58,7 +58,7 @@ class TestJobsOfAMissingBook:
         :type job: tuple[JobKind, MetadataMap]
         """
         kind, params = job
-        queued = await fx_kit.parts(fx_kit.uow()).starter.enqueue(BookId(uuid4()), kind, params)
+        queued = await fx_kit.parts().starter.enqueue(BookId(uuid4()), kind, params)
 
         await fx_kit.work_queue()
 
@@ -77,9 +77,7 @@ class TestJobsOfAMissingBook:
         :type fx_open_book: BookOpener
         """
         kit = ProcessingKit(fx_database, fx_open_book, processors=[FakeContentProbe([])])
-        queued = await kit.parts(kit.uow()).starter.enqueue(
-            BookId(uuid4()), JobKind.DETECT_CONTENT, ContentDetection().to_map()
-        )
+        queued = await kit.parts().starter.enqueue(BookId(uuid4()), JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
         await kit.work_queue()
 
@@ -91,7 +89,7 @@ class TestJobsOfAMissingBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        queued = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
+        queued = await fx_kit.parts().starter.enqueue(
             BookId(uuid4()), JobKind.DETECT_CONTENT, ContentDetection().to_map()
         )
 

@@ -579,7 +579,6 @@ class ImportRig:
         """
         uow = uow or self.open_uow()
         parts = ProcessingParts.build(
-            uow,
             FakeCatalogue(self.processors),
             self.defaults,
             ProcessingRuntime(publisher=self.fakes.events, board=self.fakes.board, tracer=NullTracer()),

@@ -1584,20 +1584,6 @@ class SqlAlchemyRecipeProfileRepository(
             key=lambda profile: profile.stage.position,
         )
 
-    @override
-    def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
-        """Return the profile a new book of the account starts a stage with.
-
-        :param account_id: Account owning the profile.
-        :type account_id: AccountId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The default profile of the stage, or None.
-        :rtype: RecipeProfile | None
-        """
-        row = self._rows.get_one_or_none(account_id=account_id, stage=stage, is_default=True)
-        return None if row is None else self._mapper.to_entity(row)
-
 
 class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
     """Every repository of the catalogue, bound to the session of one transaction of the catalogue.

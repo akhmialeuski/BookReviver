@@ -8,10 +8,8 @@ from attrs import evolve
 from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, Step
-from tests.helpers.builders import make_record
 from tests.helpers.processing import account_books
 from tests.helpers.processors import SECOND_KEY, THIRD_KEY
-from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Recipe, RecipeProfile
@@ -56,22 +54,6 @@ async def save_profile(
     """
     draft = ProfileDraft(name=PROFILE_NAME, steps=steps, order=order)
     return await kit.profiles().save(actor, stage, draft)
-
-
-async def another_book(kit: ProcessingKit, actor: Actor) -> BookId:
-    """Commit another book of the same account, which has opened no stage.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the book.
-    :type actor: Actor
-    :returns: The book.
-    :rtype: BookId
-    """
-    book_id = await store_book(
-        kit.uow(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
-    )
-    return book_id
 
 
 async def stored_recipe(book_id: BookId, recipe: Recipe, *, databases: LocatedBookDatabases) -> Recipe:
@@ -137,7 +119,7 @@ class TestProfileOrder:
 class TestReplaceProfile:
     """Tests for replacing the name, the steps and the order of a profile, which is how a book saves to its profile."""
 
-    async def test_the_name_the_steps_and_the_order_are_replaced_and_the_stage_and_the_default_stay(
+    async def test_the_name_the_steps_and_the_order_are_replaced_and_the_stage_stays(
         self, fx_ordered_kit: ProcessingKit
     ) -> None:
         """Verify what a book sends replaces what the profile had, and what it does not send stays.
@@ -147,17 +129,11 @@ class TestReplaceProfile:
         """
         actor, _ = await fx_ordered_kit.seed_book()
         profile = await save_profile(fx_ordered_kit, actor)
-        await fx_ordered_kit.profiles().set_default(profile, is_default=True)
         draft = ProfileDraft(name=RENAMED, steps=BROKEN_ORDER, order=OrderMode.FREE)
         replaced = await fx_ordered_kit.profiles().replace(profile, draft)
         stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert stored == replaced
-        assert (stored.name, stored.order, stored.stage, stored.is_default) == (
-            RENAMED,
-            OrderMode.FREE,
-            Stage.GEOMETRY,
-            True,
-        )
+        assert (stored.name, stored.order, stored.stage) == (RENAMED, OrderMode.FREE, Stage.GEOMETRY)
         assert [step.processor_key for step in stored.steps] == [THIRD_KEY, SECOND_KEY]
 
     async def test_a_step_off_a_required_place_is_refused_in_the_usual_order_and_the_profile_is_unchanged(
@@ -226,21 +202,6 @@ class TestRecipeLink:
             await fx_ordered_kit.profiles().apply(fx_open_book(actor, book_id), profile, kind=RecipeKind.BLANK)
         ).recipe
         assert (await stored_recipe(book_id, applied, databases=fx_open_book.databases)).profile_id == profile.id
-
-    async def test_the_default_profile_of_a_new_book_is_the_profile_of_its_first_recipe(
-        self, fx_ordered_kit: ProcessingKit
-    ) -> None:
-        """Verify the recipe a stage starts with from the default profile is linked to that profile.
-
-        :param fx_ordered_kit: Kit over processors that declare a place.
-        :type fx_ordered_kit: ProcessingKit
-        """
-        actor, _ = await fx_ordered_kit.seed_book()
-        profile = await save_profile(fx_ordered_kit, actor)
-        await fx_ordered_kit.profiles().set_default(profile, is_default=True)
-        fresh = await another_book(fx_ordered_kit, actor)
-        recipe = await fx_ordered_kit.recipe_of(actor, fresh, Stage.GEOMETRY)
-        assert recipe.profile_id == profile.id
 
     async def test_a_recipe_can_be_linked_to_a_profile_and_unlinked_again(
         self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener

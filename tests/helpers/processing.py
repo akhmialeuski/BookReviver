@@ -168,11 +168,9 @@ class ProcessingKit:
             tiler=self.tiler,
         )
 
-    def parts(self, uow: UnitOfWork) -> ProcessingParts:
-        """Build the shared parts over a unit of work.
+    def parts(self) -> ProcessingParts:
+        """Build the shared parts of one request or job.
 
-        :param uow: Unit of work of the request or job.
-        :type uow: UnitOfWork
         :returns: The parts.
         :rtype: ProcessingParts
         """
@@ -181,7 +179,7 @@ class ProcessingKit:
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
-        return ProcessingParts.build(uow, self.catalogue, self._defaults, runtime, config)
+        return ProcessingParts.build(self.catalogue, self._defaults, runtime, config)
 
     def service(self) -> ProcessingService:
         """Build the processing service over a new unit of work.
@@ -189,7 +187,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: ProcessingService
         """
-        return ProcessingService(catalogue=self.catalogue, parts=self.parts(self.uow()))
+        return ProcessingService(catalogue=self.catalogue, parts=self.parts())
 
     def profiles(self) -> RecipeProfiles:
         """Build the service of the recipe profiles over a new unit of work.
@@ -198,7 +196,7 @@ class ProcessingKit:
         :rtype: RecipeProfiles
         """
         uow = self.uow()
-        parts = self.parts(uow)
+        parts = self.parts()
         processing = ProcessingService(catalogue=self.catalogue, parts=parts)
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing)
 
@@ -281,7 +279,7 @@ class ProcessingKit:
         return ProcessingJobs(
             books=make_books_service(uow, databases=self.databases, files=self.files),
             runtime=runtime,
-            parts=self.parts(uow),
+            parts=self.parts(),
             pages=self._pages(),
         )
 
@@ -321,8 +319,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: EditService
         """
-        uow = self.uow()
-        return EditService(catalogue=self.catalogue, records=self.parts(uow).records)
+        return EditService(catalogue=self.catalogue, records=self.parts().records)
 
     def page_settings(self) -> PageSettingsService:
         """Build the page settings service over a new unit of work.
@@ -330,8 +327,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageSettingsService
         """
-        uow = self.uow()
-        return PageSettingsService(catalogue=self.catalogue, records=self.parts(uow).records)
+        return PageSettingsService(catalogue=self.catalogue, records=self.parts().records)
 
     def page_history(self) -> PageHistoryService:
         """Build the page history service over a new unit of work.
@@ -339,8 +335,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageHistoryService
         """
-        uow = self.uow()
-        parts = self.parts(uow)
+        parts = self.parts()
         return PageHistoryService(records=parts.records, starter=parts.starter)
 
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
@@ -359,7 +354,7 @@ class ProcessingKit:
         :returns: The key of the edit of that step.
         :rtype: PageStepKey
         """
-        recipe = await self.parts(self.uow()).recipes.of_kind(await open_book(self, book_id), stage, page.recipe_kind)
+        recipe = await self.parts().recipes.of_kind(await open_book(self, book_id), stage, page.recipe_kind)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 

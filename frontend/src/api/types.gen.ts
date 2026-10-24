@@ -1296,10 +1296,6 @@ export type LibraryProfileSchema = {
     steps: Array<StepSchema>;
     order: OrderMode;
     /**
-     * Is Default
-     */
-    is_default: boolean;
-    /**
      * Created At
      */
     created_at: string;
@@ -2910,7 +2906,6 @@ export type RecipeProfileName = {
  * :ivar name: Name the user sees.
  * :ivar steps: The steps in the order they run, each with its parameters and its switch.
  * :ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.
- * :ivar is_default: Whether a new book starts the stage with this profile.
  * :ivar created_at: When the profile was saved.
  * :ivar updated_at: When the profile was last changed.
  */
@@ -2929,10 +2924,6 @@ export type RecipeProfileSchema = {
      */
     steps: Array<StepSchema>;
     order: OrderMode;
-    /**
-     * Is Default
-     */
-    is_default: boolean;
     /**
      * Created At
      */
@@ -6469,86 +6460,6 @@ export type PutProfileApiV1RecipeProfilesProfileIdPutResponses = {
 };
 
 export type PutProfileApiV1RecipeProfilesProfileIdPutResponse = PutProfileApiV1RecipeProfilesProfileIdPutResponses[keyof PutProfileApiV1RecipeProfilesProfileIdPutResponses];
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteData = {
-    body?: never;
-    path: {
-        /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-    };
-    query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}/default';
-};
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteError = DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors[keyof DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors];
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeProfileSchema;
-};
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponse = DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses[keyof DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses];
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutData = {
-    body?: never;
-    path: {
-        /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-    };
-    query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}/default';
-};
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutError = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors];
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeProfileSchema;
-};
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponse = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses];
 
 export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostData = {
     body: ApplyProfileBody;

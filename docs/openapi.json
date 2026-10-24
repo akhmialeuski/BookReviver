@@ -3407,7 +3407,7 @@
           "processing"
         ],
         "summary": "Reset Recipe",
-        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the account's default profile for the stage when the recipe is the one of text pages and the\naccount has a usable profile, and otherwise those of the built-in template of the kind. The recipe keeps its\nidentifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.",
+        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the built-in template of the kind. The recipe keeps its identifier and its kind, and every\nstep in it is new. The answer is 404 for a stage that has no steps by default.",
         "operationId": "reset_recipe_api_v1_books__book_id__stages__stage__recipes__recipe_id__reset_post",
         "parameters": [
           {
@@ -4743,7 +4743,7 @@
           "profiles"
         ],
         "summary": "Create Profile",
-        "description": "Save the steps of a recipe as a profile, which is not the default until it is made one.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a\nstep that stands where it cannot work, unless the body asks for the free order.",
+        "description": "Save the steps of a recipe as a profile.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a\nstep that stands where it cannot work, unless the body asks for the free order.",
         "operationId": "create_profile_api_v1_recipe_profiles_post",
         "requestBody": {
           "required": true,
@@ -4817,7 +4817,7 @@
           "profiles"
         ],
         "summary": "Import Profile",
-        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of the first version is read as well, and the condition its\nsteps name is dropped. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
+        "description": "Save the profile a file holds.\n\nThe file is checked as a saved profile is. A file of the first version is read as well, and the condition its\nsteps name is dropped. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
         "operationId": "import_profile_api_v1_recipe_profiles_import_post",
         "requestBody": {
           "content": {
@@ -4984,7 +4984,7 @@
           "profiles"
         ],
         "summary": "Duplicate Profile",
-        "description": "Save a copy of a profile under its name with \"(copy)\" after it, which is not the default.",
+        "description": "Save a copy of a profile under its name with \"(copy)\" after it.",
         "operationId": "duplicate_profile_api_v1_recipe_profiles__profile_id__duplicate_post",
         "parameters": [
           {
@@ -5062,7 +5062,7 @@
           "profiles"
         ],
         "summary": "Put Profile",
-        "description": "Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.\n\nThe stage and the default mark stay. The recipes made from the profile are not changed. A step whose processor is\nunknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it\ncannot work, unless the body asks for the free order.",
+        "description": "Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.\n\nThe stage stays. The recipes made from the profile are not changed. A step whose processor is\nunknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it\ncannot work, unless the body asks for the free order.",
         "operationId": "put_profile_api_v1_recipe_profiles__profile_id__put",
         "parameters": [
           {
@@ -5253,160 +5253,6 @@
         "responses": {
           "204": {
             "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/recipe-profiles/{profile_id}/default": {
-      "put": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Put Default Profile",
-        "description": "Make a profile the default of its stage, so a new book starts the stage with it instead of the built-in recipe.\n\nThe profile that was the default of the stage stops being one.",
-        "operationId": "put_default_profile_api_v1_recipe_profiles__profile_id__default_put",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeProfileSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Delete Default Profile",
-        "description": "Stop a profile being the default of its stage, so a new book starts the stage with the built-in recipe again.",
-        "operationId": "delete_default_profile_api_v1_recipe_profiles__profile_id__default_delete",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeProfileSchema"
-                }
-              }
-            }
           },
           "422": {
             "description": "Validation Error",
@@ -10742,10 +10588,6 @@
           "order": {
             "$ref": "#/components/schemas/OrderMode"
           },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -10768,7 +10610,6 @@
           "name",
           "steps",
           "order",
-          "is_default",
           "created_at",
           "updated_at",
           "books"
@@ -13082,10 +12923,6 @@
           "order": {
             "$ref": "#/components/schemas/OrderMode"
           },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -13104,12 +12941,11 @@
           "name",
           "steps",
           "order",
-          "is_default",
           "created_at",
           "updated_at"
         ],
         "title": "RecipeProfileSchema",
-        "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.\n:ivar is_default: Whether a new book starts the stage with this profile.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
+        "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
       },
       "RecipeSchema": {
         "properties": {

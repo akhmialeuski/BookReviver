@@ -81,9 +81,7 @@ async def step_of(kit: ProcessingKit, book_id: BookId) -> Step:
     :returns: The first step of the recipe.
     :rtype: Step
     """
-    return (
-        await kit.parts(kit.uow()).recipes.of_kind(await open_book(kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
-    ).steps[0]
+    return (await kit.parts().recipes.of_kind(await open_book(kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)).steps[0]
 
 
 async def ran_book(kit: ProcessingKit, *, count: int = 4) -> tuple[Actor, BookId, list[Page], StepId]:
@@ -682,7 +680,7 @@ class TestValuesForPartsOfTheBook:
             :returns: The state of the stage of each page of the book.
             :rtype: list[StageState]
             """
-            records = fx_kit.parts(fx_kit.uow()).records
+            records = fx_kit.parts().records
             await fx_open_book.databases.open(book_id).change(
                 lambda repos, _book_record: records.mark_group_stale(repos, page.id, labels),
             )
@@ -698,7 +696,7 @@ class TestValuesForPartsOfTheBook:
         """Verify the values of a step in one book neither run in another book with the same step ids, nor get replaced.
 
         The second book holds copies of the recipes of the first with the same step identifiers, as two books built
-        from one default profile do.
+        from the same templates do.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -923,9 +921,7 @@ class TestRunWithPageSettings:
         step = await step_of(fx_kit, book_id)
         key = await fx_kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY)
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.parts(fx_kit.uow()).recipes.of_kind(
-            await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT
-        )
+        await fx_kit.parts().recipes.of_kind(await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
         draft = RecipeDraft(steps=[evolve(step, params={STRENGTH_PARAMETER: STRONGEST})])
         await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, draft)
         await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
@@ -952,9 +948,7 @@ class TestRunWithPageSettings:
         await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
         first, runs = await head_of(fx_kit, book_id, page, Stage.GEOMETRY), fx_kit.fake.runs
         await PageValues(fx_kit, actor, book_id).take_back(key, STRENGTH_PARAMETER)
-        await fx_kit.parts(fx_kit.uow()).recipes.of_kind(
-            await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT
-        )
+        await fx_kit.parts().recipes.of_kind(await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
         draft = RecipeDraft(steps=[evolve(step, params={STRENGTH_PARAMETER: STRONGER})])
         await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, draft)
         await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)

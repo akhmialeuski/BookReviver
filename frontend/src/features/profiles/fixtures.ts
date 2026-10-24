@@ -19,7 +19,6 @@ export function profile(
       step('geometry.crop', { enabled: false }),
     ],
     order: 'usual',
-    is_default: false,
     created_at: '2026-10-01T00:00:00Z',
     updated_at: '2026-10-01T00:00:00Z',
     books: 0,

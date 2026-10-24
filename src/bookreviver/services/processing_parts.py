@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.ids import BookId, PageVersionId
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import EventPublisher, JobBoard
     from bookreviver.ports.tracing import Tracer
@@ -270,7 +269,7 @@ class JobStarter:
 
 @frozen(kw_only=True)
 class ProcessingParts:
-    """The objects a processing use case works through, built over one unit of work.
+    """The objects a processing use case works through, built for one request or job.
 
     :ivar recipes: The recipes of the book and the check of their steps.
     :ivar records: Writer of the stage records.
@@ -284,16 +283,13 @@ class ProcessingParts:
     @classmethod
     def build(
         cls,
-        uow: UnitOfWork,
         catalogue: ProcessorCatalog,
         defaults: DefaultRecipes,
         runtime: ProcessingRuntime,
         config: ProcessingConfig,
     ) -> ProcessingParts:
-        """Build the parts over a unit of work.
+        """Build the parts of one request or job.
 
-        :param uow: Unit of work of the request or job.
-        :type uow: UnitOfWork
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
@@ -306,7 +302,7 @@ class ProcessingParts:
         :rtype: ProcessingParts
         """
         return cls(
-            recipes=RecipeBook(uow=uow, catalogue=catalogue, defaults=defaults, order=RecipeOrder(catalogue)),
+            recipes=RecipeBook(catalogue=catalogue, defaults=defaults, order=RecipeOrder(catalogue)),
             records=StageRecords(),
             starter=JobStarter(runtime=runtime, config=config),
         )

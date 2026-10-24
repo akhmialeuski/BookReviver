@@ -252,11 +252,6 @@ export function ProfileMenu({
                         }
                       >
                         <span className="truncate">{profile.name}</span>
-                        {profile.is_default ? (
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            {MESSAGES.profiles.library.defaultMark}
-                          </span>
-                        ) : null}
                       </Button>
                     </li>
                   ))}

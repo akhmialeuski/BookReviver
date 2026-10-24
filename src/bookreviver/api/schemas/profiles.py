@@ -33,7 +33,6 @@ class RecipeProfileSchema(ResponseModel):
     :ivar name: Name the user sees.
     :ivar steps: The steps in the order they run, each with its parameters and its switch.
     :ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.
-    :ivar is_default: Whether a new book starts the stage with this profile.
     :ivar created_at: When the profile was saved.
     :ivar updated_at: When the profile was last changed.
     """
@@ -43,7 +42,6 @@ class RecipeProfileSchema(ResponseModel):
     name: str
     steps: list[StepSchema]
     order: OrderMode
-    is_default: bool
     created_at: datetime
     updated_at: datetime
 

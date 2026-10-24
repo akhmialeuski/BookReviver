@@ -10,8 +10,7 @@ account and hand over the books of the account, and a use case works on what it 
 Applying a profile to a book puts its steps into the recipe of one kind of page of the stage and links the recipe to the
 profile, through the use cases of ``ProcessingService``, which also mark the pages the recipe processed stale. A
 processor that is not installed on the server is left out of the recipe and named in the result, so one profile serves
-several machines. An account has at most one default profile for each stage, whose steps the recipe of text pages
-starts with at the first opening of the stage in a new book, through ``RecipeBook``.
+several machines.
 
 A profile is exchanged as a file: the library exports one and imports another through the same checks that saving does.
 An import refuses a file whose processors are not all installed, since a profile that cannot be applied whole would
@@ -109,7 +108,7 @@ class RecipeProfiles:
         )
 
     async def duplicate(self, profile: RecipeProfile) -> RecipeProfile:
-        """Save a copy of a profile under the name of the profile with ``(copy)`` after it, which is not the default.
+        """Save a copy of a profile under the name of the profile with ``(copy)`` after it.
 
         The steps are copied as they were checked when the profile was saved. No book is linked to the copy.
 
@@ -136,7 +135,6 @@ class RecipeProfiles:
                     current,
                     id=RecipeProfileId(uuid4()),
                     name=COPY_NAME.format(name=current.name),
-                    is_default=False,
                     created_at=moment,
                     updated_at=moment,
                 )
@@ -145,7 +143,7 @@ class RecipeProfiles:
         return await self._uow.change(work)
 
     async def import_profile(self, owner: Actor, stage: Stage, draft: ProfileDraft) -> RecipeProfile:
-        """Save the profile a file holds, which gets new identifiers for its steps and is not the default.
+        """Save the profile a file holds, which gets new identifiers for its steps.
 
         :param owner: Account the new profile belongs to.
         :type owner: Actor
@@ -171,7 +169,7 @@ class RecipeProfiles:
         :type stage: Stage
         :param draft: Name and steps of the profile, which are checked against their processors and their order.
         :type draft: ProfileDraft
-        :returns: The profile as stored, which is not the default.
+        :returns: The profile as stored.
         :rtype: RecipeProfile
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
@@ -201,7 +199,7 @@ class RecipeProfiles:
         :param draft: New name, steps and order, which are checked against the processors of the profile's stage and
                       their order.
         :type draft: ProfileDraft
-        :returns: The profile as stored, with the same stage and the same default mark.
+        :returns: The profile as stored, with the same stage.
         :rtype: RecipeProfile
         :raises NotFoundError: If the profile was deleted meanwhile.
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
@@ -299,40 +297,6 @@ class RecipeProfiles:
 
         return await self._uow.change(work)
 
-    async def set_default(self, profile: RecipeProfile, *, is_default: bool) -> RecipeProfile:
-        """Choose a profile as the default of its stage, or stop it being one.
-
-        The profile that was the default of the stage for the same account is demoted before the new one is promoted,
-        so an account never has two defaults for a stage.
-
-        :param profile: The profile.
-        :type profile: RecipeProfile
-        :param is_default: Whether new books start the stage with this profile.
-        :type is_default: bool
-        :returns: The profile as stored.
-        :rtype: RecipeProfile
-        :raises NotFoundError: If the profile was deleted meanwhile.
-        """
-
-        def work(repos: CatalogueRepositories) -> RecipeProfile:
-            """Demote the default of the stage when a new one is chosen, and store the profile with its mark.
-
-            :param repos: Repositories of the transaction.
-            :type repos: CatalogueRepositories
-            :returns: The profile as stored.
-            :rtype: RecipeProfile
-            :raises NotFoundError: If the profile was deleted meanwhile.
-            """
-            current = repos.recipe_profiles.get(profile.id)
-            if current.is_default is is_default:
-                return current
-            moment = datetime.now(UTC)
-            if is_default and (default := repos.recipe_profiles.find_default(current.account_id, current.stage)):
-                repos.recipe_profiles.update(evolve(default, is_default=False, updated_at=moment))
-            return repos.recipe_profiles.update(evolve(current, is_default=is_default, updated_at=moment))
-
-        return await self._uow.change(work)
-
     async def remove(self, profile: RecipeProfile, books: Iterable[Book]) -> None:
         """Delete a profile, and clear the link to it in the recipes of the books, which changes no step.
 
@@ -391,12 +355,10 @@ class RecipeProfiles:
     async def reset(self, book: Book, key: RecipeKey) -> Recipe:
         """Put the steps a recipe starts with back into it, and mark the pages it processed stale.
 
-        The steps are those of the account's default profile for the stage when the recipe is the one of text pages and
-        the account has a usable profile, and otherwise those of the built-in template of the kind, which are the steps
-        the stage would have had on its first opening. The recipe keeps its identifier and its kind, while every step is
-        new, so the settings and edits the pages kept for the old steps no longer belong to any step. The recipe is
-        linked to the default profile when its steps came from it, and to no profile when they came from a template.
-        The use case holds no transaction itself, as ``apply`` holds none.
+        The steps are those of the built-in template of the kind of the recipe, which are the steps the stage would have
+        had on its first opening. The recipe keeps its identifier and its kind, while every step is new, so the
+        settings and edits the pages kept for the old steps no longer belong to any step. The recipe is linked to no
+        profile. The use case holds no transaction itself, as ``apply`` holds none.
 
         :param book: The open book.
         :type book: Book
@@ -407,9 +369,7 @@ class RecipeProfiles:
         :raises NotFoundError: If the book has no such recipe of the stage, or the stage has no steps by default.
         """
         recipe = await book.read(lambda repos: self._recipes.get(repos, key.recipe_id, stage=key.stage))
-        default = await self._recipes.default_profile(book.id, key.stage)
-        draft = self._recipes.default_draft(key.stage, recipe.kind, default)
-        return await self._put(book, key, draft, default if draft.profile_id is not None else None)
+        return await self._put(book, key, self._recipes.template_draft(key.stage, recipe.kind), None)
 
     async def _put(self, book: Book, key: RecipeKey, draft: RecipeDraft, profile: RecipeProfile | None) -> Recipe:
         """Put the steps of a draft into a recipe, and link the recipe to the profile the steps came from, or to none.

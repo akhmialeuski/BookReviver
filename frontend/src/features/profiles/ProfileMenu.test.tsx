@@ -352,7 +352,7 @@ describe('ProfileMenu', () => {
     expect(byId('profile-save-new')).toHaveProperty('disabled', true);
   });
   describe('the other profiles of the stage and the library', () => {
-    const OTHER = profile('p2', { name: 'Clean flatbed scan', is_default: true });
+    const OTHER = profile('p2', { name: 'Clean flatbed scan' });
 
     it('lists the profiles of the stage other than the one of the recipe', async () => {
       sdk.list.mockResolvedValue(profilePage([PROFILE, OTHER]));

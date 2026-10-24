@@ -166,16 +166,15 @@ async def reset_recipe(
 ) -> RecipeSchema:
     """Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.
 
-    The steps are those of the account's default profile for the stage when the recipe is the one of text pages and the
-    account has a usable profile, and otherwise those of the built-in template of the kind. The recipe keeps its
-    identifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.
+    The steps are those of the built-in template of the kind. The recipe keeps its identifier and its kind, and every
+    step in it is new. The answer is 404 for a stage that has no steps by default.
 
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
     :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
-    :param profiles: Recipe profile service of the request, which also puts the default steps back.
+    :param profiles: Recipe profile service of the request, which also puts the built-in steps back.
     :type profiles: RecipeProfiles
     :param order: Finder of the steps that stand off the place their processors ask for.
     :type order: RecipeOrder

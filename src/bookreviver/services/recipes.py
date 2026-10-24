@@ -3,8 +3,7 @@
 A stage that has recipes has exactly one for each kind of page (``RecipeKind``), and a page is processed by the recipe
 of its kind. The first time a stage is asked for, ``RecipeBook`` creates all of them from ``DefaultRecipes``. A kind
 whose template the catalogue cannot build, such as one that needs OpenCV on a machine that has none, takes the steps of
-the recipe of text pages, and a stage with no template of text pages and no default profile has no recipe at all. When
-the owner of the book has chosen a default profile for the stage, the recipe of text pages is made from the profile.
+the recipe of text pages, and a stage with no template of text pages has no recipe at all.
 
 Every step is checked before it is saved: its processor must exist, belong to the stage of the recipe, and accept its
 parameters, which are stored in the form ``validate_params`` returns, defaults filled in, so two recipes that differ in
@@ -13,12 +12,10 @@ step that stands where its processor cannot work is refused unless the draft ask
 stands off its usual place is saved, and the routes report it through ``RecipeOrder.issues``.
 
 The work of a transaction is synchronous and cannot await, so what a work needs from the book of recipes is synchronous
-and takes the ``BookRepositories`` of its transaction: ``recipes_in``, ``get``, ``rewrite`` and ``find_step``, with
-``default_draft``, ``check`` and ``installed``, which read no repository. The asynchronous ``recipes``, ``of_kind`` and
-``for_pages`` run on the transactions of the book themselves, ``recipes`` opening a ``Book.change`` of its own to
-store the defaults, so they are called outside any work, and inside a work the synchronous ``recipes_in`` is used. The
-default profile of the owner lives in the catalogue, not in the book, so a caller reads it with ``default_profile``
-before the transaction of the book and passes it in.
+and takes the ``BookRepositories`` of its transaction: ``get``, ``rewrite`` and ``find_step``, with ``template_draft``,
+``check`` and ``installed``, which read no repository. The asynchronous ``recipes``, ``of_kind`` and ``for_pages`` run
+on the transactions of the book themselves, ``recipes`` opening a ``Book.change`` of its own to store the defaults, so
+they are called outside any work.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -44,10 +41,10 @@ from bookreviver.domain.values import RecipeDraft, Step
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from bookreviver.domain.entities import Page, RecipeProfile
-    from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import MetadataMap, PageStepKey
-    from bookreviver.ports.persistence import BookRepositories, RecipeRepository, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, RecipeRepository
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book
     from bookreviver.services.recipe_order import RecipeOrder
@@ -186,19 +183,9 @@ class DefaultRecipes:
 class RecipeBook:
     """Finds the recipes of a book, creates the default ones, and checks the steps of a recipe."""
 
-    def __init__(
-        self,
-        *,
-        uow: UnitOfWork,
-        catalogue: ProcessorCatalog,
-        defaults: DefaultRecipes,
-        order: RecipeOrder,
-    ) -> None:
+    def __init__(self, *, catalogue: ProcessorCatalog, defaults: DefaultRecipes, order: RecipeOrder) -> None:
         """Work over the ports of one request or job.
 
-        :param uow: Unit of work, on which ``default_profile`` reads the catalogue. The synchronous methods use the
-                    repositories their caller passes and never this.
-        :type uow: UnitOfWork
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
@@ -206,7 +193,6 @@ class RecipeBook:
         :param order: The check of the order of the steps.
         :type order: RecipeOrder
         """
-        self._uow = uow
         self._catalogue = catalogue
         self._defaults = defaults
         self._order = order
@@ -217,15 +203,13 @@ class RecipeBook:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
         Called outside any work, since it runs on the unit of work itself. It reads in a transaction that only reads,
-        and opens a ``Book.change`` of its own only when the stage has no recipes yet, where ``recipes_in`` reads again,
-        since a task that ran at the same time may have stored them first, and adds the defaults only if they are still
-        missing. The work of a transaction cannot call this, and calls ``recipes_in`` instead.
+        and opens a ``Book.change`` of its own only when the stage has no recipes yet, where it reads again, since a
+        task that ran at the same time may have stored them first, and adds the defaults only if they are still missing.
 
         A caller that has to read something else before it goes on, such as the pages of a run, hands the read in as
         ``checking``, which runs first in the transaction that reads the recipes. When the recipes are stored that
         transaction is the only one, where a read of the caller beside this call would be a second snapshot of the
-        database. When the stage has no recipes yet, the default profile of the owner of the book is read first, in the
-        catalogue, and the defaults are made from it.
+        database.
 
         :param book: The open book owning the recipes.
         :type book: Book
@@ -252,63 +236,39 @@ class RecipeBook:
                 checking(repos)
             return self._stored(repos, stage)
 
+        def store(repos: BookRepositories, _book_record: BookRecord) -> list[Recipe]:
+            """Read the recipes again and, when the stage still has none, store the defaults.
+
+            :param repos: Repositories of the transaction that changes the book.
+            :type repos: BookRepositories
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
+            :returns: The recipes in the order of the kinds.
+            :rtype: list[Recipe]
+            :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+            """
+            if found := self._stored(repos, stage):
+                return found
+            moment = datetime.now(UTC)
+            steps = self._starting_steps(stage)
+            built = [
+                Recipe(
+                    id=RecipeId(uuid4()),
+                    stage=stage,
+                    kind=kind,
+                    steps=steps[kind],
+                    # A microsecond apart, so the recipes are listed in the order of the kinds
+                    created_at=moment + timedelta(microseconds=index),
+                    updated_at=moment,
+                )
+                for index, kind in enumerate(RecipeKind)
+            ]
+            repos.recipes.add_many(built)
+            return built
+
         if found := await book.read(read):
             return found
-        profile = await self.default_profile(book.id, stage)
-        return await book.change(lambda repos, _book_record: self.recipes_in(repos, stage, profile))
-
-    async def default_profile(self, book_id: BookId, stage: Stage) -> RecipeProfile | None:
-        """Read the default profile of the owner of a book for a stage, in a read of the catalogue.
-
-        :param book_id: Book whose owner's default profile is read.
-        :type book_id: BookId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The profile the owner chose as the default of the stage, or None when they have not chosen one.
-        :rtype: RecipeProfile | None
-        :raises NotFoundError: If the library has no such book.
-        """
-        return await self._uow.read(
-            lambda repos: repos.recipe_profiles.find_default(repos.library.get(book_id).owner_id, stage)
-        )
-
-    def recipes_in(self, repos: BookRepositories, stage: Stage, default: RecipeProfile | None) -> list[Recipe]:
-        """Return the recipes of a stage, creating them when the stage is first asked for, in the transaction of a work.
-
-        This is the form to use inside the work of ``Book.change`` or ``UnitOfWork.change``, where ``recipes`` cannot be
-        awaited. It reads the recipes and, when the stage has none, stores the defaults through the same repositories,
-        so the defaults are committed with the rest of the work.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param stage: The stage.
-        :type stage: Stage
-        :param default: The default profile of the owner of the book for the stage, which the first recipes may be made
-                        from, or None.
-        :type default: RecipeProfile | None
-        :returns: The recipes in the order of the kinds.
-        :rtype: list[Recipe]
-        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
-        """
-        if found := self._stored(repos, stage):
-            return found
-        moment = datetime.now(UTC)
-        steps, profile = self._starting_steps(stage, default)
-        built = [
-            Recipe(
-                id=RecipeId(uuid4()),
-                stage=stage,
-                kind=kind,
-                steps=steps[kind],
-                profile_id=profile.id if profile is not None and kind is RecipeKind.TEXT else None,
-                # A microsecond apart, so the recipes are listed in the order of the kinds
-                created_at=moment + timedelta(microseconds=index),
-                updated_at=moment,
-            )
-            for index, kind in enumerate(RecipeKind)
-        ]
-        repos.recipes.add_many(built)
-        return built
+        return await book.change(store)
 
     def _stored(self, repos: BookRepositories, stage: Stage) -> list[Recipe]:
         """Read the stored recipes of a stage, each with the parameters of its steps as their processors write them now.
@@ -375,26 +335,21 @@ class RecipeBook:
         by_kind = {recipe.kind: recipe for recipe in await self.recipes(book, stage)}
         return {page.id: by_kind[page.recipe_kind] for page in pages}
 
-    def default_draft(self, stage: Stage, kind: RecipeKind, default: RecipeProfile | None) -> RecipeDraft:
+    def template_draft(self, stage: Stage, kind: RecipeKind) -> RecipeDraft:
         """Return the draft of the steps the recipe of a kind starts with, which a reset puts back into the recipe.
 
-        The recipe of text pages takes the default profile of the book's owner first, when there is a usable one, and
-        the draft names it, so the recipe can be linked to it. Without one, and for any other kind, the steps are those
-        of the built-in template of the kind, or of the recipe of text pages when the template cannot be built here.
+        The steps are those of the built-in template of the kind, or of the recipe of text pages when the template
+        cannot be built here.
 
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page the recipe is for.
         :type kind: RecipeKind
-        :param default: The default profile of the owner of the book for the stage, or None.
-        :type default: RecipeProfile | None
         :returns: The draft, whose steps are checked and each have a new identifier, in the free order.
         :rtype: RecipeDraft
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        steps, profile = self._starting_steps(stage, default)
-        profile_id = profile.id if profile is not None and kind is RecipeKind.TEXT else None
-        return RecipeDraft(steps=steps[kind], order=OrderMode.FREE, profile_id=profile_id)
+        return RecipeDraft(steps=self._starting_steps(stage)[kind], order=OrderMode.FREE)
 
     def get(self, repos: BookRepositories, recipe_id: RecipeId, *, stage: Stage | None = None) -> Recipe:
         """Return a recipe of the book, of the given stage when one is named.
@@ -526,58 +481,29 @@ class RecipeBook:
             for key in template.processor_keys
         )
 
-    def _starting_steps(
-        self, stage: Stage, default: RecipeProfile | None
-    ) -> tuple[dict[RecipeKind, tuple[Step, ...]], RecipeProfile | None]:
+    def _starting_steps(self, stage: Stage) -> dict[RecipeKind, tuple[Step, ...]]:
         """Give the steps the recipe of each kind of a stage starts with, each step with an identifier of its own.
 
-        The recipe of text pages starts with the steps of the default profile of the book's owner when there is a usable
-        one, and otherwise with the steps of its template. A kind whose template the catalogue cannot build starts with
-        the steps of text pages, which a copy of a step keeps the identifier of.
+        The recipe of each kind starts with the steps of its built-in template. A kind whose template the catalogue
+        cannot build starts with the steps of text pages, which a copy of a step keeps the identifier of.
 
         :param stage: The stage.
         :type stage: Stage
-        :param default: The default profile of the owner of the book for the stage, or None.
-        :type default: RecipeProfile | None
-        :returns: The steps of each kind, and the profile the steps of text pages come from, or None.
-        :rtype: tuple[dict[RecipeKind, tuple[Step, ...]], RecipeProfile | None]
+        :returns: The steps of each kind.
+        :rtype: dict[RecipeKind, tuple[Step, ...]]
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
         templates = self._buildable(stage)
-        preferred = self._usable(stage, default)
-        if preferred is None and RecipeKind.TEXT not in templates:
+        if RecipeKind.TEXT not in templates:
             raise NotFoundError(NO_RECIPE.format(stage=stage.label))
-        profile, text_steps = (
-            (None, self._template_steps(templates[RecipeKind.TEXT])) if preferred is None else preferred
-        )
-        others = [kind for kind in RecipeKind if kind is not RecipeKind.TEXT]
+        text_steps = self._template_steps(templates[RecipeKind.TEXT])
         steps = {RecipeKind.TEXT: text_steps}
         steps.update(
-            (kind, self._template_steps(templates[kind]) if kind in templates else text_steps) for kind in others
+            (kind, self._template_steps(templates[kind]) if kind in templates else text_steps)
+            for kind in RecipeKind
+            if kind is not RecipeKind.TEXT
         )
-        return steps, profile
-
-    def _usable(self, stage: Stage, default: RecipeProfile | None) -> tuple[RecipeProfile, tuple[Step, ...]] | None:
-        """Take the default profile of the book's owner with its checked steps, if there is a usable one.
-
-        A step whose processor is not installed is left out. A profile that has no step left to run, or whose steps no
-        longer fit their processors, is passed over, so the stage starts with the built-in recipes as it does for an
-        account without a default profile.
-
-        :param stage: The stage.
-        :type stage: Stage
-        :param default: The default profile of the owner of the book for the stage, or None.
-        :type default: RecipeProfile | None
-        :returns: The profile and its steps as a recipe runs them, or None.
-        :rtype: tuple[RecipeProfile, tuple[Step, ...]] | None
-        """
-        if default is None:
-            return None
-        try:
-            steps = self.check(stage, self.installed(default.steps)[0], order=OrderMode.FREE)
-        except InvalidParametersError:
-            return None
-        return default, steps
+        return steps
 
     def _offers(self, key: str) -> bool:
         """Tell whether the catalogue has a processor.

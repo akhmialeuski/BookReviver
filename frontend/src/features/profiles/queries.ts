@@ -3,14 +3,12 @@ import type { Stage } from '@/api';
 import {
   applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostMutation,
   createProfileApiV1RecipeProfilesPostMutation,
-  deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteMutation,
   deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation,
   duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostMutation,
   exportProfileApiV1RecipeProfilesProfileIdExportGetOptions,
   importProfileApiV1RecipeProfilesImportPostMutation,
   listProfilesApiV1RecipeProfilesGetOptions,
   listProfilesApiV1RecipeProfilesGetQueryKey,
-  putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
   putProfileApiV1RecipeProfilesProfileIdPutMutation,
   putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutMutation,
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
@@ -19,12 +17,11 @@ import { invalidateAllRecipes } from '@/features/books/queries';
 
 /**
  * The queries and changes behind the recipe profiles of the account: the list of them, by stage or all, and the saving,
- * replacing, renaming, choosing as the default, copying, exporting, importing, deleting, applying to a book and linking a
- * recipe to one.
+ * replacing, renaming, copying, exporting, importing, deleting, applying to a book and linking a recipe to one.
  *
- * Every change of a profile reads the lists again, since a new default takes the mark off the one before it. Applying a
- * profile changes the recipes of one stage of one book and the number of books the profile has, so it reads the stage
- * and the list again, and the jobs too, since applying it to pages queues a run.
+ * Every change of a profile reads the lists again. Applying a profile changes the recipes of one stage of one book and
+ * the number of books the profile has, so it reads the stage and the list again, and the jobs too, since applying it to
+ * pages queues a run.
  */
 
 /** Profiles asked for per request; the route accepts at most this many. */
@@ -95,24 +92,6 @@ export function useDeleteProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     ...deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation(),
-    onSettled: () => refreshProfiles(queryClient),
-  });
-}
-
-/** Make a profile the default of its stage, which takes the mark off the one that was. */
-export function useSetDefaultProfile() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation(),
-    onSettled: () => refreshProfiles(queryClient),
-  });
-}
-
-/** Stop a profile being the default of its stage. */
-export function useUnsetDefaultProfile() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteMutation(),
     onSettled: () => refreshProfiles(queryClient),
   });
 }

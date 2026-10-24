@@ -8,22 +8,18 @@ import { ProfilesPage } from '@/features/profiles/ProfilesPage';
 
 /**
  * The profiles of the account in the settings, which are the library without a book: grouped by stage, with the steps
- * each holds, the mark on the default of a stage, and the buttons that choose or give up the default.
+ * each holds.
  */
 
 const sdk = vi.hoisted(() => ({
   list: vi.fn(),
   processors: vi.fn(),
-  choose: vi.fn(),
-  giveUp: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   listProfilesApiV1RecipeProfilesGet: sdk.list,
   listProcessorsApiV1ProcessorsGet: sdk.processors,
-  putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPut: sdk.choose,
-  deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDelete: sdk.giveUp,
 }));
 
 // In the order the server lists them: by stage of the pipeline, then oldest first
@@ -33,7 +29,7 @@ const PROFILES = [
     stage: 'page-split',
     steps: [step('split.none')],
   }),
-  profile('p1', { name: 'Clean flatbed scan', is_default: true }),
+  profile('p1', { name: 'Clean flatbed scan' }),
   profile('p2', { name: 'Photographed book' }),
 ];
 
@@ -78,8 +74,6 @@ describe('ProfilesPage', () => {
         pages: 1,
       },
     });
-    sdk.choose.mockResolvedValue({ data: profile('p2', { is_default: true }) });
-    sdk.giveUp.mockResolvedValue({ data: profile('p1') });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -127,40 +121,6 @@ describe('ProfilesPage', () => {
     expect(byId('profile-import')).toHaveLength(1);
     expect(byId('profile-apply-book')).toHaveLength(0);
     expect(byId('profile-apply-pages')).toHaveLength(0);
-  });
-
-  it('marks the default of a stage, and offers to make the others the default', async () => {
-    await render();
-
-    expect(byId('profile-default-badge')).toHaveLength(1);
-    expect(byId('profile-row')[1]?.dataset.default).toBe('true');
-    expect(byId('profile-unset-default')).toHaveLength(1);
-    expect(byId('profile-make-default')).toHaveLength(2);
-  });
-
-  it('makes a profile the default through the server and reads the list again', async () => {
-    await render();
-
-    await act(async () => {
-      byId('profile-make-default')[1]?.click();
-    });
-
-    expect(sdk.choose).toHaveBeenCalledWith(
-      expect.objectContaining({ path: { profile_id: 'p2' } }),
-    );
-    expect(sdk.list).toHaveBeenCalledTimes(2);
-  });
-
-  it('gives up the default through the server', async () => {
-    await render();
-
-    await act(async () => {
-      byId('profile-unset-default')[0]?.click();
-    });
-
-    expect(sdk.giveUp).toHaveBeenCalledWith(
-      expect.objectContaining({ path: { profile_id: 'p1' } }),
-    );
   });
 
   it('says so when the account has no profile yet', async () => {

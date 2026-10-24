@@ -885,7 +885,7 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
 
 
 class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
-    """The recipe profiles of the accounts; an account has at most one default profile for each stage.
+    """The recipe profiles of the accounts.
 
     Deleting an account removes its profiles. A recipe of a book may name the profile it was made from, but a book
     lives in a store of its own, so no key checks that name, and the service that deletes a profile empties it in the
@@ -902,18 +902,6 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         :type stage: Stage | None
         :returns: The profiles of the account.
         :rtype: Sequence[RecipeProfile]
-        """
-
-    @abstractmethod
-    def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
-        """Return the profile a new book of the account starts a stage with.
-
-        :param account_id: Account owning the profile.
-        :type account_id: AccountId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The default profile of the stage, or None when the account has not chosen one.
-        :rtype: RecipeProfile | None
         """
 
 

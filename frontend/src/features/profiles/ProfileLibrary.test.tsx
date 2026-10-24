@@ -52,7 +52,6 @@ const PROFILES = [
   profile('p3', { name: 'Plain split', stage: 'page-split', steps: [step('split.none')] }),
   profile('p1', {
     name: 'Clean flatbed scan',
-    is_default: true,
     books: 7,
     steps: [step('geometry.deskew'), step('geometry.crop')],
   }),
@@ -196,13 +195,11 @@ describe('ProfileLibrary', () => {
       ]);
     });
 
-    it('shows the books that use a profile and marks the default', async () => {
+    it('shows the books that use a profile', async () => {
       await render();
 
       expect(inCard('Clean flatbed scan', 'profile-books')?.textContent).toBe('Used in 7 books');
       expect(inCard('Old book with plates', 'profile-books')?.textContent).toBe('Used in 1 book');
-      expect(inCard('Clean flatbed scan', 'profile-default-badge')).not.toBeNull();
-      expect(inCard('Old book with plates', 'profile-default-badge')).toBeNull();
     });
 
     it('names the steps by their titles, with the ones that are off', async () => {

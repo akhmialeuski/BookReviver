@@ -7,12 +7,9 @@ import {
   useApplyProfile,
   useDuplicateProfile,
   useExportProfile,
-  useSetDefaultProfile,
-  useUnsetDefaultProfile,
 } from '@/features/profiles/queries';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
@@ -20,7 +17,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * One profile of the library: its name, the books that use it, the steps it holds, and what can be done with it.
  *
  * Inside a book the profile is applied to the recipe of one kind of page, which the library lets the reader choose. The
- * rest works without a book: copying the profile, saving it to a file, choosing it as the default of its stage, renaming
+ * rest works without a book: copying the profile, saving it to a file, renaming
  * and deleting it. What an action did is written under the card, with the steps that had to be left out.
  */
 
@@ -122,17 +119,14 @@ export function ProfileCard({
 }): React.JSX.Element {
   const duplicate = useDuplicateProfile();
   const exporter = useExportProfile();
-  const choose = useSetDefaultProfile();
-  const giveUp = useUnsetDefaultProfile();
   const [notice, setNotice] = useState<CardNotice | null>(null);
-  const error = duplicate.error ?? exporter.error ?? choose.error ?? giveUp.error;
+  const error = duplicate.error ?? exporter.error;
 
   return (
     <li
       className="grid gap-2 rounded-lg border bg-card p-3 text-card-foreground"
       data-testid="profile-row"
       data-name={profile.name}
-      data-default={profile.is_default}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-2">
         <h3 className="min-w-0 truncate font-medium" data-testid="profile-name">
@@ -140,18 +134,6 @@ export function ProfileCard({
         </h3>
         <p className="text-xs text-muted-foreground">
           <span data-testid="profile-books">{labels.usedIn(profile.books)}</span>
-          {profile.is_default ? (
-            <>
-              {' · '}
-              <Badge
-                variant="secondary"
-                title={page.defaultBadge}
-                data-testid="profile-default-badge"
-              >
-                {labels.defaultMark}
-              </Badge>
-            </>
-          ) : null}
         </p>
       </div>
       <p className="text-sm text-muted-foreground" data-testid="profile-steps">
@@ -195,29 +177,6 @@ export function ProfileCard({
         </Button>
       </div>
       <div className="flex flex-wrap gap-1">
-        {profile.is_default ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            title={page.unsetDefaultHint}
-            disabled={giveUp.isPending}
-            data-testid="profile-unset-default"
-            onClick={() => giveUp.mutate({ path: { profile_id: profile.id } })}
-          >
-            {page.unsetDefault}
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            title={page.makeDefaultHint}
-            disabled={choose.isPending}
-            data-testid="profile-make-default"
-            onClick={() => choose.mutate({ path: { profile_id: profile.id } })}
-          >
-            {page.makeDefault}
-          </Button>
-        )}
         <RenameProfileDialog profile={profile}>
           <Button variant="ghost" size="sm" data-testid="profile-rename">
             {page.rename}

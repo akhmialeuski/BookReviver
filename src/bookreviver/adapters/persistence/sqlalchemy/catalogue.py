@@ -15,7 +15,7 @@ from typing import Any, Final
 from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from sqlalchemy import JSON, ForeignKey, Index, text
+from sqlalchemy import JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
@@ -26,8 +26,6 @@ LIBRARY_TABLE: Final = 'library'
 # The column of the library that names the book, its key
 BOOK_ID_COLUMN: Final = 'project_id'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
-# The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
-DEFAULT_PROFILE: Final = text('is_default')
 
 
 class LibraryRow(DefaultBase):
@@ -48,7 +46,7 @@ class LibraryRow(DefaultBase):
 
 
 class RecipeProfileRow(DefaultBase):
-    """Row of one recipe profile of an account, of which at most one per stage is the default.
+    """Row of one recipe profile of an account.
 
     The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. No column of the
     profile refers to a book. A recipe of a book may name the profile it was made from, which lives in another file, so
@@ -61,16 +59,11 @@ class RecipeProfileRow(DefaultBase):
     :ivar name: Name the user sees.
     :ivar steps: The steps in order, as JSON.
     :ivar order: Whether the steps were saved in the usual order or the free one, stored by value.
-    :ivar is_default: Whether a new book of the account starts the stage with this profile.
     :ivar created_at: Time the profile was saved.
     :ivar updated_at: Time the profile last changed.
     """
 
     __tablename__ = RECIPE_PROFILES_TABLE
-    # The database keeps two requests that both choose the default profile of a stage from both succeeding
-    __table_args__ = (
-        Index('ix_recipe_profiles_one_default', 'account_id', 'stage', unique=True, sqlite_where=DEFAULT_PROFILE),
-    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     account_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=CASCADE), index=True)
@@ -78,6 +71,5 @@ class RecipeProfileRow(DefaultBase):
     name: Mapped[str]
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     order: Mapped[OrderMode] = mapped_column(enum_by_value(OrderMode), server_default=OrderMode.USUAL.value)
-    is_default: Mapped[bool]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]

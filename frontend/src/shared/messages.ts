@@ -688,7 +688,7 @@ export const MESSAGES = {
 
         reset: {
           open: 'Reset to the default steps',
-          hint: 'Put back the steps of your default profile for this stage, or the built-in steps when you have none',
+          hint: 'Put back the built-in steps of this stage',
           title: 'Reset to the default steps?',
           body: (pages: number) =>
             `The steps of this recipe are replaced by the default ones, and the settings and hand edits that pages kept for the old steps no longer belong to any step. ${
@@ -1225,7 +1225,6 @@ export const MESSAGES = {
       loadFailed: 'The profiles could not be read.',
       usedIn: (books: number) =>
         books === 0 ? 'Used in no book' : `Used in ${books} ${pluralize(books, 'book', 'books')}`,
-      defaultMark: 'default',
       steps: {
         label: 'Steps',
         titleOff: (title: string) => `${title} (off)`,
@@ -1263,14 +1262,8 @@ export const MESSAGES = {
     },
     page: {
       title: 'Recipe profiles',
-      description:
-        'The recipes you saved from your books, by stage. A new book starts a stage with the default profile of the stage instead of the built-in recipe.',
+      description: 'The recipes you saved from your books, by stage.',
       loading: 'Loading the profiles…',
-      defaultBadge: 'Default for new books',
-      makeDefault: 'Make default',
-      makeDefaultHint: 'A new book starts this stage with this profile',
-      unsetDefault: 'Stop being the default',
-      unsetDefaultHint: 'A new book starts this stage with the built-in recipe again',
       rename: 'Rename',
       renameTitle: 'Rename the profile',
       renameLabel: 'New name',
