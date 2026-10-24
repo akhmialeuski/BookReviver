@@ -27,7 +27,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import TYPE_CHECKING, Final
-from uuid import UUID
 
 import anyio
 from alembic.script import ScriptDirectory
@@ -36,12 +35,12 @@ from attrs import define, field
 
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SchemaRevisions, SqlDatabase
 from bookreviver.domain.errors import BookTooNewError, ConflictError, NotFoundError
-from bookreviver.domain.ids import BookId
 from bookreviver.domain.keys import BookKeys, KeySegment
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.tracing import Tracer
 
 # The files SQLite keeps beside a database in the write-ahead log, removed with it
@@ -174,14 +173,6 @@ class BookRegistry:
         finally:
             self._removing.discard(book_id)
 
-    async def stored(self) -> list[BookId]:
-        """Return every book that has a database under the storage root.
-
-        :returns: The identifiers of the books, in order.
-        :rtype: list[BookId]
-        """
-        return await to_thread.run_sync(self._stored)
-
     async def close_idle(self) -> None:
         """Close every open book that no unit of work has used for the idle limit."""
         since = monotonic() - self._idle_seconds
@@ -289,25 +280,6 @@ class BookRegistry:
                     await database.dispose()
                 self._blank = blank
             return self._blank
-
-    def _stored(self) -> list[BookId]:
-        """List the books that have a database, in a worker thread.
-
-        Every directory under ``projects`` is named by the identifier of its book, which is how the stores make them.
-
-        :returns: The identifiers of the books, in order.
-        :rtype: list[BookId]
-        """
-        books = self._root / KeySegment.BOOKS
-        if not books.is_dir():
-            return []
-        found: list[BookId] = []
-        for directory in books.iterdir():
-            with suppress(ValueError):
-                book_id = BookId(UUID(directory.name))
-                if self.path(book_id).is_file():
-                    found.append(book_id)
-        return sorted(found)
 
 
 def _shipped_revisions() -> tuple[tuple[str, ...], frozenset[str]]:

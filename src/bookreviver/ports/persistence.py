@@ -1036,14 +1036,6 @@ class UnitOfWork(ABC):
         :raises InvalidArchiveError: If the store does not hold exactly one record of a book.
         """
 
-    @abstractmethod
-    async def stored_books(self) -> Collection[BookId]:
-        """Return the books that have a store, whether the library lists them or not.
-
-        :returns: The identifiers of the stored books.
-        :rtype: Collection[BookId]
-        """
-
 
 class BookDatabase(ABC):
     """Runs the work of a use case on the repositories of one transaction of one book, one transaction for each call.

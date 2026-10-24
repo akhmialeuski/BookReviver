@@ -8,12 +8,9 @@ it receives, and a caller outside a transaction wraps the call in ``Book.read``.
 identifier with its database, which the jobs use, and ``book`` does the same for a library entry that is already read,
 which the access dependencies of the API use. Neither checks an owner.
 
-A book is deleted files first, then its store, and the library entry last. Every use case of the book needs the entry,
-a repeated deletion included, so an entry deleted first would leave the files of a failed deletion out of every
-request's reach for good. A deletion that fails part-way keeps the entry, and repeating it removes what is left. Until
-then the book may lack some of its files, which only a deletion the owner asked for can cause. The files go outside any
-transaction. A start pass, ``sweep``, finishes a deletion or a creation that was broken off half way and is not
-repeated by anyone: a store without an entry, or an entry without a store.
+A book is deleted entry first, then its files and its store. Once the entry is gone no request can open the book,
+so a deletion broken off half way leaves a directory nobody lists, which only takes room on the disk. The use case that
+holds the book can repeat the deletion and remove what is left. The files go outside any transaction.
 """
 
 from contextlib import asynccontextmanager
@@ -182,7 +179,7 @@ class BooksService:
 
         The archive is unpacked database first, then the database is brought to this release and the record of its book
         renamed, and the entry of the library comes last, as for a book created here. A failure removes what was
-        unpacked, and an import broken off is a store without an entry, which the start pass removes.
+        unpacked, and an import broken off is a store without an entry, which nobody lists.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
@@ -214,31 +211,23 @@ class BooksService:
         await self._stores.assets(book_id).delete_all()
         await self._uow.delete_book(book_id)
 
-    async def _forget(self, book_id: BookId) -> None:
-        """Delete the entry of a book from the library.
-
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
-        """
-        await self._uow.change(lambda repos: repos.library.delete(book_id))
-
     async def delete(self, book: Book) -> None:
-        """Delete the book's source files and derived files, then its store, then its entry in the library.
+        """Delete the book's entry in the library, then its source files and derived files, then its store.
 
-        The files go outside any transaction, so a slow store holds no lock of the book. A failure at any step leaves
-        the entry in place, and calling this again finishes the deletion.
+        The entry goes first, so a request that comes later finds no book. The files go outside any transaction, so a
+        slow store holds no lock of the book. A failure after the entry leaves files nobody lists, and calling this
+        again with the same book removes them.
 
         :param book: The open book.
         :type book: Book
         """
+        await self._uow.change(lambda repos: repos.library.delete(book.id))
         await self._erase(book.id)
-        # The entry goes last: only an existing entry lets a repeated call reach what a failed call left behind
-        await self._forget(book.id)
 
     async def delete_all(self, books: Iterable[Book]) -> None:
         """Delete the books with all their files, as the deletion of the account that owns them needs.
 
-        Each book is deleted in transactions of its own, files first, so a failure keeps the books not yet deleted,
+        Each book is deleted in transactions of its own, entry first, so a failure keeps the books not yet deleted,
         and calling this again with the books that are left deletes them.
 
         :param books: The books to delete.
@@ -246,18 +235,3 @@ class BooksService:
         """
         for book in books:
             await self.delete(book)
-
-    async def sweep(self) -> None:
-        """Finish the creations and deletions of books that were broken off half way, which is a pass of the start.
-
-        A creation stores the book before its entry, and a deletion removes the entry after the book, so a store
-        without an entry is a creation that stopped and an entry without a store is a deletion that stopped. No one can
-        open the book of either, so its files and what is left of it go.
-        """
-        stored = set(await self._uow.stored_books())
-        entries = {book.id for book in await self.listed()}
-        for book_id in sorted(stored - entries):
-            await self._erase(book_id)
-        for book_id in sorted(entries - stored):
-            await self._erase(book_id)
-            await self._forget(book_id)

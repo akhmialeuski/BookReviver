@@ -37,8 +37,6 @@ ALWAYS_IDLE_SECONDS: float = 0.0
 # A revision the code does not ship, standing for a book saved by a newer release
 NEWER_REVISION: str = 'ffffffffffff'
 VERSION_TABLE: str = 'alembic_versions'
-# A directory under the ``projects`` directory of the storage that no store makes, which is not a book
-NOT_A_BOOK: str = 'not-a-book'
 
 
 def _new_book() -> BookId:
@@ -271,36 +269,6 @@ class TestRemove:
         expect(not path.exists())
         expect(kept.is_dir())
         assert_expectations()
-
-
-class TestStored:
-    """Tests for the listing of the books that have a database."""
-
-    async def test_lists_the_directories_of_books_with_a_database_and_nothing_else(
-        self, fx_books: BookRegistry, fx_settings: Settings
-    ) -> None:
-        """Verify a directory without a database, and one not named by a book, are not books.
-
-        :param fx_books: Registry of the books of the test.
-        :type fx_books: BookRegistry
-        :param fx_settings: Settings naming the storage root.
-        :type fx_settings: Settings
-        """
-        made = sorted([_new_book(), _new_book()])
-        for book_id in made:
-            await fx_books.create(book_id)
-        books_root = fx_settings.storage_root / KeySegment.BOOKS
-        (books_root / str(_new_book())).mkdir()
-        (books_root / NOT_A_BOOK).mkdir()
-        assert await fx_books.stored() == made
-
-    async def test_a_storage_root_with_no_book_lists_none(self, fx_books: BookRegistry) -> None:
-        """Verify a storage root that no book has been made under yet lists no book.
-
-        :param fx_books: Registry of the books of the test.
-        :type fx_books: BookRegistry
-        """
-        assert await fx_books.stored() == []
 
 
 class TestCloseIdle:

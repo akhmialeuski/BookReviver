@@ -37,7 +37,7 @@ from bookreviver.domain.errors import InvalidArchiveError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, UnitOfWork
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection
+    from collections.abc import Callable
 
     from sqlalchemy.orm import Session
 
@@ -110,7 +110,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     async def create_book(self, book_record: BookRecord) -> BookRecord:
         """Make the file of a new book and store the record of the book in it.
 
-        A failure after the file was made leaves a file the library does not list, which the start removes.
+        A failure after the file was made leaves a file the library does not list.
 
         :param book_record: The record of the new book.
         :type book_record: BookRecord
@@ -158,15 +158,6 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
                 )
         except DatabaseError as error:
             raise InvalidArchiveError(NOT_A_DATABASE) from error
-
-    @override
-    async def stored_books(self) -> Collection[BookId]:
-        """Return the books that have a file under the storage root.
-
-        :returns: The identifiers of the stored books.
-        :rtype: Collection[BookId]
-        """
-        return await self._books.stored()
 
     async def read_session[T](self, work: Callable[[Session], T]) -> T:
         """Run ``work`` over a session of the catalogue that only reads, which is not part of the port.

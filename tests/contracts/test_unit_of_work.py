@@ -3,10 +3,10 @@
 A change of the catalogue by the unit of work and a change of a book by its database run their work on one transaction
 of one store, commit it when the work returns, roll it back when the work raises, and wait for any other change of the
 same store: the same book, or the catalogue. A change of one book never waits for a change of another book or of the
-catalogue. A read of either runs its work on one committed state and refuses every write. ``create_book``,
-``delete_book`` and ``stored_books`` make, remove and list the books. Concurrency is real: tasks of an ``anyio`` task
-group, ordered by a held store, by events and by ``anyio.wait_all_tasks_blocked`` and never by a sleep. The contract of
-the book database alone is in ``test_book_database.py``.
+catalogue. A read of either runs its work on one committed state and refuses every write. ``create_book`` and
+``delete_book`` make and remove the books. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held
+store, by events and by ``anyio.wait_all_tasks_blocked`` and never by a sleep. The contract of the book database alone
+is in ``test_book_database.py``.
 """
 
 from datetime import timedelta
@@ -558,7 +558,7 @@ class TestChangeEnd:
 
 
 class TestBookLifecycle:
-    """Contract of create_book, delete_book and stored_books, which make, remove and list the books."""
+    """Contract of create_book and delete_book, which make and remove the books."""
 
     async def test_create_book_stores_the_book_and_returns_it(
         self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
@@ -628,11 +628,15 @@ class TestBookLifecycle:
         remaining = await fx_databases().open(kept.id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
         assert remaining.total == 1
 
-    async def test_deleting_a_book_again_or_one_never_stored_does_nothing(self, fx_uow: UnitOfWorkFactory) -> None:
+    async def test_deleting_a_book_again_or_one_never_stored_does_nothing(
+        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
         """Verify a deletion broken off half way can run again, and a book that does not exist is left as it is.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         await fx_uow().create_book(book_record)
@@ -641,7 +645,8 @@ class TestBookLifecycle:
         await fx_uow().delete_book(book_record.id)
         await fx_uow().delete_book(make_record().id)
 
-        assert list(await fx_uow().stored_books()) == []
+        with pytest.raises(NotFoundError, match=str(book_record.id)):
+            await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
 
     async def test_a_deleted_book_can_be_created_again(
         self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
@@ -662,19 +667,6 @@ class TestBookLifecycle:
 
         pages = await fx_databases().open(book_record.id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
         assert pages.total == 0
-
-    async def test_stored_books_lists_the_books_that_have_a_store(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Verify the stored books are those created and not deleted, whether the library lists them or not.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        """
-        first, second, third = make_record(), make_record(), make_record()
-        before = list(await fx_uow().stored_books())
-        for book_record in (first, second, third):
-            await fx_uow().create_book(book_record)
-        await fx_uow().delete_book(second.id)
-        assert (before, set(await fx_uow().stored_books())) == ([], {first.id, third.id})
 
 
 class TestRead:

@@ -388,7 +388,7 @@ class TestOpenAsset:
 class TestDelete:
     """Tests for BooksService.delete()."""
 
-    async def test_removes_the_book_then_all_its_files(
+    async def test_removes_the_entry_then_the_book_with_all_its_files(
         self,
         fx_service: Callable[[], BooksService],
         fx_uow: UnitOfWorkFactory,
@@ -396,7 +396,7 @@ class TestDelete:
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
-        """Verify the row, its pages, its source and its derived files go, and a neighbour's files stay.
+        """Verify the entry, the book with its pages, its source and its derived files go, and a neighbour's files stay.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -419,12 +419,11 @@ class TestDelete:
 
         remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
         expect([entry.book_id for entry in remaining.items] == [kept.id])
-        expect(doomed.id not in await fx_uow().stored_books())
         expect(fx_files.gone(doomed.id))
         expect(fx_files.kept(kept_page))
         assert_expectations()
 
-    async def test_failed_deletion_can_be_repeated_until_nothing_is_left(
+    async def test_a_failed_deletion_has_removed_the_entry_and_leaves_the_book_unlisted(
         self,
         fx_flaky_service: Callable[[], BooksService],
         fx_uow: UnitOfWorkFactory,
@@ -432,7 +431,7 @@ class TestDelete:
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
-        """Verify a deletion stopped by a storage failure keeps the book, and repeating it removes everything.
+        """Verify a deletion stopped by a storage failure has taken the book out of the library before its files.
 
         :param fx_flaky_service: Function building the service over a source store whose first deletion fails.
         :type fx_flaky_service: Callable[[], BooksService]
@@ -453,13 +452,10 @@ class TestDelete:
         with pytest.raises(StoreFailedError):
             await fx_flaky_service().delete(fx_open_book(fx_actor, book_record.id))
 
+        expect(await fx_uow().read(lambda repos: repos.library.list_all()) == [])
         expect(await _stored(book_record, databases=fx_open_book.databases) == book_record)
+        expect(fx_files.kept(page))
         assert_expectations()
-        await fx_flaky_service().delete(fx_open_book(fx_actor, book_record.id))
-
-        with pytest.raises(NotFoundError):
-            await _stored(book_record, databases=fx_open_book.databases)
-        assert fx_files.gone(book_record.id)
 
 
 class TestDeleteAll:
@@ -650,7 +646,11 @@ class TestExportAndImport:
             assert path.read_bytes() == MASK_CONTENT
 
     async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_storage_root: Path,
     ) -> None:
         """Verify an archive whose database holds no book is refused and its unpacked files are removed.
 
@@ -660,6 +660,8 @@ class TestExportAndImport:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_storage_root: Storage root the archive is unpacked under.
+        :type fx_storage_root: Path
         """
         written = io.BytesIO()
         with zipfile.ZipFile(written, mode='w') as archive:
@@ -669,81 +671,8 @@ class TestExportAndImport:
         with pytest.raises(DomainError):
             await fx_service().import_archive(fx_actor, written)
 
-        expect(await fx_uow().stored_books() == [])
+        expect(list((fx_storage_root / KeySegment.BOOKS).glob('*')) == [])
         expect((await _listed(fx_service(), fx_uow(), fx_actor)).total == 0)
-        assert_expectations()
-
-
-class TestSweep:
-    """Tests for BooksService.sweep(), which finishes the creations and deletions that were broken off half way."""
-
-    async def test_a_book_stored_without_an_entry_goes_with_its_files(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
-        fx_files: BookFiles,
-        fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify a creation that stored the book and never listed it is undone, and a listed book stays.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_files: Files of imported books in the stores the service deletes from.
-        :type fx_files: BookFiles
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        broken, whole = make_record(), make_record()
-        broken_page, whole_page = make_page(), make_page()
-        await fx_uow().create_book(broken)
-        await store_book(fx_uow(), whole, whole_page, owner=fx_actor.account_id, databases=fx_databases())
-        for book_record, page in ((broken, broken_page), (whole, whole_page)):
-            await fx_files.store(book_record.id, page)
-
-        await fx_service().sweep()
-
-        expect(set(await fx_uow().stored_books()) == {whole.id})
-        expect(fx_files.gone(broken.id))
-        expect(fx_files.kept(whole_page))
-        assert_expectations()
-
-    async def test_an_entry_without_a_book_goes_with_the_files_that_are_left(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
-        fx_files: BookFiles,
-        fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify a deletion that removed the book and never removed its entry is finished.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_files: Files of imported books in the stores the service deletes from.
-        :type fx_files: BookFiles
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_record = make_record()
-        page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
-        await fx_files.store(book_record.id, page)
-        await fx_uow().delete_book(book_record.id)
-
-        await fx_service().sweep()
-
-        entries = await fx_uow().read(lambda repos: repos.library.list_all())
-        expect(entries == [])
-        expect(fx_files.gone(book_record.id))
         assert_expectations()
 
 

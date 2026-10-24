@@ -25,7 +25,6 @@ from bookreviver.domain.errors import DomainError
 from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.storage import BookFileStores
 from bookreviver.ports.tracing import Tracer
-from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
 
@@ -49,12 +48,11 @@ async def prepare_start(container: AsyncContainer) -> None:
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
     left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
-    it any more, and its sources that were stored stay. A creation or a deletion of a book that was broken off half way
-    is finished, so the catalogue and the stores of the books list the same books before any other pass reads them. The
-    stages whose result a replaced version of a processor made are marked stale, so the workspace never shows them as up
-    to date, and the blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the
-    book writes. The three passes run in a request scope of their own, as a job does, and the last two go over the books
-    the library lists and write one book at a time, in a ``Book.change`` of that book.
+    it any more, and its sources that were stored stay. The stages whose result a replaced version of a processor made
+    are marked stale, so the workspace never shows them as up to date, and the blank leaves among them are given a
+    pending version, which the next ``prepare-pages`` job of the book writes. The two passes run in a request scope of
+    their own, as a job does, go over the books the library lists and write one book at a time, in a ``Book.change`` of
+    that book.
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer
@@ -64,7 +62,6 @@ async def prepare_start(container: AsyncContainer) -> None:
     await container.get(StepExecutor)
     await (await container.get(BookFileStores)).discard_all_staged()
     async with container() as request:
-        await (await request.get(BooksService)).sweep()
         await (await request.get(OutdatedResults)).mark_stale()
         await (await request.get(PageService)).remake_outdated_leaves()
 
