@@ -298,7 +298,7 @@ class TestSqliteTransactions:
             await uow.change(lambda repos: repos.library.add(entry))
         assert await uow.read(lambda repos: repos.library.get(entry.book_id)) == entry
 
-    async def test_change_book_hands_the_work_the_book_as_the_last_change_committed_it(
+    async def test_book_change_hands_the_work_the_book_as_the_last_change_committed_it(
         self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a ``Book.change`` reads the book's record at its start, so it sees the title another change stored.

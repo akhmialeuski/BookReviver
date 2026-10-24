@@ -223,7 +223,7 @@ class ChangeKind(NamedTuple):
 
 type Run[T] = Callable[[Stores, Book, Callable[[Any], T]], Coroutine[Any, Any, T]]
 
-KINDS: dict[str, ChangeKind] = {'change_book': ChangeKind(of_book=True), 'change': ChangeKind(of_book=False)}
+KINDS: dict[str, ChangeKind] = {'book': ChangeKind(of_book=True), 'catalogue': ChangeKind(of_book=False)}
 KIND_PARAMS: list[ChangeKind] = list(KINDS.values())
 KIND_IDS: list[str] = list(KINDS)
 
@@ -275,7 +275,7 @@ class WriteCase(NamedTuple):
 # Each repository of the port with each write method it has, which the port's own declaration lists
 WRITE_PARAMS: list[Any] = [
     pytest.param(WriteCase(repository, method, kind), id=f'{repository}.{method}')
-    for kind, repositories in ((KINDS['change_book'], BookRepositories), (KINDS['change'], CatalogueRepositories))
+    for kind, repositories in ((KINDS['book'], BookRepositories), (KINDS['catalogue'], CatalogueRepositories))
     for repository, repository_type in repositories.__annotations__.items()
     for method in WRITE_METHODS
     if hasattr(repository_type, method)

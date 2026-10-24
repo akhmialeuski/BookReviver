@@ -140,7 +140,7 @@ def _book_path(book_id: object) -> str:
     return f'{BOOKS_PATH}/{book_id}'
 
 
-async def _read_book(client: httpx.AsyncClient, book_id: object) -> BookSchema:
+async def _get_book(client: httpx.AsyncClient, book_id: object) -> BookSchema:
     """Read one book through the API.
 
     :param client: Client of the running application.
@@ -447,7 +447,7 @@ class TestUpdateBook:
         updated = BookSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_200_OK)
         expect((updated.details.title, updated.details.publisher) == (TITLE, 'Press'))
-        expect((await _read_book(fx_client, book_record.id)).details == updated.details)
+        expect((await _get_book(fx_client, book_record.id)).details == updated.details)
         assert_expectations()
 
     async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
@@ -619,7 +619,7 @@ class TestUpdateBook:
 
         chosen = await fx_client.patch(_book_path(book_record.id), json={COVER_FIELD: str(title.id)})
 
-        expect((await _read_book(fx_client, book_record.id)).cover_page_id == cover.id)
+        expect((await _get_book(fx_client, book_record.id)).cover_page_id == cover.id)
         expect(chosen.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         assert_expectations()
 
@@ -653,7 +653,7 @@ class TestUpdateBook:
         expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(case.field in response.text)
-        expect((await _read_book(fx_client, book_record.id)).details.title == TITLE)
+        expect((await _get_book(fx_client, book_record.id)).details.title == TITLE)
         assert_expectations()
 
     async def test_another_accounts_book_is_not_found(

@@ -41,7 +41,6 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
-from tests.helpers.fakes_jobs import RecordingEventBus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Collection, Sequence
@@ -277,7 +276,7 @@ class TestSplit:
         :type fx_databases: BookDatabasesFactory
         """
         report = await SharedDatabaseSplit(fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books).run()
-        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books, publisher=RecordingEventBus())
+        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books)
         entries = await uow.read(lambda repos: repos.library.list_for_owner(fx_shared.owner_id, SliceRequest()))
         profiles = await uow.read(lambda repos: repos.recipe_profiles.list_for_account(fx_shared.owner_id))
         first = (

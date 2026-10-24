@@ -242,9 +242,7 @@ def fx_traced_uow(fx_traced_database: SqlDatabase, fx_traced_books: BookRegistry
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(
-            fx_traced_database, fx_traced_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds
-        )
+        return SqlAlchemyUnitOfWork(fx_traced_database, fx_traced_books, wait_seconds=wait_seconds)
 
     return open_unit_of_work
 
@@ -269,9 +267,7 @@ def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookRe
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(
-            fx_traced_database, fx_impatient_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds
-        )
+        return SqlAlchemyUnitOfWork(fx_traced_database, fx_impatient_books, wait_seconds=wait_seconds)
 
     return open_unit_of_work
 

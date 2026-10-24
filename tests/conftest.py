@@ -194,9 +194,7 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
 
 
 @pytest.fixture
-def fx_uow(
-    fx_database: SqlDatabase, fx_books: BookRegistry, fx_settings: Settings, fx_book_changes: RecordingEventBus
-) -> UnitOfWorkFactory:
+def fx_uow(fx_database: SqlDatabase, fx_books: BookRegistry, fx_settings: Settings) -> UnitOfWorkFactory:
     """Return a function opening a new unit of work over the catalogue and the books of the test, as a request would get.
 
     :param fx_database: Catalogue of the test.
@@ -205,8 +203,6 @@ def fx_uow(
     :type fx_books: BookRegistry
     :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
     :type fx_settings: Settings
-    :param fx_book_changes: Where the units of work announce the committed changes of the books.
-    :type fx_book_changes: RecordingEventBus
     :returns: Function opening a unit of work over ``fx_database`` and ``fx_books``.
     :rtype: UnitOfWorkFactory
     """
@@ -220,7 +216,7 @@ def fx_uow(
         :rtype: UnitOfWork
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyUnitOfWork(fx_database, fx_books, publisher=fx_book_changes, wait_seconds=seconds)
+        return SqlAlchemyUnitOfWork(fx_database, fx_books, wait_seconds=seconds)
 
     return open_unit_of_work
 

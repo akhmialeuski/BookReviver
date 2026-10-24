@@ -13,11 +13,12 @@ to one database, which runs it in a thread of its own on a session of a transact
   ``BEGIN IMMEDIATE`` to the commit that follows the work. When the work raises, the transaction is rolled back and the
   exception goes on.
 
-The four calls of a book, ``read_book``, ``change_book``, ``book_version`` and ``snapshot_book``, hand over to the
-:class:`~bookreviver.adapters.persistence.sqlalchemy.book_database.SqlAlchemyBookDatabase` of the book, which says how
-a book is read, changed, versioned and copied. The accounts of fastapi-users are tables of the catalogue but not part
-of the port, so ``read_session`` and ``change_session`` run a function over a session of the catalogue itself, in the
-same threads and with the same transactions, for the account database.
+The transactions of one book are those of its
+:class:`~bookreviver.adapters.persistence.sqlalchemy.book_database.SqlAlchemyBookDatabase`, which says how a book is
+read, changed, versioned and copied; the unit of work only makes, removes and adopts the files of the books. The
+accounts of fastapi-users are tables of the catalogue but not part of the port, so ``read_session`` and
+``change_session`` run a function over a session of the catalogue itself, in the same threads and with the same
+transactions, for the account database.
 """
 
 from functools import partial
@@ -26,7 +27,6 @@ from typing import TYPE_CHECKING, override
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import DatabaseError
 
-from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookRepositories,
     SqlAlchemyCatalogueRepositories,
@@ -45,8 +45,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories
-    from bookreviver.ports.runtime import EventPublisher
+    from bookreviver.ports.persistence import CatalogueRepositories
 
 
 NOT_ONE_RECORD: str = 'The database of the archive does not hold exactly one book.'
@@ -54,11 +53,10 @@ NOT_A_DATABASE: str = 'The database of the archive is not a database of a book.'
 
 
 class SqlAlchemyUnitOfWork(UnitOfWork):
-    """Runs the work of a use case on the repositories of one transaction of the catalogue or of a book.
+    """Runs the work of a use case on the repositories of one transaction of the catalogue, and makes the books.
 
     :ivar _catalogue: The database of the catalogue.
     :ivar _books: The registry of the databases of the books.
-    :ivar _databases: Opens the database of a book, which runs the transactions of that book.
     :ivar _wait_seconds: How long a change waits for the writer of its file before it gives up with ``BookBusyError``.
     """
 
@@ -67,17 +65,14 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         catalogue: SqlDatabase,
         books: BookRegistry,
         *,
-        publisher: EventPublisher,
         wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS,
     ) -> None:
-        """Run the transactions of the catalogue and of the books with the given wait limit for a writer.
+        """Run the transactions of the catalogue and the lifecycle of the books with the given wait limit for a writer.
 
         :param catalogue: The database of the catalogue, shared by every unit of work.
         :type catalogue: SqlDatabase
         :param books: The registry of the databases of the books, shared by every unit of work.
         :type books: BookRegistry
-        :param publisher: Where a committed change of a book is announced.
-        :type publisher: EventPublisher
         :param wait_seconds: How long a change waits for the writer of its file before it gives up with
                              ``BookBusyError``; :mod:`bookreviver.adapters.persistence.sqlalchemy.database` says what it
                              covers.
@@ -85,7 +80,6 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         """
         self._catalogue = catalogue
         self._books = books
-        self._databases = SqlAlchemyBookDatabases(books, publisher=publisher, wait_seconds=wait_seconds)
         self._wait_seconds = wait_seconds
 
     @override
@@ -111,38 +105,6 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If the writer or SQLite's write lock was not free within the wait limit.
         """
         return await self.change_session(lambda session: work(SqlAlchemyCatalogueRepositories(session)))
-
-    @override
-    async def read_book[T](self, book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
-        """Run ``work`` on a transaction of the book that only reads, in a thread of the book.
-
-        :param book_id: Identifier of the book to read.
-        :type book_id: BookId
-        :param work: Function over the repositories of the transaction.
-        :type work: Callable[[BookRepositories], T]
-        :returns: What the work returns.
-        :rtype: T
-        :raises NotFoundError: If the book is not stored.
-        :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
-        :raises NoChangeOpenError: If the work writes.
-        """
-        return await self._databases.open(book_id).read(work)
-
-    @override
-    async def change_book[T](self, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]) -> T:
-        """Run ``work`` on a transaction of the book that writes, with its record as the previous change committed it.
-
-        :param book_id: Identifier of the book to change.
-        :type book_id: BookId
-        :param work: Function over the repositories of the transaction and the record of the book read at its start.
-        :type work: Callable[[BookRepositories, BookRecord], T]
-        :returns: What the work returns.
-        :rtype: T
-        :raises NotFoundError: If the book is not stored.
-        :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
-        :raises BookBusyError: If the writer of the book or SQLite's write lock was not free within the wait limit.
-        """
-        return await self._databases.open(book_id).change(work)
 
     @override
     async def create_book(self, book_record: BookRecord) -> BookRecord:
@@ -173,32 +135,6 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :type book_id: BookId
         """
         await self._books.remove(book_id)
-
-    @override
-    async def book_version(self, book_id: BookId) -> int:
-        """Read the version of a book in one transaction of a reader of the book.
-
-        :param book_id: The book.
-        :type book_id: BookId
-        :returns: The version of the book.
-        :rtype: int
-        :raises NotFoundError: If the book is not stored.
-        :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
-        """
-        return await self._databases.open(book_id).version()
-
-    @override
-    async def snapshot_book(self, book_id: BookId) -> bytes:
-        """Copy the database of a book through SQLite's backup, in one transaction of a reader of the book.
-
-        :param book_id: Identifier of the book to copy.
-        :type book_id: BookId
-        :returns: The database file as SQLite writes it, of the state committed when the copy began.
-        :rtype: bytes
-        :raises NotFoundError: If the book is not stored.
-        :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
-        """
-        return await self._databases.open(book_id).snapshot()
 
     @override
     async def adopt_book(self, book_id: BookId) -> BookRecord:

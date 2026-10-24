@@ -67,7 +67,7 @@ def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
 class TestWriteBlockSpan:
     """Tests for the span of one change of one unit of work."""
 
-    async def test_change_book_makes_one_span_of_its_book_with_its_timings(
+    async def test_book_change_makes_one_span_of_its_book_with_its_timings(
         self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookRecord, fx_tracer: AskingTracer
     ) -> None:
         """Verify a committed ``Book.change`` gives one span with its kind, its book, its timings and its end.
