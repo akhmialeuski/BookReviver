@@ -24,7 +24,6 @@ from sqlalchemy import func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from bookreviver.adapters.persistence.sqlalchemy.accounts import OAuthAccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
@@ -57,6 +56,7 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
+from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
@@ -110,7 +110,19 @@ BEFORE_DIRECTORIES: str = '0734365bee74'
 BEFORE_SUPERUSER: str = '87d63fb283ae'
 SUPERUSER_REVISION: str = '2d1c8cf7b6ea'
 SUPERUSER_COLUMN: str = 'is_superuser'
+# The revision before the tokens of the provider accounts were dropped, and the one that drops them
+BEFORE_TOKENS: str = SUPERUSER_REVISION
+TOKENS_REVISION: str = 'df4b7a534833'
+TOKEN_COLUMNS: set[str] = {'access_token', 'expires_at', 'refresh_token'}
+# The token a provider account holds before that revision
+PROVIDER_TOKEN: str = 'provider-access-token'
+# Stores a provider account as the schemas before that revision hold it, with the tokens the tables no longer describe
+INSERT_PROVIDER_ACCOUNT = text(
+    'INSERT INTO oauth_account (id, user_id, oauth_name, access_token, account_id, account_email) '
+    'VALUES (:id, :user, :provider, :token, :account, :email)'
+)
 USER_TABLE: str = 'user'
+LINK_TABLE: str = 'oauth_account'
 # Stores a verified account as the schemas before that revision hold it, with the flag the tables no longer describe
 INSERT_FLAGGED_ACCOUNT = text(
     "INSERT INTO user (id, email, hashed_password, is_active, is_superuser, is_verified) VALUES (:id, :email, '', 1, 0, 1)"
@@ -274,6 +286,26 @@ def _insert_flagged_account(database: SqlDatabase) -> AccountId:
     with _session(database) as session, session.begin():
         session.execute(INSERT_FLAGGED_ACCOUNT, {'id': account_id.bytes, 'email': f'{account_id}@example.org'})
     return account_id
+
+
+def _insert_provider_account(database: SqlDatabase, owner: AccountId) -> None:
+    """Link a provider account to an account in a catalogue migrated to a revision before the tokens were dropped.
+
+    :param database: Catalogue migrated to such a revision.
+    :type database: SqlDatabase
+    :param owner: The account the provider account is linked to.
+    :type owner: AccountId
+    """
+    values = {
+        'id': uuid4().bytes,
+        'user': owner.bytes,
+        'provider': PROVIDER,
+        'token': PROVIDER_TOKEN,
+        'account': PROVIDER_ACCOUNT,
+        'email': PROVIDER_EMAIL,
+    }
+    with _session(database) as session, session.begin():
+        session.execute(INSERT_PROVIDER_ACCOUNT, values)
 
 
 async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: str) -> None:
@@ -509,17 +541,8 @@ class TestChecksRevision:
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, CATALOGUE_BASELINE)
         owner = _insert_flagged_account(fx_empty_catalogue)
-        with _session(fx_empty_catalogue) as session, session.begin():
-            session.add_all(
-                OAuthAccountTable(
-                    user_id=owner,
-                    oauth_name=PROVIDER,
-                    access_token='',
-                    account_id=PROVIDER_ACCOUNT,
-                    account_email=PROVIDER_EMAIL,
-                )
-                for _ in range(2)
-            )
+        for _ in range(2):
+            _insert_provider_account(fx_empty_catalogue, owner)
         with pytest.raises(RuntimeError, match='linked more than once'):
             await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, HEAD)
         assert await fx_empty_catalogue.current_revisions() == (CATALOGUE_BASELINE,)
@@ -961,6 +984,37 @@ class TestSuperuserRevision:
         expect(SUPERUSER_COLUMN not in upgraded_columns)
         expect(upgraded == [owner.bytes])
         expect(flags == [0])
+        assert_expectations()
+
+
+class TestTokensRevision:
+    """Tests for the revision of the catalogue that drops the tokens of the provider accounts."""
+
+    async def test_the_links_keep_their_rows_and_the_downgrade_puts_the_columns_back(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the upgrade drops only the token columns of a link, and the downgrade restores them empty.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_TOKENS)
+        _insert_provider_account(fx_empty_catalogue, await commit_account(fx_empty_catalogue))
+        read_links = text('SELECT oauth_name, account_id, account_email FROM oauth_account')
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, TOKENS_REVISION)
+        with fx_empty_catalogue.engine.connect() as connection:
+            upgraded_columns = {column['name'] for column in inspect(connection).get_columns(LINK_TABLE)}
+        with _session(fx_empty_catalogue) as session:
+            upgraded = [tuple(row) for row in session.execute(read_links)]
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.downgrade, BEFORE_TOKENS)
+        with _session(fx_empty_catalogue) as session:
+            tokens = session.execute(text('SELECT access_token, expires_at, refresh_token FROM oauth_account')).all()
+
+        expect(upgraded_columns.isdisjoint(TOKEN_COLUMNS))
+        expect(upgraded == [(PROVIDER, PROVIDER_ACCOUNT, PROVIDER_EMAIL)])
+        expect([tuple(row) for row in tokens] == [('', None, None)])
         assert_expectations()
 
 

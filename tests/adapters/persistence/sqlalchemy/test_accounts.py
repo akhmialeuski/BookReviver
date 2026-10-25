@@ -41,9 +41,7 @@ NEW_HASH: str = 'new-hash'
 PROVIDER: str = 'google'
 PROVIDER_ACCOUNT: str = 'provider-account-1'
 PROVIDER_EMAIL: str = 'reader@gmail.example'
-ACCESS_TOKEN: str = 'provider-access-token'
-RENEWED_TOKEN: str = 'renewed'
-RENEWED_EXPIRY: int = 1_900_000_000
+RENEWED_EMAIL: str = 'renewed@gmail.example'
 SESSION_TOKEN: str = 't' * 43
 OTHER_TOKEN: str = 'u' * 43
 # The time a stored session token was created, and the step the tests move a limit away from it
@@ -55,15 +53,12 @@ ONE_BLOCK: int = 1
 NEW_USER: dict[str, Any] = {'email': EMAIL, 'hashed_password': PASSWORD_HASH}
 LINK: dict[str, Any] = {
     'oauth_name': PROVIDER,
-    'access_token': ACCESS_TOKEN,
     'account_id': PROVIDER_ACCOUNT,
     'account_email': PROVIDER_EMAIL,
-    'expires_at': None,
-    'refresh_token': None,
 }
 VERIFIED: dict[str, Any] = {'is_verified': True, 'hashed_password': NEW_HASH}
 DEACTIVATED: dict[str, Any] = {'is_active': False}
-RENEWED_LINK: dict[str, Any] = {'access_token': RENEWED_TOKEN, 'expires_at': RENEWED_EXPIRY}
+RENEWED_LINK: dict[str, Any] = {'account_email': RENEWED_EMAIL}
 LATER: dict[str, Any] = {'created_at': CREATED_AT + STEP}
 
 
@@ -416,7 +411,7 @@ class TestAccountDatabase:
     async def test_update_oauth_account_changes_the_linked_account(
         self, fx_users: AccountDatabase, fx_linked_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
     ) -> None:
-        """Verify an update of the linked account returns the user and commits the new token and expiry.
+        """Verify an update of the linked account returns the user and commits the new address of the account at the provider.
 
         :param fx_users: The user database of the request.
         :type fx_users: AccountDatabase
@@ -429,8 +424,7 @@ class TestAccountDatabase:
         returned = await fx_users.update_oauth_account(fx_linked_user, link, dict(RENEWED_LINK))
         stored = await _committed_user(fx_counting_catalogue, fx_linked_user.id)
         expect(returned is fx_linked_user)
-        expect(stored is not None and stored.oauth_accounts[0].access_token == RENEWED_TOKEN)
-        expect(stored is not None and stored.oauth_accounts[0].expires_at == RENEWED_EXPIRY)
+        expect(stored is not None and stored.oauth_accounts[0].account_email == RENEWED_EMAIL)
         assert_expectations()
 
     async def test_delete_removes_the_user_with_its_provider_accounts_and_tokens(

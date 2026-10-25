@@ -57,11 +57,8 @@ IS_VERIFIED_FIELD: str = 'is_verified'
 TOKEN_SUBJECT_CLAIM: str = 'sub'
 TOKEN_FINGERPRINT_CLAIM: str = 'password_fgpt'
 OAUTH_NAME_FIELD: str = 'oauth_name'
-ACCESS_TOKEN_FIELD: str = 'access_token'
 ACCOUNT_ID_FIELD: str = 'account_id'
 ACCOUNT_EMAIL_FIELD: str = 'account_email'
-EXPIRES_AT_FIELD: str = 'expires_at'
-REFRESH_TOKEN_FIELD: str = 'refresh_token'
 
 
 class AccountMail(enum.Enum):
@@ -274,19 +271,21 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     ) -> AccountTable:
         """Sign in the account a provider vouches for, creating it with a password nobody knows when there is none.
 
-        Mirrors ``BaseUserManager.oauth_callback``, with the hash of the unknown password made by the hasher.
+        Mirrors ``BaseUserManager.oauth_callback``, with the hash of the unknown password made by the hasher. The tokens
+        the provider issued are used only by the sign-in, to read the account it vouches for, and are not kept: the link
+        stores the name of the provider and the identifier and address of the account there.
 
         :param oauth_name: Name of the OAuth client.
         :type oauth_name: str
-        :param access_token: Access token the provider issued.
+        :param access_token: Access token the provider issued, which is not stored.
         :type access_token: str
         :param account_id: Identifier of the account at the provider.
         :type account_id: str
         :param account_email: Email address of the account at the provider.
         :type account_email: str
-        :param expires_at: When the access token expires, as a Unix timestamp, if the provider says.
+        :param expires_at: When the access token expires, as a Unix timestamp, if the provider says; not stored.
         :type expires_at: int | None
-        :param refresh_token: Token that renews the access token, if the provider issued one.
+        :param refresh_token: Token that renews the access token, if the provider issued one; not stored.
         :type refresh_token: str | None
         :param request: Request that triggered the sign-in, if any.
         :type request: Request | None
@@ -300,11 +299,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         """
         oauth_account_dict: dict[str, Any] = {
             OAUTH_NAME_FIELD: oauth_name,
-            ACCESS_TOKEN_FIELD: access_token,
             ACCOUNT_ID_FIELD: account_id,
             ACCOUNT_EMAIL_FIELD: account_email,
-            EXPIRES_AT_FIELD: expires_at,
-            REFRESH_TOKEN_FIELD: refresh_token,
         }
 
         try:

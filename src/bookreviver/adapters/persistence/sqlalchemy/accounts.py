@@ -2,7 +2,8 @@
 
 The tables ``user``, ``oauth_account`` and ``accesstoken`` are the ones fastapi-users reads, under the attribute names
 it expects, and their identifiers and times have the types of every other table of the adapter. They are tables of
-the catalogue, where the library and the recipe profiles refer to ``user.id``.
+the catalogue, where ``oauth_account``, ``accesstoken`` and the library refer to ``user.id``. The recipe profiles live
+in the database of each book.
 
 The databases of fastapi-users run over the catalogue database and nothing else: every read is a ``read_session`` and
 every write a ``change_session`` of
@@ -62,9 +63,10 @@ class OAuthAccountTable(DefaultBase):
         id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
         user_id: Mapped[UUID] = mapped_column(ForeignKey(USER_ID, ondelete=CASCADE), index=True)
         oauth_name: Mapped[str] = mapped_column(String(length=100), index=True)
-        access_token: Mapped[str] = mapped_column(String(length=1024))
-        expires_at: Mapped[int | None]
-        refresh_token: Mapped[str | None] = mapped_column(String(length=1024))
+        # fastapi-users declares the tokens of a link, and the application keeps none, so they are no columns
+        access_token = ''
+        expires_at = None
+        refresh_token = None
         account_id: Mapped[str] = mapped_column(String(length=320), index=True)
         account_email: Mapped[str] = mapped_column(String(length=320))
 
