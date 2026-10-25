@@ -18,6 +18,8 @@ pytestmark = pytest.mark.anyio
 # Start of the reST parameter fields that route docstrings carry after their form feed
 DOCSTRING_FIELD: str = ':param'
 DESCRIPTION_KEY: str = 'description'
+# The field fastapi-users declares in its account schemas, which the application has no use for
+SUPERUSER_FLAG: str = 'is_superuser'
 # The committed schema, found from the repository root as the command writes it
 SCHEMA_FILE: Path = Path(__file__).parents[2] / SCHEMA_PATH
 
@@ -40,6 +42,23 @@ class TestOperationDescriptions:
 
         expect(bool(fx_app.openapi()['paths']))
         expect(leaking == [])
+        assert_expectations()
+
+
+class TestAccountSchemas:
+    """Tests for the schemas of the accounts, from which the superuser flag of fastapi-users is left out."""
+
+    async def test_no_schema_has_the_superuser_flag(self, fx_app: FastAPI) -> None:
+        """Verify no schema of the published API has an ``is_superuser`` property, the account ones included.
+
+        :param fx_app: The running application with every router included.
+        :type fx_app: FastAPI
+        """
+        schemas = fx_app.openapi()['components']['schemas']
+        flagged = [name for name, schema in schemas.items() if SUPERUSER_FLAG in schema.get('properties', {})]
+
+        expect({'AccountRead', 'AccountCreate', 'AccountUpdate'} <= schemas.keys())
+        expect(flagged == [])
         assert_expectations()
 
 

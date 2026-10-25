@@ -17,6 +17,7 @@ uv run fastapi dev                       # API on http://127.0.0.1:8000, data in
 uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # catalogue revision
 uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
 uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
+uv run bookreviver-migrate move-book-directories  # once: data/storage/projects/ to data/storage/books/
 uv run pytest tests/contracts            # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
@@ -45,9 +46,10 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - A route annotates its parameters in place (`Annotated[BookId, Path()]`, `FromDishka[BooksService]`), with no
   module-level alias made only to keep an import at runtime. `ruff.toml` lists the `fastapi.APIRouter` methods and
   `dishka.integrations.fastapi.inject` under `runtime-evaluated-decorators`, and ruff resolves `@router.get` to
-  them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `ActorDep`,
-  stays an alias in its own module. One that reads a path parameter, such as `open_book`, is written in place, since
-  ruff's `FAST003` does not follow an alias to the path parameter it reads. A route docstring puts a form feed
+  them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `AccessDep`,
+  stays an alias in its own module. A path parameter, such as the `book_id` of a book, is written in place on the
+  route (or in a dataclass the route takes with `Depends()`), since ruff's `FAST003` does not follow an alias to the
+  path parameter it reads. A route docstring puts a form feed
   (`\N{FORM FEED}`) before its reST fields, because FastAPI ends the OpenAPI description there.
 
 ## Architecture rules
@@ -64,11 +66,16 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   with `FromDishka[StageSummaries]` and calls with the `Book`: the resource schema, or
   fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
   domain errors in the one handler registered in `app`.
-- Who may work on what is decided only by the FastAPI dependencies of `api/access.py`. `open_book` opens a book of the
-  signed-in account and answers one of another account like a missing one, and `own_books` reads the account's list.
-  Services, the domain and the jobs check no owner and choose no account's records: a use case works on the `Book` it
-  is given, and takes an account only as the owner of a record it creates. A recipe profile lives in its book and is
-  reached through the routes of the book. A route of a book declares `Annotated[Book, Depends(open_book)]` in place.
+- Who may work on what is decided only by `Access` in `api/access.py`. Every route of the API is mounted under one
+  router whose dependency is `access`, so a request without a session is refused before any route runs; only sign-in,
+  the routes of the signed-in account and `/iiif` are mounted outside it. A route that needs the account, a book or the
+  list of books declares `access: AccessDep`. `Access.book` opens a book of the signed-in account and answers one of
+  another account like a missing one, `Access.books` reads the account's list, and `Access.actor` is the owner of a
+  record the route creates. Services, the domain and the jobs check no owner and choose no account's records: a use
+  case works on the `Book` it is given, and takes an account only as the owner of a record it creates. A recipe profile
+  lives in its book and is reached through the routes of the book. A route of a book declares
+  `book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]` in place (or takes it from a path dataclass) and
+  calls `await access.book(book_id)`. A new router is added to `GUARDED_ROUTERS` in `api/routing.py`.
 - All request input is validated by Pydantic before the route runs: bodies, query models (`Annotated[Model, Query()]`),
   forms and headers, built on the shared `RequestModel` base and the constrained types in `api/schemas/types.py`.
   Handlers never check raw input by hand.
@@ -103,7 +110,7 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - Python 3.14 with deferred annotations. SQLAlchemy 2.0 synchronous engines over SQLite in the persistence adapter, its
   tables private to it. SQLite is the only database: the catalogue `data/catalogue.db` holds the accounts, the library
   that says which account owns which book, and the recipe profiles, and every book is `book.db` in its own directory
-  `data/storage/projects/<id>/`, beside its files, with no account in it. Nothing refers across two files by a key.
+  `data/storage/books/<id>/`, beside its files, with no account in it. Nothing refers across two files by a key.
 - A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/catalogue/versions/`
   or `.../book/versions/`, generated with `make-migrations --autogenerate` (`--bind-key book` for a book), read by eye
   for every key and index, and formatted by the gate. `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails

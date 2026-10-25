@@ -1,6 +1,6 @@
 """Local directory tree under the storage root, holding the directory of every book: its database, uploads and files.
 
-The directory of a book is ``projects/<name>/`` under the root, and :class:`LocalBookDirectory` is the one class that
+The directory of a book is ``books/<name>/`` under the root, and :class:`LocalBookDirectory` is the one class that
 names it in the storage. A new book gets an empty directory, an imported book gets the content of its archive, and the
 directory deletes itself whole with the database file in it, which the persistence adapter makes and reads at its own
 path. The stores of one book place every key of the book, which ``BookKeys`` builds relative to the
@@ -58,7 +58,7 @@ OUTSIDE_THE_BOOK: str = 'The archive holds {name}, which is not a file of a book
 
 
 class _BookTree:
-    """The directory ``projects/<name>`` of one book under the storage root, with the paths of its keys under it.
+    """The directory ``books/<name>`` of one book under the storage root, with the paths of its keys under it.
 
     :ivar _name: Name of the directory of the book.
     :ivar _directory: The directory of the book, whether or not it exists.
@@ -434,7 +434,7 @@ class _Pieces:
 
 
 class LocalBookDirectory(_BookTree, BookDirectory):
-    """The directory ``projects/<name>/`` of one book, with its two stores and its archive.
+    """The directory ``books/<name>/`` of one book, with its two stores and its archive.
 
     The archive is written as it is streamed, one piece of a file at a time, so a book of many gigabytes needs no
     temporary file and no more memory than one piece. Files still being written under a hidden name are left out.

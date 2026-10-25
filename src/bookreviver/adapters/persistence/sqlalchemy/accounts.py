@@ -2,7 +2,8 @@
 
 The tables ``user``, ``oauth_account`` and ``accesstoken`` are the ones fastapi-users reads, under the attribute names
 it expects, and their identifiers and times have the types of every other table of the adapter. They are tables of
-the catalogue, where the library and the recipe profiles refer to ``user.id``.
+the catalogue, where ``oauth_account``, ``accesstoken`` and the library refer to ``user.id``. The recipe profiles live
+in the database of each book.
 
 The databases of fastapi-users run over the catalogue database and nothing else: every read is a ``read_session`` and
 every write a ``change_session`` of
@@ -22,7 +23,7 @@ from uuid import UUID, uuid4
 from advanced_alchemy.base import DefaultBase
 from fastapi_users.authentication.strategy.db import AccessTokenDatabase as AccessTokenDatabaseProtocol
 from fastapi_users.db import BaseUserDatabase
-from sqlalchemy import ForeignKey, String, UniqueConstraint, func, select
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, delete, func, select, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 # The column the keys of the other account tables refer to
 USER_TABLE: str = 'user'
 USER_ID: str = f'{USER_TABLE}.id'
+EMAIL_INDEX: str = 'ix_user_email'
 # ORM cascade of a user to its linked provider accounts; the deletion itself is left to the database
 LINKED_ACCOUNT_CASCADE: str = 'all, delete'
 
@@ -62,9 +64,10 @@ class OAuthAccountTable(DefaultBase):
         id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
         user_id: Mapped[UUID] = mapped_column(ForeignKey(USER_ID, ondelete=CASCADE), index=True)
         oauth_name: Mapped[str] = mapped_column(String(length=100), index=True)
-        access_token: Mapped[str] = mapped_column(String(length=1024))
-        expires_at: Mapped[int | None]
-        refresh_token: Mapped[str | None] = mapped_column(String(length=1024))
+        # fastapi-users declares the tokens of a link, and the application keeps none, so they are no columns
+        access_token = ''
+        expires_at = None
+        refresh_token = None
         account_id: Mapped[str] = mapped_column(String(length=320), index=True)
         account_email: Mapped[str] = mapped_column(String(length=320))
 
@@ -73,6 +76,9 @@ class AccountTable(DefaultBase):
     """A user who signs in with a password or a social provider."""
 
     __tablename__ = USER_TABLE
+    # An address is taken whatever its case, as ``AccountDatabase.get_by_email`` reads it, and the address is stored as
+    # typed, so the key is the lower-cased one, which the search by it uses too
+    __table_args__ = (Index(EMAIL_INDEX, text('lower(email)'), unique=True),)
 
     # The type checkers read the plain annotations, which are what the ``UserOAuthProtocol`` of fastapi-users asks
     # for, because a ``Mapped`` attribute is a descriptor to them
@@ -86,10 +92,11 @@ class AccountTable(DefaultBase):
         oauth_accounts: list[OAuthAccountTable]
     else:
         id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-        email: Mapped[str] = mapped_column(String(length=320), unique=True, index=True)
+        email: Mapped[str] = mapped_column(String(length=320))
         hashed_password: Mapped[str] = mapped_column(String(length=1024))
         is_active: Mapped[bool] = mapped_column(default=True)
-        is_superuser: Mapped[bool] = mapped_column(default=False)
+        # fastapi-users reads the flag, and the application has no superuser, so it is no column and never set
+        is_superuser = False
         is_verified: Mapped[bool] = mapped_column(default=False)
         # Loaded with the user, as fastapi-users reads them when a provider signs the user in
         oauth_accounts: Mapped[list[OAuthAccountTable]] = relationship(
@@ -361,3 +368,25 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         :type access_token: AccessTokenTable
         """
         await self.catalogue.change_session(lambda session: session.delete(access_token))
+
+    async def delete_created_before(self, cutoff: datetime) -> None:
+        """Remove every token created before ``cutoff``, which no sign-in can use any more, in one statement.
+
+        :param cutoff: Earliest creation time a token may have and stay, with its time zone.
+        :type cutoff: datetime
+        """
+        statement = delete(AccessTokenTable).where(ACCESS_TOKENS.created_at < cutoff)
+        await self.catalogue.change_session(lambda session: session.execute(statement))
+
+    async def delete_of_user(self, user_id: UUID, *, keep: str | None = None) -> None:
+        """Remove every token of a user, in one statement, which signs all its sessions out.
+
+        :param user_id: Identifier of the user.
+        :type user_id: UUID
+        :param keep: Value of the one token to leave, or None to remove them all.
+        :type keep: str | None
+        """
+        statement = delete(AccessTokenTable).where(ACCESS_TOKENS.user_id == user_id)
+        if keep is not None:
+            statement = statement.where(ACCESS_TOKENS.token != keep)
+        await self.catalogue.change_session(lambda session: session.execute(statement))

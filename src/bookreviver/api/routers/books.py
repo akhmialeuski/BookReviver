@@ -3,9 +3,9 @@
 FastAPI publishes a route's docstring as the description of its operation, up to a form feed. Each route docstring
 puts a form feed before its reST fields, so the parameter lists stay in the code and out of the OpenAPI schema.
 
-The import of a book declares no body, as the upload of sources does: a dependency reads the form once the caller is
-known to be signed in, so no archive is spooled to disk for a request that will be refused. The export streams the
-archive as it is written, since a book may hold many gigabytes.
+The import of a book declares no body, as the upload of sources does: a dependency reads the form after the guard of
+the router has refused a caller who is not signed in, so no archive is spooled to disk for a request that will be
+refused. The export streams the archive as it is written, since a book may hold many gigabytes.
 """
 
 from typing import TYPE_CHECKING, Annotated
@@ -18,14 +18,12 @@ from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page, Params
 from pydantic import ValidationError
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book, own_books, own_entry
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
+from bookreviver.api.pagination import slice_request
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.books import ArchiveForm, BookCreate, BookSchema, BookUpdate
-from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.ids import BookId
-from bookreviver.domain.values import Slice
 from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
@@ -42,15 +40,13 @@ CONTENT_DISPOSITION_HEADER: str = 'Content-Disposition'
 ARCHIVE_DISPOSITION: str = 'attachment; filename="book.zip"; filename*=UTF-8\'\'{title}.zip'
 
 
-async def read_archive(request: Request, _actor: ActorDep) -> AsyncIterator[UploadFile]:
-    """Read the uploaded archive of the request, once the caller is known to be signed in.
+async def read_archive(request: Request) -> AsyncIterator[UploadFile]:
+    """Read the uploaded archive of the request, once the guard of the router has known the caller to be signed in.
 
     The form is closed when the response has been sent, which removes the temporary file it spooled.
 
     :param request: The request, whose multipart body holds the archive.
     :type request: Request
-    :param _actor: The signed-in account, resolved before the body is read.
-    :type _actor: Actor
     :returns: Iterator yielding once the uploaded archive, and closing the form afterwards.
     :rtype: AsyncIterator[UploadFile]
     :raises RequestValidationError: If the form holds no archive.
@@ -96,22 +92,21 @@ one_book = APIRouter(prefix='/books', route_class=DishkaRoute, dependencies=[Dep
 
 @collection.get('')
 async def list_books(
-    params: Annotated[Params, Depends()],
-    window: Annotated[Slice[LibraryEntry], Depends(own_books)],
-    stages: FromDishka[StageSummaries],
+    access: AccessDep, params: Annotated[Params, Depends()], stages: FromDishka[StageSummaries]
 ) -> Page[BookSchema]:
     """List the books of the signed-in account, the latest added first.
 
     \N{FORM FEED}
+    :param access: Access of the signed-in account, which lists its books.
+    :type access: Access
     :param params: Page number and size from the query.
     :type params: Params
-    :param window: The library entries of the books of the signed-in account the page asks for.
-    :type window: Slice[LibraryEntry]
     :param stages: Stage summaries of the request, which give each book its progress.
     :type stages: StageSummaries
     :returns: One page of the account's books.
     :rtype: Page[BookSchema]
     """
+    window = await access.books(slice_request(params))
     schemas = [
         BookSchema.from_overview(book_id=entry.book_id, overview=await stages.overview(Book(entry.directory)))
         for entry in window.items
@@ -122,7 +117,7 @@ async def list_books(
 @collection.post('', status_code=status.HTTP_201_CREATED)
 async def create_book(
     body: Annotated[BookCreate, Body()],
-    actor: ActorDep,
+    access: AccessDep,
     links: Annotated[BookLinks, Depends()],
     books: FromDishka[BooksService],
 ) -> BookId:
@@ -131,8 +126,8 @@ async def create_book(
     \N{FORM FEED}
     :param body: Description of the book.
     :type body: BookCreate
-    :param actor: The signed-in account, which becomes the owner.
-    :type actor: Actor
+    :param access: Access of the signed-in account, which becomes the owner.
+    :type access: Access
     :param links: The request and response, which build the ``Location`` of the new book.
     :type links: BookLinks
     :param books: Books service of the request.
@@ -140,22 +135,22 @@ async def create_book(
     :returns: The identifier of the new book.
     :rtype: BookId
     """
-    book_id = await books.create(actor, body.to_details())
+    book_id = await books.create(access.actor, body.to_details())
     links.created(book_id)
     return book_id
 
 
 @one_book.get('/{book_id}', name=RouteName.BOOK)
 async def get_book(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     stages: FromDishka[StageSummaries],
 ) -> BookSchema:
     """Return one book of the signed-in account.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param book_id: Identifier of the book, from the path.
     :type book_id: BookId
     :param stages: Stage summaries of the request, which give the book its progress.
@@ -163,12 +158,14 @@ async def get_book(
     :returns: The book.
     :rtype: BookSchema
     """
+    book = await access.book(book_id)
     return BookSchema.from_overview(book_id=book_id, overview=await stages.overview(book))
 
 
 @one_book.patch('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def update_book(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[BookUpdate, Body()],
 ) -> None:
     """Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
@@ -178,11 +175,14 @@ async def update_book(
     is announced on the event stream of the book and read from there.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: Fields to change, with null for a field to clear.
     :type body: BookUpdate
     """
+    book = await access.book(book_id)
     await book.update(body.to_changes())
 
 
@@ -191,18 +191,23 @@ async def update_book(
     response_class=StreamingResponse,
     responses={status.HTTP_200_OK: {'content': {ARCHIVE_MEDIA_TYPE: {}}, 'description': 'The archive of the book'}},
 )
-async def export_book(book: Annotated[Book, Depends(open_book)]) -> StreamingResponse:
+async def export_book(
+    access: AccessDep, book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
+) -> StreamingResponse:
     """Download the archive of a book, which another instance imports as a book of its own.
 
     The archive is a ZIP file of the database of the book and every file of its sources and derived files, streamed as
     it is written and named after the title of the book.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :returns: The stream of the archive.
     :rtype: StreamingResponse
     """
+    book = await access.book(book_id)
     archived = await book.export()
     disposition = ARCHIVE_DISPOSITION.format(title=quote(archived.title, safe=''))
     return StreamingResponse(
@@ -222,7 +227,7 @@ async def export_book(book: Annotated[Book, Depends(open_book)]) -> StreamingRes
 )
 async def import_book(
     archive: Annotated[UploadFile, Depends(read_archive)],
-    actor: ActorDep,
+    access: AccessDep,
     links: Annotated[BookLinks, Depends()],
     books: FromDishka[BooksService],
 ) -> BookId:
@@ -235,8 +240,8 @@ async def import_book(
     \N{FORM FEED}
     :param archive: The uploaded archive, read once the caller was checked.
     :type archive: UploadFile
-    :param actor: The signed-in account, which becomes the owner.
-    :type actor: Actor
+    :param access: Access of the signed-in account, which becomes the owner.
+    :type access: Access
     :param links: The request and response, which build the ``Location`` of the new book.
     :type links: BookLinks
     :param books: Books service of the request.
@@ -244,25 +249,28 @@ async def import_book(
     :returns: The identifier of the new book.
     :rtype: BookId
     """
-    book_id = await books.import_archive(actor, archive.file)
+    book_id = await books.import_archive(access.actor, archive.file)
     links.created(book_id)
     return book_id
 
 
 @one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_book(
-    entry: Annotated[LibraryEntry, Depends(own_entry)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     books: FromDishka[BooksService],
 ) -> None:
     """Delete a book with its pages, jobs and files.
 
     \N{FORM FEED}
-    :param entry: The library entry of the book the path names, when the signed-in account owns it.
-    :type entry: LibraryEntry
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param books: Books service of the request.
     :type books: BooksService
     """
-    await books.delete(entry)
+    await books.delete(book_id=book_id, book=await access.book(book_id))
 
 
 router = APIRouter(tags=['books'])

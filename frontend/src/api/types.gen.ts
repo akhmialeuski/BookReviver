@@ -23,10 +23,6 @@ export type AccountCreate = {
      */
     is_active?: boolean | null;
     /**
-     * Is Superuser
-     */
-    is_superuser?: boolean | null;
-    /**
      * Is Verified
      */
     is_verified?: boolean | null;
@@ -51,10 +47,6 @@ export type AccountRead = {
      */
     is_active?: boolean;
     /**
-     * Is Superuser
-     */
-    is_superuser?: boolean;
-    /**
      * Is Verified
      */
     is_verified?: boolean;
@@ -78,10 +70,6 @@ export type AccountUpdate = {
      * Is Active
      */
     is_active?: boolean | null;
-    /**
-     * Is Superuser
-     */
-    is_superuser?: boolean | null;
     /**
      * Is Verified
      */
@@ -4290,17 +4278,17 @@ export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Source Id
-         *
-         * Identifier of the source
-         */
-        source_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Source Id
+         *
+         * Identifier of the source
+         */
+        source_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}';
@@ -4336,17 +4324,17 @@ export type GetSourceApiV1BooksBookIdSourcesSourceIdGetData = {
     body?: never;
     path: {
         /**
-         * Source Id
-         *
-         * Identifier of the source
-         */
-        source_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Source Id
+         *
+         * Identifier of the source
+         */
+        source_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}';
@@ -4435,17 +4423,17 @@ export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostData = {
     body: PageAnchorBody;
     path: {
         /**
-         * Source Id
-         *
-         * Identifier of the source
-         */
-        source_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Source Id
+         *
+         * Identifier of the source
+         */
+        source_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}/pages/move';
@@ -6249,17 +6237,17 @@ export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetData = 
     body?: never;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/export';
@@ -6295,17 +6283,17 @@ export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePost
     body?: never;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/duplicate';
@@ -6341,17 +6329,17 @@ export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
@@ -6387,17 +6375,17 @@ export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchData = {
     body: RecipeProfileName;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
@@ -6433,17 +6421,17 @@ export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutData = {
     body: ProfileBody;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
@@ -6479,17 +6467,17 @@ export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostData = {
     body: ApplyProfileBody;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/apply';
@@ -7254,17 +7242,17 @@ export type CancelJobApiV1BooksBookIdJobsJobIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Job Id
-         *
-         * Identifier of the job
-         */
-        job_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Job Id
+         *
+         * Identifier of the job
+         */
+        job_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/jobs/{job_id}';
@@ -7300,17 +7288,17 @@ export type ReadJobApiV1BooksBookIdJobsJobIdGetData = {
     body?: never;
     path: {
         /**
-         * Job Id
-         *
-         * Identifier of the job
-         */
-        job_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Job Id
+         *
+         * Identifier of the job
+         */
+        job_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/jobs/{job_id}';
@@ -7836,157 +7824,3 @@ export type UsersPatchCurrentUserApiV1UsersMePatchResponses = {
 };
 
 export type UsersPatchCurrentUserApiV1UsersMePatchResponse = UsersPatchCurrentUserApiV1UsersMePatchResponses[keyof UsersPatchCurrentUserApiV1UsersMePatchResponses];
-
-export type UsersDeleteUserApiV1UsersIdDeleteData = {
-    body?: never;
-    path: {
-        /**
-         * Id
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/users/{id}';
-};
-
-export type UsersDeleteUserApiV1UsersIdDeleteErrors = {
-    /**
-     * Missing token or inactive user.
-     */
-    401: unknown;
-    /**
-     * Not a superuser.
-     */
-    403: unknown;
-    /**
-     * The user does not exist.
-     */
-    404: unknown;
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type UsersDeleteUserApiV1UsersIdDeleteError = UsersDeleteUserApiV1UsersIdDeleteErrors[keyof UsersDeleteUserApiV1UsersIdDeleteErrors];
-
-export type UsersDeleteUserApiV1UsersIdDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type UsersDeleteUserApiV1UsersIdDeleteResponse = UsersDeleteUserApiV1UsersIdDeleteResponses[keyof UsersDeleteUserApiV1UsersIdDeleteResponses];
-
-export type UsersUserApiV1UsersIdGetData = {
-    body?: never;
-    path: {
-        /**
-         * Id
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/users/{id}';
-};
-
-export type UsersUserApiV1UsersIdGetErrors = {
-    /**
-     * Missing token or inactive user.
-     */
-    401: unknown;
-    /**
-     * Not a superuser.
-     */
-    403: unknown;
-    /**
-     * The user does not exist.
-     */
-    404: unknown;
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type UsersUserApiV1UsersIdGetError = UsersUserApiV1UsersIdGetErrors[keyof UsersUserApiV1UsersIdGetErrors];
-
-export type UsersUserApiV1UsersIdGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: AccountRead;
-};
-
-export type UsersUserApiV1UsersIdGetResponse = UsersUserApiV1UsersIdGetResponses[keyof UsersUserApiV1UsersIdGetResponses];
-
-export type UsersPatchUserApiV1UsersIdPatchData = {
-    body: AccountUpdate;
-    path: {
-        /**
-         * Id
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/users/{id}';
-};
-
-export type UsersPatchUserApiV1UsersIdPatchErrors = {
-    /**
-     * Bad Request
-     */
-    400: ErrorModel;
-    /**
-     * Missing token or inactive user.
-     */
-    401: unknown;
-    /**
-     * Not a superuser.
-     */
-    403: unknown;
-    /**
-     * The user does not exist.
-     */
-    404: unknown;
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type UsersPatchUserApiV1UsersIdPatchError = UsersPatchUserApiV1UsersIdPatchErrors[keyof UsersPatchUserApiV1UsersIdPatchErrors];
-
-export type UsersPatchUserApiV1UsersIdPatchResponses = {
-    /**
-     * Successful Response
-     */
-    200: AccountRead;
-};
-
-export type UsersPatchUserApiV1UsersIdPatchResponse = UsersPatchUserApiV1UsersIdPatchResponses[keyof UsersPatchUserApiV1UsersIdPatchResponses];

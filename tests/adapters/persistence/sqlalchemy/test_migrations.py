@@ -24,7 +24,8 @@ from sqlalchemy import func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from bookreviver.adapters.persistence.sqlalchemy.accounts import OAuthAccountTable
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
@@ -54,6 +55,7 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     make_step_values,
+    new_account_id,
     new_book_id,
 )
 from tests.helpers.seeding import commit_account
@@ -65,6 +67,7 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
+    from bookreviver.domain.ids import AccountId
 
 pytestmark = pytest.mark.anyio
 
@@ -105,6 +108,49 @@ BEFORE_RELATIVE_KEYS: str = 'ba87bba973f4'
 BEFORE_RECORD_KEY: str = '54f16295b19a'
 # The revision of the catalogue before the library entry kept the directory of its book
 BEFORE_DIRECTORIES: str = '0734365bee74'
+# The revision of the catalogue before the superuser flag of the accounts was dropped, and the one that drops it
+BEFORE_SUPERUSER: str = '87d63fb283ae'
+SUPERUSER_REVISION: str = '2d1c8cf7b6ea'
+SUPERUSER_COLUMN: str = 'is_superuser'
+# The revision before the tokens of the provider accounts were dropped, and the one that drops them
+BEFORE_TOKENS: str = SUPERUSER_REVISION
+TOKENS_REVISION: str = 'df4b7a534833'
+# The revision before the unique index of the addresses ignored their case, and the one that makes it so
+BEFORE_ADDRESS_INDEX: str = TOKENS_REVISION
+ADDRESS_INDEX_REVISION: str = '7306aaee3202'
+# The revision before the key column of the library was renamed, and the one that renames it
+BEFORE_BOOK_COLUMN: str = ADDRESS_INDEX_REVISION
+BOOK_COLUMN_REVISION: str = 'cb21262f1e2e'
+# The revision of a book before its record table was renamed, the table before and after, and the checks of the new one
+BEFORE_RECORDS_TABLE: str = 'acac97b29548'
+OLD_RECORDS_TABLE: str = 'projects'
+RECORDS_TABLE: str = 'book_records'
+RECORD_CHECKS: set[str] = {
+    'ck_book_records_one_book',
+    'ck_book_records_orthography',
+    'ck_book_records_script',
+    'ck_book_records_rightsstatus',
+    'ck_book_records_imagepolicy',
+}
+# The directory the entry of the library of that test names
+LIBRARY_DIRECTORY: str = 'the-directory'
+# Two spellings of one address
+ADDRESS: str = 'Reader@Example.org'
+OTHER_ADDRESS: str = 'stranger@example.org'
+TOKEN_COLUMNS: set[str] = {'access_token', 'expires_at', 'refresh_token'}
+# The token a provider account holds before that revision
+PROVIDER_TOKEN: str = 'provider-access-token'
+# Stores a provider account as the schemas before that revision hold it, with the tokens the tables no longer describe
+INSERT_PROVIDER_ACCOUNT = text(
+    'INSERT INTO oauth_account (id, user_id, oauth_name, access_token, account_id, account_email) '
+    'VALUES (:id, :user, :provider, :token, :account, :email)'
+)
+USER_TABLE: str = 'user'
+LINK_TABLE: str = 'oauth_account'
+# Stores a verified account as the schemas before that revision hold it, with the flag the tables no longer describe
+INSERT_FLAGGED_ACCOUNT = text(
+    "INSERT INTO user (id, email, hashed_password, is_active, is_superuser, is_verified) VALUES (:id, :email, '', 1, 0, 1)"
+)
 MESH_KEY: str = 'assets/pages/page/geometry/geometry.dewarp/version/mesh.json'
 MESH_PATH: str = '$.mesh_key'
 # The fields the change of that test sets
@@ -250,6 +296,40 @@ def _primary_keys(database: SqlDatabase) -> dict[str, list[str]]:
         inspector = inspect(connection)
         tables = set(inspector.get_table_names()) - {database.config.alembic_config.version_table_name}
         return {table: list(inspector.get_pk_constraint(table)['constrained_columns']) for table in tables}
+
+
+def _insert_flagged_account(database: SqlDatabase) -> AccountId:
+    """Store an account in a catalogue migrated to a revision before the superuser flag was dropped.
+
+    :param database: Catalogue migrated to such a revision.
+    :type database: SqlDatabase
+    :returns: Identifier of the account.
+    :rtype: AccountId
+    """
+    account_id = new_account_id()
+    with _session(database) as session, session.begin():
+        session.execute(INSERT_FLAGGED_ACCOUNT, {'id': account_id.bytes, 'email': f'{account_id}@example.org'})
+    return account_id
+
+
+def _insert_provider_account(database: SqlDatabase, owner: AccountId) -> None:
+    """Link a provider account to an account in a catalogue migrated to a revision before the tokens were dropped.
+
+    :param database: Catalogue migrated to such a revision.
+    :type database: SqlDatabase
+    :param owner: The account the provider account is linked to.
+    :type owner: AccountId
+    """
+    values = {
+        'id': uuid4().bytes,
+        'user': owner.bytes,
+        'provider': PROVIDER,
+        'token': PROVIDER_TOKEN,
+        'account': PROVIDER_ACCOUNT,
+        'email': PROVIDER_EMAIL,
+    }
+    with _session(database) as session, session.begin():
+        session.execute(INSERT_PROVIDER_ACCOUNT, values)
 
 
 async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: str) -> None:
@@ -484,18 +564,9 @@ class TestChecksRevision:
         :type fx_empty_catalogue: SqlDatabase
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, CATALOGUE_BASELINE)
-        owner = await commit_account(fx_empty_catalogue)
-        with _session(fx_empty_catalogue) as session, session.begin():
-            session.add_all(
-                OAuthAccountTable(
-                    user_id=owner,
-                    oauth_name=PROVIDER,
-                    access_token='',
-                    account_id=PROVIDER_ACCOUNT,
-                    account_email=PROVIDER_EMAIL,
-                )
-                for _ in range(2)
-            )
+        owner = _insert_flagged_account(fx_empty_catalogue)
+        for _ in range(2):
+            _insert_provider_account(fx_empty_catalogue, owner)
         with pytest.raises(RuntimeError, match='linked more than once'):
             await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, HEAD)
         assert await fx_empty_catalogue.current_revisions() == (CATALOGUE_BASELINE,)
@@ -870,17 +941,49 @@ class TestRecordKeyRevision:
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         await _commit_book(fx_empty_book)
-        read_key = text('SELECT id FROM projects')
 
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_RECORD_KEY)
         with _session(fx_empty_book) as session:
-            downgraded = session.scalars(read_key).all()
+            downgraded = session.scalars(text('SELECT id FROM projects')).all()
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
-            upgraded = session.scalars(read_key).all()
+            upgraded = session.scalars(text(f'SELECT id FROM {RECORDS_TABLE}')).all()
 
         expect(downgraded == [BOOK_ID.bytes])
         expect(upgraded == [1])
+        assert_expectations()
+
+
+class TestRecordsTableRevision:
+    """Tests for the revision that names the table of the record of a book book_records."""
+
+    async def test_the_record_keeps_its_row_and_its_checks_both_ways(self, fx_empty_book: SqlDatabase) -> None:
+        """Verify the row is the same under both names, and the checks of the new table are named after it.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        await _commit_book(fx_empty_book)
+        with _session(fx_empty_book) as session:
+            committed = [tuple(row) for row in session.execute(text(f'SELECT * FROM {RECORDS_TABLE}'))]
+        with fx_empty_book.engine.connect() as connection:
+            checks = {check['name'] for check in inspect(connection).get_check_constraints(RECORDS_TABLE)}
+
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_RECORDS_TABLE)
+        with _session(fx_empty_book) as session:
+            downgraded = [tuple(row) for row in session.execute(text(f'SELECT * FROM {OLD_RECORDS_TABLE}'))]
+        with fx_empty_book.engine.connect() as connection:
+            tables = set(inspect(connection).get_table_names())
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            upgraded = [tuple(row) for row in session.execute(text(f'SELECT * FROM {RECORDS_TABLE}'))]
+
+        expect(len(committed) == 1)
+        expect(checks == RECORD_CHECKS)
+        expect(downgraded == committed)
+        expect(OLD_RECORDS_TABLE in tables and RECORDS_TABLE not in tables)
+        expect(upgraded == committed)
         assert_expectations()
 
 
@@ -896,7 +999,7 @@ class TestDirectoriesRevision:
         :type fx_empty_catalogue: SqlDatabase
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_DIRECTORIES)
-        owner, book_id = await commit_account(fx_empty_catalogue), new_book_id()
+        owner, book_id = _insert_flagged_account(fx_empty_catalogue), new_book_id()
         with _session(fx_empty_catalogue) as session, session.begin():
             session.execute(
                 text('INSERT INTO library (project_id, owner_id, added_at) VALUES (:book, :owner, :added)'),
@@ -908,6 +1011,174 @@ class TestDirectoriesRevision:
         with _session(fx_empty_catalogue) as session:
             directories = session.scalars(text('SELECT directory FROM library')).all()
         assert directories == [str(book_id)]
+
+
+class TestSuperuserRevision:
+    """Tests for the revision of the catalogue that drops the superuser flag of the accounts."""
+
+    async def test_the_accounts_keep_their_rows_and_the_downgrade_puts_the_flag_back(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the upgrade drops only the column of the flag, and the downgrade restores it as false.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_SUPERUSER)
+        owner = _insert_flagged_account(fx_empty_catalogue)
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, SUPERUSER_REVISION)
+        with fx_empty_catalogue.engine.connect() as connection:
+            upgraded_columns = {column['name'] for column in inspect(connection).get_columns(USER_TABLE)}
+        with _session(fx_empty_catalogue) as session:
+            upgraded = session.scalars(text('SELECT id FROM user')).all()
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.downgrade, BEFORE_SUPERUSER)
+        with _session(fx_empty_catalogue) as session:
+            flags = session.scalars(text(f'SELECT {SUPERUSER_COLUMN} FROM user')).all()
+
+        expect(SUPERUSER_COLUMN not in upgraded_columns)
+        expect(upgraded == [owner.bytes])
+        expect(flags == [0])
+        assert_expectations()
+
+
+class TestTokensRevision:
+    """Tests for the revision of the catalogue that drops the tokens of the provider accounts."""
+
+    async def test_the_links_keep_their_rows_and_the_downgrade_puts_the_columns_back(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the upgrade drops only the token columns of a link, and the downgrade restores them empty.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_TOKENS)
+        _insert_provider_account(fx_empty_catalogue, await commit_account(fx_empty_catalogue))
+        read_links = text('SELECT oauth_name, account_id, account_email FROM oauth_account')
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, TOKENS_REVISION)
+        with fx_empty_catalogue.engine.connect() as connection:
+            upgraded_columns = {column['name'] for column in inspect(connection).get_columns(LINK_TABLE)}
+        with _session(fx_empty_catalogue) as session:
+            upgraded = [tuple(row) for row in session.execute(read_links)]
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.downgrade, BEFORE_TOKENS)
+        with _session(fx_empty_catalogue) as session:
+            tokens = session.execute(text('SELECT access_token, expires_at, refresh_token FROM oauth_account')).all()
+
+        expect(upgraded_columns.isdisjoint(TOKEN_COLUMNS))
+        expect(upgraded == [(PROVIDER, PROVIDER_ACCOUNT, PROVIDER_EMAIL)])
+        expect([tuple(row) for row in tokens] == [('', None, None)])
+        assert_expectations()
+
+
+class TestAddressIndexRevision:
+    """Tests for the revision of the catalogue that makes the address of an account unique whatever its case."""
+
+    @staticmethod
+    def _add_accounts(database: SqlDatabase, *addresses: str) -> None:
+        """Store an account for each address, in a catalogue migrated to the revision before the index.
+
+        :param database: Catalogue migrated to the revision before the index.
+        :type database: SqlDatabase
+        :param addresses: Addresses of the accounts, which the earlier index compares as typed.
+        :type addresses: str
+        """
+        with _session(database) as session, session.begin():
+            session.add_all(AccountTable(email=address, hashed_password='') for address in addresses)
+
+    async def test_two_addresses_that_differ_only_in_case_stop_the_revision(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify accounts holding one address in two cases stop the revision before it changes the index.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_ADDRESS_INDEX)
+        self._add_accounts(fx_empty_catalogue, ADDRESS, ADDRESS.lower())
+
+        with pytest.raises(RuntimeError, match='differ only in case'):
+            await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, ADDRESS_INDEX_REVISION)
+
+        assert await fx_empty_catalogue.current_revisions() == (BEFORE_ADDRESS_INDEX,)
+
+    async def test_distinct_addresses_keep_their_rows_and_the_index_ignores_case(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the revision runs on distinct addresses, keeps them as typed and then refuses a case variant.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_ADDRESS_INDEX)
+        self._add_accounts(fx_empty_catalogue, ADDRESS, OTHER_ADDRESS)
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, ADDRESS_INDEX_REVISION)
+
+        with _session(fx_empty_catalogue) as session:
+            kept = set(session.scalars(text('SELECT email FROM user')))
+        with pytest.raises(IntegrityError, match='UNIQUE constraint failed'):
+            self._add_accounts(fx_empty_catalogue, ADDRESS.upper())
+        expect(kept == {ADDRESS, OTHER_ADDRESS})
+        assert_expectations()
+
+
+class TestBookColumnRevision:
+    """Tests for the revision of the catalogue that names the key column of the library book_id."""
+
+    async def test_the_entry_keeps_its_row_and_the_keys_and_the_downgrade_names_the_old_column(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the rename keeps the row and every key, index and unique constraint, and the downgrade renames it back.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_BOOK_COLUMN)
+        owner, book_id = await commit_account(fx_empty_catalogue), new_book_id()
+        with _session(fx_empty_catalogue) as session, session.begin():
+            session.execute(
+                text(
+                    'INSERT INTO library (project_id, owner_id, directory, added_at) '
+                    'VALUES (:book, :owner, :directory, :added)'
+                ),
+                {
+                    'book': book_id.bytes,
+                    'owner': owner.bytes,
+                    'directory': LIBRARY_DIRECTORY,
+                    'added': EPOCH.isoformat(),
+                },
+            )
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BOOK_COLUMN_REVISION)
+        with fx_empty_catalogue.engine.connect() as connection:
+            inspector = inspect(connection)
+            upgraded_columns = {column['name'] for column in inspector.get_columns(LIBRARY_TABLE)}
+            primary_key = inspector.get_pk_constraint(LIBRARY_TABLE)
+            foreign_keys = inspector.get_foreign_keys(LIBRARY_TABLE)
+            unique = inspector.get_unique_constraints(LIBRARY_TABLE)
+            indexes = inspector.get_indexes(LIBRARY_TABLE)
+        with _session(fx_empty_catalogue) as session:
+            upgraded = [tuple(row) for row in session.execute(text('SELECT book_id, owner_id, directory FROM library'))]
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.downgrade, BEFORE_BOOK_COLUMN)
+        with _session(fx_empty_catalogue) as session:
+            downgraded = session.scalars(text('SELECT project_id FROM library')).all()
+
+        expect(upgraded_columns == {'book_id', 'owner_id', 'directory', 'added_at'})
+        expect((primary_key['name'], primary_key['constrained_columns']) == ('pk_library', ['book_id']))
+        expect(
+            [(key['name'], key['options']['ondelete']) for key in foreign_keys]
+            == [('fk_library_owner_id_user', 'RESTRICT')]
+        )
+        expect([(key['name'], key['column_names']) for key in unique] == [('uq_library_directory', ['directory'])])
+        expect([(index['name'], index['column_names']) for index in indexes] == [('ix_library_owner_id', ['owner_id'])])
+        expect(upgraded == [(book_id.bytes, owner.bytes, LIBRARY_DIRECTORY)])
+        expect(downgraded == [book_id.bytes])
+        assert_expectations()
 
 
 class TestEnv:
@@ -968,7 +1239,7 @@ class TestEnv:
     @pytest.mark.parametrize(
         ('table', 'column', 'new_type'),
         [
-            pytest.param('projects', 'title', 'Integer', id='string-reflected-by-name'),
+            pytest.param('book_records', 'title', 'Integer', id='string-reflected-by-name'),
             pytest.param('pages', 'scan_id', 'String', id='guid-compared-by-affinity'),
         ],
     )
@@ -977,7 +1248,7 @@ class TestEnv:
     ) -> None:
         """Verify ``alembic check`` fails on a column of another type, so autogenerate writes type changes too.
 
-        ``projects.title`` has a type SQLite reflects by name, and ``pages.scan_id`` a ``GUID`` it reflects by affinity.
+        ``book_records.title`` has a type SQLite reflects by name, and ``pages.scan_id`` a ``GUID`` it reflects by affinity.
 
         :param fx_empty_book: Database of a book with no table.
         :type fx_empty_book: SqlDatabase

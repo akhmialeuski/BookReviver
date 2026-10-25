@@ -7,7 +7,7 @@ no page has a record of is counted as not run, since the records are written whe
 
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
-book: the access dependency ``open_book`` of the API does that. Every method reads through one read transaction of the
+book: ``Access.book`` of the API does that. Every method reads through one read transaction of the
 ``Book`` it is given.
 """
 

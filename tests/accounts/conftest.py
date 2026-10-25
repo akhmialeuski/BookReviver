@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.api.auth import current_actor
+from bookreviver.api.auth import signed_in_user
+from bookreviver.app.container import build_container
 from tests.helpers.fakes_accounts import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -17,11 +18,14 @@ from tests.helpers.fakes_accounts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     import httpx
-    from dishka import Provider
+    from dishka import AsyncContainer, Provider
     from fastapi import FastAPI
+
+    from bookreviver.app.settings import Settings
+    from tests.helpers.database import SharedDatabaseProvider
 
 
 @pytest.fixture
@@ -62,16 +66,16 @@ def fx_extra_providers(fx_mailer: RecordingMailer, fx_hash_calls: HashCalls) -> 
 async def fx_browser(fx_app: FastAPI, fx_client: httpx.AsyncClient) -> httpx.AsyncClient:
     """Return a client that is signed out and sends the CSRF header, as the web interface does.
 
-    The suite's application signs in a fixed actor; removing that override leaves the decision to fastapi-users.
+    The suite's application signs in a fixed user; putting fastapi-users' own dependency back leaves the decision to it.
 
-    :param fx_app: The running application, whose fixed-actor override is removed.
+    :param fx_app: The running application, whose fixed-user override is replaced.
     :type fx_app: FastAPI
     :param fx_client: In-process client of that application.
     :type fx_client: httpx.AsyncClient
     :returns: The client, holding the CSRF cookie and sending its value in the header.
     :rtype: httpx.AsyncClient
     """
-    fx_app.dependency_overrides.pop(current_actor)
+    fx_app.dependency_overrides[signed_in_user] = fx_app.state.current_user
     # Any response hands out the CSRF cookie, whose value the client then echoes in the header
     await fx_client.get(ME_PATH)
     fx_client.headers[CSRF_HEADER] = fx_client.cookies[CSRF_COOKIE]
@@ -90,3 +94,22 @@ def fx_visitor(fx_browser: httpx.AsyncClient, fx_mailer: RecordingMailer) -> Vis
     :rtype: Visitor
     """
     return Visitor(fx_browser, fx_mailer)
+
+
+@pytest.fixture
+async def fx_container(
+    fx_settings: Settings, fx_shared_database: SharedDatabaseProvider
+) -> AsyncIterator[AsyncContainer]:
+    """Yield the application's container on the catalogue and the books of the test.
+
+    :param fx_settings: Settings pointing at a fresh data directory of the test.
+    :type fx_settings: Settings
+    :param fx_shared_database: The catalogue and the books of the test, which the container is given in place of its
+                               own.
+    :type fx_shared_database: SharedDatabaseProvider
+    :returns: Iterator yielding the container and closing it afterwards.
+    :rtype: AsyncIterator[AsyncContainer]
+    """
+    container = build_container(fx_settings, [fx_shared_database])
+    yield container
+    await container.close()

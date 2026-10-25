@@ -15,7 +15,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pages import PageAnchorBody
@@ -23,7 +23,6 @@ from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
 from bookreviver.domain.entities import Scan, Source
 from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.ids import BookId, SourceId
-from bookreviver.services.book import Book
 from bookreviver.services.pages import PageService
 from bookreviver.services.sources import SourceService
 
@@ -40,7 +39,8 @@ router = APIRouter(prefix='/books', tags=['sources'], route_class=DishkaRoute, d
 # published as one opaque object
 @router.get('/{book_id}/sources')
 async def list_sources(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     params: Annotated[Params, Depends()],
     sources: FromDishka[SourceService],
     status: Annotated[frozenset[SourceStatus], Query(description=STATUS_DESCRIPTION)] = IMPORTED_ONLY,
@@ -51,8 +51,10 @@ async def list_sources(
     the files a cancelled import never reached.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param params: Page number and size.
     :type params: Params
     :param sources: Source service of the request.
@@ -62,13 +64,15 @@ async def list_sources(
     :returns: One page of the book's files in the statuses.
     :rtype: Page[SourceSchema]
     """
+    book = await access.book(book_id)
     pager = Pager[Source, SourceSchema](params, SourceSchema.model_validate)
     return pager.page(await sources.list(book, pager.request, statuses=status))
 
 
 @router.delete('/{book_id}/sources/unimported', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_unimported_sources(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     sources: FromDishka[SourceService],
 ) -> None:
     """Delete the rejected and skipped files of a book, which is closing the report of an import.
@@ -76,25 +80,31 @@ async def delete_unimported_sources(
     The imported sources stay. The book answers 409 while it imports.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param sources: Source service of the request.
     :type sources: SourceService
     """
+    book = await access.book(book_id)
     await sources.delete_unimported(book)
 
 
 @router.get('/{book_id}/sources/{source_id}')
 async def get_source(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
     sources: FromDishka[SourceService],
 ) -> SourceSchema:
     """Return one source of a book.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param source_id: Identifier of the source.
     :type source_id: SourceId
     :param sources: Source service of the request.
@@ -102,12 +112,14 @@ async def get_source(
     :returns: The source.
     :rtype: SourceSchema
     """
+    book = await access.book(book_id)
     return SourceSchema.model_validate(await sources.get(book, source_id))
 
 
 @router.delete('/{book_id}/sources/{source_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_source(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
     sources: FromDishka[SourceService],
 ) -> None:
@@ -116,19 +128,22 @@ async def delete_source(
     The pages made from the source lose only the reference to their scan. The book answers 409 while it imports.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param source_id: Identifier of the source.
     :type source_id: SourceId
     :param sources: Source service of the request.
     :type sources: SourceService
     """
+    book = await access.book(book_id)
     await sources.delete(book, source_id)
 
 
 @router.get('/{book_id}/scans')
 async def list_scans(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     request: Request,
     query: Annotated[ScanQuery, Depends()],
@@ -137,8 +152,8 @@ async def list_scans(
     """List the scans of a book source by source, or of one source, with the paths of their images once cut.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param book_id: Identifier of the book, from the path.
     :type book_id: BookId
     :param request: The request, whose application knows the route that serves the images.
@@ -150,13 +165,15 @@ async def list_scans(
     :returns: One page of scans.
     :rtype: Page[ScanSchema]
     """
+    book = await access.book(book_id)
     pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request, book_id=book_id))
     return pager.page(await sources.scans(book, pager.request, source_id=query.source_id))
 
 
 @router.post('/{book_id}/sources/{source_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
 async def move_source_pages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
     body: PageAnchorBody,
     pages: FromDishka[PageService],
@@ -167,8 +184,10 @@ async def move_source_pages(
     event, so the answer has no body.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param source_id: Identifier of the source whose pages are moved.
     :type source_id: SourceId
     :param body: The page to put them next to, and the side.
@@ -176,4 +195,5 @@ async def move_source_pages(
     :param pages: Page service of the request.
     :type pages: PageService
     """
+    book = await access.book(book_id)
     await pages.move_source(book, source_id, body.anchor)

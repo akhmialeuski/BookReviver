@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 from dishka import AsyncContainer
 
+from bookreviver.api.auth import signed_in_user
 from tests.helpers.board_idle import JobsIdle
 from tests.helpers.storage import BookFiles
 
@@ -15,6 +16,16 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from bookreviver.app.settings import Settings
+
+
+@pytest.fixture
+def fx_signed_out(fx_app: FastAPI) -> None:
+    """Take the test's sign-in off, so a request has no session.
+
+    :param fx_app: The running application, whose stub user is removed.
+    :type fx_app: FastAPI
+    """
+    fx_app.dependency_overrides.pop(signed_in_user)
 
 
 @pytest.fixture

@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from attrs import frozen
-from dishka.integrations.fastapi import DishkaRoute
 from fastapi import APIRouter
+from fastapi.routing import APIRoute
 from fastapi_users.models import UserProtocol
 
 from bookreviver.api.schemas.accounts import AccountCreate, AccountRead, AccountUpdate, SignInProvider
@@ -23,8 +23,8 @@ ACCOUNTS_TAG: str = 'accounts'
 AUTH_TAG: str = 'auth'
 # Page of the web interface a provider returns the browser to, which hands the code and the state to the API
 OAUTH_CALLBACK_PAGE: str = '{public_url}/auth/{name}/callback'
-
-router = APIRouter(tags=[ACCOUNTS_TAG], route_class=DishkaRoute)
+# The routes of the fastapi-users users router that the application keeps, those of the signed-in account
+CURRENT_USER_ROUTES: frozenset[str] = frozenset({'users:current_user', 'users:patch_current_user'})
 
 
 @frozen(kw_only=True)
@@ -81,7 +81,10 @@ class AccountRoutes[UserT: UserProtocol[UUID]]:
         route, because that route answers a successful sign-in with ``204`` and no page. The page forwards ``code``
         and ``state`` to the callback route with the browser's cookies, which carry fastapi-users' state cookie.
 
-        :returns: Router holding sign-in, registration, verification, reset, OAuth and user routes.
+        The users router of fastapi-users also reads, changes and deletes any account by its identifier, for a
+        superuser the application has none of, so only its two routes of the signed-in account are mounted.
+
+        :returns: Router holding sign-in, registration, verification, reset, OAuth and signed-in account routes.
         :rtype: APIRouter
         """
         auth = APIRouter(prefix='/auth', tags=[AUTH_TAG])
@@ -107,5 +110,10 @@ class AccountRoutes[UserT: UserProtocol[UUID]]:
         routes = APIRouter()
         routes.include_router(auth)
         users = self.users.get_users_router(AccountRead, AccountUpdate, requires_verification=True)
-        routes.include_router(users, prefix='/users', tags=[ACCOUNTS_TAG])
+        current = APIRouter(
+            routes=[
+                route for route in users.routes if isinstance(route, APIRoute) and route.name in CURRENT_USER_ROUTES
+            ]
+        )
+        routes.include_router(current, prefix='/users', tags=[ACCOUNTS_TAG])
         return routes

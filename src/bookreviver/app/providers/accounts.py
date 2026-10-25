@@ -1,13 +1,15 @@
 """Provider of the accounts feature: users, sessions, OAuth clients and mail, all on fastapi-users."""
 
 import enum
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
 import jwt
-from anyio import CapacityLimiter, to_thread
-from dishka import FromDishka, Provider, Scope, provide
+from anyio import CapacityLimiter, sleep, to_thread
+from dishka import AsyncContainer, FromDishka, Provider, Scope, provide
 from dishka.integrations.fastapi import inject
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport
@@ -26,14 +28,10 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
     AccountTable,
 )
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
-from bookreviver.api.access import AccountBooks
 from bookreviver.api.routers.accounts import AccountRoutes
 from bookreviver.app.settings import Settings
-from bookreviver.domain.ids import AccountId
 from bookreviver.domain.values import MailMessage
-from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.runtime import Mailer
-from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -46,6 +44,8 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import AuthSettings, OAuthClient
 
 SessionStrategy = DatabaseStrategy[AccountTable, UUID, AccessTokenTable]
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE: str = 'bookreviver_session'
 AUTH_BACKEND: str = 'cookie'
@@ -61,11 +61,8 @@ IS_VERIFIED_FIELD: str = 'is_verified'
 TOKEN_SUBJECT_CLAIM: str = 'sub'
 TOKEN_FINGERPRINT_CLAIM: str = 'password_fgpt'
 OAUTH_NAME_FIELD: str = 'oauth_name'
-ACCESS_TOKEN_FIELD: str = 'access_token'
 ACCOUNT_ID_FIELD: str = 'account_id'
 ACCOUNT_EMAIL_FIELD: str = 'account_email'
-EXPIRES_AT_FIELD: str = 'expires_at'
-REFRESH_TOKEN_FIELD: str = 'refresh_token'
 
 
 class AccountMail(enum.Enum):
@@ -181,15 +178,15 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     """fastapi-users' account rules, with mail sent through the ``Mailer`` port.
 
     No answer reveals whether an address is registered: registering a taken address answers like a new
-    registration and mails the owner instead. An account is deleted only after its books, whose owner key refuses
-    to leave them without an owner.
+    registration and mails the owner instead.
 
     Hashing a password with argon2id takes tens of milliseconds, and the ``PasswordHelper`` protocol of fastapi-users is
     synchronous, so ``BaseUserManager`` runs it inside the event loop, where it stalls every other request and event.
     The methods that hash or verify a password (``create``, ``oauth_callback``, ``forgot_password``,
     ``reset_password``, ``authenticate`` and ``_update``) are therefore overridden to mirror ``BaseUserManager`` of
-    fastapi-users 15.0.5, step by step, with only the hashing moved to the worker threads of ``PasswordHasher``. Compare
-    them with the upstream methods when fastapi-users is upgraded.
+    fastapi-users 15.0.5, step by step, with only the hashing moved to the worker threads of ``PasswordHasher``.
+    ``tests/accounts/test_mirrored_methods.py`` holds a hash of the source of each upstream method and fails, naming
+    the method, when an upgrade of fastapi-users changes one, so that the two are compared again.
 
     :ivar password_min_length: Fewest characters a password may have.
     """
@@ -202,7 +199,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         *,
         hasher: PasswordHasher,
         mailer: Mailer,
-        books: AccountBooks,
+        tokens: AccessTokenDatabase,
         settings: Settings,
     ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
@@ -213,8 +210,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :type hasher: PasswordHasher
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
-        :param books: The books of the accounts, which deletes an account's books with their files.
-        :type books: AccountBooks
+        :param tokens: Session tokens of the current request, which a new password ends the other sessions in.
+        :type tokens: AccessTokenDatabase
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
         """
@@ -224,7 +221,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         self.reset_password_token_secret = secret
         self._hasher = hasher
         self._mailer = mailer
-        self._books = books
+        self._tokens = tokens
         self._public_url = settings.public_url
 
     @override
@@ -238,7 +235,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
         :param user_create: Registration data, email address and password.
         :type user_create: BaseUserCreate
-        :param safe: Whether to ignore the privileged fields of ``user_create``.
+        :param safe: Kept for the signature of the base class; privileged fields are always ignored.
         :type safe: bool
         :param request: Request that triggered the registration, if any.
         :type request: Request | None
@@ -252,11 +249,9 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
             # Spend the time a new account costs, and answer with an account that is never stored
             await self._hasher.hash(user_create.password)
             await self._mailer.send(AccountMail.ALREADY_REGISTERED.to(user_create.email, public_url=self._public_url))
-            return AccountTable(
-                id=uuid4(), email=user_create.email, is_active=True, is_superuser=False, is_verified=False
-            )
+            return AccountTable(id=uuid4(), email=user_create.email, is_active=True, is_verified=False)
 
-        user_dict = user_create.create_update_dict() if safe else user_create.create_update_dict_superuser()
+        user_dict = user_create.create_update_dict()
         password = user_dict.pop(PASSWORD_FIELD)
         user_dict[HASHED_PASSWORD_FIELD] = await self._hasher.hash(password)
         created_user = await self.user_db.create(user_dict)
@@ -285,19 +280,21 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     ) -> AccountTable:
         """Sign in the account a provider vouches for, creating it with a password nobody knows when there is none.
 
-        Mirrors ``BaseUserManager.oauth_callback``, with the hash of the unknown password made by the hasher.
+        Mirrors ``BaseUserManager.oauth_callback``, with the hash of the unknown password made by the hasher. The tokens
+        the provider issued are used only by the sign-in, to read the account it vouches for, and are not kept: the link
+        stores the name of the provider and the identifier and address of the account there.
 
         :param oauth_name: Name of the OAuth client.
         :type oauth_name: str
-        :param access_token: Access token the provider issued.
+        :param access_token: Access token the provider issued, which is not stored.
         :type access_token: str
         :param account_id: Identifier of the account at the provider.
         :type account_id: str
         :param account_email: Email address of the account at the provider.
         :type account_email: str
-        :param expires_at: When the access token expires, as a Unix timestamp, if the provider says.
+        :param expires_at: When the access token expires, as a Unix timestamp, if the provider says; not stored.
         :type expires_at: int | None
-        :param refresh_token: Token that renews the access token, if the provider issued one.
+        :param refresh_token: Token that renews the access token, if the provider issued one; not stored.
         :type refresh_token: str | None
         :param request: Request that triggered the sign-in, if any.
         :type request: Request | None
@@ -311,11 +308,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         """
         oauth_account_dict: dict[str, Any] = {
             OAUTH_NAME_FIELD: oauth_name,
-            ACCESS_TOKEN_FIELD: access_token,
             ACCOUNT_ID_FIELD: account_id,
             ACCOUNT_EMAIL_FIELD: account_email,
-            EXPIRES_AT_FIELD: expires_at,
-            REFRESH_TOKEN_FIELD: refresh_token,
         }
 
         try:
@@ -521,6 +515,38 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         await self._mailer.send(AccountMail.RESET.to(user.email, public_url=self._public_url, token=token))
 
     @override
+    async def on_after_reset_password(self, user: AccountTable, request: Request | None = None) -> None:
+        """End every session of the account, since whoever held one did not know the new password.
+
+        :param user: Account that reset its password.
+        :type user: AccountTable
+        :param request: Request that triggered the reset, if any.
+        :type request: Request | None
+        """
+        await self._tokens.delete_of_user(user.id)
+
+    @override
+    async def on_after_update(
+        self, user: AccountTable, update_dict: dict[str, Any], request: Request | None = None
+    ) -> None:
+        """End the other sessions of an account that changed its password, and keep the one that changed it.
+
+        The dictionary is the one ``update`` was given by the route, so a new password is under ``password`` in the
+        clear, and not under ``hashed_password`` as ``_update`` stores it.
+
+        :param user: The updated account.
+        :type user: AccountTable
+        :param update_dict: Fields the update changed.
+        :type update_dict: dict[str, Any]
+        :param request: Request that triggered the update, whose session cookie names the session to keep.
+        :type request: Request | None
+        """
+        if update_dict.get(PASSWORD_FIELD) is None:
+            return
+        current = None if request is None else request.cookies.get(SESSION_COOKIE)
+        await self._tokens.delete_of_user(user.id, keep=current)
+
+    @override
     async def on_after_login(
         self, user: AccountTable, request: Request | None = None, response: Response | None = None
     ) -> None:
@@ -541,23 +567,53 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         unknown_password = await self._hasher.hash(self.password_helper.generate())
         await self.user_db.update(user, {IS_VERIFIED_FIELD: True, HASHED_PASSWORD_FIELD: unknown_password})
 
-    @override
-    async def on_before_delete(self, user: AccountTable, request: Request | None = None) -> None:
-        """Delete every book of the account with its files, so the account can be deleted after them.
 
-        A database cascade from the account would remove the rows of its books and leave their files behind, so
-        the owner key restricts, and the books of the account are deleted here through ``AccountBooks``.
+class SessionCleanup:
+    """Deletes the session tokens that outlived the session lifetime, which nothing but a sign-out removed before.
 
-        :param user: Account about to be deleted.
-        :type user: AccountTable
-        :param request: Request that triggered the deletion, if any.
-        :type request: Request | None
+    A token older than the lifetime is refused when it is read, so a stored one is only dead weight in the catalogue.
+    The cleanup runs in a request scope of its own, as a job does, and fails soft: a run that cannot write is logged
+    and tried again at the next interval, so it never takes the application down with it.
+    """
+
+    def __init__(
+        self,
+        container: AsyncContainer,
+        *,
+        interval_seconds: float,
+        lifetime_seconds: float,
+    ) -> None:
+        """Clean up through the scopes of ``container``, once for every ``interval_seconds``.
+
+        :param container: Application container, which gives each run the token database of a scope of its own.
+        :type container: AsyncContainer
+        :param interval_seconds: How long the loop sleeps between two runs.
+        :type interval_seconds: float
+        :param lifetime_seconds: How long a session lasts, which puts the cutoff that far behind the present.
+        :type lifetime_seconds: float
         """
-        await self._books.delete_all(AccountId(user.id))
+        self._container = container
+        self._interval_seconds = interval_seconds
+        self._lifetime = timedelta(seconds=lifetime_seconds)
+
+    async def purge(self) -> None:
+        """Delete every token created before the present less the session lifetime, in one statement."""
+        async with self._container() as scope:
+            tokens = await scope.get(AccessTokenDatabase)
+            await tokens.delete_created_before(datetime.now(UTC) - self._lifetime)
+
+    async def run(self) -> None:
+        """Purge at once and then after every interval, for ever; the caller stops the loop by cancelling it."""
+        while True:
+            try:
+                await self.purge()
+            except Exception:
+                logger.exception('The expired sessions could not be deleted')
+            await sleep(self._interval_seconds)
 
 
 class AccountsProvider(Provider):
-    """Builds the mailer and the password hasher, and per request the user manager and the session strategy."""
+    """Builds the mailer, the password hasher and the session cleanup, and per request the user manager and sessions."""
 
     @provide(scope=Scope.APP)
     def mailer(self, settings: Settings) -> Mailer:
@@ -614,17 +670,33 @@ class AccountsProvider(Provider):
         return AccountDatabase(catalogue)
 
     @provide(scope=Scope.REQUEST)
-    def account_books(self, catalogue: CatalogueDatabase, books: BooksService) -> AccountBooks:
-        """Build the books of the accounts over the request's catalogue database.
+    def access_token_database(self, catalogue: SqlAlchemyCatalogueDatabase) -> AccessTokenDatabase:
+        """Build the session tokens of the request, read and written through its catalogue database.
 
-        :param catalogue: Catalogue database of the request, whose catalogue lists the books of an account.
-        :type catalogue: CatalogueDatabase
-        :param books: Books service of the request, which deletes the books with their files.
-        :type books: BooksService
-        :returns: The books of the accounts.
-        :rtype: AccountBooks
+        :param catalogue: Catalogue database of the request, whose transactions the token reads and writes run in.
+        :type catalogue: SqlAlchemyCatalogueDatabase
+        :returns: The session tokens of the request.
+        :rtype: AccessTokenDatabase
         """
-        return AccountBooks(catalogue=catalogue, books=books)
+        return AccessTokenDatabase(catalogue)
+
+    @provide(scope=Scope.APP)
+    def session_cleanup(self, container: AsyncContainer, settings: Settings) -> SessionCleanup:
+        """Build the loop that deletes the expired sessions, which the application runs beside its other tasks.
+
+        :param container: Application container, whose request scopes give the loop its token database.
+        :type container: AsyncContainer
+        :param settings: Application settings holding the session lifetime and the interval of the cleanup.
+        :type settings: Settings
+        :returns: The session cleanup.
+        :rtype: SessionCleanup
+        """
+        auth = settings.auth
+        return SessionCleanup(
+            container,
+            interval_seconds=auth.session_cleanup_interval_seconds,
+            lifetime_seconds=auth.session_lifetime_seconds,
+        )
 
     @provide(scope=Scope.REQUEST)
     def user_manager(
@@ -632,7 +704,7 @@ class AccountsProvider(Provider):
         user_db: AccountDatabase,
         hasher: PasswordHasher,
         mailer: Mailer,
-        books: AccountBooks,
+        tokens: AccessTokenDatabase,
         settings: Settings,
     ) -> UserManager:
         """Build the user manager over the users of the request.
@@ -643,27 +715,27 @@ class AccountsProvider(Provider):
         :type hasher: PasswordHasher
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
-        :param books: The books of the accounts, which deletes the books of a deleted account.
-        :type books: AccountBooks
+        :param tokens: Session tokens of the request, shared with the session strategy.
+        :type tokens: AccessTokenDatabase
         :param settings: Application settings holding the secret and the public URL.
         :type settings: Settings
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(user_db, hasher=hasher, mailer=mailer, books=books, settings=settings)
+        return UserManager(user_db, hasher=hasher, mailer=mailer, tokens=tokens, settings=settings)
 
     @provide(scope=Scope.REQUEST)
-    def session_strategy(self, catalogue: SqlAlchemyCatalogueDatabase, settings: Settings) -> SessionStrategy:
+    def session_strategy(self, tokens: AccessTokenDatabase, settings: Settings) -> SessionStrategy:
         """Build the strategy that keeps session tokens in the database, so signing out revokes them.
 
-        :param catalogue: Catalogue database of the request, whose transactions the token reads and writes run in.
-        :type catalogue: SqlAlchemyCatalogueDatabase
+        :param tokens: Session tokens of the request.
+        :type tokens: AccessTokenDatabase
         :param settings: Application settings holding the session lifetime.
         :type settings: Settings
         :returns: The session strategy of the request.
         :rtype: SessionStrategy
         """
-        return DatabaseStrategy(AccessTokenDatabase(catalogue), lifetime_seconds=settings.auth.session_lifetime_seconds)
+        return DatabaseStrategy(tokens, lifetime_seconds=settings.auth.session_lifetime_seconds)
 
 
 @inject

@@ -13,15 +13,14 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.page_history import ClearedSchema, PageHistoryEntrySchema, UndoForm, UndoneSchema
 from bookreviver.domain.entities import PageHistoryEntry
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, StepId
+from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
-from bookreviver.services.book import Book
 from bookreviver.services.page_history import PageHistoryService
 
 router = APIRouter(prefix='/books', tags=['page-history'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
@@ -48,7 +47,8 @@ class StepPath:
 
 @router.get('/{book_id}/pages/{page_id}/history/{stage}/{step_id}')
 async def list_history(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     address: Annotated[StepPath, Depends()],
     params: Annotated[Params, Depends()],
     history: FromDishka[PageHistoryService],
@@ -56,8 +56,10 @@ async def list_history(
     """List the changes of a step on a page, the newest first, with which of them were taken back.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param params: Page number and size from the query.
@@ -67,6 +69,7 @@ async def list_history(
     :returns: One page of the changes.
     :rtype: Page[PageHistoryEntrySchema]
     """
+    book = await access.book(book_id)
     found = await history.list(book, address.key)
     undone = found.undone
 
@@ -88,7 +91,8 @@ async def list_history(
 
 @router.post('/{book_id}/pages/{page_id}/history/{stage}/{step_id}/undo')
 async def undo_change(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     address: Annotated[StepPath, Depends()],
     form: UndoForm,
     history: FromDishka[PageHistoryService],
@@ -100,8 +104,10 @@ async def undo_change(
     back.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param form: The oldest change to take back, or none for the newest change alone.
@@ -111,13 +117,15 @@ async def undo_change(
     :returns: The undos that were written.
     :rtype: UndoneSchema
     """
+    book = await access.book(book_id)
     written = await history.undo(book, address.key, form.change_id)
     return UndoneSchema(changes=[PageHistoryEntrySchema.model_validate(change) for change in written])
 
 
 @router.delete('/{book_id}/pages/{page_id}/history/{stage}/{step_id}')
 async def clear_history(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     address: Annotated[StepPath, Depends()],
     history: FromDishka[PageHistoryService],
 ) -> ClearedSchema:
@@ -131,8 +139,10 @@ async def clear_history(
     404 when no recipe of the stage has the step.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param history: Page history service of the request.
@@ -144,5 +154,6 @@ async def clear_history(
     :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the book is queued or
                            running.
     """
+    book = await access.book(book_id)
     cleared = await history.clear(book, address.key)
     return ClearedSchema(changes=cleared.changes, versions=len(cleared.versions))

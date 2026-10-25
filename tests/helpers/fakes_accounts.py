@@ -4,7 +4,9 @@ import enum
 import threading
 from typing import TYPE_CHECKING, override
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 
+from attrs import frozen
 from dishka import Provider, Scope, provide
 from fastapi_users.password import PasswordHelper, PasswordHelperProtocol
 
@@ -28,9 +30,20 @@ LOGIN_PATH: str = f'{AUTH_PATH}/login'
 LOGOUT_PATH: str = f'{AUTH_PATH}/logout'
 FORGOT_PATH: str = f'{AUTH_PATH}/forgot-password'
 RESET_PATH: str = f'{AUTH_PATH}/reset-password'
-ME_PATH: str = '/api/v1/users/me'
+USERS_PATH: str = '/api/v1/users'
+ME_PATH: str = f'{USERS_PATH}/me'
 CSRF_COOKIE: str = 'csrftoken'
 CSRF_HEADER: str = 'x-csrftoken'
+
+
+@frozen
+class SignedInUser:
+    """The user a request of a test is signed in as, of which the API reads only the identifier.
+
+    :ivar id: Identifier of the account.
+    """
+
+    id: UUID
 
 
 class RecordingMailer(Mailer):

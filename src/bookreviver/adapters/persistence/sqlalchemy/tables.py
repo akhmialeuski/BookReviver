@@ -1,6 +1,6 @@
 """Tables of a book, private to the SQLAlchemy persistence adapter, which every book keeps in a file of its own.
 
-The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
+The module declares the ``book_records``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
 ``page_step_states``, ``step_changes``, ``page_history``, ``page_groups``, ``step_values``, ``group_values``,
 ``pagination_sections``, ``book_places``, ``recipes`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative
 style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
@@ -85,7 +85,7 @@ NO_IMPLICIT_LOAD: Final = 'raise'
 # Server defaults of the columns the description gained, which existing rows take when the columns are added
 EMPTY_TEXT: Final = ''
 EMPTY_LIST: Final = '[]'
-BOOK_RECORDS_TABLE: Final = 'projects'
+BOOK_RECORDS_TABLE: Final = 'book_records'
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'

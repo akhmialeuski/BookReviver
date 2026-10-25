@@ -12,7 +12,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Form, Path, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
@@ -21,7 +21,6 @@ from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
-from bookreviver.services.book import Book
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_carry import CarryOverService
 
@@ -62,7 +61,7 @@ class StepEditPath(EditPath):
 
 @router.get('/{book_id}/pages/{page_id}/edits/{stage}')
 async def list_edits(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[EditPath, Depends()],
     params: Annotated[Params, Depends()],
     request: Request,
@@ -71,8 +70,8 @@ async def list_edits(
     """List the manual edits of one stage of a page, by processor.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the page and the stage.
     :type address: EditPath
     :param params: Page number and size from the query.
@@ -84,6 +83,7 @@ async def list_edits(
     :returns: One page of the edits.
     :rtype: Page[PageEditSchema]
     """
+    book = await access.book(address.book_id)
 
     def to_schema(edit: PageEdit) -> PageEditSchema:
         """Build the schema of one edit.
@@ -103,7 +103,7 @@ async def list_edits(
 
 @router.put('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}')
 async def put_edit(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[StepEditPath, Depends()],
     form: Annotated[EditForm, Form(media_type=MULTIPART_FORM)],
     request: Request,
@@ -115,8 +115,8 @@ async def put_edit(
     answer is 422 for an edit the processor of the step does not read, and nothing is processed by this request.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepEditPath
     :param form: The editor, the shape and the mask.
@@ -128,35 +128,32 @@ async def put_edit(
     :returns: The edit as stored, with its hash.
     :rtype: PageEditSchema
     """
+    book = await access.book(address.book_id)
     stored = await edits.save(book, address.key, form.to_edit(), form.mask)
     return PageEditSchema.of(stored, address.book_id, request)
 
 
 @router.delete('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_edit(
-    book: Annotated[Book, Depends(open_book)],
-    address: Annotated[StepEditPath, Depends()],
-    edits: FromDishka[EditService],
+    access: AccessDep, address: Annotated[StepEditPath, Depends()], edits: FromDishka[EditService]
 ) -> None:
     """Delete the edit a step of a recipe reads, and mark the stage of the page stale.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepEditPath
     :param edits: Edit service of the request.
     :type edits: EditService
     """
+    book = await access.book(address.book_id)
     await edits.delete(book, address.key)
 
 
 @router.post('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over')
 async def carry_over_edit(
-    book: Annotated[Book, Depends(open_book)],
-    address: Annotated[StepEditPath, Depends()],
-    form: CarryForm,
-    carry: FromDishka[CarryOverService],
+    access: AccessDep, address: Annotated[StepEditPath, Depends()], form: CarryForm, carry: FromDishka[CarryOverService]
 ) -> CarryOverSchema:
     """Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.
 
@@ -168,8 +165,8 @@ async def carry_over_edit(
     belongs to one page, and for a carry-over to the selected pages that names none.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the source page, the stage and the step.
     :type address: StepEditPath
     :param form: The pages to carry the shape to, and whether to write over a shape of their own.
@@ -179,6 +176,7 @@ async def carry_over_edit(
     :returns: The batch, the changes written and the pages skipped.
     :rtype: CarryOverSchema
     """
+    book = await access.book(address.book_id)
     carried = await carry.carry(book, form.to_request(address.key))
     return CarryOverSchema(
         batch_id=carried.batch_id,

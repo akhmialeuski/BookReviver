@@ -14,7 +14,7 @@ Every command runs its revisions in one transaction together with the row of the
 applies whole or not at all. The transaction begins with ``BEGIN IMMEDIATE``, as every transaction of that engine does,
 and the driver commits or rolls it back. A migration also runs with foreign keys off. The engine turns them on for
 every connection, and batch mode changes a table by copying it, dropping the old one and renaming the copy, so
-dropping the old ``projects`` with keys on would cascade and delete every source, scan and page of the book.
+dropping the old ``book_records`` with keys on would cascade and delete every source, scan and page of the book.
 SQLite ignores the pragma inside a transaction, so it is set on the driver connection before the transaction begins,
 and ``PRAGMA foreign_key_check`` runs in the transaction before its commit: a migration that left a row whose key
 points nowhere is rolled back and fails the command. See https://alembic.sqlalchemy.org/en/latest/batch.html.

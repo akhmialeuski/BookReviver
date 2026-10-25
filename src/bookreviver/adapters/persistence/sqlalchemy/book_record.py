@@ -1,4 +1,4 @@
-"""The repository of the record of a book, the one row of the ``projects`` table of the file of the book.
+"""The repository of the record of a book, the one row of the ``book_records`` table of the file of the book.
 
 The record names no book, so its one row is keyed by a constant, and the identifier of the book an overview carries is
 the one the library gives it.
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class SqlAlchemyBookRecordRepository(BookRecordRepository):
-    """The record of the book of the file, the one row of ``projects``, with the counts and the cover of the book.
+    """The record of the book of the file, the one row of ``book_records``, with the counts and the cover of the book.
 
     The counts are scalar subqueries, so one statement returns every count.
 
@@ -33,7 +33,7 @@ class SqlAlchemyBookRecordRepository(BookRecordRepository):
     """
 
     def __init__(self, session: Session) -> None:
-        """Create the repository over the ``projects`` table.
+        """Create the repository over the ``book_records`` table.
 
         :param session: Session of the transaction.
         :type session: Session

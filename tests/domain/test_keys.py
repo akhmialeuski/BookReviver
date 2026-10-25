@@ -8,7 +8,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StepId, StorageKey
-from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.values import ProcessorRef, Renditions
 from tests.helpers.builders import make_page_version, make_scan, make_source
 
@@ -26,7 +26,7 @@ class TestRelative:
     """Tests for the keys of a book, which name every file from the directory of the book."""
 
     def test_no_built_key_names_the_directory_of_its_book(self) -> None:
-        """Verify every area, source, scan and page key starts at an area of the book, never at ``projects/``."""
+        """Verify every area, source, scan and page key starts at an area of the book, never at ``books/``."""
         source = make_source()
         keys = [
             BookKeys.INCOMING_AREA,
@@ -46,6 +46,10 @@ class TestRelative:
 
 class TestAreas:
     """Tests for the areas the two storage ports own."""
+
+    def test_the_directories_of_the_books_lie_under_books(self) -> None:
+        """Verify the root of the directories of the books under the storage root is named ``books``."""
+        assert KeySegment.BOOKS == 'books'
 
     def test_source_files_and_derived_files_never_share_a_prefix(self) -> None:
         """Verify an upload and a source lie outside the assets area, so deleting assets never reaches them."""
@@ -158,7 +162,7 @@ class TestIsAsset:
         'key',
         [
             f'sources/{BOOK_ID}/book.pdf',
-            f'projects/{BOOK_ID}/assets/book',
+            f'books/{BOOK_ID}/assets/book',
             'assets/../sources/book.pdf',
             'assets/./book',
             'assets//book',

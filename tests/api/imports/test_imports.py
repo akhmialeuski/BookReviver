@@ -10,7 +10,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from fastapi import Request
 
-from bookreviver.api.auth import current_actor
+from bookreviver.api.auth import signed_in_user
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
 from bookreviver.domain.enums import BookResource, JobKind, JobState, RejectionReason, SourceStatus
@@ -473,7 +473,7 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        fx_app.dependency_overrides.pop(current_actor)
+        fx_app.dependency_overrides.pop(signed_in_user)
 
         response = await fx_client.post(
             SOURCES_PATH.format(book_id=fx_book), files=_multipart([image_upload(tmp_path, 'a.jpg')])

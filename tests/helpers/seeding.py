@@ -57,7 +57,6 @@ async def commit_account(
         email=f'{account_id}@{ACCOUNT_DOMAIN}',
         hashed_password=hashed_password,
         is_active=True,
-        is_superuser=False,
         is_verified=True,
     )
     await database.write(

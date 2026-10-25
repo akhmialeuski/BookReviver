@@ -23,7 +23,7 @@ from bookreviver.adapters.persistence.sqlalchemy.columns import RESTRICT
 
 LIBRARY_TABLE: Final = 'library'
 # The column of the library that names the book, its key
-BOOK_ID_COLUMN: Final = 'project_id'
+BOOK_ID_COLUMN: Final = 'book_id'
 
 
 class LibraryRow(DefaultBase):

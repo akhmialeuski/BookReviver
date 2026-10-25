@@ -3,16 +3,20 @@
 import threading
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import httpx
 import pytest
 from delayed_assert import assert_expectations, expect
+from fastapi import APIRouter
 from fastapi_users.router.common import ErrorCode
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenDatabase
+from bookreviver.api.access import AccessDep
 from bookreviver.api.schemas.accounts import AccountRead
 from bookreviver.app.providers.accounts import SESSION_COOKIE, AccountMail, UserManager
 from tests.helpers.fakes_accounts import (
+    CSRF_COOKIE,
     DETAIL_FIELD,
     EMAIL_FIELD,
     FORGOT_PATH,
@@ -22,6 +26,7 @@ from tests.helpers.fakes_accounts import (
     PASSWORD_FIELD,
     RESET_PATH,
     TOKEN_PARAMETER,
+    USERS_PATH,
     VERIFY_PATH,
     HashStep,
     RecordingPasswordHelper,
@@ -44,6 +49,24 @@ ACTOR_PATH: str = '/test/actor'
 HTTPS_BASE_URL: str = 'https://testserver'
 
 
+async def _status_with_session(client: httpx.AsyncClient, token: str) -> HTTPStatus:
+    """Answer what ``GET /users/me`` says to a request that carries only the given session token.
+
+    The header replaces the cookie jar of the client, which holds the token of the last sign-in. It repeats the CSRF
+    cookie of the jar, since a request without it is handed a new one, and the header of the client no longer matches.
+
+    :param client: Client of the application.
+    :type client: httpx.AsyncClient
+    :param token: Value of the session cookie to send.
+    :type token: str
+    :returns: The status of the answer.
+    :rtype: HTTPStatus
+    """
+    cookies = f'{SESSION_COOKIE}={token}; {CSRF_COOKIE}={client.cookies[CSRF_COOKIE]}'
+    response = await client.get(ME_PATH, headers={'cookie': cookies})
+    return HTTPStatus(response.status_code)
+
+
 def _session_cookie_header(response: httpx.Response) -> str:
     """Return the ``Set-Cookie`` header that carries the session.
 
@@ -55,25 +78,29 @@ def _session_cookie_header(response: httpx.Response) -> str:
     return next(header for header in response.headers.get_list('set-cookie') if header.startswith(SESSION_COOKIE))
 
 
+actor_router = APIRouter()
+
+
+@actor_router.get(ACTOR_PATH)
+def whoami(access: AccessDep) -> str:
+    """Answer with the identifier of the acting account.
+
+    :param access: Access that resolved the account from the request's session.
+    :type access: Access
+    :returns: The account identifier as text.
+    :rtype: str
+    """
+    return str(access.actor.account_id)
+
+
 @pytest.fixture
 def fx_actor_route(fx_app: FastAPI) -> None:
-    """Serve ``ACTOR_PATH``, answering with the account ``current_actor`` resolves.
+    """Serve ``ACTOR_PATH``, answering with the account ``Access`` resolves.
 
     :param fx_app: The running application the route is added to.
     :type fx_app: FastAPI
     """
-
-    def whoami(actor: ActorDep) -> str:
-        """Answer with the identifier of the acting account.
-
-        :param actor: Actor ``current_actor`` resolved from the request's session.
-        :type actor: ActorDep
-        :returns: The account identifier as text.
-        :rtype: str
-        """
-        return str(actor.account_id)
-
-    fx_app.add_api_route(ACTOR_PATH, whoami)
+    fx_app.include_router(actor_router)
 
 
 class TestRegister:
@@ -107,7 +134,7 @@ class TestRegister:
         fx_mailer.sent.clear()
         response = await fx_visitor.register(EMAIL, NEW_PASSWORD)
         expect(response.status_code == HTTPStatus.CREATED)
-        expect(response.json().keys() == AccountRead.model_fields.keys())
+        expect(response.json().keys() == AccountRead.model_json_schema()['properties'].keys())
         expect(AccountRead.model_validate(response.json()).is_verified is False)
         expect([message.subject for message in fx_mailer.sent] == [AccountMail.ALREADY_REGISTERED.subject])
         expect((await fx_visitor.login(EMAIL, NEW_PASSWORD)).status_code == HTTPStatus.BAD_REQUEST)
@@ -212,10 +239,10 @@ class TestLogin:
 
 @pytest.mark.usefixtures('fx_actor_route')
 class TestCurrentActor:
-    """Tests for current_actor()."""
+    """Tests for the actor of Access."""
 
     async def test_resolves_the_signed_in_account(self, fx_visitor: Visitor) -> None:
-        """Verify ``current_actor`` resolves the account whose session the request carries.
+        """Verify ``Access`` resolves the account whose session the request carries.
 
         :param fx_visitor: Signed-out visitor of the application.
         :type fx_visitor: Visitor
@@ -319,6 +346,33 @@ class TestPasswordReset:
         expect((await fx_visitor.login(EMAIL, NEW_PASSWORD)).status_code == HTTPStatus.NO_CONTENT)
         assert_expectations()
 
+    async def test_reset_ends_every_session_of_the_account(
+        self, fx_visitor: Visitor, fx_mailer: RecordingMailer, fx_app: FastAPI
+    ) -> None:
+        """Verify a session opened before the reset gets 401 afterwards, and no session row of the account is left.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_mailer: Recording mailer of the application.
+        :type fx_mailer: RecordingMailer
+        :param fx_app: The running application, whose container reads the session rows.
+        :type fx_app: FastAPI
+        """
+        await fx_visitor.sign_up(EMAIL)
+        old = fx_visitor.client.cookies[SESSION_COOKIE]
+        await fx_visitor.client.post(FORGOT_PATH, json={EMAIL_FIELD: EMAIL})
+        token = fx_mailer.token(AccountMail.RESET.subject)
+        before = await _status_with_session(fx_visitor.client, old)
+
+        await fx_visitor.client.post(RESET_PATH, json={TOKEN_PARAMETER: token, PASSWORD_FIELD: NEW_PASSWORD})
+
+        async with fx_app.state.dishka_container() as scope:
+            stored = await (await scope.get(AccessTokenDatabase)).get_by_token(old)
+        expect(before == HTTPStatus.OK)
+        expect(await _status_with_session(fx_visitor.client, old) == HTTPStatus.UNAUTHORIZED)
+        expect(stored is None)
+        assert_expectations()
+
     async def test_unknown_address_answers_like_a_known_one(
         self, fx_browser: httpx.AsyncClient, fx_mailer: RecordingMailer
     ) -> None:
@@ -351,6 +405,27 @@ class TestUpdateMe:
         expect((await fx_visitor.login(EMAIL, NEW_PASSWORD)).status_code == HTTPStatus.NO_CONTENT)
         assert_expectations()
 
+    async def test_new_password_ends_the_other_sessions_and_keeps_the_current_one(self, fx_visitor: Visitor) -> None:
+        """Verify changing the password signs the account's other sessions out, and the session that changed it stays.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        """
+        await fx_visitor.sign_up(EMAIL)
+        other = fx_visitor.client.cookies[SESSION_COOKIE]
+        await fx_visitor.login(EMAIL)
+        current = fx_visitor.client.cookies[SESSION_COOKIE]
+        before = await _status_with_session(fx_visitor.client, other)
+
+        response = await fx_visitor.client.patch(ME_PATH, json={PASSWORD_FIELD: NEW_PASSWORD})
+
+        expect(other != current)
+        expect(before == HTTPStatus.OK)
+        expect(response.status_code == HTTPStatus.OK)
+        expect(await _status_with_session(fx_visitor.client, other) == HTTPStatus.UNAUTHORIZED)
+        expect(await _status_with_session(fx_visitor.client, current) == HTTPStatus.OK)
+        assert_expectations()
+
     async def test_email_cannot_be_changed(self, fx_visitor: Visitor) -> None:
         """Verify an address change is refused before it could tell whether the new address is taken.
 
@@ -360,6 +435,42 @@ class TestUpdateMe:
         await fx_visitor.sign_up(EMAIL)
         response = await fx_visitor.client.patch(ME_PATH, json={EMAIL_FIELD: OTHER_EMAIL})
         assert response.status_code == HTTPStatus.UNPROCESSABLE_CONTENT
+
+
+class TestUserRoutes:
+    """Tests for the routes under /users, of which only those of the signed-in account are mounted."""
+
+    async def test_current_account_is_returned(self, fx_visitor: Visitor) -> None:
+        """Verify ``GET /users/me`` answers with the account of the session.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        """
+        await fx_visitor.sign_up(EMAIL)
+        response = await fx_visitor.client.get(ME_PATH)
+        account = AccountRead.model_validate(response.json())
+        expect(response.status_code == HTTPStatus.OK)
+        expect(account.email == EMAIL)
+        expect(account.is_verified is True)
+        expect('is_superuser' not in response.json())
+        assert_expectations()
+
+    @pytest.mark.parametrize('method', ['GET', 'PATCH', 'DELETE'])
+    async def test_account_by_identifier_is_not_offered(self, fx_visitor: Visitor, method: str) -> None:
+        """Verify an account cannot be read, changed or deleted by its identifier, even by a signed-in one.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param method: HTTP method of the request.
+        :type method: str
+        """
+        account = AccountRead.model_validate((await fx_visitor.register(EMAIL)).json())
+        await fx_visitor.verify()
+        await fx_visitor.login(EMAIL)
+        for identifier in (account.id, uuid4()):
+            response = await fx_visitor.client.request(method, f'{USERS_PATH}/{identifier}', json={})
+            expect(response.status_code == HTTPStatus.NOT_FOUND)
+        assert_expectations()
 
 
 class TestHashingOffTheLoop:

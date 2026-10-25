@@ -178,7 +178,6 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
                 email='owner@example.org',
                 hashed_password='',
                 is_active=True,
-                is_superuser=False,
                 is_verified=True,
             )
         )

@@ -1,10 +1,9 @@
 """Use cases of the set of books: creating, importing, listing and deleting them, and serving their derived files.
 
 What reads or changes one open book, such as its description or its archive, is a method of ``Book``.
-A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
-book of the signed-in account, and they choose the books of a list. A book knows no identifier, so ``create`` and
-``import_archive`` return the identifier they gave the new book, and ``delete`` takes the library entry the caller has
-read.
+A use case works on the ``Book`` objects it is given and checks no owner: the ``Access`` of the API opens a book of the
+signed-in account, and chooses the books of a list. A book knows no identifier, so ``create`` and ``import_archive``
+return the identifier they gave the new book, and ``delete`` takes the identifier and the book the caller has opened.
 
 A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
 ``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
@@ -131,15 +130,17 @@ class BooksService:
             added_at=datetime.now(UTC),
         )
 
-    async def delete(self, entry: LibraryEntry) -> None:
+    async def delete(self, *, book_id: BookId, book: Book) -> None:
         """Delete the book's entry in the library, then the book with its directory.
 
         The entry goes first, so a request that comes later finds no book. A failure after the entry leaves a directory
         nobody lists, and ``Book.delete`` of the same directory removes it.
 
-        :param entry: The library entry of the book, which names its directory.
-        :type entry: LibraryEntry
+        :param book_id: Identifier of the book, which the library entry is kept under.
+        :type book_id: BookId
+        :param book: The book to delete, opened for the account that owns it.
+        :type book: Book
         :raises NotFoundError: If the library holds the entry no more, as when another deletion took it first.
         """
-        await self._catalogue.change(lambda repos: repos.library.delete(entry.book_id))
-        await Book(entry.directory).delete()
+        await self._catalogue.change(lambda repos: repos.library.delete(book_id))
+        await book.delete()

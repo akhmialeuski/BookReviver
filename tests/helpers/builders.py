@@ -188,7 +188,7 @@ def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
 
 @frozen
 class BookOpener:
-    """Opens the books of a test with their databases, as the access dependencies open them for a request.
+    """Opens the books of a test with their databases, as ``Access`` opens them for a request.
 
     A test that opens a book also seeds the catalogue and reads and writes the databases and the files of the books, so
     the opener hands out the catalogue databases, the databases and the file stores of the test too.
@@ -216,7 +216,7 @@ class BookOpener:
 
 
 def open_for(_actor: Actor, book_id: BookId) -> Book:
-    """Open a book as the access dependency ``open_book`` does, without reading the library.
+    """Open a book as ``Access.book`` does, without reading the library.
 
     The book opens its directory and its database by its directory name, so the test has registered them. A book holds
     no owner, so the account only says who the test acts as.

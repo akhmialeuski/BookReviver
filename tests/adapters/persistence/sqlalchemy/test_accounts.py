@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import (
     AccessTokenDatabase,
@@ -36,34 +37,33 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 EMAIL: str = 'Reader@Example.org'
+OTHER_EMAIL: str = 'neighbour@example.org'
 PASSWORD_HASH: str = 'hash-of-a-password'
 NEW_HASH: str = 'new-hash'
 PROVIDER: str = 'google'
 PROVIDER_ACCOUNT: str = 'provider-account-1'
 PROVIDER_EMAIL: str = 'reader@gmail.example'
-ACCESS_TOKEN: str = 'provider-access-token'
-RENEWED_TOKEN: str = 'renewed'
-RENEWED_EXPIRY: int = 1_900_000_000
+RENEWED_EMAIL: str = 'renewed@gmail.example'
 SESSION_TOKEN: str = 't' * 43
 OTHER_TOKEN: str = 'u' * 43
+NEWER_TOKEN: str = 'v' * 43
 # The time a stored session token was created, and the step the tests move a limit away from it
 CREATED_AT: datetime = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 STEP: timedelta = timedelta(seconds=1)
+# How many of the three tokens of the test of the cutoff stay
+EXPECTED_KEPT: int = 2
 # How many times a write opens a transaction that writes
 ONE_BLOCK: int = 1
 # The columns a test gives a new user and a linked provider account, and the new values of an update of each
 NEW_USER: dict[str, Any] = {'email': EMAIL, 'hashed_password': PASSWORD_HASH}
 LINK: dict[str, Any] = {
     'oauth_name': PROVIDER,
-    'access_token': ACCESS_TOKEN,
     'account_id': PROVIDER_ACCOUNT,
     'account_email': PROVIDER_EMAIL,
-    'expires_at': None,
-    'refresh_token': None,
 }
 VERIFIED: dict[str, Any] = {'is_verified': True, 'hashed_password': NEW_HASH}
 DEACTIVATED: dict[str, Any] = {'is_active': False}
-RENEWED_LINK: dict[str, Any] = {'access_token': RENEWED_TOKEN, 'expires_at': RENEWED_EXPIRY}
+RENEWED_LINK: dict[str, Any] = {'account_email': RENEWED_EMAIL}
 LATER: dict[str, Any] = {'created_at': CREATED_AT + STEP}
 
 
@@ -320,6 +320,33 @@ class TestAccountDatabase:
         looked_up = await fx_users.get_by_email(spelling)
         assert (looked_up is not None and looked_up.id == fx_user.id) if is_matched else looked_up is None
 
+    @pytest.mark.parametrize('spelling', [EMAIL.lower(), EMAIL.upper()], ids=['lower-case', 'upper-case'])
+    async def test_create_refuses_an_address_that_differs_only_in_case(
+        self,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        spelling: str,
+    ) -> None:
+        """Verify the catalogue refuses a second user whose address differs from a stored one only in case.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user, registered as ``Reader@Example.org``.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param spelling: The address of the second user.
+        :type spelling: str
+        """
+        with pytest.raises(IntegrityError):
+            await fx_users.create({**NEW_USER, 'email': spelling})
+
+        stored = await _committed_user(fx_counting_catalogue, fx_user.id)
+        expect(stored is not None and stored.email == EMAIL)
+        expect(await fx_users.get_by_email(spelling) is not None)
+        assert_expectations()
+
     @pytest.mark.parametrize(
         ('provider', 'account', 'is_linked'),
         [
@@ -416,7 +443,7 @@ class TestAccountDatabase:
     async def test_update_oauth_account_changes_the_linked_account(
         self, fx_users: AccountDatabase, fx_linked_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
     ) -> None:
-        """Verify an update of the linked account returns the user and commits the new token and expiry.
+        """Verify an update of the linked account returns the user and commits the new address of the account at the provider.
 
         :param fx_users: The user database of the request.
         :type fx_users: AccountDatabase
@@ -429,8 +456,7 @@ class TestAccountDatabase:
         returned = await fx_users.update_oauth_account(fx_linked_user, link, dict(RENEWED_LINK))
         stored = await _committed_user(fx_counting_catalogue, fx_linked_user.id)
         expect(returned is fx_linked_user)
-        expect(stored is not None and stored.oauth_accounts[0].access_token == RENEWED_TOKEN)
-        expect(stored is not None and stored.oauth_accounts[0].expires_at == RENEWED_EXPIRY)
+        expect(stored is not None and stored.oauth_accounts[0].account_email == RENEWED_EMAIL)
         assert_expectations()
 
     async def test_delete_removes_the_user_with_its_provider_accounts_and_tokens(
@@ -668,11 +694,80 @@ class TestAccessTokenDatabase:
         expect(await _count(fx_counting_catalogue, AccessTokenTable) == 0)
         assert_expectations()
 
+    async def test_delete_created_before_removes_only_the_tokens_older_than_the_cutoff(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+    ) -> None:
+        """Verify a token created before the cutoff goes, and one created at the cutoff or after it stays.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the tokens are for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        for value, created_at in (
+            (SESSION_TOKEN, CREATED_AT),
+            (OTHER_TOKEN, CREATED_AT + STEP),
+            (NEWER_TOKEN, CREATED_AT + 2 * STEP),
+        ):
+            await fx_tokens.create(_token(fx_user, token=value, created_at=created_at))
+
+        await fx_tokens.delete_created_before(CREATED_AT + STEP)
+
+        expect(await fx_tokens.get_by_token(SESSION_TOKEN) is None)
+        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is not None)
+        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(await _count(fx_counting_catalogue, AccessTokenTable) == EXPECTED_KEPT)
+        assert_expectations()
+
+    @pytest.mark.parametrize('keep', [None, SESSION_TOKEN], ids=['all', 'all-but-one'])
+    async def test_delete_of_user_removes_the_tokens_of_that_user_only(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        keep: str | None,
+    ) -> None:
+        """Verify the tokens of the user go, but for the one to keep, and the token of another user stays.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user the first two tokens are for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param keep: Value of the token to keep, or None to remove them all.
+        :type keep: str | None
+        """
+        neighbour = await fx_users.create({**NEW_USER, 'email': OTHER_EMAIL})
+        await fx_tokens.create(_token(fx_user))
+        await fx_tokens.create(_token(fx_user, token=OTHER_TOKEN))
+        await fx_tokens.create(_token(neighbour, token=NEWER_TOKEN))
+        fx_counting_catalogue.blocks = 0
+
+        await fx_tokens.delete_of_user(fx_user.id, keep=keep)
+
+        expect((await fx_tokens.get_by_token(SESSION_TOKEN) is not None) == (keep == SESSION_TOKEN))
+        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is None)
+        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(fx_counting_catalogue.blocks == ONE_BLOCK)
+        assert_expectations()
+
     @pytest.mark.parametrize(
         'operation',
         [
             pytest.param(
                 lambda tokens, _stored, user: tokens.create(_token(user, token=OTHER_TOKEN)), id='create-token'
+            ),
+            pytest.param(
+                lambda tokens, _stored, _user: tokens.delete_created_before(CREATED_AT), id='delete-created-before'
             ),
             pytest.param(lambda tokens, stored, _user: tokens.update(stored, dict(LATER)), id='update-token'),
             pytest.param(lambda tokens, stored, _user: tokens.delete(stored), id='delete-token'),

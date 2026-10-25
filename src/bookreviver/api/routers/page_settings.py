@@ -15,7 +15,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import StagePath
@@ -27,10 +27,9 @@ from bookreviver.api.schemas.page_settings import (
     ValueTargetModel,
 )
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, StepId
+from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.step_values import PageStepSettings, ValueField
 from bookreviver.domain.values import Slice
-from bookreviver.services.book import Book
 from bookreviver.services.page_settings import PageSettingsService
 
 if TYPE_CHECKING:
@@ -75,7 +74,8 @@ class FieldPath(StagePath):
 
 @router.get('/{book_id}/pages/{page_id}/settings/{stage}')
 async def list_settings(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     address: Annotated[SettingsPath, Depends()],
     params: Annotated[Params, Depends()],
     settings: FromDishka[PageSettingsService],
@@ -86,8 +86,10 @@ async def list_settings(
     the groups for the step, and with the parameters the step runs with on the page.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param address: Identifiers of the book, the page and the stage.
     :type address: SettingsPath
     :param params: Page number and size from the query.
@@ -97,6 +99,7 @@ async def list_settings(
     :returns: One page of the settings, by step.
     :rtype: Page[PageStepSettingsSchema]
     """
+    book = await access.book(book_id)
 
     def to_schema(entry: PageStepSettings) -> PageStepSettingsSchema:
         """Build the schema of the settings of one step.
@@ -116,7 +119,7 @@ async def list_settings(
 
 @router.put('/{book_id}/stages/{stage}/steps/{step_id}/values/{name}')
 async def put_value(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[FieldPath, Depends()],
     form: ValueForm,
     settings: FromDishka[PageSettingsService],
@@ -130,8 +133,8 @@ async def put_value(
     nothing is processed by this request.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the stage, the step and the field.
     :type address: FieldPath
     :param form: The pages and the value.
@@ -141,6 +144,7 @@ async def put_value(
     :returns: The batch and the changes written, one on each page whose parameters change.
     :rtype: ValueChangesSchema
     """
+    book = await access.book(address.book_id)
     done = await settings.change(book, address.of(form.to_target()), form.value)
     return ValueChangesSchema(
         batch_id=done.batch_id, changes=[PageHistoryEntrySchema.model_validate(change) for change in done.changes]
@@ -149,7 +153,7 @@ async def put_value(
 
 @router.delete('/{book_id}/stages/{stage}/steps/{step_id}/values/{name}')
 async def delete_value(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[FieldPath, Depends()],
     target: Annotated[ValueTargetModel, Query()],
     settings: FromDishka[PageSettingsService],
@@ -159,8 +163,8 @@ async def delete_value(
     The answer is 404 when none of the pages has a value of its own for the field, or the step is not one of the stage.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the stage, the step and the field.
     :type address: FieldPath
     :param target: The pages, the odd pages, the even pages or the group the value was set for.
@@ -170,6 +174,7 @@ async def delete_value(
     :returns: The batch and the changes written, one on each page whose parameters change.
     :rtype: ValueChangesSchema
     """
+    book = await access.book(address.book_id)
     done = await settings.reset(book, address.of(target.to_target()))
     return ValueChangesSchema(
         batch_id=done.batch_id, changes=[PageHistoryEntrySchema.model_validate(change) for change in done.changes]
