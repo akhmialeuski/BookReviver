@@ -43,7 +43,6 @@ class VersionClearing:
         :type book: Book
         """
         self._book = book
-        self._keys = BookKeys()
         self._held: set[PageVersionId] = set()
 
     async def clear(self, batch: Sequence[PageVersion]) -> int:
@@ -83,7 +82,7 @@ class VersionClearing:
         gone: list[PageVersionId] = []
         for version in going:
             try:
-                await self._book.assets.delete_prefix(self._keys.version_directory(version))
+                await self._book.assets.delete_prefix(BookKeys.version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed, so its row stays', version.id)
                 self._hold([version])

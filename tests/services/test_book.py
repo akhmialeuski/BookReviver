@@ -62,7 +62,7 @@ class TestOverview:
             databases=fx_open_book.databases,
         )
 
-        overview = await _stages().overview(fx_open_book(fx_actor, book_id), book_id)
+        overview = await _stages().overview(fx_open_book(fx_actor, book_id))
 
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
@@ -95,4 +95,4 @@ class TestUpdate:
 
         await book.update(BookChanges(image_policy=ImagePolicy.LOSSLESS))
 
-        assert (await _stages().overview(book, book_id)).book_record.image_policy == ImagePolicy.LOSSLESS
+        assert (await _stages().overview(book)).book_record.image_policy == ImagePolicy.LOSSLESS

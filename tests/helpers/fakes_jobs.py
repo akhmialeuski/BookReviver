@@ -114,17 +114,16 @@ class RecordingEventBus(EventChannels):
 
     @contextmanager
     def installed(self) -> Iterator[Self]:
-        """Register the bus as the way a book opens its event channel, and give the previous registration back after.
+        """Register the bus as the way a book opens its event channel, and make it the current bus while the block runs.
 
         :returns: Context manager yielding the bus.
         :rtype: Iterator[Self]
         """
         previous_bus, RecordingEventBus._current = RecordingEventBus._current, self
-        previous = BookEvents.register(self.open)
+        BookEvents.register(self.open)
         try:
             yield self
         finally:
-            BookEvents.register(previous)
             RecordingEventBus._current = previous_bus
 
     @override
@@ -184,7 +183,7 @@ class JobFakes:
     )
 
     def __attrs_post_init__(self) -> None:
-        """Register the board as the way a book opens its job queue, which the suite gives back after the test."""
+        """Register the board as the way a book opens its job queue, replacing the one the suite registered."""
         BookJobs.register(self.board.open)
 
 
@@ -203,19 +202,13 @@ class FakeBoardProvider(Provider):
         self._board = board
 
     @provide(override=True)
-    def job_board(self) -> Iterator[InMemoryJobBoard]:
-        """Register the given board as the job queues of the books, and return it as the board of the application.
+    def job_board(self) -> InMemoryJobBoard:
+        """Return the given board as the board of the application, whose queues ``prepare_start`` registers.
 
-        The registration is given back when the application closes the container.
-
-        :returns: Iterator yielding the board given to the constructor, so the application sees the jobs a test puts on it.
-        :rtype: Iterator[InMemoryJobBoard]
+        :returns: The board given to the constructor, so the application sees the jobs a test puts on it.
+        :rtype: InMemoryJobBoard
         """
-        previous = BookJobs.register(self._board.open)
-        try:
-            yield self._board
-        finally:
-            BookJobs.register(previous)
+        return self._board
 
 
 class JobFakesProvider(Provider):
@@ -233,16 +226,10 @@ class JobFakesProvider(Provider):
         self._fakes = fakes
 
     @provide(override=True)
-    def event_channels(self) -> Iterator[EventChannels]:
-        """Register the recording bus as the event channels of the books, and return it as those of the application.
+    def event_channels(self) -> EventChannels:
+        """Return the recording bus as the event channels of the application, whose channels ``prepare_start`` registers.
 
-        The registration is given back when the application closes the container.
-
-        :returns: Iterator yielding the recording event bus of the fakes.
-        :rtype: Iterator[EventChannels]
+        :returns: The recording event bus of the fakes.
+        :rtype: EventChannels
         """
-        previous = BookEvents.register(self._fakes.events.open)
-        try:
-            yield self._fakes.events
-        finally:
-            BookEvents.register(previous)
+        return self._fakes.events

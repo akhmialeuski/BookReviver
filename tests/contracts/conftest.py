@@ -4,7 +4,8 @@ The persistence port has one adapter, so its contract tests run on the root ``fx
 ``fx_databases``.
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from collections.abc import Callable
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import pytest
 from dishka import make_async_container
@@ -12,6 +13,7 @@ from dishka import make_async_container
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
+from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import make_record
 from tests.helpers.job_boards import BoardAdapter
@@ -20,7 +22,7 @@ from tests.helpers.step_executors import StepExecutorAdapter
 from tests.helpers.tracers import TracerAdapter
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable
 
     from dishka import AsyncContainer
 
@@ -137,16 +139,18 @@ async def fx_storage(request: pytest.FixtureRequest, fx_settings: Settings) -> A
 
 
 @pytest.fixture
-async def fx_stores(fx_storage: AsyncContainer) -> type[BookDirectory]:
-    """Return the directory port with the storage backend under test registered, which opens the directory of a book.
+async def fx_stores(fx_storage: AsyncContainer) -> Callable[[BookDirectoryName], BookDirectory]:
+    """Return the opener of the storage backend under test, which opens the directory of a book by its name.
 
     :param fx_storage: Container holding the provider of one storage backend.
     :type fx_storage: AsyncContainer
-    :returns: The ``BookDirectory`` class, which opens the directory of each book by its name.
-    :rtype: type[BookDirectory]
+    :returns: Function from the directory name of a book to its directory.
+    :rtype: Callable[[BookDirectoryName], BookDirectory]
     """
-    await fx_storage.get(type[BookDirectory])
-    return BookDirectory
+    return cast(
+        'Callable[[BookDirectoryName], BookDirectory]',
+        await fx_storage.get(Callable[[BookDirectoryName], BookDirectory]),
+    )
 
 
 class Book(NamedTuple):

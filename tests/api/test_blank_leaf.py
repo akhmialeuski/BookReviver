@@ -159,13 +159,12 @@ async def fx_book(
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
     await fx_databases().open(book_id).change(save_heads)
-    keys = BookKeys()
     for scan in scans:
-        async with fx_directories.assets(book_id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+        async with fx_directories.assets(book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(_jpeg())
     for version in versions:
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with fx_directories.assets(book_id).writable(keys.version_rendition(version, rendition)) as path:
+            async with fx_directories.assets(book_id).writable(BookKeys.version_rendition(version, rendition)) as path:
                 path.write_bytes(_jpeg())
     return Book(book_id=book_id, pages=pages)
 

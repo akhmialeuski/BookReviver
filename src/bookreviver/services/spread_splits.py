@@ -161,7 +161,6 @@ class SpreadSplit:
         self._order_keys = runtime.order_keys
         self._records = records
         self._labels = PageLabels()
-        self._keys = BookKeys()
 
     def splits(self, recipe: Recipe) -> bool:
         """Tell whether a recipe splits scans: it is a recipe of the page split whose step makes a part for each half.
@@ -321,7 +320,7 @@ class SpreadSplit:
         :type undoing: Unsplit
         """
         for right in undoing.rights:
-            await self._runner.discard(self._book, self._keys.page(right.id))
+            await self._runner.discard(self._book, BookKeys.page(right.id))
 
     def _halves(self, repos: BookRepositories, page: Page, right_id: PageId | None = None) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
@@ -526,7 +525,7 @@ class SpreadSplit:
             # earlier run made ready
             for version, earlier in zip(made, basis.stored, strict=False):
                 if earlier is None or earlier.state is not VersionState.READY:
-                    cleanup.push_async_callback(self._runner.discard, self._book, self._keys.version_directory(version))
+                    cleanup.push_async_callback(self._runner.discard, self._book, BookKeys.version_directory(version))
             stored = await self._book.change(work)
             if stored:
                 cleanup.pop_all()

@@ -24,7 +24,7 @@ from tests.helpers.seeding import store_book
 from tests.helpers.storage import SharedBookDirectories, book_directory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -81,7 +81,7 @@ def fx_import_board(fx_book_parts: RecordingEventBus) -> FakeJobBoard:
     """Build a job board that holds the jobs a test puts on it, and runs them to their end when the test says so.
 
     :param fx_book_parts: The bus and the job board registered as the parts of the books, which this board is
-                          registered over and which are given back after the test.
+                          registered over.
     :type fx_book_parts: RecordingEventBus
     :returns: Board the books of the test open their job queues on.
     :rtype: FakeJobBoard
@@ -103,24 +103,20 @@ def fx_service() -> Callable[[], SourceService]:
 
 
 @pytest.fixture
-def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> Iterator[BookOpener]:
+def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookOpener:
     """Register source stores whose first deletion fails as the ones the books of the test open, and return the opener.
 
     :param fx_open_book: Opens the books of the test, whose catalogue databases and databases the opener shares. It
-                         depends on the parts registered for the books, which get their directory back after the test.
+                         depends on the parts registered for the books.
     :type fx_open_book: BookOpener
     :param fx_storage_root: Storage root of the test, which holds the files of its books.
     :type fx_storage_root: Path
-    :returns: Iterator yielding the opener, whose books fail the first deletion of a source, and giving the registration
-              back.
-    :rtype: Iterator[BookOpener]
+    :returns: The opener, whose books fail the first deletion of a source.
+    :rtype: BookOpener
     """
     stores = SharedBookDirectories(root=fx_storage_root, source_store=SourceStoreFailingOnce)
-    previous = BookDirectory.register(stores.open)
-    try:
-        yield evolve(fx_open_book, files=stores)
-    finally:
-        BookDirectory.register(previous)
+    BookDirectory.register(stores.open)
+    return evolve(fx_open_book, files=stores)
 
 
 async def _record_unimported(book_id: BookId, *, databases: LocatedBookDatabases) -> tuple[Source, Source]:
@@ -466,7 +462,7 @@ class TestDelete:
 
         remaining = await fx_service().list(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
         scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_id), SliceRequest())
-        image = BookKeys().version_rendition(fx_book.version, Rendition.FULL_JPEG)
+        image = BookKeys.version_rendition(fx_book.version, Rendition.FULL_JPEG)
         page = await fx_open_book.databases.open(fx_book.book_id).read(lambda repos: repos.pages.get(fx_book.page.id))
         versions = await fx_open_book.databases.open(fx_book.book_id).read(
             lambda repos: repos.page_versions.list_for_page(fx_book.page.id)

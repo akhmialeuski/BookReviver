@@ -261,11 +261,9 @@ class BookRecordRepository(ABC):
         """
 
     @abstractmethod
-    def overview(self, book_id: BookId) -> BookOverview:
+    def overview(self) -> BookOverview:
         """Return the record of the book together with the counts of the book.
 
-        :param book_id: Identifier the library gives the book, which the overview carries and the store does not hold.
-        :type book_id: BookId
         :returns: The record of the book with the counts of its included pages, sources and scans.
         :rtype: BookOverview
         :raises NotFoundError: If the store holds no record yet.

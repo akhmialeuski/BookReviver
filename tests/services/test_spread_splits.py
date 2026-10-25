@@ -71,9 +71,7 @@ async def width_of(kit: ProcessingKit, book_id: BookId, version: PageVersion) ->
     :rtype: int
     """
     assert version.renditions is not None
-    async with kit.files.assets(book_id).readable(
-        BookKeys().version_rendition(version, version.renditions.full)
-    ) as full:
+    async with kit.files.assets(book_id).readable(BookKeys.version_rendition(version, version.renditions.full)) as full:
         with Image.open(io.BytesIO(full.read_bytes())) as image:
             return image.width
 
@@ -293,11 +291,10 @@ class TestSplit:
         broken, _ = await fx_cv_kit.seed_scan_page(book_id, image=b'this is no image')
         await use_recipe(fx_cv_kit, actor, book_id, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.PAGE_SPLIT))
-        keys = BookKeys()
         assert broken.scan_id is not None
         scan_id = broken.scan_id
         scan = await fx_cv_kit.databases.open(book_id).read(lambda repos: repos.scans.get(scan_id))
-        full = keys.scan_rendition(scan, scan.renditions.full)
+        full = BookKeys.scan_rendition(scan, scan.renditions.full)
         await fx_cv_kit.files.assets(book_id).delete_prefix(full)
         async with fx_cv_kit.files.assets(book_id).writable(full) as target:
             target.write_bytes(png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX)))
@@ -414,7 +411,7 @@ class TestUnsplit:
         actor, book_id, [left, right] = await self.split_then_use_whole_scan(fx_cv_kit)
         right_version = await head_of(fx_cv_kit, book_id, right, Stage.PAGE_SPLIT)
         assert right_version.renditions is not None
-        stored = BookKeys().version_rendition(right_version, right_version.renditions.full)
+        stored = BookKeys.version_rendition(right_version, right_version.renditions.full)
         await run_stage(fx_cv_kit, actor, book_id, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         [remaining] = await book_of(book_id, databases=fx_cv_kit.databases)
         head = await head_of(fx_cv_kit, book_id, remaining, Stage.PAGE_SPLIT)
@@ -559,6 +556,6 @@ class TestSplitApplyStep:
         expect(len(await book_of(book_id, databases=fx_open_book.databases)) == pages_left)
         expect(record is None)
         expect(versions.total == 0)
-        expect(await fx_cv_kit.files.assets(book_id).size_of(BookKeys().page(page.id)) == 0)
+        expect(await fx_cv_kit.files.assets(book_id).size_of(BookKeys.page(page.id)) == 0)
         expect(told == [])
         assert_expectations()

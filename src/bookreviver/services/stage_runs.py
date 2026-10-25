@@ -167,7 +167,6 @@ class StageWork:
         self._processors = runtime.processors
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
-        self._keys = BookKeys()
 
     def task_count(self, steps: Sequence[Step]) -> int:
         """Count the tasks of the steps a run or a preview goes over on one page.
@@ -298,13 +297,13 @@ class StageWork:
         if scale is VersionScale.PREVIEW:
             return StepSource(
                 version_id=None,
-                image=self._keys.scan_rendition(scan, Rendition.PREVIEW),
+                image=BookKeys.scan_rendition(scan, Rendition.PREVIEW),
                 data=data,
                 scale=scale,
                 ratio=self._ratio(facts.width_px, facts.height_px),
             )
         return StepSource(
-            version_id=None, image=self._keys.scan_rendition(scan, scan.renditions.full), data=data, scale=scale
+            version_id=None, image=BookKeys.scan_rendition(scan, scan.renditions.full), data=data, scale=scale
         )
 
     def _version_source(self, version: PageVersion, scale: VersionScale) -> StepSource:
@@ -326,14 +325,14 @@ class StageWork:
             ratio = 1.0 if size is None else self._ratio(size.width_px, size.height_px)
             return StepSource(
                 version_id=version.id,
-                image=self._keys.version_rendition(version, Rendition.PREVIEW),
+                image=BookKeys.version_rendition(version, Rendition.PREVIEW),
                 data=version.data,
                 scale=scale,
                 ratio=ratio,
             )
         return StepSource(
             version_id=version.id,
-            image=self._keys.version_rendition(version, version.renditions.full),
+            image=BookKeys.version_rendition(version, version.renditions.full),
             data=version.data,
             scale=scale,
         )
@@ -690,7 +689,7 @@ class StageWork:
         try:
             await self._book.change(store)
         except Exception:
-            await self._runner.discard(self._book, self._keys.version_directory(made))
+            await self._runner.discard(self._book, BookKeys.version_directory(made))
             raise
         if made.state is VersionState.READY:
             span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
@@ -1089,7 +1088,7 @@ class RecipeRun(StageWork):
         try:
             await self._book.change(fail)
         except NotFoundError:
-            await self._runner.discard(self._book, self._keys.page(page.id))
+            await self._runner.discard(self._book, BookKeys.page(page.id))
             return RunOutcome.SKIPPED
         return RunOutcome.FAILED
 

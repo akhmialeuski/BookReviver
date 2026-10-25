@@ -56,7 +56,7 @@ class Book(NamedTuple):
     @property
     def pyramid(self) -> StorageKey:
         """The key of the directory of the tile pyramid of the page."""
-        return BookKeys().version_rendition(self.version, Rendition.TILES)
+        return BookKeys.version_rendition(self.version, Rendition.TILES)
 
 
 async def _store_book(
@@ -78,11 +78,10 @@ async def _store_book(
     page = make_page()
     version = make_page_version(page_id=page.id)
     book_id = await store_book(catalogue, make_record(), page, owner=owner, versions=[version], databases=databases)
-    keys = BookKeys()
     for key, content in (
-        (f'{keys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
-        (f'{keys.version_rendition(version, Rendition.TILES)}/{TILE_PATH}', TILE_CONTENT),
-        (keys.version_rendition(version, Rendition.THUMBNAIL), TILE_CONTENT),
+        (f'{BookKeys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
+        (f'{BookKeys.version_rendition(version, Rendition.TILES)}/{TILE_PATH}', TILE_CONTENT),
+        (BookKeys.version_rendition(version, Rendition.THUMBNAIL), TILE_CONTENT),
     ):
         async with files.assets(book_id).writable(StorageKey(key)) as path:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +148,7 @@ class TestIiifFile:
         book = await _store_book(
             fx_open_book.catalogue(), fx_directories, fx_actor.account_id, databases=fx_open_book.databases
         )
-        key = BookKeys().version_rendition(book.version, rendition)
+        key = BookKeys.version_rendition(book.version, rendition)
         address = f'{key}/{TILE_PATH}' if rendition is Rendition.TILES else key
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.book_id}/{address}')
@@ -184,7 +183,7 @@ class TestIiifFile:
         book = await _store_book(
             fx_open_book.catalogue(), fx_directories, fx_actor.account_id, databases=fx_open_book.databases
         )
-        directory = BookKeys().version_directory(book.version)
+        directory = BookKeys.version_directory(book.version)
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.book_id}/{directory}/{name}')
 
@@ -241,7 +240,6 @@ class TestIiifFile:
         :type fx_databases: BookDatabasesFactory
         """
         book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
-        keys = BookKeys()
         promoted, staged = JobId(uuid4()), JobId(uuid4())
         source_id = SourceId(uuid4())
         for job_id in (promoted, staged):
@@ -249,8 +247,8 @@ class TestIiifFile:
         await fx_directories.sources(book_id).promote(promoted, source_id, names=[SOURCE_NAME])
 
         responses = [
-            await fx_client.get(f'{IIIF_PATH}/{book_id}/{keys.source(source_id)}/{SOURCE_NAME}'),
-            await fx_client.get(f'{IIIF_PATH}/{book_id}/{keys.incoming(staged)}/{SOURCE_NAME}'),
+            await fx_client.get(f'{IIIF_PATH}/{book_id}/{BookKeys.source(source_id)}/{SOURCE_NAME}'),
+            await fx_client.get(f'{IIIF_PATH}/{book_id}/{BookKeys.incoming(staged)}/{SOURCE_NAME}'),
         ]
 
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2

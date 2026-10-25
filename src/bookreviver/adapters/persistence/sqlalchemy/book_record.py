@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.domain.ids import BookId
 
 
 class SqlAlchemyBookRecordRepository(BookRecordRepository):
@@ -77,14 +76,12 @@ class SqlAlchemyBookRecordRepository(BookRecordRepository):
         return self._mapper.to_entity(self._rows.update(self._mapper.to_row(book_record)))
 
     @override
-    def overview(self, book_id: BookId) -> BookOverview:
+    def overview(self) -> BookOverview:
         """Read the record, count the included pages, the sources and the scans of the book, and find its cover.
 
         The cover is the page of the kind ``cover`` that comes first in the book, else the first page of the book, and a
         book without pages has none.
 
-        :param book_id: Identifier the library gives the book, which the overview carries.
-        :type book_id: BookId
         :returns: The record of the book with its counts and its cover.
         :rtype: BookOverview
         :raises NotFoundError: If the file holds no record yet.
@@ -94,7 +91,6 @@ class SqlAlchemyBookRecordRepository(BookRecordRepository):
         cover = select(PageRow.id).order_by(PageRow.kind != PageKind.COVER, PageRow.order_key).limit(1)
         cover_id = self._rows.session.scalar(cover)
         return BookOverview(
-            book_id=book_id,
             book_record=book_record,
             page_count=pages,
             source_count=sources,

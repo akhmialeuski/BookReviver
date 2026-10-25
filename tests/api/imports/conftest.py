@@ -42,7 +42,7 @@ def fx_fakes(fx_events: JobEndBus, fx_book_parts: RecordingEventBus) -> JobFakes
     :param fx_events: Event bus of the application.
     :type fx_events: JobEndBus
     :param fx_book_parts: The bus and the job board registered as the parts of the books, which the board of the fakes
-                          is registered over, and which are given back after the test.
+                          is registered over.
     :type fx_book_parts: RecordingEventBus
     :returns: Fakes with nothing published.
     :rtype: JobFakes

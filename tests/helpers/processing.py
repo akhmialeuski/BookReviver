@@ -32,7 +32,6 @@ from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.book import Book
-from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
@@ -417,9 +416,8 @@ class ProcessingKit:
             repos.pages.add(page)
 
         await self.databases.open(book_id).change(add_scan_page)
-        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-            async with self.files.assets(book_id).writable(keys.scan_rendition(scan, rendition)) as target:
+            async with self.files.assets(book_id).writable(BookKeys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
         return page, scan
 
@@ -445,9 +443,8 @@ class ProcessingKit:
             tiles_ready=True,
             data={'width_px': IMAGE_SIZE_PX, 'height_px': IMAGE_SIZE_PX},
         )
-        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with self.files.assets(book_id).writable(keys.version_rendition(version, rendition)) as target:
+            async with self.files.assets(book_id).writable(BookKeys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
 
         def add_base_version(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -480,9 +477,8 @@ class ProcessingKit:
         :param book_id: Book owning the page.
         :type book_id: BookId
         """
-        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with self.files.assets(book_id).writable(keys.version_rendition(version, rendition)) as target:
+            async with self.files.assets(book_id).writable(BookKeys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)
 
     async def stored_version(self, book_id: BookId, version_id: PageVersionId) -> PageVersion:
@@ -535,7 +531,7 @@ async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
     :raises NotFoundError: If the library has no such book.
     """
     catalogue = kit.catalogue()
-    return BooksService(catalogue=catalogue).book(await catalogue.read(lambda repos: repos.library.get(book_id)))
+    return Book((await catalogue.read(lambda repos: repos.library.get(book_id))).directory)
 
 
 async def change_versions(

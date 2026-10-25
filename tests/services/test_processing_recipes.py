@@ -7,6 +7,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
 from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
@@ -20,6 +21,7 @@ from bookreviver.domain.values import (
     Step,
     StepPreview,
 )
+from bookreviver.ports.persistence import BookDatabase
 from tests.helpers.builders import make_page_stage, open_for
 from tests.helpers.processing import open_book
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
@@ -27,9 +29,10 @@ from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, Fake
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, Recipe
-    from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabase, BookRepositories
+    from bookreviver.domain.ids import BookDirectoryName, BookId
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
@@ -598,11 +601,38 @@ class ReadGate:
         self._parties = parties
         self._all_read = anyio.Event()
 
-    def watch(self, database: BookDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Hold the first read of the recipes of a stage that the book database makes.
+    def opener(
+        self, books: BookRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> Callable[[BookDirectoryName], BookDatabase]:
+        """Make the opener of the book databases whose first read is held, which a book is opened over.
 
         The recipe book reads in a transaction that only reads before it opens a change, and a book database makes no
         other read while it asks for the recipes of a stage, so the first read of the book database is the one held.
+
+        :param books: Registry of the books of the test, which opens the databases.
+        :type books: BookRegistry
+        :param monkeypatch: Fixture that restores the book databases when the test ends.
+        :type monkeypatch: pytest.MonkeyPatch
+        :returns: Function from the directory name of a book to its database, to register with ``BookDatabase``.
+        :rtype: Callable[[BookDirectoryName], BookDatabase]
+        """
+
+        def open_held(dir_name: BookDirectoryName) -> BookDatabase:
+            """Open the database of a book, holding its first read.
+
+            :param dir_name: Name of the directory of the book.
+            :type dir_name: BookDirectoryName
+            :returns: The database of the book.
+            :rtype: BookDatabase
+            """
+            database = SqlAlchemyBookDatabase(dir_name, books=books)
+            self._hold_first_read(database, monkeypatch)
+            return database
+
+        return open_held
+
+    def _hold_first_read(self, database: BookDatabase, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Hold the first read that a book database makes until every party has read.
 
         :param database: Book database of one of the tasks.
         :type database: BookDatabase
@@ -637,7 +667,7 @@ class TestDefaultRecipesInChanges:
     """Tests for the creation of the default recipes by tasks that ask for the stage at the same time."""
 
     async def test_two_tasks_that_both_found_no_recipes_store_one_set(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+        self, fx_kit: ProcessingKit, fx_books: BookRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify the task that enters the change second reads again, finds the recipes, and adds none.
 
@@ -646,14 +676,16 @@ class TestDefaultRecipesInChanges:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_books: Registry of the books of the test, which opens their databases.
+        :type fx_books: BookRegistry
         :param monkeypatch: Fixture that restores the catalogue databases and the repository.
         :type monkeypatch: pytest.MonkeyPatch
         """
         _, book_id = await fx_kit.seed_book()
-        books = [await open_book(fx_kit, book_id) for _ in range(TASKS)]
         gate = ReadGate(parties=TASKS)
-        for book in books:
-            gate.watch(book.database, monkeypatch)
+        BookDatabase.register(gate.opener(fx_books, monkeypatch))
+        books = [await open_book(fx_kit, book_id) for _ in range(TASKS)]
+        BookDatabase.register(lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books))
         stored_sets: list[int] = []
         add_many = SqlAlchemyRecipeRepository.add_many
 

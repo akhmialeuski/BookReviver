@@ -90,7 +90,7 @@ class ProcessingJobs:
 
         :param runtime: The runner, the processors and the size of a preview.
         :type runtime: StageRuntime
-        :param parts: The recipes, the stage records and the job starter over the catalogue database.
+        :param parts: The recipes, the stage records and the job starter, which work on the book of each job.
         :type parts: ProcessingParts
         :param pages: The page service, which queues the detection of the content of the pages a split made.
         :type pages: PageService
@@ -385,7 +385,6 @@ class ProcessingJobs:
             or version.renditions is None
         ):
             return
-        keys = BookKeys()
         cut_version = await self._runtime.runner.cut_tiles(book, version)
 
         def mark(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, PageVersion | None]:
@@ -408,7 +407,7 @@ class ProcessingJobs:
         if stored:
             await book.events.publish(PageVersionReady(version=cut_version))
         elif current is None:
-            await book.assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
+            await book.assets.delete_prefix(BookKeys.version_rendition(version, Rendition.TILES))
 
     async def _collect(self, book: Book, job: Job, control: JobControl) -> int:
         """Delete the versions that nothing needs, batch by batch, with their files and their rows.

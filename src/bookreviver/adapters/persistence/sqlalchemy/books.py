@@ -1,15 +1,16 @@
 """The databases of the books: one SQLite file in the directory of each book, opened on first use and closed when idle.
 
 The file of a book lies in the directory of the book, which the storage owns: it unpacks the file of an imported book
-and deletes the directory whole, and the registry is given the path of the file by the book database that asks for it.
-:class:`BookRegistry` opens a
+and deletes the directory whole, and the registry builds the path of the file from the storage root and the name of the
+directory. :class:`BookRegistry` opens a
 :class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the book schema the first time a
 transaction asks for the book, brings the file to the head revision of that schema when it is behind, and refuses a file
 at a revision this code does not ship with ``BookTooNewError``, leaving the file as it is for the newer code. Each open
 book has engines and a write queue of its own, so a change of one book never waits for a change of another.
 
-A new book starts as a copy of a blank file at the head revision, made once for the registry and copied by the book
-database that creates the book: running the revisions takes about a second, and copying a file a few milliseconds.
+A new book starts as a copy of a blank file at the head revision, made once for the registry and copied by
+:meth:`BookRegistry.copy_blank` for the book database that creates the book: running the revisions takes about a
+second, and copying a file a few milliseconds.
 
 A book that no transaction has used for the idle limit is closed, which disposes of its engines and their
 connections, and the next use opens it again. :meth:`BookRegistry.keep_closing_idle` looks for such books ten times
@@ -72,13 +73,16 @@ class BookRegistry:
     def __init__(
         self,
         *,
+        root: Path,
         tracer: Tracer,
         wait_seconds: float,
         idle_seconds: float,
         blank: Path | None = None,
     ) -> None:
-        """Serve the books whose files the callers name.
+        """Serve the books whose files lie in the directories under the storage root.
 
+        :param root: Storage root of the directories of the books, in which the file of each book lies.
+        :type root: Path
         :param tracer: Tracer the write blocks of every book are timed with.
         :type tracer: Tracer
         :param wait_seconds: The busy timeout every connection of a book gets, which is the longest wait limit of a
@@ -90,6 +94,7 @@ class BookRegistry:
                       on the first creation of a book.
         :type blank: Path | None
         """
+        self._root = root
         self._tracer = tracer
         self._wait_seconds = wait_seconds
         self._idle_seconds = idle_seconds
@@ -102,20 +107,27 @@ class BookRegistry:
         # Taken to open, create and close books, never around a transaction
         self._lock = anyio.Lock()
 
+    @property
+    def wait_seconds(self) -> float:
+        """The busy timeout every connection of a book gets, which is also how long a change waits for the writer.
+
+        :returns: The wait limit in seconds.
+        :rtype: float
+        """
+        return self._wait_seconds
+
     @asynccontextmanager
-    async def use(self, dir_name: BookDirectoryName, path: Path) -> AsyncIterator[SqlDatabase]:
+    async def use(self, dir_name: BookDirectoryName) -> AsyncIterator[SqlDatabase]:
         """Hold the database of a book open for the caller, opening it from its file first when it is closed.
 
         :param dir_name: Name of the directory of the book.
         :type dir_name: BookDirectoryName
-        :param path: The database file of the book.
-        :type path: Path
         :returns: Iterator yielding the open database of the book once.
         :rtype: AsyncIterator[SqlDatabase]
         :raises NotFoundError: If the file does not exist, or the book was closed for good.
         :raises BookTooNewError: If the database is at a revision of the book schema that this code does not ship.
         """
-        book = await self._acquire(dir_name, path)
+        book = await self._acquire(dir_name)
         try:
             yield book.database
         finally:
@@ -169,7 +181,7 @@ class BookRegistry:
             await to_thread.run_sync(self._blank_directory.cleanup)
             self._blank_directory = None
 
-    async def _acquire(self, dir_name: BookDirectoryName, path: Path) -> OpenBook:
+    async def _acquire(self, dir_name: BookDirectoryName) -> OpenBook:
         """Count one more user of a book, opening its database first when it is closed.
 
         The open book is looked up and counted with no await between, so a removal or a closing never finds it unused
@@ -177,8 +189,6 @@ class BookRegistry:
 
         :param dir_name: Name of the directory of the book.
         :type dir_name: BookDirectoryName
-        :param path: The database file of the book.
-        :type path: Path
         :returns: The open book, counted.
         :rtype: OpenBook
         :raises NotFoundError: If the file does not exist, or the book was closed for good.
@@ -191,6 +201,7 @@ class BookRegistry:
             if dir_name in self._closed:
                 raise NotFoundError(dir_name)
             if (book := self._open.get(dir_name)) is None:
+                path = self._file_of(dir_name)
                 if not await anyio.Path(path).is_file():
                     raise NotFoundError(dir_name)
                 database = self._database(path)
@@ -202,6 +213,16 @@ class BookRegistry:
                 book = self._open[dir_name] = OpenBook(database=database)
             book.users += 1
             return book
+
+    def _file_of(self, dir_name: BookDirectoryName) -> Path:
+        """Name the database file of a book in its directory, which may not exist yet.
+
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
+        :returns: The path of ``book.db`` in the directory of the book.
+        :rtype: Path
+        """
+        return self._root / KeySegment.BOOKS / dir_name / KeySegment.DATABASE
 
     def _database(self, path: Path) -> SqlDatabase:
         """Configure the database of the book schema over a file.
@@ -231,7 +252,7 @@ class BookRegistry:
         if not revisions.is_current:
             await to_thread.run_sync(database.migrations.upgrade)
 
-    async def blank(self) -> Path:
+    async def _blank_file(self) -> Path:
         """Return the blank file new books are copied from, making it in a temporary directory the first time.
 
         :returns: A file of the book schema at the head revision, with no rows.
@@ -252,16 +273,16 @@ class BookRegistry:
                 self._blank = blank
             return self._blank
 
-    async def copy_blank(self, path: Path) -> None:
-        """Copy the blank file to ``path``, which becomes the database file of a new book.
+    async def copy_blank(self, dir_name: BookDirectoryName) -> None:
+        """Copy the blank file into the directory of a book, where it becomes the database file of the new book.
 
-        :param path: Where the copy is made, in an existing directory.
-        :type path: Path
-        :raises FileExistsError: If a file exists at ``path`` already.
+        :param dir_name: Name of the directory of the book, which must exist.
+        :type dir_name: BookDirectoryName
+        :raises FileExistsError: If the book has a database file already.
         """
-        blank = await self.blank()
+        blank = await self._blank_file()
         # The exclusive mode refuses a file that exists, which a check before the write could not
-        async with await anyio.open_file(path, 'xb') as copy:
+        async with await anyio.open_file(self._file_of(dir_name), 'xb') as copy:
             await copy.write(await anyio.Path(blank).read_bytes())
 
 

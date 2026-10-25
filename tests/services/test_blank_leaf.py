@@ -206,10 +206,9 @@ class LeafDesk:
                 )
 
         await self.databases.open(book_id).change(save_heads)
-        keys = BookKeys()
         for version in versions:
             async with self.files.assets(book_id).writable(
-                keys.version_rendition(version, Rendition.FULL_PNG)
+                BookKeys.version_rendition(version, Rendition.FULL_PNG)
             ) as target:
                 ruled_page((SCAN_WIDTH_PX, SCAN_HEIGHT_PX), PAPER, INK).save(target, format=PNG)
         return LeafBook(book_id=book_id, pages=pages, versions=versions)
@@ -352,7 +351,7 @@ class LeafDesk:
         :rtype: Image.Image
         """
         assert version.renditions is not None
-        key = BookKeys().version_rendition(version, version.renditions.full)
+        key = BookKeys.version_rendition(version, version.renditions.full)
         with Image.open(book_directory(self.storage_root, book.book_id) / key) as image:
             return image.copy()
 
@@ -777,9 +776,10 @@ class TestRemakeOutdatedLeaves:
             repos.page_versions.delete_many([leaf.id])
 
         await desk.databases.open(book.book_id).change(replace_leaf)
-        keys = BookKeys()
         assert old.renditions is not None
-        async with desk.files.assets(book.book_id).writable(keys.version_rendition(old, old.renditions.full)) as target:
+        async with desk.files.assets(book.book_id).writable(
+            BookKeys.version_rendition(old, old.renditions.full)
+        ) as target:
             Image.new(BILEVEL, (SCAN_WIDTH_PX, SCAN_HEIGHT_PX), 1).save(target, format=PNG)
 
     async def test_a_leaf_of_an_older_version_is_drawn_again_with_the_paper_and_its_stage_is_fresh(

@@ -177,5 +177,5 @@ class SourceService:
         self._refuse_active_import(book)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await book.sources.delete_source(source_id)
-        await book.assets.delete_prefix(BookKeys().source_scans(source_id))
+        await book.assets.delete_prefix(BookKeys.source_scans(source_id))
         await book.change(lambda repos, _book_record: repos.sources.delete(source_id))

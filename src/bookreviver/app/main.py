@@ -1,6 +1,7 @@
 """Application factory: wires the container, error handling, pagination, security and routers."""
 
 import logging
+from collections.abc import Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,10 @@ from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
+from bookreviver.domain.ids import BookDirectoryName
+from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepExecutor
+from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
@@ -50,8 +54,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     processes that run the steps is started too, so every process has built its catalogue before the first request and
     the first preview does not wait for it. The file of default recipes is read here too, so a file that does not fit
     stops the start. The storage, the registry of the databases of the books, the event channels and the job board are
-    built here as well, which registers them as the way a book opens its directory, its database, its event channel and
-    its job queue, so every book opened afterwards finds them.
+    built here as well, and their openers are registered with the four ports of the parts of a book, its directory, its
+    database, its event channel and its job queue, so every book opened afterwards finds them.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
     left half done is left as it is. The upload an import was receiving or running on is removed from each book the
@@ -66,12 +70,12 @@ async def prepare_start(container: AsyncContainer) -> None:
     :raises RuntimeError: When the database is not at the head revision of the migrations.
     """
     await container.get(SqlDatabase)
-    await container.get(EventChannels)
-    await container.get(InMemoryJobBoard)
+    BookDirectory.register(await container.get(Callable[[BookDirectoryName], BookDirectory]))
+    BookDatabase.register(await container.get(Callable[[BookDirectoryName], BookDatabase]))
+    BookEvents.register((await container.get(EventChannels)).open)
+    BookJobs.register((await container.get(InMemoryJobBoard)).open)
     await container.get(StepExecutor)
     await container.get(DefaultRecipes)
-    await container.get(type[BookDirectory])
-    await container.get(BookRegistry)
     async with container() as request:
         for book in await (await request.get(BooksService)).listed():
             await book.sources.discard_all_staged()

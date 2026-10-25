@@ -2,9 +2,9 @@
 
 The catalogue and the registry of the books are one per application, and the catalogue database over the catalogue is
 built per request or job. The same catalogue database is the ``CatalogueDatabase`` of the port and the one the accounts
-run on, so the accounts add no second connection pool and no second catalogue database. The registry is also where a
-book opens its database, so building it registers the opener of ``BookDatabase``, which ``prepare_start`` does before
-the first request. A book waits for its writer as long as a job does, since the opener knows no scope.
+run on, so the accounts add no second connection pool and no second catalogue database. A book opens its database over
+the registry, so the provider builds that opener, which ``prepare_start`` registers with ``BookDatabase.register``. A
+book waits for its writer as long as a job does, since the opener knows no scope.
 
 The application never changes the schema of the catalogue. Its migrations are applied by hand, after a copy of the data
 directory if it matters, and the provider only compares the revision of the catalogue with the head of the migrations
@@ -15,8 +15,7 @@ does not know that revision, so the message names the downgrade to run with the 
 restore. A book is brought to the head revision of its schema by the registry when it is opened.
 """
 
-from collections.abc import AsyncIterator
-from functools import partial
+from collections.abc import AsyncIterator, Callable
 
 from dishka import Provider, Scope, alias, provide
 from sqlalchemy.orm import configure_mappers
@@ -26,6 +25,7 @@ from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.app.settings import Settings
+from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase, ChangeWaitSeconds
 from bookreviver.ports.tracing import Tracer
 
@@ -101,10 +101,9 @@ class DatabaseProvider(Provider):
 
     @provide(scope=Scope.APP)
     async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookRegistry]:
-        """Open the registry of the databases of the books, and register how a book opens its database over it.
+        """Open the registry of the databases of the books, over which the database of each book runs.
 
-        Every open book is closed, and the registration is given back, when the application closes the container, so
-        the books of another application stay registered.
+        Every open book is closed when the application closes the container.
 
         :param settings: Application settings, of which the storage root, the wait limit of a job and the idle limit of
                          a book are read.
@@ -115,23 +114,26 @@ class DatabaseProvider(Provider):
         :rtype: AsyncIterator[BookRegistry]
         """
         books = BookRegistry(
+            root=settings.storage_root,
             tracer=tracer,
             wait_seconds=settings.change_wait.job_seconds,
             idle_seconds=settings.book_idle_seconds,
         )
-        previous = BookDatabase.register(
-            partial(
-                SqlAlchemyBookDatabase,
-                root=settings.storage_root,
-                books=books,
-                wait_seconds=settings.change_wait.job_seconds,
-            )
-        )
         try:
             yield books
         finally:
-            BookDatabase.register(previous)
             await books.dispose()
+
+    @provide(scope=Scope.APP)
+    def book_database(self, books: BookRegistry) -> Callable[[BookDirectoryName], BookDatabase]:
+        """Build the function that opens the database of a book over the registry of the books.
+
+        :param books: The registry of the databases of the books.
+        :type books: BookRegistry
+        :returns: The opener, from the directory name of a book to its database.
+        :rtype: Callable[[BookDirectoryName], BookDatabase]
+        """
+        return lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=books)
 
     @provide(scope=Scope.REQUEST)
     def catalogue_database(

@@ -115,15 +115,12 @@ class EditService:
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
         await book.read(check)
-        keys = BookKeys()
-        mask_digest, scratch = (
-            (None, None) if mask is None else await self._receive(keys, key, mask, assets=book.assets)
-        )
+        mask_digest, scratch = (None, None) if mask is None else await self._receive(key, mask, assets=book.assets)
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
         mask_key = None
         if scratch is not None:
-            directory = keys.page_edit(key.page_id, key.step_id, edit_hash)
-            mask_key = StorageKey(f'{directory}{keys.SEPARATOR}{Rendition.MASK}')
+            directory = BookKeys.page_edit(key.page_id, key.step_id, edit_hash)
+            mask_key = StorageKey(f'{directory}{BookKeys.SEPARATOR}{Rendition.MASK}')
             await self._keep(scratch, mask_key, assets=book.assets)
         stored = PageEdit(
             page_id=key.page_id,
@@ -283,13 +280,9 @@ class EditService:
         if not masked and edit.geometry is None:
             raise InvalidParametersError(NEEDS_GEOMETRY.format(editor=edit.kind.label))
 
-    async def _receive(
-        self, keys: BookKeys, key: PageStepKey, mask: IncomingFile, *, assets: AssetStore
-    ) -> tuple[str, StorageKey]:
+    async def _receive(self, key: PageStepKey, mask: IncomingFile, *, assets: AssetStore) -> tuple[str, StorageKey]:
         """Write an uploaded mask to a scratch key, and work out its digest while it streams in.
 
-        :param keys: Keys of the book.
-        :type keys: BookKeys
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :param mask: The upload.
@@ -299,7 +292,7 @@ class EditService:
         :returns: The SHA-256 digest of the mask and the scratch key it was written to.
         :rtype: tuple[str, StorageKey]
         """
-        scratch = keys.page_edit(key.page_id, key.step_id, f'upload-{uuid4().hex}')
+        scratch = BookKeys.page_edit(key.page_id, key.step_id, f'upload-{uuid4().hex}')
         digest = hashlib.sha256()
         async with assets.writable(scratch) as target, await anyio.open_file(target, 'wb') as out:
             while chunk := await mask.read(self.UPLOAD_CHUNK_BYTES):

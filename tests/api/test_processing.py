@@ -156,11 +156,10 @@ async def store_scan_images(asset_store: AssetStore, scan: Scan) -> None:
     :param scan: The scan, whose renditions are ready.
     :type scan: Scan
     """
-    keys = BookKeys()
     buffer = io.BytesIO()
     Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
     for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-        async with asset_store.writable(keys.scan_rendition(scan, rendition)) as path:
+        async with asset_store.writable(BookKeys.scan_rendition(scan, rendition)) as path:
             path.write_bytes(buffer.getvalue())
 
 
@@ -701,7 +700,7 @@ class TestRunAndVersions:
             input_id=head_id,
         )
         async with fx_directories.assets(fx_book.book_id).writable(
-            BookKeys().version_rendition(old, Rendition.FULL_JPEG)
+            BookKeys.version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)
         await fx_databases().open(fx_book.book_id).change(lambda repos, _book_record: repos.page_versions.add(old))

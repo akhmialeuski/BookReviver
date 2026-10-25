@@ -7,7 +7,7 @@ no page has a record of is counted as not run, since the records are written whe
 
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
-book: the books service does that through the library. Every method reads through one read transaction of the
+book: the access dependency ``open_book`` of the API does that. Every method reads through one read transaction of the
 ``Book`` it is given.
 """
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookOverview, PageVersion, Recipe
     from bookreviver.domain.enums import RecipeKind
-    from bookreviver.domain.ids import BookId, PageVersionId, StepId
+    from bookreviver.domain.ids import PageVersionId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
@@ -46,15 +46,13 @@ class StageSummaries:
         """
         self._processors = processors
 
-    async def overview(self, book: Book, book_id: BookId) -> BookOverview:
+    async def overview(self, book: Book) -> BookOverview:
         """Return a book with its counts and progress.
 
         A stage is running while a job that runs it is queued or running.
 
         :param book: The book to read.
         :type book: Book
-        :param book_id: Identifier of the book in the library, which the overview carries and the book does not know.
-        :type book_id: BookId
         :returns: The book with its counts and progress.
         :rtype: BookOverview
         :raises NotFoundError: If the book is not stored.
@@ -68,20 +66,21 @@ class StageSummaries:
             :returns: The overview with its progress.
             :rtype: BookOverview
             """
-            overview = repos.book_record.overview(book_id)
+            overview = repos.book_record.overview()
             tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
             running = {job.stage for job in book.jobs.active() if job.stage is not None}
-            return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
+            summaries = self._summarize(
+                image_page_count=overview.image_page_count, tallies=tallies, recipes={}, kinds={}, stopped={}
+            )
+            return evolve(overview, progress=BookProgress.of(summaries, running))
 
         return await book.read(work)
 
-    async def stages(self, book: Book, book_id: BookId, request: SliceRequest) -> Slice[StageSummary]:
+    async def stages(self, book: Book, request: SliceRequest) -> Slice[StageSummary]:
         """Sum every stage of a book over its pages, in the order of the pipeline, and cut a window of them.
 
         :param book: The book to read.
         :type book: Book
-        :param book_id: Identifier of the book in the library, which the overview the sums are made from carries.
-        :type book_id: BookId
         :param request: Offset and limit of the window of stages.
         :type request: SliceRequest
         :returns: The window of the stages in the order of the pipeline, with the recipes of each kind of page when the
@@ -106,7 +105,13 @@ class StageSummaries:
             stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
             for step_tally in repos.page_stages.step_tally():
                 stopped[step_tally.stage].append(step_tally)
-            summaries = self._summarize(repos.book_record.overview(book_id), tallies, recipes, kinds, stopped)
+            summaries = self._summarize(
+                image_page_count=repos.book_record.overview().image_page_count,
+                tallies=tallies,
+                recipes=recipes,
+                kinds=kinds,
+                stopped=stopped,
+            )
             return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
 
         return await book.read(work)
@@ -228,7 +233,8 @@ class StageSummaries:
 
     def _summarize(
         self,
-        overview: BookOverview,
+        *,
+        image_page_count: int,
         tallies: Mapping[Stage, StageTally],
         recipes: Mapping[Stage, Sequence[Recipe]],
         kinds: Mapping[RecipeKind, int],
@@ -236,8 +242,8 @@ class StageSummaries:
     ) -> list[StageSummary]:
         """Sum every stage of a book from the counts already read.
 
-        :param overview: The book with the number of its pages that have an image.
-        :type overview: BookOverview
+        :param image_page_count: The number of pages of the book that have an image.
+        :type image_page_count: int
         :param tallies: The counts of the records of each stage that has any.
         :type tallies: Mapping[Stage, StageTally]
         :param recipes: The recipes of each stage that has any, or none for a list of books, which does not show them.
@@ -254,7 +260,7 @@ class StageSummaries:
             StageSummary.of(
                 stage,
                 available=stage.manual or stage in with_processor,
-                pages=overview.image_page_count,
+                pages=image_page_count,
                 tally=tallies.get(stage),
             )
             .with_recipes(recipes.get(stage, ()), kinds)

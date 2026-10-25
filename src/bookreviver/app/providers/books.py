@@ -18,24 +18,24 @@ from bookreviver.services.steps import StepRunner
 
 
 class BooksProvider(Provider):
-    """Builds the book, page, place and source services, one per request."""
+    """Builds the book and page services once per request, and the services that keep no state once per application."""
 
     scope = Scope.REQUEST
 
-    @provide
+    @provide(scope=Scope.APP)
     def stage_summaries(self, processors: ProcessorCatalog) -> StageSummaries:
-        """Build the sums of the stages of books, which read through the repositories their caller passes.
+        """Build the sums of the stages of books, which hold the processors and read through the book they are given.
 
         :param processors: The processors of the application, which say which stages are available.
         :type processors: ProcessorCatalog
-        :returns: The stage summaries of the request.
+        :returns: The stage summaries of the application.
         :rtype: StageSummaries
         """
         return StageSummaries(processors=processors)
 
-    @provide
+    @provide(scope=Scope.APP)
     def freshness(self) -> BookFreshness:
-        """Build the freshness of the reads of the books of a request.
+        """Build the freshness of the reads of the books, which keeps no state.
 
         :returns: The freshness of the reads of the books.
         :rtype: BookFreshness
@@ -82,29 +82,29 @@ class BooksProvider(Provider):
         """
         return PageService(books=books, order_keys=order_keys, imaging=imaging)
 
-    @provide
+    @provide(scope=Scope.APP)
     def pagination(self) -> PaginationService:
-        """Build the pagination service over the request's catalogue database.
+        """Build the pagination service, which works on the book it is given and keeps no state of a request.
 
-        :returns: The pagination service of the request.
+        :returns: The pagination service of the application.
         :rtype: PaginationService
         """
         return PaginationService()
 
-    @provide
+    @provide(scope=Scope.APP)
     def places(self) -> PlaceService:
-        """Build the place service over the request's catalogue database.
+        """Build the place service, which works on the book it is given and keeps no state.
 
-        :returns: The place service of the request.
+        :returns: The place service of the application.
         :rtype: PlaceService
         """
         return PlaceService()
 
-    @provide
+    @provide(scope=Scope.APP)
     def sources(self) -> SourceService:
-        """Build the source service of the request.
+        """Build the source service, which works on the book it is given and keeps no state.
 
-        :returns: The source service of the request.
+        :returns: The source service of the application.
         :rtype: SourceService
         """
         return SourceService()

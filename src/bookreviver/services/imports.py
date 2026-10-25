@@ -158,8 +158,7 @@ class ImportRun:
     also the check that the job was not cancelled.
 
     :ivar imported: Identifiers of the sources the run imported, in book order.
-    :ivar book: The open book the job imports into, whose ``Book.change`` stores each source. ``execute`` opens it,
-                so it is there for every step that follows and for ``record_skipped``.
+    :ivar book: The open book the job imports into, whose ``Book.change`` stores each source.
     """
 
     def __init__(
@@ -187,8 +186,6 @@ class ImportRun:
         self._job = job
         self._control = running.control
         self._files = {file.name: file for file in (job.request.files if job.request else ())}
-        self._sources = book.sources
-        self._assets = book.assets
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
         self._runner = imaging.runner
@@ -197,7 +194,6 @@ class ImportRun:
         self._base_versions = BaseVersions(tiler=imaging.tiler)
         self._order_keys = runtime.order_keys
         self._limits = runtime.limits
-        self._keys = BookKeys()
         self._handled: set[str] = set()
         self._done = 0
         self._total = len(self._files)
@@ -258,7 +254,7 @@ class ImportRun:
                 supported.append(name)
         if not supported:
             return
-        async with self._sources.staged_files(self._job.id) as paths:
+        async with self.book.sources.staged_files(self._job.id) as paths:
             grouped = await self._inspector.group({name: paths[name] for name in supported})
         for uploaded in grouped:
             await self._import_source(uploaded)
@@ -285,7 +281,7 @@ class ImportRun:
                 uploaded=uploaded,
             )
             return
-        async with self._sources.staged_files(self._job.id) as paths:
+        async with self.book.sources.staged_files(self._job.id) as paths:
             try:
                 analysis = await self._inspector.inspect(uploaded.kind, [paths[name] for name in uploaded.names])
             except UnsupportedSourceError as error:
@@ -373,7 +369,7 @@ class ImportRun:
             repos.sources.delete(source.id)
 
         try:
-            await self._sources.promote(self._job.id, source.id, names=list(uploaded.names))
+            await self.book.sources.promote(self._job.id, source.id, names=list(uploaded.names))
         except Exception:
             # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
             # is taken back whole. Its pages go first, since deleting the source only empties their scan.
@@ -477,14 +473,14 @@ class ImportRun:
         book_record, pages = await self.book.change(start)
         full = book_record.image_policy.full_format(scan.facts.color_mode)
         ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
-        of_scan = partial(self._keys.scan_rendition, ready)
-        await self._assets.delete_prefix(self._keys.scan_directory(scan))
+        of_scan = partial(BookKeys.scan_rendition, ready)
+        await self.book.assets.delete_prefix(BookKeys.scan_directory(scan))
         async with (
-            self._sources.source_files(scan.source_id) as files,
-            self._assets.writable(of_scan(full)) as target,
+            self.book.sources.source_files(scan.source_id) as files,
+            self.book.assets.writable(of_scan(full)) as target,
         ):
             await self._rasterizer.extract(kind, files, scan.number, target, full=full)
-        await self._base_versions.derive(of_scan, assets=self._assets, full=full)
+        await self._base_versions.derive(of_scan, assets=self.book.assets, full=full)
         versions = []
         run = StepRun(
             processor_key=SPLIT_NONE.key,
@@ -528,9 +524,9 @@ class ImportRun:
         if not fits:
             # The scan stays unready for the next run to cut, and the files made for it are of no version or scan
             logger.warning('Scan %s was changed or deleted while its images were cut, so they were not stored', scan.id)
-            await self._assets.delete_prefix(self._keys.scan_directory(scan))
+            await self.book.assets.delete_prefix(BookKeys.scan_directory(scan))
             for version in versions:
-                await self._assets.delete_prefix(self._keys.version_directory(version))
+                await self.book.assets.delete_prefix(BookKeys.version_directory(version))
             await self._report(total=-1)
             return
         await self._report(done=1)

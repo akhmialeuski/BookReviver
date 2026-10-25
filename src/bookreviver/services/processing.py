@@ -66,7 +66,7 @@ class ProcessingService:
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The recipes, the stage records, the job tracker and the job starter over the catalogue database.
+        :param parts: The recipes, the stage records and the job starter, which work on the book of each request.
         :type parts: ProcessingParts
         """
         self._processors = processors
@@ -450,8 +450,7 @@ class ProcessingService:
             return repos.page_versions.collectable(collection.previews_older_than)
 
         old = await book.read(work)
-        keys = BookKeys()
-        sizes = [await book.assets.size_of(keys.version_directory(version)) for version in old]
+        sizes = [await book.assets.size_of(BookKeys.version_directory(version)) for version in old]
         return CollectionReport(versions=len(old), size_bytes=sum(sizes))
 
     async def start_collection(self, book: Book) -> Job:

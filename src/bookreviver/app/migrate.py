@@ -16,20 +16,22 @@ file made at the head revision for the command in a temporary directory: that is
 files of the books, once.
 """
 
-from functools import partial
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import anyio
 from advanced_alchemy.cli import add_migration_commands
 from advanced_alchemy.utils.cli_tools import click, group
+from dishka import make_async_container
 
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.split import SharedDatabaseSplit
-from bookreviver.adapters.storage import LocalBookDirectory
 from bookreviver.adapters.tracing.null import NullTracer
+from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
+from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.domain.keys import KeySegment
 from bookreviver.ports.storage import BookDirectory
 
@@ -92,23 +94,23 @@ def split_shared_database() -> None:
     settings = Settings()
     catalogue = open_catalogue(settings)
     books = BookRegistry(
-        tracer=NullTracer(), wait_seconds=settings.change_wait.job_seconds, idle_seconds=settings.book_idle_seconds
-    )
-    split = SharedDatabaseSplit(
-        settings.data_dir.resolve() / SHARED_DATABASE,
-        catalogue_db=catalogue,
-        books=books,
         root=settings.storage_root,
+        tracer=NullTracer(),
+        wait_seconds=settings.change_wait.job_seconds,
+        idle_seconds=settings.book_idle_seconds,
     )
-    BookDirectory.register(partial(LocalBookDirectory, root=settings.storage_root))
+    split = SharedDatabaseSplit(settings.data_dir.resolve() / SHARED_DATABASE, catalogue_db=catalogue, books=books)
+    storage = make_async_container(STORAGE_PROVIDERS[settings.storage](), context={Settings: settings})
 
     async def run() -> None:
-        """Run the split and close the databases it opened."""
+        """Register the directories of the configured storage, run the split, and close what it opened."""
         try:
+            BookDirectory.register(await storage.get(Callable[[BookDirectoryName], BookDirectory]))
             report = await split.run()
         finally:
             await books.dispose()
             await catalogue.dispose()
+            await storage.close()
         click.echo(f'Moved {report.accounts} accounts and {report.books} books.')
 
     anyio.run(run)

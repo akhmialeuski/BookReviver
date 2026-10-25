@@ -83,7 +83,7 @@ async def _statements_of(
     :returns: The number of statements of each call, in the order given.
     :rtype: list[int]
     """
-    async with books.use(directory_of(book_id), databases.path(book_id)) as book:
+    async with books.use(directory_of(book_id)) as book:
         with StatementLog(book.engine) as log:
 
             def work(repos: BookRepositories, _book_record: BookRecord) -> list[int]:

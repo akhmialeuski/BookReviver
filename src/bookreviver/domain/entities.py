@@ -156,7 +156,6 @@ class LibraryEntry:
 class BookOverview:
     """A book as shown in a list, with its size counted when read.
 
-    :ivar book_id: Identifier of the book in the library, which its record does not hold.
     :ivar book_record: The record of the listed book.
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
@@ -168,7 +167,6 @@ class BookOverview:
                     None before it has.
     """
 
-    book_id: BookId
     book_record: BookRecord
     page_count: int = field(default=0, validator=validators.ge(0))
     source_count: int = field(default=0, validator=validators.ge(0))

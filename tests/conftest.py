@@ -1,6 +1,5 @@
 """Fixtures shared by the whole suite."""
 
-from functools import partial
 from typing import TYPE_CHECKING
 
 import httpx
@@ -26,6 +25,7 @@ from tests.helpers.database import (
     copy_schema_template,
     create_schema_template,
     database_file,
+    waiting,
 )
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
@@ -111,43 +111,26 @@ def fx_settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def fx_book_parts(
-    fx_directories: SharedBookDirectories, fx_books: BookRegistry, fx_settings: Settings
-) -> Iterator[RecordingEventBus]:
+def fx_book_parts(fx_directories: SharedBookDirectories, fx_books: BookRegistry) -> Iterator[RecordingEventBus]:
     """Register the parts every book of the test opens: its directory, its database, its events and its job queue.
 
     A book opens its parts by the name of its directory, so every test has them registered. The directory is a local
     one under the storage root of the test, and the database is the SQLAlchemy one over the registry of the test. The
     event bus records what is published, and the job board runs nothing. A test that builds a part of its own registers
-    that one in place of the one registered here, and the registrations before the test are given back after it.
+    that one in place of the one registered here. Every test registers fresh parts at its start, so none is given back.
 
     :param fx_directories: The directories of the books of the test, which every book opens its directory from.
     :type fx_directories: SharedBookDirectories
     :param fx_books: Registry of the books of the test, which every book opens its database over.
     :type fx_books: BookRegistry
-    :param fx_settings: Settings of the test, whose job limit is the wait of the databases of the books.
-    :type fx_settings: Settings
     :returns: The recording bus that is the event channel of every book of the test.
     :rtype: Iterator[RecordingEventBus]
     """
-    previous_jobs = BookJobs.register(None)
-    previous_directory = BookDirectory.register(fx_directories.open)
-    previous_database = BookDatabase.register(
-        partial(
-            SqlAlchemyBookDatabase,
-            root=fx_settings.storage_root,
-            books=fx_books,
-            wait_seconds=fx_settings.change_wait.job_seconds,
-        )
-    )
+    BookDirectory.register(fx_directories.open)
+    BookDatabase.register(lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books))
     with RecordingEventBus().installed() as bus:
         BookJobs.register(FakeJobBoard(runner=ScriptedRunner()).open)
-        try:
-            yield bus
-        finally:
-            BookJobs.register(previous_jobs)
-            BookDirectory.register(previous_directory)
-            BookDatabase.register(previous_database)
+        yield bus
 
 
 @pytest.fixture
@@ -260,6 +243,7 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
     :rtype: AsyncIterator[BookRegistry]
     """
     books = BookRegistry(
+        root=fx_settings.storage_root,
         tracer=NullTracer(),
         wait_seconds=fx_settings.change_wait.job_seconds,
         idle_seconds=TEST_BOOK_IDLE_SECONDS,
@@ -326,7 +310,7 @@ def fx_databases(
         :rtype: LocatedBookDatabases
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return LocatedBookDatabases(fx_books, root=fx_storage_root, wait_seconds=seconds)
+        return LocatedBookDatabases(waiting(fx_books, seconds), root=fx_storage_root)
 
     return open_databases
 

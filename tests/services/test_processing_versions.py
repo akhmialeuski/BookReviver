@@ -569,7 +569,7 @@ class TestStartTiles:
         job = await fx_kit.service().start_tiles(fx_open_book(actor, book_id), page.id, untiled.id)
         await fx_kit.work_queue()
         cut = await fx_kit.stored_version(book_id, untiled.id)
-        tiles = BookKeys().version_rendition(cut, Rendition.TILES)
+        tiles = BookKeys.version_rendition(cut, Rendition.TILES)
         async with fx_kit.files.assets(book_id).readable(tiles) as directory:
             exists = directory.is_dir()
         expect((cut.tiles_ready, exists) == (True, True))
@@ -629,8 +629,7 @@ class TestCollection:
             created_at=EPOCH - timedelta(days=90),
             tiles_ready=False,
         )
-        keys = BookKeys()
-        async with kit.files.assets(book_id).writable(keys.version_rendition(old, Rendition.FULL_JPEG)) as target:
+        async with kit.files.assets(book_id).writable(BookKeys.version_rendition(old, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         await kit.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(old))
         return actor, book_id, page, current, old
@@ -683,7 +682,7 @@ class TestCollection:
         await fx_kit.work_queue()
         remaining = (await stage_versions(book_id, page, None, databases=fx_open_book.databases)).items
         with pytest.raises(NotFoundError):
-            async with fx_kit.files.assets(book_id).readable(BookKeys().version_directory(old)):
+            async with fx_kit.files.assets(book_id).readable(BookKeys.version_directory(old)):
                 pass
         expect(old.id not in {version.id for version in remaining})
         expect(len(remaining) == 2)
@@ -710,11 +709,10 @@ class TestCollection:
         gone = await found_version(book_id, old.id, databases=fx_kit.databases)
         kept = await fx_kit.stored_version(book_id, current.id)
         record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        keys = BookKeys()
         with pytest.raises(NotFoundError):
-            async with fx_kit.files.assets(book_id).readable(keys.version_directory(old)):
+            async with fx_kit.files.assets(book_id).readable(BookKeys.version_directory(old)):
                 pass
-        async with fx_kit.files.assets(book_id).readable(keys.version_rendition(current, Rendition.FULL_JPEG)):
+        async with fx_kit.files.assets(book_id).readable(BookKeys.version_rendition(current, Rendition.FULL_JPEG)):
             pass
         collections = [job for job in jobs if job.kind is JobKind.COLLECT_VERSIONS]
         expect(all(job.state is JobState.SUCCEEDED for job in collections) and bool(collections))
@@ -744,14 +742,15 @@ class TestCollection:
             scale=VersionScale.PREVIEW,
             created_at=EPOCH - timedelta(days=2),
         )
-        keys = BookKeys()
-        async with fx_kit.files.assets(book_id).writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
+        async with fx_kit.files.assets(book_id).writable(
+            BookKeys.version_rendition(preview, Rendition.PREVIEW)
+        ) as target:
             target.write_bytes(IMAGE_CONTENT)
         await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(preview))
         await fx_kit.service().start_collection(fx_open_book(actor, book_id))
         await fx_kit.work_queue()
         with pytest.raises(NotFoundError):
-            async with fx_kit.files.assets(book_id).readable(keys.version_directory(preview)):
+            async with fx_kit.files.assets(book_id).readable(BookKeys.version_directory(preview)):
                 pass
         expect(await found_version(book_id, preview.id, databases=fx_open_book.databases) is None)
         # The version of the full run that nothing reads goes in the same collection, so the preview is no exception
@@ -817,7 +816,7 @@ class TestCollection:
         again = await fx_kit.service().start_collection(fx_open_book(actor, book_id))
         await fx_kit.work_queue()
         with pytest.raises(NotFoundError):
-            async with fx_kit.files.assets(book_id).readable(BookKeys().version_directory(old)):
+            async with fx_kit.files.assets(book_id).readable(BookKeys.version_directory(old)):
                 pass
         expect(await found_version(book_id, old.id, databases=fx_open_book.databases) is None)
         expect(stored_job(fx_kit, again.id).state is JobState.SUCCEEDED)
@@ -840,8 +839,9 @@ class TestCollection:
         """
         actor, book_id, _, _, old = await self.collectable_book(fx_kit)
         other = evolve(old, id=OTHER_VERSION_ID, created_at=EPOCH - timedelta(days=80))
-        keys = BookKeys()
-        async with fx_kit.files.assets(book_id).writable(keys.version_rendition(other, Rendition.FULL_JPEG)) as target:
+        async with fx_kit.files.assets(book_id).writable(
+            BookKeys.version_rendition(other, Rendition.FULL_JPEG)
+        ) as target:
             target.write_bytes(IMAGE_CONTENT)
 
         def add_other(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -855,7 +855,7 @@ class TestCollection:
             repos.page_versions.add(other)
 
         await fx_open_book.databases.open(book_id).change(add_other)
-        refused = keys.version_directory(old)
+        refused = BookKeys.version_directory(old)
         removing = fx_kit.files.assets(book_id).delete_prefix
 
         async def refuse_one(prefix: StorageKey) -> None:
@@ -877,7 +877,7 @@ class TestCollection:
 
         stayed = await fx_kit.stored_version(book_id, old.id)
         stored = stored_job(fx_kit, job.id)
-        async with fx_kit.files.assets(book_id).readable(keys.version_rendition(old, Rendition.FULL_JPEG)):
+        async with fx_kit.files.assets(book_id).readable(BookKeys.version_rendition(old, Rendition.FULL_JPEG)):
             pass
         expect(await found_version(book_id, other.id, databases=fx_open_book.databases) is None)
         expect((stayed.state, stayed.data[VersionData.ERROR]) == (VersionState.FAILED, BEING_COLLECTED))
@@ -898,11 +898,12 @@ class TestCollection:
         """
         actor, book_id, _, _, old = await self.collectable_book(fx_kit)
         reader = evolve(old, id=OTHER_VERSION_ID, input_id=old.id)
-        keys = BookKeys()
-        async with fx_kit.files.assets(book_id).writable(keys.version_rendition(reader, Rendition.FULL_JPEG)) as target:
+        async with fx_kit.files.assets(book_id).writable(
+            BookKeys.version_rendition(reader, Rendition.FULL_JPEG)
+        ) as target:
             target.write_bytes(IMAGE_CONTENT)
         await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(reader))
-        refused = keys.version_directory(reader)
+        refused = BookKeys.version_directory(reader)
         removing = fx_kit.files.assets(book_id).delete_prefix
 
         async def refuse_the_reader(prefix: StorageKey) -> None:
@@ -922,7 +923,7 @@ class TestCollection:
         await fx_kit.work_queue()
 
         stored = await fx_kit.stored_version(book_id, reader.id)
-        async with fx_kit.files.assets(book_id).readable(keys.version_rendition(old, Rendition.FULL_JPEG)):
+        async with fx_kit.files.assets(book_id).readable(BookKeys.version_rendition(old, Rendition.FULL_JPEG)):
             pass
         expect(stored.input_id == old.id)
         expect(stored_job(fx_kit, job.id).error == VERSIONS_LEFT.format(count=2))
@@ -939,11 +940,10 @@ class TestCollection:
         :type fx_open_book: BookOpener
         """
         actor, book_id, _, _, old = await self.collectable_book(fx_kit)
-        keys = BookKeys()
         commented = evolve(old, id=OTHER_VERSION_ID, mark=None, comment='Check the margin.')
         good = evolve(old, mark=ResultMark.GOOD)
         async with fx_kit.files.assets(book_id).writable(
-            keys.version_rendition(commented, Rendition.FULL_JPEG)
+            BookKeys.version_rendition(commented, Rendition.FULL_JPEG)
         ) as target:
             target.write_bytes(IMAGE_CONTENT)
 
@@ -962,7 +962,7 @@ class TestCollection:
         await fx_kit.service().start_collection(fx_open_book(actor, book_id))
         await fx_kit.work_queue()
         for kept in (good, commented):
-            async with fx_kit.files.assets(book_id).readable(keys.version_rendition(kept, Rendition.FULL_JPEG)):
+            async with fx_kit.files.assets(book_id).readable(BookKeys.version_rendition(kept, Rendition.FULL_JPEG)):
                 pass
         expect(await found_version(book_id, good.id, databases=fx_open_book.databases) is not None)
         expect(await found_version(book_id, commented.id, databases=fx_open_book.databases) is not None)
@@ -1003,7 +1003,7 @@ class TestCollection:
         report = await fx_kit.service().collection_report(fx_open_book(actor, book_id))
         listed = (await stage_versions(book_id, page, None, databases=fx_open_book.databases)).items
         jobs = fx_kit.board.jobs(book_id, active=False)
-        async with fx_kit.files.assets(book_id).readable(BookKeys().version_rendition(old, Rendition.FULL_JPEG)):
+        async with fx_kit.files.assets(book_id).readable(BookKeys.version_rendition(old, Rendition.FULL_JPEG)):
             pass
         expect(report == CollectionReport(versions=1, size_bytes=len(IMAGE_CONTENT)))
         expect(old.id in {version.id for version in listed})
@@ -1042,8 +1042,9 @@ class TestCollection:
         """
         actor, book_id, _, _, old = await self.collectable_book(fx_kit)
         other = evolve(old, id=OTHER_VERSION_ID, created_at=EPOCH - timedelta(days=80))
-        keys = BookKeys()
-        async with fx_kit.files.assets(book_id).writable(keys.version_rendition(other, Rendition.FULL_JPEG)) as target:
+        async with fx_kit.files.assets(book_id).writable(
+            BookKeys.version_rendition(other, Rendition.FULL_JPEG)
+        ) as target:
             target.write_bytes(IMAGE_CONTENT)
         await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(other))
         job = await fx_kit.service().start_collection(fx_open_book(actor, book_id))
@@ -1099,7 +1100,7 @@ class TestCollection:
         await fx_kit.work_queue()
         stored = await fx_kit.stored_version(book_id, reader.id)
         untouched = await fx_kit.stored_version(book_id, old.id)
-        async with fx_kit.files.assets(book_id).readable(BookKeys().version_rendition(old, Rendition.FULL_JPEG)):
+        async with fx_kit.files.assets(book_id).readable(BookKeys.version_rendition(old, Rendition.FULL_JPEG)):
             pass
         expect(untouched.id == old.id)
         expect(stored.input_id == old.id)

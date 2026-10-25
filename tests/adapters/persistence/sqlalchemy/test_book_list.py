@@ -13,7 +13,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 from bookreviver.domain.values import SliceRequest
-from bookreviver.services.books import BooksService
+from bookreviver.services.book import Book
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import make_job, make_page, make_page_stage, make_record
 from tests.helpers.fake_processing import FakeCatalogue
@@ -94,15 +94,14 @@ async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: i
     :rtype: int
     """
     catalogue = stores.catalogue()
-    service = BooksService(catalogue=catalogue)
     stages = StageSummaries(processors=FakeCatalogue([]))
     request = SliceRequest(limit=window)
     entries = await catalogue.read(lambda repos: repos.library.list_for_owner(owner_id, request))
-    opened = [(service.book(entry), entry.book_id) for entry in entries.items]
+    opened = [Book(entry.directory) for entry in entries.items]
     counter = StatementCounter()
     event.listen(Engine, STATEMENT_EVENT, counter)
     try:
-        books = [await stages.overview(book, book_id) for book, book_id in opened]
+        books = [await stages.overview(book) for book in opened]
     finally:
         event.remove(Engine, STATEMENT_EVENT, counter)
     assert len(books) == window
@@ -111,7 +110,7 @@ async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: i
 
 
 class TestBookList:
-    """Tests for the statements ``BooksService.overviews`` sends to SQLite for a window of books."""
+    """Tests for the statements ``StageSummaries.overview`` sends to SQLite for a window of books."""
 
     async def test_every_book_of_a_window_adds_the_same_number_of_statements(
         self, fx_open_book: BookOpener, fx_owner_id: AccountId

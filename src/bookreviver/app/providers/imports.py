@@ -3,11 +3,11 @@
 The board is an application-scoped generator, so it is built when first needed and its tasks are cancelled when the
 container closes. It is built with the runner of ``app/jobs.py``, which knows the container the jobs resolve their
 services from, so the provider is the one place where the board and its runner meet. The board is also where a book
-opens its job queue, so building it registers the board as the implementation of ``BookJobs``, which ``prepare_start``
-does before the first request.
+opens its job queue, so ``prepare_start`` registers its ``open`` as the opener of ``BookJobs``.
 
-The import service is built once per request or job from three parts that keep no state of their own and so live as
-long as the application: the stores, the imaging ports, and the order keys and limits. The limits
+The job service keeps no state and is built once per application. The import service is built once per request or job
+from three parts that keep no state of their own and so live as long as the application: the stores, the imaging ports,
+and the order keys and limits. The limits
 come from the settings, and the IIIF root from the mount point of the IIIF routes, which only ``api`` knows. The
 import entry in ``app/jobs.py`` and the upload route resolve the same service.
 """
@@ -22,7 +22,6 @@ from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.imports import (
     ImportImaging,
     ImportLimits,
@@ -35,14 +34,13 @@ from bookreviver.services.steps import StepRunner
 
 
 class ImportsProvider(Provider):
-    """Builds the job board once per application, and the import and job services per request or job."""
+    """Builds the job board and the job service once per application, and the import service per request or job."""
 
     @provide(scope=Scope.APP)
     async def job_board(self, settings: Settings, container: AsyncContainer) -> AsyncIterator[InMemoryJobBoard]:
-        """Open the job board and register it as the way a book opens its job queue.
+        """Open the job board, which opens the job queue of each book.
 
-        The board is closed, which cancels the jobs running, and the registration is given back when the application
-        closes the container.
+        The board is closed, which cancels the jobs running, when the application closes the container.
 
         :param settings: Application settings, of which ``jobs.kept_ended`` is read.
         :type settings: Settings
@@ -54,20 +52,15 @@ class ImportsProvider(Provider):
         # An exit stack rather than `async with` around the yield: dishka drives this generator (ASYNC119)
         stack = AsyncExitStack()
         try:
-            board = await stack.enter_async_context(
+            yield await stack.enter_async_context(
                 InMemoryJobBoard(runner=job_runner(container), kept_ended=settings.jobs.kept_ended)
             )
-            previous = BookJobs.register(board.open)
-            try:
-                yield board
-            finally:
-                BookJobs.register(previous)
         finally:
             await stack.aclose()
 
-    @provide(scope=Scope.REQUEST)
+    @provide(scope=Scope.APP)
     def job_service(self) -> JobService:
-        """Build the job service of the request or job.
+        """Build the job service, which keeps no state and so lives as long as the application.
 
         :returns: The job service.
         :rtype: JobService

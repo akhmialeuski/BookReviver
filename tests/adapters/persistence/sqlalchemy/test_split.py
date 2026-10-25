@@ -274,7 +274,6 @@ class TestSplit:
         fx_shared: SharedBooks,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the catalogue lists the books of the owner and every book file holds its own rows and no other.
@@ -285,14 +284,10 @@ class TestSplit:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test, which makes their files.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        report = await SharedDatabaseSplit(
-            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-        ).run()
+        report = await SharedDatabaseSplit(fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()
         catalogue = SqlAlchemyCatalogueDatabase(fx_empty_catalogue)
         entries = await catalogue.read(lambda repos: repos.library.list_for_owner(fx_shared.owner_id, SliceRequest()))
         first = (
@@ -328,7 +323,6 @@ class TestSplit:
         fx_shared: SharedBooks,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the rows go through the revisions after the baseline, so a label typed by hand keeps its page.
@@ -339,14 +333,10 @@ class TestSplit:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        await SharedDatabaseSplit(
-            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-        ).run()
+        await SharedDatabaseSplit(fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()
 
         page = await fx_databases().open(fx_shared.first_id).read(lambda repos: repos.pages.get(fx_shared.labelled))
         assert page.manual_label == MANUAL_LABEL
@@ -356,7 +346,6 @@ class TestSplit:
         fx_shared: SharedBooks,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
     ) -> None:
         """Verify the split reads the shared file only, so it stays a copy to go back to.
 
@@ -366,13 +355,9 @@ class TestSplit:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         """
         before = fx_shared.path.read_bytes()
-        await SharedDatabaseSplit(
-            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-        ).run()
+        await SharedDatabaseSplit(fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()
         assert fx_shared.path.read_bytes() == before
 
 
@@ -385,7 +370,6 @@ class TestRefusal:
         fx_settings: Settings,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
     ) -> None:
         """Verify a shared database the last release did not upgrade is refused with the revision it is at.
 
@@ -395,22 +379,17 @@ class TestRefusal:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         """
         fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
         shared = await _build_shared(fx_settings.data_dir, revision=OLDER_REVISION)
         with pytest.raises(SplitRefusedError, match=OLDER_REVISION):
-            await SharedDatabaseSplit(
-                shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-            ).run()
+            await SharedDatabaseSplit(shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()
 
     async def test_a_missing_shared_database_is_refused(
         self,
         fx_settings: Settings,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
     ) -> None:
         """Verify a data directory without the shared file is refused, naming the place it looked at.
 
@@ -420,21 +399,16 @@ class TestRefusal:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         """
         missing = fx_settings.data_dir / SHARED_FILE
         with pytest.raises(SplitRefusedError, match=SHARED_FILE):
-            await SharedDatabaseSplit(
-                missing, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-            ).run()
+            await SharedDatabaseSplit(missing, catalogue_db=fx_empty_catalogue, books=fx_books).run()
 
     async def test_a_catalogue_that_holds_accounts_is_refused(
         self,
         fx_shared: SharedBooks,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
     ) -> None:
         """Verify a second split, or one over a catalogue already in use, is refused before it writes anything.
 
@@ -444,23 +418,16 @@ class TestRefusal:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         """
-        await SharedDatabaseSplit(
-            fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-        ).run()
+        await SharedDatabaseSplit(fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()
         with pytest.raises(SplitRefusedError, match=AccountTable.__tablename__):
-            await SharedDatabaseSplit(
-                fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-            ).run()
+            await SharedDatabaseSplit(fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()
 
     async def test_a_book_that_has_a_file_already_is_refused(
         self,
         fx_shared: SharedBooks,
         fx_empty_catalogue: SqlDatabase,
         fx_books: BookRegistry,
-        fx_storage_root: Path,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the split never overwrites the file of a book that exists.
@@ -471,13 +438,9 @@ class TestRefusal:
         :type fx_empty_catalogue: SqlDatabase
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
-        :param fx_storage_root: Storage root of the test, where the split makes the files of the books.
-        :type fx_storage_root: Path
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         await fx_databases().create_book(fx_shared.first_id, make_record())
         with pytest.raises(SplitRefusedError, match=str(fx_shared.first_id)):
-            await SharedDatabaseSplit(
-                fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books, root=fx_storage_root
-            ).run()
+            await SharedDatabaseSplit(fx_shared.path, catalogue_db=fx_empty_catalogue, books=fx_books).run()

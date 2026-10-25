@@ -3,8 +3,8 @@
 A book knows the name of its directory and opens its own parts by it: its directory, its database, its event channel
 and its job queue. It knows no identifier and no owner, which live in the library entry of the catalogue: a caller that
 needs them takes them where they already are, the routes from the path, the access dependency ``open_book`` from the
-library entry, and a job from the queue it was taken from. ``BooksService.book`` opens a book of a library entry
-already read. For a request, ``open_book`` of the API opens a book of the signed-in account after it has checked the
+library entry, and a job from the queue it was taken from. ``BooksService`` opens a book of a library entry already
+read. For a request, ``open_book`` of the API opens a book of the signed-in account after it has checked the
 owner, so a use case that takes a ``Book`` works on it and checks nothing itself. A job opens the book of its queue
 from the name of the directory. A use case reads the book through ``read``, changes it through ``change``, and asks
 ``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any
@@ -42,40 +42,47 @@ if TYPE_CHECKING:
 class Book:
     """A book opened with its parts, for the acting account or for a job.
 
+    The only argument of a book is the name of its directory. Its four parts are opened from that name when the book is
+    built, through the ports ``app`` registered the openers of, and are no part of what makes two books equal.
+
     :ivar dir_name: The name of the directory of the book, by which the parts of the book are opened.
-    :ivar database: The database of the book, which runs the transactions of the book. It is no part of what makes two
-                    books equal.
-    :ivar directory: The directory of the book, which holds its files and its database file, no part of what makes two
-                     books equal.
-    :ivar events: The event channel of the book, which every object of the book shares and which is no part of what
-                  makes two books equal.
-    :ivar jobs: The queue of the jobs of the book, which every object of the book shares and which is no part of what
-                makes two books equal.
+    :ivar _database: The database of the book, which runs the transactions of the book, reached through ``read``,
+                     ``change``, ``version`` and ``snapshot``.
+    :ivar _directory: The directory of the book, which holds its files and its database file, reached through
+                      ``sources``, ``assets``, ``export``, ``create``, ``unpack`` and ``delete``.
+    :ivar events: The event channel of the book, which every object of the book shares.
+    :ivar jobs: The queue of the jobs of the book, which every object of the book shares.
     """
 
     dir_name: BookDirectoryName
-    database: BookDatabase = field(
-        default=Factory(lambda self: BookDatabase.open(self.dir_name), takes_self=True), eq=False, repr=False
+    _database: BookDatabase = field(
+        init=False,
+        eq=False,
+        repr=False,
+        default=Factory(lambda self: BookDatabase.open(self.dir_name), takes_self=True),
     )
-    directory: BookDirectory = field(
-        default=Factory(lambda self: BookDirectory.open(self.dir_name), takes_self=True), eq=False, repr=False
+    _directory: BookDirectory = field(
+        init=False,
+        eq=False,
+        repr=False,
+        default=Factory(lambda self: BookDirectory.open(self.dir_name), takes_self=True),
     )
     events: BookEvents = field(
-        default=Factory(lambda self: BookEvents.open(self.dir_name), takes_self=True), eq=False, repr=False
+        init=False, eq=False, repr=False, default=Factory(lambda self: BookEvents.open(self.dir_name), takes_self=True)
     )
     jobs: BookJobs = field(
-        default=Factory(lambda self: BookJobs.open(self.dir_name), takes_self=True), eq=False, repr=False
+        init=False, eq=False, repr=False, default=Factory(lambda self: BookJobs.open(self.dir_name), takes_self=True)
     )
 
     @property
     def sources(self) -> SourceStore:
         """The store of the uploads and sources of the book."""
-        return self.directory.sources
+        return self._directory.sources
 
     @property
     def assets(self) -> AssetStore:
         """The store of the derived files of the book."""
-        return self.directory.assets
+        return self._directory.assets
 
     async def read[T](self, work: Callable[[BookRepositories], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads, and return what it returns.
@@ -87,7 +94,7 @@ class Book:
         :raises NotFoundError: If the book is not stored.
         :raises NoChangeOpenError: If the work writes.
         """
-        return await self.database.read(work)
+        return await self._database.read(work)
 
     async def change[T](self, work: Callable[[BookRepositories, BookRecord], T]) -> T:
         """Run ``work`` on a transaction of the book that writes, alone among its changes, with its record as it is.
@@ -99,7 +106,7 @@ class Book:
         :raises NotFoundError: If the book is not stored.
         :raises BookBusyError: If the write did not begin within the wait limit of the database.
         """
-        return await self.database.change(work)
+        return await self._database.change(work)
 
     async def version(self) -> int:
         """Return the version of the book, which every committed change that wrote a part of the book raised by one.
@@ -108,7 +115,7 @@ class Book:
         :rtype: int
         :raises NotFoundError: If the book is not stored.
         """
-        return await self.database.version()
+        return await self._database.version()
 
     async def snapshot(self) -> bytes:
         """Return a copy of the store of the book as one committed state of it, for the archive of the book.
@@ -117,7 +124,7 @@ class Book:
         :rtype: bytes
         :raises NotFoundError: If the book is not stored.
         """
-        return await self.database.snapshot()
+        return await self._database.snapshot()
 
     async def update(self, changes: BookChanges) -> None:
         """Change some fields of the book, such as its description or its cover, and mark it as updated.
@@ -157,7 +164,7 @@ class Book:
         """
         book_record = await self.read(lambda repos: repos.book_record.get())
         database = await self.snapshot()
-        return ArchivedBook(title=book_record.details.title, pieces=self.directory.export(database))
+        return ArchivedBook(title=book_record.details.title, pieces=self._directory.export(database))
 
     async def create(self, details: BookDetails) -> None:
         """Make the empty book: its directory, then its database with the first description, created and changed now.
@@ -167,8 +174,8 @@ class Book:
         :raises ConflictError: If the book has a database already.
         """
         moment = datetime.now(UTC)
-        await self.directory.create()
-        await self.database.create(BookRecord(details=details, created_at=moment, updated_at=moment))
+        await self._directory.create()
+        await self._database.create(BookRecord(details=details, created_at=moment, updated_at=moment))
 
     async def unpack(self, archive: BinaryIO) -> None:
         """Make the book from the archive of an exported book: its directory first, then its database brought to date.
@@ -181,9 +188,9 @@ class Book:
         :raises BookTooNewError: If the book was exported by a newer release.
         :raises ConflictError: If the directory of the book exists already.
         """
-        await self.directory.unpack(archive)
+        await self._directory.unpack(archive)
         try:
-            await self.database.adopt()
+            await self._database.adopt()
         except Exception:
             await self.delete()
             raise
@@ -193,5 +200,5 @@ class Book:
 
         A deletion broken off half way, such as by a failure of the disk, removes what is left when it runs again.
         """
-        await self.database.close()
-        await self.directory.delete()
+        await self._database.close()
+        await self._directory.delete()

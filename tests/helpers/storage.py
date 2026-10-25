@@ -14,12 +14,16 @@ from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import directory_of, make_page_version
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page
     from bookreviver.domain.ids import BookDirectoryName, BookId, PageId, StorageKey
     from bookreviver.ports.storage import AssetStore
+
+# The function from the directory name of a book to its directory, which the storage backend under test registers
+type DirectoryOpener = Callable[[BookDirectoryName], BookDirectory]
 
 # More than one read chunk of the local store, so staging has to stream
 LARGE_CONTENT: bytes = bytes(range(256)) * 10_240
@@ -203,15 +207,14 @@ class BookFiles:
         :param page: Page whose book and image are stored.
         :type page: Page
         """
-        keys = BookKeys()
         job_id, source_id = JobId(uuid4()), SourceId(uuid4())
         sources = BookDirectory.open(directory_of(book_id)).sources
         staged = await sources.stage(job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
         await sources.promote(job_id, source_id, names=[file.name for file in staged])
-        image = keys.version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
+        image = BookKeys.version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
         async with BookDirectory.open(directory_of(book_id)).assets.writable(image) as path:
             path.write_bytes(PAGE_IMAGE_CONTENT)
-        self._stored[page.id] = (book_id, keys.source(source_id), image)
+        self._stored[page.id] = (book_id, BookKeys.source(source_id), image)
 
     def kept(self, page: Page, *, book_id: BookId | None = None) -> bool:
         """Return whether the source stored for the page's book and the page's full image are still on disk.

@@ -150,6 +150,6 @@ class TestSet:
         await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, stronger)
         await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         kept = await fx_kit.stored_version(book_id, first.id)
-        async with fx_kit.files.assets(book_id).readable(BookKeys().version_directory(first)):
+        async with fx_kit.files.assets(book_id).readable(BookKeys.version_directory(first)):
             pass
         assert (kept.mark, kept.comment) == (ResultMark.BAD, COMMENT)

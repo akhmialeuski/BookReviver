@@ -192,8 +192,7 @@ class StepRunner:
         :returns: The version with its transform, data, review mark, renditions and the state ready.
         :rtype: PageVersion
         """
-        keys = BookKeys()
-        directory = keys.version_directory(version)
+        directory = BookKeys.version_directory(version)
         await book.assets.delete_prefix(directory)
         renditions: Renditions | None = None
         async with book.assets.writable(directory) as target:
@@ -215,7 +214,7 @@ class StepRunner:
         transform = output.transform
         if output.mesh is not None:
             # The step cannot know where its mesh is stored, so the transform that names the file is made here
-            transform = Transform(kind=TransformKind.MESH, mesh_key=keys.version_rendition(version, Rendition.MESH))
+            transform = Transform(kind=TransformKind.MESH, mesh_key=BookKeys.version_rendition(version, Rendition.MESH))
         stored = evolve(
             version,
             transform=transform,
@@ -252,10 +251,9 @@ class StepRunner:
         """
         if version.renditions is None or not version.renditions.ready or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_READY.format(version_id=version.id))
-        keys = BookKeys()
-        tiles = keys.version_rendition(version, Rendition.TILES)
+        tiles = BookKeys.version_rendition(version, Rendition.TILES)
         await book.assets.delete_prefix(tiles)
-        full = keys.version_rendition(version, version.renditions.full)
+        full = BookKeys.version_rendition(version, version.renditions.full)
         async with book.assets.readable(full) as image, book.assets.writable(tiles) as target:
             await self._tiler.tile(image, target)
         return evolve(version, tiles_ready=True)

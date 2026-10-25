@@ -9,8 +9,9 @@ books of a test copies the template of a book for every new book, and ``test_mig
 migrations build the same schemas as the models.
 """
 
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, override
 
 import anyio
 from alembic.runtime.migration import MigrationContext
@@ -20,24 +21,24 @@ from dishka import Provider, Scope, provide
 from sqlalchemy.engine import make_url
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
-from bookreviver.adapters.persistence.sqlalchemy.book_database import database_file as book_file
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.keys import KeySegment
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import directory_of
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
 
     from sqlalchemy.orm import Session
 
     from bookreviver.adapters.persistence.sqlalchemy.database import Schema
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.ports.persistence import CatalogueDatabase
 
 NO_DATABASE_FILE: str = (
@@ -60,30 +61,90 @@ class CatalogueDatabaseFactory(Protocol):
         """
 
 
-class LocatedBookDatabases:
-    """The databases of the books of a test, each opened over a registry of the test with a wait limit of its own.
+class WaitingBookRegistry(BookRegistry):
+    """A registry of the books that shares the open books of another one, and whose changes wait for a limit of its own.
 
-    A book opens its own database through the opener the application registers, with one wait limit. A test that needs
-    another limit, or another registry over the same files, opens the database of a book here instead.
+    The book database takes its wait limit from the registry it opens over, as the application's one does, so a test
+    that needs another limit over the same books and the same write queues opens its databases over this view.
+    """
+
+    def __init__(self, books: BookRegistry, *, wait_seconds: float) -> None:
+        """Wrap a registry with another wait limit for the changes of its books.
+
+        :param books: The registry whose open books, write queues and blank file are used.
+        :type books: BookRegistry
+        :param wait_seconds: How long a change waits for the writer of its book.
+        :type wait_seconds: float
+        """
+        self._books = books
+        self._wait_seconds = wait_seconds
+
+    @override
+    @asynccontextmanager
+    async def use(self, dir_name: BookDirectoryName) -> AsyncIterator[SqlDatabase]:
+        """Hold the database of a book of the wrapped registry open for the caller.
+
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
+        :returns: Iterator yielding the open database of the book once.
+        :rtype: AsyncIterator[SqlDatabase]
+        """
+        async with self._books.use(dir_name) as database:
+            yield database
+
+    @override
+    async def close(self, dir_name: BookDirectoryName) -> None:
+        """Close the database of a book of the wrapped registry for good.
+
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
+        """
+        await self._books.close(dir_name)
+
+    @override
+    async def copy_blank(self, dir_name: BookDirectoryName) -> None:
+        """Copy the blank file of the wrapped registry into the directory of a book.
+
+        :param dir_name: Name of the directory of the book, which must exist.
+        :type dir_name: BookDirectoryName
+        """
+        await self._books.copy_blank(dir_name)
+
+
+def waiting(books: BookRegistry, wait_seconds: float) -> BookRegistry:
+    """Return the registry itself when its wait limit is the one asked for, and a view with that limit otherwise.
+
+    :param books: The registry of the books of the test.
+    :type books: BookRegistry
+    :param wait_seconds: How long a change of a book waits for its writer.
+    :type wait_seconds: float
+    :returns: A registry whose wait limit is ``wait_seconds``, over the books of ``books``.
+    :rtype: BookRegistry
+    """
+    return books if books.wait_seconds == wait_seconds else WaitingBookRegistry(books, wait_seconds=wait_seconds)
+
+
+class LocatedBookDatabases:
+    """The databases of the books of a test, each opened over a registry of the test.
+
+    A book opens its own database through the opener the application registers, with the wait limit of its registry. A
+    test that needs another limit, or another registry over the same files, opens the database of a book here instead,
+    over a registry with that limit.
 
     :ivar books: The registry of the databases of the books of the test.
     :ivar root: The storage root of the test, which holds the directories of the books and their database files.
-    :ivar wait_seconds: How long a change waits for the writer of its book.
     """
 
-    def __init__(self, books: BookRegistry, *, root: Path, wait_seconds: float) -> None:
+    def __init__(self, books: BookRegistry, *, root: Path) -> None:
         """Open the databases of the books of a test over a registry.
 
         :param books: The registry of the databases of the books of the test.
         :type books: BookRegistry
         :param root: The storage root of the test.
         :type root: Path
-        :param wait_seconds: How long a change waits for the writer of its book.
-        :type wait_seconds: float
         """
         self.books = books
         self.root = root
-        self.wait_seconds = wait_seconds
 
     def open(self, book_id: BookId) -> SqlAlchemyBookDatabase:
         """Return the database of a book, from the file of its directory.
@@ -93,9 +154,7 @@ class LocatedBookDatabases:
         :returns: The database of the book.
         :rtype: SqlAlchemyBookDatabase
         """
-        return SqlAlchemyBookDatabase(
-            directory_of(book_id), root=self.root, books=self.books, wait_seconds=self.wait_seconds
-        )
+        return SqlAlchemyBookDatabase(directory_of(book_id), books=self.books)
 
     def path(self, book_id: BookId) -> Path:
         """Name the database file of a book, which may not exist yet.
@@ -105,7 +164,7 @@ class LocatedBookDatabases:
         :returns: The path of ``book.db`` in the directory of the book.
         :rtype: Path
         """
-        return book_file(self.root, directory_of(book_id))
+        return self.root / KeySegment.BOOKS / directory_of(book_id) / KeySegment.DATABASE
 
     async def create_book(self, book_id: BookId, book_record: BookRecord) -> None:
         """Make the directory of a new book and its database with the record, as a creation does.
@@ -239,11 +298,9 @@ class BookSessions:
     """Runs a function over a session of the file of a book, for a test that reads or writes rows with plain SQL.
 
     :ivar books: Registry of the books of the test.
-    :ivar root: The storage root of the test, which holds the database files of the books.
     """
 
     books: BookRegistry
-    root: Path
 
     async def read[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads.
@@ -255,7 +312,7 @@ class BookSessions:
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(directory_of(book_id), book_file(self.root, directory_of(book_id))) as database:
+        async with self.books.use(directory_of(book_id)) as database:
             return await database.read(work)
 
     async def write[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
@@ -268,7 +325,7 @@ class BookSessions:
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(directory_of(book_id), book_file(self.root, directory_of(book_id))) as database:
+        async with self.books.use(directory_of(book_id)) as database:
             return await database.write(
                 work, kind=BlockKind.BOOK, book=directory_of(book_id), wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
             )

@@ -127,7 +127,7 @@ async def has_files(kit: ProcessingKit, book_id: BookId, version: PageVersion) -
     :rtype: bool
     """
     try:
-        async with kit.files.assets(book_id).readable(BookKeys().version_directory(version)):
+        async with kit.files.assets(book_id).readable(BookKeys.version_directory(version)):
             return True
     except NotFoundError:
         return False

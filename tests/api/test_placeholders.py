@@ -123,9 +123,8 @@ async def fx_book(
         versions=[base],
         databases=fx_databases(),
     )
-    keys = BookKeys()
     for scan in scans:
-        async with fx_directories.assets(book_id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+        async with fx_directories.assets(book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(_jpeg())
     return Book(book_id=book_id, shown=shown, placeholder=placeholder, spare=scans[1])
 

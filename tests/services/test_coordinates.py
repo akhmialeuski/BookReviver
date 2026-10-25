@@ -56,9 +56,7 @@ async def landmark_on(kit: ProcessingKit, book_id: BookId, version: PageVersion)
     :rtype: Point
     """
     assert version.renditions is not None
-    async with kit.files.assets(book_id).readable(
-        BookKeys().version_rendition(version, version.renditions.full)
-    ) as full:
+    async with kit.files.assets(book_id).readable(BookKeys.version_rendition(version, version.renditions.full)) as full:
         with Image.open(io.BytesIO(full.read_bytes())) as image:
             x, y = find_mark(image)
     return Point(x=x, y=y)

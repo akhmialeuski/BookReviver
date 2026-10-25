@@ -38,6 +38,7 @@ from bookreviver.domain.values import (
     Step,
     StepPreview,
 )
+from bookreviver.ports.persistence import BookDatabase
 from tests.helpers.builders import make_job, make_page, open_for
 from tests.helpers.counting import CountingBookDatabase
 from tests.helpers.fake_processing import PREVIEW_TOKEN
@@ -108,8 +109,9 @@ class TestRunStage:
         await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         version = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        keys = BookKeys()
-        async with fx_kit.files.assets(book_id).readable(keys.version_rendition(version, Rendition.FULL_JPEG)) as full:
+        async with fx_kit.files.assets(book_id).readable(
+            BookKeys.version_rendition(version, Rendition.FULL_JPEG)
+        ) as full:
             content = full.read_bytes()
         expect((version.state, version.scale) == (VersionState.READY, VersionScale.FULL))
         expect((version.renditions is not None and version.renditions.ready, version.tiles_ready) == (True, True))
@@ -710,7 +712,7 @@ class TestPreviewStep:
         )
         [version] = versions.items
         async with fx_kit.files.assets(book_id).readable(
-            BookKeys().version_rendition(version, Rendition.PREVIEW)
+            BookKeys.version_rendition(version, Rendition.PREVIEW)
         ) as file:
             content = file.read_bytes()
         record = await found_stage(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
@@ -987,7 +989,7 @@ class TestRunApplyStep:
         )
         change_while_writing(fx_kit, monkeypatch, partial(delete_the_page, fx_kit, seeded))
         await fx_kit.work_queue()
-        left = await fx_kit.files.assets(seeded.book_id).size_of(BookKeys().page(seeded.page.id))
+        left = await fx_kit.files.assets(seeded.book_id).size_of(BookKeys.page(seeded.page.id))
         assert left == 0
 
     async def test_a_mark_and_a_comment_put_on_the_version_while_it_ran_are_kept(
@@ -1138,7 +1140,8 @@ class TestStartRun:
         actor, book_id, page = await prepared_page(fx_kit)
         await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
         database = CountingBookDatabase(fx_open_book.databases.open(book_id))
-        book = evolve(fx_open_book(actor, book_id), database=database)
+        BookDatabase.register(lambda _dir_name: database)
+        book = fx_open_book(actor, book_id)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
 
         await fx_kit.service().start_run(book, Stage.GEOMETRY, run)

@@ -9,8 +9,8 @@ contract of the port holds for both, and nothing about the order in which jobs r
 A test names a book by its identifier, and the books of the tests are in directories named by ``directory_of``, so the
 board puts, reads and cancels a job by the identifier of its book. A job knows no book, so the board remembers the
 directory each job was put for. A test that wants the books it opens to use the board
-registers ``board.open`` as ``BookJobs``, and the ``fx_book_parts`` fixture of the suite gives the previous registration
-back after each test.
+registers ``board.open`` as ``BookJobs``, which replaces the registration the ``fx_book_parts`` fixture of the suite made
+at the start of the test.
 """
 
 from typing import TYPE_CHECKING, override
@@ -24,7 +24,7 @@ from tests.helpers.builders import directory_of
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.adapters.jobs.board import JobRunner
+    from bookreviver.adapters.jobs.board import InMemoryBookJobs, JobRunner
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId
 
@@ -51,20 +51,18 @@ class FakeJobBoard(InMemoryJobBoard):
         self._being_run: set[BookDirectoryName] = set()
 
     @override
-    def put_job(self, dir_name: BookDirectoryName, job: Job) -> Job:
-        """Queue the job and remember it, without announcing it and without starting a task for its book.
+    def after_put(self, queue: InMemoryBookJobs, job: Job, *, starts: bool) -> None:
+        """Remember the job put on a queue, without announcing it and without starting a task for its book.
 
-        :param dir_name: Name of the directory of the book.
-        :type dir_name: BookDirectoryName
-        :param job: The job to queue, in the queued state.
+        :param queue: The queue the job was put on.
+        :type queue: InMemoryBookJobs
+        :param job: The queued job.
         :type job: Job
-        :returns: The job.
-        :rtype: Job
+        :param starts: Whether no task served the queue, which this board never starts.
+        :type starts: bool
         """
         self.put_jobs.append(job)
-        self._homes[job.id] = dir_name
-        self._ledger.add(dir_name, job)
-        return job
+        self._homes[job.id] = queue.dir_name
 
     def put(self, book_id: BookId, job: Job) -> Job:
         """Queue the job at the end of the queue of a book, as the book would.
@@ -147,6 +145,6 @@ class FakeJobBoard(InMemoryJobBoard):
             return
         self._being_run.add(dir_name)
         try:
-            await self._serve(dir_name)
+            await self.open(dir_name).serve()
         finally:
             self._being_run.discard(dir_name)

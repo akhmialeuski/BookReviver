@@ -178,9 +178,8 @@ async def _commit_book(
         versions=versions,
         databases=databases,
     )
-    keys = BookKeys()
     for scan in scans:
-        async with files.assets(book_id).writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+        async with files.assets(book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(IMAGE)
     return BookOfScans(book_id=book_id, source=source, scans=scans, pages=pages, versions=versions)
 
@@ -235,7 +234,7 @@ async def _spare_scan(files: SharedBookDirectories, book: BookOfScans, *, databa
         repos.scans.add(scan)
 
     await databases.open(book.book_id).change(add_scan)
-    async with files.assets(book.book_id).writable(BookKeys().scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+    async with files.assets(book.book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
         path.write_bytes(IMAGE)
     return scan
 
@@ -881,12 +880,11 @@ class TestAttachScan:
         book, placeholder = await _placeholder_book(
             fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        keys = BookKeys()
         async with fx_directories.assets(book.book_id).writable(
-            keys.version_rendition(book.versions[0], Rendition.FULL_JPEG)
+            BookKeys.version_rendition(book.versions[0], Rendition.FULL_JPEG)
         ) as path:
             await anyio.Path(path).write_bytes(IMAGE)
-        taken_directory = book_directory(fx_storage_root, book.book_id) / keys.page(book.pages[0].id)
+        taken_directory = book_directory(fx_storage_root, book.book_id) / BookKeys.page(book.pages[0].id)
         assert taken_directory.is_dir()
 
         overview = await fx_service().attach_scan(
@@ -1002,11 +1000,10 @@ class TestDelete:
             [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
             databases=fx_open_book.databases,
         )
-        keys = BookKeys()
         doomed, kept = book.pages
         for version in book.versions:
             async with fx_directories.assets(book.book_id).writable(
-                keys.version_rendition(version, Rendition.FULL_JPEG)
+                BookKeys.version_rendition(version, Rendition.FULL_JPEG)
             ) as path:
                 await anyio.Path(path).write_bytes(IMAGE)
 
@@ -1023,8 +1020,8 @@ class TestDelete:
         sources = await fx_open_book.databases.open(book.book_id).read(lambda repos: repos.sources.list_all())
         expect(doomed.id not in stored_ids and kept.id in stored_ids)
         expect([version.page_id for version in versions] == [kept.id])
-        expect(not (book_directory(fx_storage_root, book.book_id) / keys.page(doomed.id)).exists())
-        expect((book_directory(fx_storage_root, book.book_id) / keys.page(kept.id)).is_dir())
+        expect(not (book_directory(fx_storage_root, book.book_id) / BookKeys.page(doomed.id)).exists())
+        expect((book_directory(fx_storage_root, book.book_id) / BookKeys.page(kept.id)).is_dir())
         expect([scan.id for scan in scans] == [book.scans[0].id] and book.source.id in {each.id for each in sources})
         assert_expectations()
 
@@ -1137,7 +1134,7 @@ class TestPrepareImages:
         await fx_board.run_queued()
 
         [version] = await _stored_versions(book_id, overview.page, databases=fx_open_book.databases)
-        directory = book_directory(fx_storage_root, book_id) / BookKeys().version_directory(version)
+        directory = book_directory(fx_storage_root, book_id) / BookKeys.version_directory(version)
         expect(version.state is VersionState.READY)
         expect(version.renditions == Renditions(ready=True, full=Rendition.FULL_PNG))
         expect(_white_leaf_facts(directory / Rendition.FULL_PNG) == ('1', (64, 48), True, 1))
@@ -1177,9 +1174,7 @@ class TestPrepareImages:
         await fx_runtime[1].run_queued()
 
         [version] = await _stored_versions(book.book_id, placeholder, databases=fx_open_book.databases)
-        copy = book_directory(fx_storage_root, book.book_id) / BookKeys().version_rendition(
-            version, Rendition.FULL_JPEG
-        )
+        copy = book_directory(fx_storage_root, book.book_id) / BookKeys.version_rendition(version, Rendition.FULL_JPEG)
         expect(version.state is VersionState.READY)
         expect(version.renditions == Renditions(ready=True, full=Rendition.FULL_JPEG))
         expect(copy.read_bytes() == IMAGE)
@@ -1526,7 +1521,7 @@ class TestPrepareImagesWhileTheBookChanges:
         expect(
             [event.version.page_id for event in events.published if isinstance(event, PageVersionReady)] == [kept.id]
         )
-        expect(not (book_directory(root, book_id) / BookKeys().page(gone)).exists())
+        expect(not (book_directory(root, book_id) / BookKeys.page(gone)).exists())
         assert_expectations()
 
     async def test_unexpected_error_in_the_files_of_a_version_fails_the_version_and_the_job_and_frees_the_book(

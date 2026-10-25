@@ -1,13 +1,11 @@
-"""Use cases of the set of books: opening, creating, importing and deleting them.
+"""Use cases of the set of books: creating, importing, listing and deleting them, and serving their derived files.
 
 What reads or changes one open book, such as its description or its archive, is a method of ``Book``.
 A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
-book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
-synchronous functions over repositories: the work of ``Book.read`` or ``Book.change`` calls them with the repositories
-it receives, and a caller outside a transaction wraps the call in ``Book.read``. ``book`` opens the book a library entry
-names, which the access dependencies of the API use, and checks no owner. A book knows no identifier, so ``create`` and
-``import_archive`` return the identifier of the new book with it, and ``delete`` reads the library entry of the
-identifier it is given.
+book of the signed-in account, and they choose the books of a list. ``book_pages`` is a synchronous function over
+repositories: the work of ``Book.read`` or ``Book.change`` calls it with the repositories it receives, and a caller
+outside a transaction wraps the call in ``Book.read``. A book knows no identifier, so ``create`` and ``import_archive``
+return the identifier of the new book with it, and ``delete`` reads the library entry of the identifier it is given.
 
 A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
 ``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
@@ -73,7 +71,7 @@ class NewBook:
 
 
 class BooksService:
-    """Books of the acting account, with their description and their files."""
+    """Keeps the library entries of the books in the catalogue, and creates, imports, lists and deletes the books."""
 
     def __init__(self, *, catalogue: CatalogueDatabase) -> None:
         """Work over the catalogue database of one request, which keeps the library entries of the books.
@@ -83,16 +81,6 @@ class BooksService:
         :type catalogue: CatalogueDatabase
         """
         self._catalogue = catalogue
-
-    def book(self, entry: LibraryEntry) -> Book:
-        """Open the book a library entry names, without reading anything.
-
-        :param entry: The entry of the library.
-        :type entry: LibraryEntry
-        :returns: The book.
-        :rtype: Book
-        """
-        return Book(entry.directory)
 
     @asynccontextmanager
     async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
@@ -114,7 +102,7 @@ class BooksService:
         if not BookKeys.is_asset(key):
             raise NotFoundError(key)
         entry = await self._catalogue.read(lambda repos: repos.library.get(book_id))
-        async with self.book(entry).assets.readable(key) as path:
+        async with Book(entry.directory).assets.readable(key) as path:
             yield path
 
     async def listed(self) -> list[Book]:
@@ -124,7 +112,7 @@ class BooksService:
         :rtype: list[Book]
         """
         entries = await self._catalogue.read(lambda repos: repos.library.list_all())
-        return [self.book(entry) for entry in entries]
+        return [Book(entry.directory) for entry in entries]
 
     async def create(self, owner: Actor, details: BookDetails) -> NewBook:
         """Create an empty book of an account: its directory, its database with its description, then its entry.
@@ -137,7 +125,7 @@ class BooksService:
         :rtype: NewBook
         """
         entry = self._new_entry(owner)
-        book = self.book(entry)
+        book = Book(entry.directory)
         await book.create(details)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
         return NewBook(book_id=entry.book_id, book=book)
@@ -159,7 +147,7 @@ class BooksService:
         :raises BookTooNewError: If the book was exported by a newer release.
         """
         entry = self._new_entry(owner)
-        book = self.book(entry)
+        book = Book(entry.directory)
         await book.unpack(archive)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
         return NewBook(book_id=entry.book_id, book=book)

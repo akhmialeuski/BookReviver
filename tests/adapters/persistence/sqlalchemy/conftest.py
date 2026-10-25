@@ -17,7 +17,7 @@ from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.services.book import Book
 from tests.helpers.builders import make_record
-from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file
+from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file, waiting
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_account, store_book
@@ -56,17 +56,15 @@ async def fx_owner_id(fx_database: SqlDatabase) -> AccountId:
 
 
 @pytest.fixture
-def fx_book_sessions(fx_books: BookRegistry, fx_storage_root: Path) -> BookSessions:
+def fx_book_sessions(fx_books: BookRegistry) -> BookSessions:
     """Give the sessions of the files of the books of the test, for the tests that read and write rows directly.
 
     :param fx_books: Registry of the books of the test.
     :type fx_books: BookRegistry
-    :param fx_storage_root: Storage root of the test, which holds the database files of its books.
-    :type fx_storage_root: Path
     :returns: The sessions over the registry.
     :rtype: BookSessions
     """
-    return BookSessions(fx_books, fx_storage_root)
+    return BookSessions(fx_books)
 
 
 @pytest.fixture
@@ -157,7 +155,7 @@ async def fx_traced_database(
 
 @pytest.fixture
 async def fx_open_books(
-    fx_book_template: Path, fx_tracer: AskingTracer
+    fx_book_template: Path, fx_storage_root: Path, fx_tracer: AskingTracer
 ) -> AsyncIterator[Callable[[float], BookRegistry]]:
     """Give a function that opens a registry of the books of the test, with the busy timeout it is told.
 
@@ -166,6 +164,8 @@ async def fx_open_books(
 
     :param fx_book_template: The blank file every new book copies.
     :type fx_book_template: Path
+    :param fx_storage_root: Storage root of the test, which holds the files of its books.
+    :type fx_storage_root: Path
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
     :returns: Iterator yielding the opening function and closing every registry it opened afterwards.
@@ -183,6 +183,7 @@ async def fx_open_books(
         """
         opened.append(
             BookRegistry(
+                root=fx_storage_root,
                 tracer=fx_tracer,
                 wait_seconds=wait_seconds,
                 idle_seconds=TRACED_IDLE_SECONDS,
@@ -272,7 +273,7 @@ def fx_traced_databases(
         :returns: A new opener of the databases of the books.
         :rtype: LocatedBookDatabases
         """
-        return LocatedBookDatabases(fx_traced_books, root=fx_storage_root, wait_seconds=wait_seconds)
+        return LocatedBookDatabases(waiting(fx_traced_books, wait_seconds), root=fx_storage_root)
 
     return open_databases
 
@@ -302,7 +303,7 @@ def fx_impatient_databases(
         :returns: A new opener of the databases of the books.
         :rtype: LocatedBookDatabases
         """
-        return LocatedBookDatabases(fx_impatient_books, root=fx_storage_root, wait_seconds=wait_seconds)
+        return LocatedBookDatabases(waiting(fx_impatient_books, wait_seconds), root=fx_storage_root)
 
     return open_databases
 

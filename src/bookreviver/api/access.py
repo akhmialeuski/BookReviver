@@ -3,9 +3,8 @@
 The services, the domain and the jobs never check an owner. A route of a book takes it from a dependency of this
 module, which reads it from the catalogue, compares its owner with the signed-in account and answers a book of another
 account exactly like a missing one, so the identifiers of other accounts cannot be probed. A list of the account's books
-is read here too, so a service is handed the objects it works on and never chooses whose they are. The books service
-opens each book with its database, and takes no part in the choice. The recipe profiles live in the book, so whoever
-may open the book may work on its profiles.
+is read here too, so a service is handed the objects it works on and never chooses whose they are. The recipe profiles
+live in the book, so whoever may open the book may work on its profiles.
 
 Every route of one book takes ``Annotated[Book, Depends(open_book)]``, written in place so that ruff sees the
 ``book_id`` of the path the dependency reads. FastAPI resolves a dependency once per request, so ``fresh_book`` and the
@@ -27,11 +26,11 @@ from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import Slice, SliceRequest
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.services.book import Book
-from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import CatalogueRepositories
+    from bookreviver.services.books import BooksService
 
 BOOK_ID_DESCRIPTION: Final = 'Identifier of the book'
 # Entries of the library read at a time when every book of an account is wanted
@@ -105,7 +104,6 @@ async def open_book(
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     catalogue: FromDishka[CatalogueDatabase],
-    books: FromDishka[BooksService],
 ) -> Book:
     """Open the book the path names, when the signed-in account owns it.
 
@@ -115,8 +113,6 @@ async def open_book(
     :type actor: Actor
     :param catalogue: Catalogue database of the request, whose library entry of the book names its owner.
     :type catalogue: CatalogueDatabase
-    :param books: Books service of the request, which opens the book with its database.
-    :type books: BooksService
     :returns: The open book.
     :rtype: Book
     :raises NotFoundError: If the library has no such book, or the book belongs to another account.
@@ -124,7 +120,7 @@ async def open_book(
     entry = await catalogue.read(lambda repos: repos.library.get(book_id))
     if entry.owner_id != actor.account_id:
         raise NotFoundError(book_id)
-    return books.book(entry)
+    return Book(entry.directory)
 
 
 @inject
@@ -135,7 +131,7 @@ async def own_books(
 ) -> Slice[LibraryEntry]:
     """Read the window of the library entries of the signed-in account's books the page parameters ask for.
 
-    The latest added comes first. A route opens the book of an entry with ``BooksService.book``, and takes the
+    The latest added comes first. A route opens the book of an entry with ``Book(entry.directory)``, and takes the
     identifier of the book from the entry.
 
     :param params: Page number and size from the query.

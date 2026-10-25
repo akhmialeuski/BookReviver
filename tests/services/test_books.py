@@ -15,7 +15,7 @@ from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import BookKeys, KeySegment
-from bookreviver.domain.values import PageStepKey, Slice, SliceRequest
+from bookreviver.domain.values import PageStepKey, SliceRequest
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
@@ -36,7 +36,7 @@ from tests.helpers.seeding import commit_record, store_book
 from tests.helpers.storage import BookFiles, SharedBookDirectories, SharedDirectory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -113,24 +113,20 @@ class DirectoryFailingOnce(SharedDirectory):
 
 
 @pytest.fixture
-def fx_flaky_directories(fx_storage_root: Path, fx_book_parts: RecordingEventBus) -> Iterator[SharedBookDirectories]:
+def fx_flaky_directories(fx_storage_root: Path, fx_book_parts: RecordingEventBus) -> SharedBookDirectories:
     """Register the directories of the books of the test, whose first deletion of a directory fails, for the test.
 
     :param fx_storage_root: Storage root of the directories.
     :type fx_storage_root: Path
-    :param fx_book_parts: The parts registered for the books of the test, over which the directories are registered and
-                          which get their directory back after the test.
+    :param fx_book_parts: The parts registered for the books of the test, over which the directories are registered.
     :type fx_book_parts: RecordingEventBus
-    :returns: Iterator yielding the directories, each of whose deletion fails once, and giving the registration back.
-    :rtype: Iterator[SharedBookDirectories]
+    :returns: The directories, each of whose deletion fails once.
+    :rtype: SharedBookDirectories
     """
     del fx_book_parts
     directories = SharedBookDirectories(root=fx_storage_root, directory_type=DirectoryFailingOnce)
-    previous = BookDirectory.register(directories.open)
-    try:
-        yield directories
-    finally:
-        BookDirectory.register(previous)
+    BookDirectory.register(directories.open)
+    return directories
 
 
 async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> BookRecord:
@@ -163,7 +159,6 @@ class TestList:
 
     async def test_lists_only_the_actors_books_newest_first(
         self,
-        fx_service: Callable[[], BooksService],
         fx_database: SqlDatabase,
         fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
@@ -171,8 +166,6 @@ class TestList:
     ) -> None:
         """Verify another account's book is hidden and the actor's come most recently updated first.
 
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
@@ -189,10 +182,10 @@ class TestList:
             for minutes, owner in ((1, fx_actor.account_id), (2, fx_actor.account_id), (3, new_account_id()))
         ]
 
-        result = await _listed(fx_service(), fx_catalogue(), fx_actor)
+        result = await _listed(fx_catalogue(), fx_actor)
 
-        expect([item.book_id for item in result.items] == [newer_id, older_id])
-        expect(result.total == 2)
+        expect(list(result) == [newer_id, older_id])
+        expect(len(result) == 2)
         assert_expectations()
 
 
@@ -221,7 +214,7 @@ class TestOpenAsset:
         :type fx_databases: BookDatabasesFactory
         """
         book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
-        key = BookKeys().book
+        key = BookKeys.BOOK
         async with fx_directories.assets(book_id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
@@ -238,7 +231,7 @@ class TestOpenAsset:
         :param fx_directories: The directories of the books of the test.
         :type fx_directories: SharedBookDirectories
         """
-        book_id, key = new_book_id(), BookKeys().book
+        book_id, key = new_book_id(), BookKeys.BOOK
         async with fx_directories.assets(book_id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
@@ -270,7 +263,7 @@ class TestOpenAsset:
         book_id = await commit_record(
             fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
-        key = BookKeys().book
+        key = BookKeys.BOOK
         async with fx_directories.assets(book_id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
@@ -328,7 +321,7 @@ class TestOpenAsset:
         book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(book_id, BookKeys().book):
+            async with fx_service().open_asset(book_id, BookKeys.BOOK):
                 pytest.fail('A file that is not stored was opened.')
 
 
@@ -474,23 +467,19 @@ class TestDeleteAll:
         await AccountBooks(catalogue=fx_catalogue(), books=fx_service()).delete_all(fx_actor.account_id)
 
 
-async def _listed(service: BooksService, catalogue: CatalogueDatabase, actor: Actor) -> Slice[BookOverview]:
+async def _listed(catalogue: CatalogueDatabase, actor: Actor) -> dict[BookId, BookOverview]:
     """List the books of the actor as the list route does: the books the access dependencies read, then their overviews.
 
-    :param service: The book service of the request.
-    :type service: BooksService
     :param catalogue: Catalogue database the books of the actor are read through.
     :type catalogue: CatalogueDatabase
     :param actor: Account whose books are listed.
     :type actor: Actor
-    :returns: The overviews of the actor's books, the latest added first, and their number.
-    :rtype: Slice[BookOverview]
+    :returns: The overviews of the actor's books by identifier, the latest added first.
+    :rtype: dict[BookId, BookOverview]
     """
     entries = await entries_of(catalogue, actor.account_id)
     stages = _stages()
-    return Slice(
-        items=[await stages.overview(service.book(entry), entry.book_id) for entry in entries], total=len(entries)
-    )
+    return {entry.book_id: await stages.overview(Book(entry.directory)) for entry in entries}
 
 
 async def _archive(book_id: BookId) -> io.BytesIO:
@@ -537,16 +526,16 @@ class TestExportAndImport:
         archive = await _archive(book_id)
 
         copy = await fx_service().import_archive(fx_actor, archive)
-        imported = await _stages().overview(copy.book, copy.book_id)
+        imported = await _stages().overview(copy.book)
 
-        copy_id = imported.book_id
+        copy_id = copy.book_id
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)
-        listed = await _listed(fx_service(), fx_catalogue(), fx_actor)
+        listed = await _listed(fx_catalogue(), fx_actor)
         expect(copy_id != book_id)
         expect(imported.book_record.details == book_record.details)
         expect([stored.id for stored in pages] == [page.id])
         expect(fx_files.kept(page, book_id=copy_id))
-        expect([overview.book_id for overview in listed.items] == [copy_id, book_id])
+        expect(list(listed) == [copy_id, book_id])
         assert_expectations()
 
     async def test_an_imported_book_reads_the_mask_of_its_edit(
@@ -577,7 +566,7 @@ class TestExportAndImport:
         book_id = await store_book(
             fx_catalogue(), book_record, page, owner=fx_actor.account_id, databases=fx_databases()
         )
-        directory = BookKeys().page_edit(page.id, DESKEW_STEP_ID, MASK_EDIT_HASH)
+        directory = BookKeys.page_edit(page.id, DESKEW_STEP_ID, MASK_EDIT_HASH)
         edit = evolve(make_page_edit(page_id=page.id), mask_key=StorageKey(f'{directory}/{Rendition.MASK}'))
         await (
             fx_databases()
@@ -630,7 +619,7 @@ class TestExportAndImport:
             await fx_service().import_archive(fx_actor, written)
 
         expect(list((fx_storage_root / KeySegment.BOOKS).glob('*')) == [])
-        expect((await _listed(fx_service(), fx_catalogue(), fx_actor)).total == 0)
+        expect(len(await _listed(fx_catalogue(), fx_actor)) == 0)
         assert_expectations()
 
 

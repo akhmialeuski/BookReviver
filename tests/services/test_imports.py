@@ -757,7 +757,7 @@ class TestStartImport:
             )
 
         expect(fx_rig.fakes.board.put_jobs == [queued])
-        expect(not await anyio.Path(book_directory(fx_storage_root, fx_book) / BookKeys().incoming_area).exists())
+        expect(not await anyio.Path(book_directory(fx_storage_root, fx_book) / BookKeys.INCOMING_AREA).exists())
         assert_expectations()
 
     async def test_book_with_an_import_running_raises_conflict_and_leaves_only_the_upload_of_that_import(
@@ -1217,7 +1217,6 @@ class TestRunImport:
         """
         await _import(fx_rig, fx_owner, fx_book, fx_book_files)
 
-        keys = BookKeys()
         scans, pages = (
             await _scans(fx_book, databases=fx_rig.databases),
             await _pages(fx_book, databases=fx_rig.databases),
@@ -1227,14 +1226,16 @@ class TestRunImport:
             missing += [
                 key
                 for rendition in (scan.renditions.full, *DERIVED)
-                if not await _is_stored(fx_rig.files.assets(fx_book), key := keys.scan_rendition(scan, rendition))
+                if not await _is_stored(fx_rig.files.assets(fx_book), key := BookKeys.scan_rendition(scan, rendition))
             ]
         versions = await _versions(fx_book, [page.id for page in pages], databases=fx_rig.databases)
         for version in versions:
             missing += [
                 key
                 for rendition in (Rendition.FULL_JPEG, *DERIVED)
-                if not await _is_stored(fx_rig.files.assets(fx_book), key := keys.version_rendition(version, rendition))
+                if not await _is_stored(
+                    fx_rig.files.assets(fx_book), key := BookKeys.version_rendition(version, rendition)
+                )
             ]
         expect(missing == [])
         expect(all(scan.renditions.ready for scan in scans))
@@ -1269,15 +1270,16 @@ class TestRunImport:
         """
         await _import(fx_rig, fx_owner, fx_book, [image_upload(fx_samples, COVER_NAME)])
 
-        keys = BookKeys()
         [scan] = await _scans(fx_book, databases=fx_rig.databases)
         [page] = await _pages(fx_book, databases=fx_rig.databases)
         [version] = await _versions(fx_book, [page.id], databases=fx_rig.databases)
         # The asset store hands out a hidden directory beside the key, which the pyramid is published from
         assert sorted(target.parent for target in fx_rig.tiler.targets) == sorted(
             [
-                (book_directory(fx_storage_root, fx_book) / keys.scan_rendition(scan, Rendition.TILES)).parent,
-                (book_directory(fx_storage_root, fx_book) / keys.version_rendition(version, Rendition.TILES)).parent,
+                (book_directory(fx_storage_root, fx_book) / BookKeys.scan_rendition(scan, Rendition.TILES)).parent,
+                (
+                    book_directory(fx_storage_root, fx_book) / BookKeys.version_rendition(version, Rendition.TILES)
+                ).parent,
             ]
         )
 
@@ -1398,7 +1400,6 @@ class TestRunImportFullFormat:
 
         await _import(fx_rig, fx_owner, book_id, [image_upload(fx_samples, case.name, mode=case.mode)])
 
-        keys = BookKeys()
         [scan] = await _scans(book_id, databases=fx_rig.databases)
         [page] = await _pages(book_id, databases=fx_rig.databases)
         [version] = await _versions(book_id, [page.id], databases=fx_rig.databases)
@@ -1406,7 +1407,7 @@ class TestRunImportFullFormat:
         expect(fx_rig.rasterizer.formats == [case.expected])
         expect(scan.renditions.full is case.expected)
         expect(version.renditions is not None and version.renditions.full is case.expected)
-        for of in (partial(keys.scan_rendition, scan), partial(keys.version_rendition, version)):
+        for of in (partial(BookKeys.scan_rendition, scan), partial(BookKeys.version_rendition, version)):
             expect(
                 all(
                     [
@@ -1417,7 +1418,8 @@ class TestRunImportFullFormat:
             )
             expect(not await _is_stored(fx_rig.files.assets(book_id), of(other)))
         expect(
-            await _stored_image(fx_rig.files.assets(book_id), keys.scan_rendition(scan, case.expected)) == case.stored
+            await _stored_image(fx_rig.files.assets(book_id), BookKeys.scan_rendition(scan, case.expected))
+            == case.stored
         )
         assert_expectations()
 
@@ -1446,14 +1448,13 @@ class TestRunImportFullFormat:
         second = image_upload(fx_samples, 'second.jpg', width_px=SECOND_PART_WIDTH_PX)
         await _import(fx_rig, fx_owner, book_id, [second])
 
-        keys = BookKeys()
         scans = await _scans(book_id, databases=fx_rig.databases)
         kept = next(scan for scan in scans if scan.id == first.id)
         added = next(scan for scan in scans if scan.id != first.id)
         expect(kept.renditions.full is Rendition.FULL_JPEG)
         expect(added.renditions.full is Rendition.FULL_PNG)
-        expect(await _is_stored(fx_rig.files.assets(book_id), keys.scan_rendition(kept, Rendition.FULL_JPEG)))
-        expect(not await _is_stored(fx_rig.files.assets(book_id), keys.scan_rendition(kept, Rendition.FULL_PNG)))
+        expect(await _is_stored(fx_rig.files.assets(book_id), BookKeys.scan_rendition(kept, Rendition.FULL_JPEG)))
+        expect(not await _is_stored(fx_rig.files.assets(book_id), BookKeys.scan_rendition(kept, Rendition.FULL_PNG)))
         assert_expectations()
 
 
@@ -1483,14 +1484,13 @@ class TestRunImportDjvu:
 
         job = await _import(fx_rig, fx_owner, book_id, djvu_uploads([bundle]))
 
-        keys = BookKeys()
         scans = await _scans(book_id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(sorted(scan.facts.color_mode for scan in scans) == sorted(page.mode for page in DJVU_PAGES))
         for scan in scans:
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(
-                await _stored_image(fx_rig.files.assets(book_id), keys.scan_rendition(scan, scan.renditions.full))
+                await _stored_image(fx_rig.files.assets(book_id), BookKeys.scan_rendition(scan, scan.renditions.full))
                 == wanted
             )
         for page in await _pages(book_id, databases=fx_rig.databases):
@@ -1499,7 +1499,9 @@ class TestRunImportDjvu:
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(version.renditions is not None and version.renditions.full is scan.renditions.full)
             expect(
-                await _stored_image(fx_rig.files.assets(book_id), keys.version_rendition(version, scan.renditions.full))
+                await _stored_image(
+                    fx_rig.files.assets(book_id), BookKeys.version_rendition(version, scan.renditions.full)
+                )
                 == wanted
             )
         assert_expectations()
@@ -2679,7 +2681,7 @@ class TestRunImportApplyStep:
         # The progress counts the file of the upload, and the scan counted one less to cut
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
         expect(not versions)
-        expect(not await _is_stored(fx_rig.files.assets(fx_book), BookKeys().scan_directory(cut[0])))
+        expect(not await _is_stored(fx_rig.files.assets(fx_book), BookKeys.scan_directory(cut[0])))
         assert_expectations()
 
 

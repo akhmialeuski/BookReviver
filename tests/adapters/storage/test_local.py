@@ -26,7 +26,6 @@ pytestmark = pytest.mark.anyio
 
 BOOK_ID: BookId = BookId(uuid4())
 OTHER_BOOK_ID: BookId = BookId(uuid4())
-KEYS: BookKeys = BookKeys()
 # The directory of the book under the storage root, as the local stores lay it out
 BOOK_DIRECTORY: str = f'projects/{BOOK_ID}'
 JOB_ID: JobId = JobId(uuid4())
@@ -35,7 +34,7 @@ PAGE_NAME: str = 'page.png'
 PAGE_CONTENT: bytes = b'page'
 SOURCE_TAKEN: str = 'Another source was published under this identifier first.'
 MAX_BYTES: int = 1024
-FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
+FILE_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
 
 
 def _sources(root: Path, book_id: BookId = BOOK_ID) -> SourceStore:
@@ -87,7 +86,7 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        sources_dir = tmp_path / BOOK_DIRECTORY / KEYS.sources_area
+        sources_dir = tmp_path / BOOK_DIRECTORY / BookKeys.SOURCES_AREA
         (sources_dir / str(SOURCE_ID)).mkdir(parents=True)
         (sources_dir / str(SOURCE_ID) / PAGE_NAME).write_bytes(PAGE_CONTENT)
 
@@ -112,8 +111,8 @@ class TestLocalSourceStore:
         with pytest.raises(ConflictError):
             await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
-        expect((tmp_path / BOOK_DIRECTORY / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
-        expect(list((tmp_path / BOOK_DIRECTORY / KEYS.sources_area).iterdir()) == [])
+        expect((tmp_path / BOOK_DIRECTORY / BookKeys.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
+        expect(list((tmp_path / BOOK_DIRECTORY / BookKeys.SOURCES_AREA).iterdir()) == [])
         assert_expectations()
 
     async def test_discarding_all_staged_removes_every_upload_and_keeps_the_sources(self, tmp_path: Path) -> None:
@@ -122,8 +121,8 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        sources_dir = tmp_path / BOOK_DIRECTORY / BookKeys().sources_area
-        other_incoming = tmp_path / 'projects' / str(OTHER_BOOK_ID) / KEYS.incoming_area
+        sources_dir = tmp_path / BOOK_DIRECTORY / BookKeys.SOURCES_AREA
+        other_incoming = tmp_path / 'projects' / str(OTHER_BOOK_ID) / BookKeys.INCOMING_AREA
         await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
         await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
@@ -133,7 +132,7 @@ class TestLocalSourceStore:
 
         await _sources(tmp_path).discard_all_staged()
 
-        expect(not (tmp_path / BOOK_DIRECTORY / KEYS.incoming_area).exists())
+        expect(not (tmp_path / BOOK_DIRECTORY / BookKeys.INCOMING_AREA).exists())
         expect([path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)])
         expect(other_incoming.is_dir())
         assert_expectations()

@@ -519,7 +519,7 @@ class TestListScans:
 
         images = Page[ScanSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        assert images.full == f'{IIIF_PATH}/{book_id}/{BookKeys().scan_rendition(scan, full)}'
+        assert images.full == f'{IIIF_PATH}/{book_id}/{BookKeys.scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
         self,

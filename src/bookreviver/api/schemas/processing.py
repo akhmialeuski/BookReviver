@@ -508,7 +508,6 @@ class PageVersionSchema(ResponseModel):
         :returns: The schema.
         :rtype: Self
         """
-        keys = BookKeys()
         ready = version.renditions is not None and version.renditions.ready
         images = None
         preview = None
@@ -516,11 +515,11 @@ class PageVersionSchema(ResponseModel):
             images = ImagePathsSchema.of(
                 request,
                 book_id,
-                lambda rendition: keys.version_rendition(version, rendition),
+                lambda rendition: BookKeys.version_rendition(version, rendition),
                 full=version.renditions.full,
             )
         elif ready:
-            preview = iiif_path(request, book_id, keys.version_rendition(version, Rendition.PREVIEW))
+            preview = iiif_path(request, book_id, BookKeys.version_rendition(version, Rendition.PREVIEW))
         return cls(
             id=version.id,
             page_id=version.page_id,

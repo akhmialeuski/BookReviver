@@ -13,6 +13,7 @@ from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, Step, StepPreview, TileCut
+from tests.helpers.builders import directory_of
 from tests.helpers.held_steps import steps_held
 from tests.helpers.processing import open_book
 from tests.helpers.processors import FakeProcessor
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Actor, Job, Page
-    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId
+    from bookreviver.domain.ids import BookId, JobId
     from bookreviver.domain.values import MetadataMap
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
@@ -133,7 +134,7 @@ class TestRunFollowUp:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture wrapping the board to note which jobs are active whenever a job is put.
+        :param monkeypatch: Fixture wrapping the queue of the book to note which jobs are active whenever a job is put.
         :type monkeypatch: pytest.MonkeyPatch
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
@@ -141,22 +142,21 @@ class TestRunFollowUp:
         actor, book_id, _ = await prepared_page(fx_kit)
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         seen: list[tuple[JobKind, list[JobKind]]] = []
-        put = fx_kit.board.put_job
+        queue = fx_kit.board.open(directory_of(book_id))
+        put = queue.put
 
-        def put_and_look(dir_name: BookDirectoryName, job: Job) -> Job:
+        def put_and_look(job: Job) -> Job:
             """Note which processing jobs are active just before the job is put, then put it.
 
-            :param dir_name: Name of the directory of the book of the job.
-            :type dir_name: BookDirectoryName
             :param job: The job to put.
             :type job: Job
-            :returns: The job as the board holds it.
+            :returns: The job as the queue of the book holds it.
             :rtype: Job
             """
             seen.append((job.kind, processing_kinds(fx_kit, book_id)))
-            return put(dir_name, job)
+            return put(job)
 
-        monkeypatch.setattr(fx_kit.board, 'put_job', put_and_look)
+        monkeypatch.setattr(queue, 'put', put_and_look)
         await fx_kit.work_queue()
         expect(seen == [(JobKind.COLLECT_VERSIONS, [JobKind.RUN_STAGE])])
         expect(processing_kinds(fx_kit, book_id) == [])

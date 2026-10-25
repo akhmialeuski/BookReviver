@@ -21,10 +21,9 @@ from pydantic import ValidationError
 from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book, own_books
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.freshness import fresh_book
-from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.books import ArchiveForm, BookCreate, BookSchema, BookUpdate
-from bookreviver.domain.entities import BookOverview, LibraryEntry
+from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import Slice
 from bookreviver.services.book import Book
@@ -99,7 +98,6 @@ one_book = APIRouter(prefix='/books', route_class=DishkaRoute, dependencies=[Dep
 async def list_books(
     params: Annotated[Params, Depends()],
     window: Annotated[Slice[LibraryEntry], Depends(own_books)],
-    books: FromDishka[BooksService],
     stages: FromDishka[StageSummaries],
 ) -> Page[BookSchema]:
     """List the books of the signed-in account, the latest added first.
@@ -109,16 +107,16 @@ async def list_books(
     :type params: Params
     :param window: The library entries of the books of the signed-in account the page asks for.
     :type window: Slice[LibraryEntry]
-    :param books: Books service of the request, which opens the book of each entry.
-    :type books: BooksService
     :param stages: Stage summaries of the request, which give each book its progress.
     :type stages: StageSummaries
     :returns: One page of the account's books.
     :rtype: Page[BookSchema]
     """
-    pager = Pager[BookOverview, BookSchema](params, BookSchema.from_overview)
-    overviews = [await stages.overview(books.book(entry), entry.book_id) for entry in window.items]
-    return pager.page(Slice(items=overviews, total=window.total))
+    schemas = [
+        BookSchema.from_overview(book_id=entry.book_id, overview=await stages.overview(Book(entry.directory)))
+        for entry in window.items
+    ]
+    return Page[BookSchema].create(schemas, params, total=window.total)
 
 
 @collection.post('', status_code=status.HTTP_201_CREATED)
@@ -147,7 +145,7 @@ async def create_book(
     """
     created = await books.create(actor, body.to_details())
     links.created(created.book_id)
-    return BookSchema.from_overview(await stages.overview(created.book, created.book_id))
+    return BookSchema.from_overview(book_id=created.book_id, overview=await stages.overview(created.book))
 
 
 @one_book.get('/{book_id}', name=RouteName.BOOK)
@@ -168,7 +166,7 @@ async def get_book(
     :returns: The book.
     :rtype: BookSchema
     """
-    return BookSchema.from_overview(await stages.overview(book, book_id))
+    return BookSchema.from_overview(book_id=book_id, overview=await stages.overview(book))
 
 
 @one_book.patch('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -254,7 +252,7 @@ async def import_book(
     """
     imported = await books.import_archive(actor, archive.file)
     links.created(imported.book_id)
-    return BookSchema.from_overview(await stages.overview(imported.book, imported.book_id))
+    return BookSchema.from_overview(book_id=imported.book_id, overview=await stages.overview(imported.book))
 
 
 # The dependency answers 404 for a book of another account, and the service reads the library entry of the identifier

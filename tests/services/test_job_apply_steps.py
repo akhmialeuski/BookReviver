@@ -160,7 +160,7 @@ class TestCutTiles:
         expect((stored and (stored.state, stored.tiles_ready)) == kept)
         expect(not any(isinstance(event, PageVersionReady) for event in fx_kit.events.published))
         if stored is None:
-            tiles = BookKeys().version_rendition(untiled, Rendition.TILES)
+            tiles = BookKeys.version_rendition(untiled, Rendition.TILES)
             with pytest.raises(NotFoundError):
                 async with fx_kit.files.assets(book_id).readable(tiles):
                     pass

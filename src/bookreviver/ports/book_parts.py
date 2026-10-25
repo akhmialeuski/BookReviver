@@ -3,7 +3,8 @@
 A part of a book, such as its event channel or its job queue, is opened from the name of the directory of the book, and
 whoever holds that name opens the part itself. A port of such a part inherits :class:`BookPart`, so it is opened by
 ``Port.open(dir_name)`` with no object that carries the implementation to the caller. ``app`` calls
-``Port.register(opener)`` once when the application starts, and a test registers a fake the same way.
+``Port.register(opener)`` once when the application starts, and a test registers a fake the same way. A second
+registration of a port replaces the first.
 """
 
 from typing import TYPE_CHECKING, Any, Self, cast
@@ -23,21 +24,13 @@ class BookPart:
     """A port of one part of a book, opened by the directory name of the book from the implementation registered."""
 
     @classmethod
-    def register(cls, opener: Callable[[BookDirectoryName], Self] | None) -> Callable[[BookDirectoryName], Self] | None:
+    def register(cls, opener: Callable[[BookDirectoryName], Self]) -> None:
         """Register how the part of a book is opened, replacing the registration before it.
 
-        :param opener: Function from the directory name of a book to its part, or None to remove the registration.
-        :type opener: Callable[[BookDirectoryName], Self] | None
-        :returns: The registration this call replaced, or None when there was none, so a caller that borrows the
-                  registration for a while can give it back.
-        :rtype: Callable[[BookDirectoryName], Self] | None
+        :param opener: Function from the directory name of a book to its part.
+        :type opener: Callable[[BookDirectoryName], Self]
         """
-        previous = _OPENERS.get(cls)
-        if opener is None:
-            _OPENERS.pop(cls, None)
-        else:
-            _OPENERS[cls] = opener
-        return cast('Callable[[BookDirectoryName], Self] | None', previous)
+        _OPENERS[cls] = opener
 
     @classmethod
     def open(cls, dir_name: BookDirectoryName) -> Self:

@@ -72,26 +72,22 @@ async def open_board_under_test(adapter: BoardAdapter, *, kept_ended: int = 20) 
     """
     runner = ScriptedRunner()
     events = RecordingEventBus()
-    previous_jobs = BookJobs.register(None)
-    try:
-        with events.installed():
-            match adapter:
-                case BoardAdapter.IN_MEMORY:
-                    async with InMemoryJobBoard(runner=runner, kept_ended=kept_ended) as board:
-                        BookJobs.register(board.open)
-                        yield BoardUnderTest(board=board, runner=runner, events=events, start=lambda: None)
-                case BoardAdapter.FAKE:
-                    fake = FakeJobBoard(runner=runner, kept_ended=kept_ended)
-                    BookJobs.register(fake.open)
-                    async with anyio.create_task_group() as group:
+    with events.installed():
+        match adapter:
+            case BoardAdapter.IN_MEMORY:
+                async with InMemoryJobBoard(runner=runner, kept_ended=kept_ended) as board:
+                    BookJobs.register(board.open)
+                    yield BoardUnderTest(board=board, runner=runner, events=events, start=lambda: None)
+            case BoardAdapter.FAKE:
+                fake = FakeJobBoard(runner=runner, kept_ended=kept_ended)
+                BookJobs.register(fake.open)
+                async with anyio.create_task_group() as group:
 
-                        def start() -> None:
-                            """Let the queues of the jobs put so far run, in a task of the rig."""
-                            group.start_soon(fake.run_queued)
+                    def start() -> None:
+                        """Let the queues of the jobs put so far run, in a task of the rig."""
+                        group.start_soon(fake.run_queued)
 
-                        try:
-                            yield BoardUnderTest(board=fake, runner=runner, events=events, start=start)
-                        finally:
-                            group.cancel_scope.cancel()
-    finally:
-        BookJobs.register(previous_jobs)
+                    try:
+                        yield BoardUnderTest(board=fake, runner=runner, events=events, start=start)
+                    finally:
+                        group.cancel_scope.cancel()

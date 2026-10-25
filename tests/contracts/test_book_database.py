@@ -353,7 +353,7 @@ class TestAdopt:
         databases, copy_id = fx_databases(), new_book_id()
         await BookDirectory.open(directory_of(copy_id)).create()
         if case is None:
-            await fx_books.copy_blank(databases.path(copy_id))
+            await fx_books.copy_blank(directory_of(copy_id))
         else:
             databases.path(copy_id).write_bytes(case)
 

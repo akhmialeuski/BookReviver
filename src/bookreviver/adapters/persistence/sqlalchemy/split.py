@@ -34,7 +34,6 @@ from sqlalchemy import MetaData, create_engine
 from sqlalchemy.engine import make_url
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import USER_TABLE
-from bookreviver.adapters.persistence.sqlalchemy.book_database import database_file
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema
 from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
@@ -92,23 +91,20 @@ class SplitReport:
 class SharedDatabaseSplit:
     """Moves the rows of the shared database into the catalogue and the files of the books."""
 
-    def __init__(self, shared: Path, *, catalogue_db: SqlDatabase, books: BookRegistry, root: Path) -> None:
+    def __init__(self, shared: Path, *, catalogue_db: SqlDatabase, books: BookRegistry) -> None:
         """Split ``shared`` into the given catalogue and books.
 
         :param shared: The shared database file of the earlier releases.
         :type shared: Path
         :param catalogue_db: The database of the catalogue, which must hold no account yet.
         :type catalogue_db: SqlDatabase
-        :param books: The registry of the databases of the books, which opens their files.
+        :param books: The registry of the databases of the books, which makes and opens their files. The directory of a
+                      book is made through ``BookDirectory``, which the caller registers an implementation of.
         :type books: BookRegistry
-        :param root: Storage root of the directories of the books, where the file of each book is made. The directory of
-                     a book is made through ``BookDirectory``, which the caller registers an implementation of.
-        :type root: Path
         """
         self._shared = shared
         self._catalogue_db = catalogue_db
         self._books = books
-        self._root = root
 
     async def run(self) -> SplitReport:
         """Fill the catalogue, then make and fill the file of every book.
@@ -120,19 +116,19 @@ class SharedDatabaseSplit:
         """
         await to_thread.run_sync(self._require_shared)
         await to_thread.run_sync(self._catalogue_db.migrations.upgrade)
-        catalogue = self._catalogue_path()
+        catalogue = self._file_of(self._catalogue_db)
         accounts = await to_thread.run_sync(self._fill_catalogue, catalogue)
         book_ids = await to_thread.run_sync(self._book_ids)
         for book_id in book_ids:
             name = BookDirectoryName(str(book_id))
             await BookDirectory.open(name).create()
-            path = database_file(self._root, name)
             try:
-                await self._books.copy_blank(path)
+                await self._books.copy_blank(name)
             except FileExistsError as error:
                 err_msg = f'The book {book_id} has a database already, so the split would overwrite it.'
                 raise SplitRefusedError(err_msg) from error
-            async with self._books.use(name, path) as database:
+            async with self._books.use(name) as database:
+                path = self._file_of(database)
                 await to_thread.run_sync(database.migrations.downgrade, BOOK_BASELINE)
                 await database.dispose()
                 versions = database.config.alembic_config.version_table_name
@@ -157,18 +153,21 @@ class SharedDatabaseSplit:
             )
             raise SplitRefusedError(err_msg)
 
-    def _catalogue_path(self) -> Path:
-        """Return the file of the catalogue.
+    @staticmethod
+    def _file_of(database: SqlDatabase) -> Path:
+        """Return the file of a database.
 
-        :returns: The file the URL of the catalogue names.
+        :param database: The catalogue, or the database of a book.
+        :type database: SqlDatabase
+        :returns: The file the URL of the database names.
         :rtype: Path
-        :raises SplitRefusedError: If the URL of the catalogue names no file.
+        :raises SplitRefusedError: If the URL of the database names no file.
         """
-        database = make_url(self._catalogue_db.config.connection_string or '').database
-        if not database:
-            err_msg = 'The catalogue has no file to fill.'
+        file = make_url(database.config.connection_string or '').database
+        if not file:
+            err_msg = 'The database has no file to fill.'
             raise SplitRefusedError(err_msg)
-        return Path(database).resolve()
+        return Path(file).resolve()
 
     def _book_ids(self) -> list[BookId]:
         """Read the identifiers of the books of the shared database.

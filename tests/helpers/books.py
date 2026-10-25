@@ -83,14 +83,13 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
         versions=[version],
         databases=stores.databases,
     )
-    keys = BookKeys()
     sources, assets = stores.files.sources(book_id), stores.files.assets(book_id)
     for source in (first, second):
         job_id = JobId(uuid4())
         await sources.stage(job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
         await sources.promote(job_id, source.id, names=[source.file_name])
-    images = [keys.scan_rendition(scan, Rendition.FULL_JPEG) for scan in scans]
-    for key in [*images, keys.version_rendition(version, Rendition.FULL_JPEG)]:
+    images = [BookKeys.scan_rendition(scan, Rendition.FULL_JPEG) for scan in scans]
+    for key in [*images, BookKeys.version_rendition(version, Rendition.FULL_JPEG)]:
         async with assets.writable(key) as path:
             path.write_bytes(IMAGE)
     return Book(book_id=book_id, first=first, second=second, scans=scans, page=page, version=version)
@@ -108,9 +107,8 @@ def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
     :returns: Whether the source file exists, and whether the full image of its first scan exists.
     :rtype: tuple[bool, bool]
     """
-    keys = BookKeys()
     scan = next(scan for scan in book.scans if scan.source_id == source.id)
     return (
-        (book_directory(root, book.book_id) / keys.source(source.id) / source.file_name).is_file(),
-        (book_directory(root, book.book_id) / keys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
+        (book_directory(root, book.book_id) / BookKeys.source(source.id) / source.file_name).is_file(),
+        (book_directory(root, book.book_id) / BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
     )

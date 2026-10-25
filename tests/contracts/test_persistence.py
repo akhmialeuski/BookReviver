@@ -249,7 +249,7 @@ class TestBookRecordRepository:
         catalogue = fx_catalogue()
         book_id = await store_book(catalogue, book_record, owner=await fx_new_owner(), databases=fx_databases())
         await _add_book(book_id, databases=fx_databases())
-        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview())
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
             *BOOK,
@@ -272,7 +272,7 @@ class TestBookRecordRepository:
         await _add_book(book_id, databases=fx_databases())
         placeholder = make_page(order_key=KEY_B0)
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
-        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview())
         assert (overview.page_count, overview.image_page_count) == (BOOK[0] + 1, PAGE_COUNT)
 
     async def test_the_cover_is_the_first_page_of_the_kind_cover(
@@ -294,7 +294,7 @@ class TestBookRecordRepository:
         book_id = await store_book(
             fx_catalogue(), make_record(), back, text, cover, owner=await fx_new_owner(), databases=fx_databases()
         )
-        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview())
         assert overview.cover_page_id == cover.id
 
     async def test_a_book_without_a_cover_page_shows_its_first_page_and_an_empty_book_none(
@@ -324,7 +324,7 @@ class TestBookRecordRepository:
             :returns: The cover page, or None.
             :rtype: PageId | None
             """
-            return (await fx_databases().open(book).read(lambda repos: repos.book_record.overview(book))).cover_page_id
+            return (await fx_databases().open(book).read(lambda repos: repos.book_record.overview())).cover_page_id
 
         assert [await cover_of(book) for book in (empty, book_id)] == [None, first.id]
 
@@ -2148,5 +2148,5 @@ class TestSourceStatus:
             fx_catalogue(), make_record(), owner=owner_id, sources=sources, databases=fx_databases()
         )
 
-        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview(book_id))
+        overview = await fx_databases().open(book_id).read(lambda repos: repos.book_record.overview())
         assert overview.source_count == 1

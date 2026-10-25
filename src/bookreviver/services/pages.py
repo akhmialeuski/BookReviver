@@ -1070,9 +1070,8 @@ class PageService:
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
         """
-        keys = BookKeys()
         for page in pages:
-            await book.assets.delete_prefix(keys.page(page.id))
+            await book.assets.delete_prefix(BookKeys.page(page.id))
 
     def _enqueue(
         self, book: Book, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
@@ -1297,7 +1296,7 @@ class PageService:
         if gone:
             await self._discard_files(book, [page])
         elif outdated:
-            await book.assets.delete_prefix(BookKeys().version_directory(version))
+            await book.assets.delete_prefix(BookKeys.version_directory(version))
         elif current:
             await book.events.publish(PageVersionReady(version=version))
         return not (gone or outdated)
@@ -1363,7 +1362,6 @@ class PageService:
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
             book_record = repos.book_record.get()
-            keys = BookKeys()
             if version.processor == SPLIT_NONE:
                 if page.scan_id is None:
                     raise ConflictError(SCAN_DELETED)
@@ -1374,7 +1372,7 @@ class PageService:
                     processor_key=SPLIT_NONE.key,
                     params=version.params,
                     input_data=scan.facts.as_data(),
-                    image=keys.scan_rendition(scan, scan.renditions.full),
+                    image=BookKeys.scan_rendition(scan, scan.renditions.full),
                 )
             elif version.processor == PAGES_BLANK and PageSize.from_data(version.data) is not None:
                 sources = repos.page_versions.list_by_ids(version.params.get(BlankParam.PAPER_FROM, []))
@@ -1383,7 +1381,7 @@ class PageService:
                     params=version.params,
                     input_data={},
                     references=[
-                        keys.version_rendition(source, source.renditions.full)
+                        BookKeys.version_rendition(source, source.renditions.full)
                         for source in sources
                         if source.renditions is not None and source.renditions.ready
                     ],

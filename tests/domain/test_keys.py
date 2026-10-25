@@ -13,7 +13,6 @@ from bookreviver.domain.values import ProcessorRef, Renditions
 from tests.helpers.builders import make_page_version, make_scan, make_source
 
 BOOK_ID: BookId = BookId(uuid4())
-KEYS: BookKeys = BookKeys()
 # The areas a key of a book starts at
 AREAS: frozenset[str] = frozenset({'incoming', 'sources', 'assets'})
 PAGE_ID: PageId = PageId(uuid4())
@@ -30,17 +29,17 @@ class TestRelative:
         """Verify every area, source, scan and page key starts at an area of the book, never at ``projects/``."""
         source = make_source()
         keys = [
-            KEYS.incoming_area,
-            KEYS.sources_area,
-            KEYS.assets_area,
-            KEYS.book,
-            KEYS.incoming(JOB_ID),
-            KEYS.source(source.id),
-            KEYS.source_scans(source.id),
-            KEYS.scan_rendition(make_scan(source=source, number=0), Rendition.FULL_JPEG),
-            KEYS.page(PAGE_ID),
-            KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES),
-            KEYS.page_edits(PAGE_ID, STEP_ID),
+            BookKeys.INCOMING_AREA,
+            BookKeys.SOURCES_AREA,
+            BookKeys.ASSETS_AREA,
+            BookKeys.BOOK,
+            BookKeys.incoming(JOB_ID),
+            BookKeys.source(source.id),
+            BookKeys.source_scans(source.id),
+            BookKeys.scan_rendition(make_scan(source=source, number=0), Rendition.FULL_JPEG),
+            BookKeys.page(PAGE_ID),
+            BookKeys.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES),
+            BookKeys.page_edits(PAGE_ID, STEP_ID),
         ]
         assert [key for key in keys if key.split('/')[0] not in AREAS] == []
 
@@ -51,12 +50,12 @@ class TestAreas:
     def test_source_files_and_derived_files_never_share_a_prefix(self) -> None:
         """Verify an upload and a source lie outside the assets area, so deleting assets never reaches them."""
         source_id = make_source().id
-        expect(KEYS.incoming(JOB_ID).startswith(f'{KEYS.incoming_area}/'))
-        expect(KEYS.source(source_id).startswith(f'{KEYS.sources_area}/'))
-        expect(not KEYS.source(source_id).startswith(KEYS.assets_area))
-        expect(not KEYS.incoming(JOB_ID).startswith(KEYS.assets_area))
-        expect(KEYS.source_scans(source_id).startswith(f'{KEYS.assets_area}/'))
-        expect(KEYS.book.startswith(f'{KEYS.assets_area}/'))
+        expect(BookKeys.incoming(JOB_ID).startswith(f'{BookKeys.INCOMING_AREA}/'))
+        expect(BookKeys.source(source_id).startswith(f'{BookKeys.SOURCES_AREA}/'))
+        expect(not BookKeys.source(source_id).startswith(BookKeys.ASSETS_AREA))
+        expect(not BookKeys.incoming(JOB_ID).startswith(BookKeys.ASSETS_AREA))
+        expect(BookKeys.source_scans(source_id).startswith(f'{BookKeys.ASSETS_AREA}/'))
+        expect(BookKeys.BOOK.startswith(f'{BookKeys.ASSETS_AREA}/'))
         assert_expectations()
 
 
@@ -73,13 +72,13 @@ class TestScanRendition:
         source = make_source()
         scan = make_scan(source=source, number=SCAN_NUMBER)
         expected = f'assets/scans/{source.id}/{SCAN_NUMBER}/v1/{rendition}'
-        assert KEYS.scan_rendition(scan, rendition) == expected
+        assert BookKeys.scan_rendition(scan, rendition) == expected
 
     def test_key_changes_with_renditions_version(self) -> None:
         """Verify renditions cut again get new keys, so cached URLs never serve stale images."""
         scan = make_scan(source=make_source(), number=0)
         again = evolve(scan, renditions=Renditions(version=2))
-        first, second = KEYS.scan_rendition(scan, Rendition.TILES), KEYS.scan_rendition(again, Rendition.TILES)
+        first, second = BookKeys.scan_rendition(scan, Rendition.TILES), BookKeys.scan_rendition(again, Rendition.TILES)
         assert (first.endswith('/0/v1/iiif'), second.endswith('/0/v2/iiif')) == (True, True)
 
 
@@ -89,9 +88,9 @@ class TestScanDirectory:
     def test_directory_holds_every_rendition_of_the_scan(self) -> None:
         """Verify the directory of a scan's renditions is the parent of each rendition's key, so one prefix removes them."""
         scan = make_scan(source=make_source(), number=SCAN_NUMBER)
-        directory = KEYS.scan_directory(scan)
+        directory = BookKeys.scan_directory(scan)
         expect(directory == f'assets/scans/{scan.source_id}/{SCAN_NUMBER}/v1')
-        expect(all(KEYS.scan_rendition(scan, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
+        expect(all(BookKeys.scan_rendition(scan, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
         assert_expectations()
 
 
@@ -101,9 +100,11 @@ class TestVersionDirectory:
     def test_directory_holds_every_rendition_of_the_version(self) -> None:
         """Verify the directory of a version is the parent of each rendition's key, so one prefix removes them."""
         version = make_page_version(page_id=PAGE_ID)
-        directory = KEYS.version_directory(version)
+        directory = BookKeys.version_directory(version)
         expect(directory == f'assets/pages/{PAGE_ID}/page-split/split.none/{version.id}')
-        expect(all(KEYS.version_rendition(version, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
+        expect(
+            all(BookKeys.version_rendition(version, rendition) == f'{directory}/{rendition}' for rendition in Rendition)
+        )
         assert_expectations()
 
 
@@ -113,7 +114,7 @@ class TestVersionRendition:
     def test_key_follows_the_layout(self) -> None:
         """Verify a version's rendition lies under its page, stage, processor and identifier, not under a position."""
         version = make_page_version(page_id=PAGE_ID)
-        key = KEYS.version_rendition(version, Rendition.PREVIEW)
+        key = BookKeys.version_rendition(version, Rendition.PREVIEW)
         assert key == f'assets/pages/{PAGE_ID}/page-split/split.none/{version.id}/preview.jpg'
 
     @pytest.mark.parametrize('processor_key', ['..', '.', 'geometry/deskew'], ids=['parent', 'self', 'separator'])
@@ -125,7 +126,7 @@ class TestVersionRendition:
         """
         version = evolve(make_page_version(page_id=PAGE_ID), processor=ProcessorRef(key=processor_key, version='1'))
         with pytest.raises(ValueError, match='segments'):
-            KEYS.version_rendition(version, Rendition.FULL_PNG)
+            BookKeys.version_rendition(version, Rendition.FULL_PNG)
 
 
 class TestPageEdits:
@@ -133,8 +134,8 @@ class TestPageEdits:
 
     def test_edits_lie_beside_the_versions_of_the_page(self) -> None:
         """Verify the edits of a page are removed with the page's directory."""
-        key = KEYS.page_edits(PAGE_ID, STEP_ID)
-        assert (key, key.startswith(f'{KEYS.page(PAGE_ID)}/')) == (
+        key = BookKeys.page_edits(PAGE_ID, STEP_ID)
+        assert (key, key.startswith(f'{BookKeys.page(PAGE_ID)}/')) == (
             f'assets/pages/{PAGE_ID}/edits/{STEP_ID}',
             True,
         )
@@ -151,7 +152,7 @@ class TestIsAsset:
         :type rendition: Rendition
         """
         scan = make_scan(source=make_source(), number=0)
-        assert BookKeys.is_asset(KEYS.scan_rendition(scan, rendition))
+        assert BookKeys.is_asset(BookKeys.scan_rendition(scan, rendition))
 
     @pytest.mark.parametrize(
         'key',
@@ -162,8 +163,8 @@ class TestIsAsset:
             'assets/./book',
             'assets//book',
             'assets',
-            f'{KEYS.source(SourceId(uuid4()))}/book.pdf',
-            f'{KEYS.incoming(JOB_ID)}/book.pdf',
+            f'{BookKeys.source(SourceId(uuid4()))}/book.pdf',
+            f'{BookKeys.incoming(JOB_ID)}/book.pdf',
             'notes/assets/book',
             '',
         ],
