@@ -36,7 +36,6 @@ from sqlalchemy.engine import make_url
 from bookreviver.adapters.persistence.sqlalchemy.accounts import USER_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema
-from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
 from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.ports.storage import BookDirectory
 
@@ -50,6 +49,8 @@ if TYPE_CHECKING:
 SHARED_REVISION: Final = '15e015051f5c'
 # The revision of the schema of a book whose tables hold the rows of the shared database as they were
 BOOK_BASELINE: Final = '99e96bc47c3c'
+# The table of the record of a book at the baseline and in the shared database, which the later revisions renamed
+BOOK_RECORDS_TABLE: Final = 'projects'
 # The column of the tables of a book at the baseline that names the book
 BOOK_COLUMN: Final = 'project_id'
 # The name the shared file is attached under on the connection of a new file

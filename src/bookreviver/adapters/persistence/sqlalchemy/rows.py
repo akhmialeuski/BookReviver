@@ -277,7 +277,7 @@ class LibraryRows(RowRepository[LibraryRow]):
 
 
 class BookRecordRows(RowRepository[BookRecordRow]):
-    """Rows of the ``projects`` table of a book."""
+    """Rows of the ``book_records`` table of a book."""
 
     model_type = BookRecordRow
 

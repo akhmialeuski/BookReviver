@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 # The part of the book each table of a book holds, the tables of no part left out
 PART_OF_TABLE: Final[Mapping[str, BookResource]] = {
-    'projects': BookResource.RECORD,
+    'book_records': BookResource.RECORD,
     'sources': BookResource.SOURCES,
     'scans': BookResource.SCANS,
     'pages': BookResource.PAGES,

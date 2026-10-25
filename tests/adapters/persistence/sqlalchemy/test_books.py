@@ -133,7 +133,7 @@ class TestBlank:
         try:
             path = _book_file(fx_storage_root, await _new_book(books, fx_storage_root))
             with closing(sqlite3.connect(path)) as connection:
-                records = connection.execute('SELECT COUNT(*) FROM projects').fetchone()
+                records = connection.execute('SELECT COUNT(*) FROM book_records').fetchone()
             revisions = _revisions(path)
             again = _book_file(fx_storage_root, await _new_book(books, fx_storage_root))
         finally:

@@ -121,6 +121,17 @@ ADDRESS_INDEX_REVISION: str = '7306aaee3202'
 # The revision before the key column of the library was renamed, and the one that renames it
 BEFORE_BOOK_COLUMN: str = ADDRESS_INDEX_REVISION
 BOOK_COLUMN_REVISION: str = 'cb21262f1e2e'
+# The revision of a book before its record table was renamed, the table before and after, and the checks of the new one
+BEFORE_RECORDS_TABLE: str = 'acac97b29548'
+OLD_RECORDS_TABLE: str = 'projects'
+RECORDS_TABLE: str = 'book_records'
+RECORD_CHECKS: set[str] = {
+    'ck_book_records_one_book',
+    'ck_book_records_orthography',
+    'ck_book_records_script',
+    'ck_book_records_rightsstatus',
+    'ck_book_records_imagepolicy',
+}
 # The directory the entry of the library of that test names
 LIBRARY_DIRECTORY: str = 'the-directory'
 # Two spellings of one address
@@ -930,17 +941,49 @@ class TestRecordKeyRevision:
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         await _commit_book(fx_empty_book)
-        read_key = text('SELECT id FROM projects')
 
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_RECORD_KEY)
         with _session(fx_empty_book) as session:
-            downgraded = session.scalars(read_key).all()
+            downgraded = session.scalars(text('SELECT id FROM projects')).all()
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
-            upgraded = session.scalars(read_key).all()
+            upgraded = session.scalars(text(f'SELECT id FROM {RECORDS_TABLE}')).all()
 
         expect(downgraded == [BOOK_ID.bytes])
         expect(upgraded == [1])
+        assert_expectations()
+
+
+class TestRecordsTableRevision:
+    """Tests for the revision that names the table of the record of a book book_records."""
+
+    async def test_the_record_keeps_its_row_and_its_checks_both_ways(self, fx_empty_book: SqlDatabase) -> None:
+        """Verify the row is the same under both names, and the checks of the new table are named after it.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        await _commit_book(fx_empty_book)
+        with _session(fx_empty_book) as session:
+            committed = [tuple(row) for row in session.execute(text(f'SELECT * FROM {RECORDS_TABLE}'))]
+        with fx_empty_book.engine.connect() as connection:
+            checks = {check['name'] for check in inspect(connection).get_check_constraints(RECORDS_TABLE)}
+
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_RECORDS_TABLE)
+        with _session(fx_empty_book) as session:
+            downgraded = [tuple(row) for row in session.execute(text(f'SELECT * FROM {OLD_RECORDS_TABLE}'))]
+        with fx_empty_book.engine.connect() as connection:
+            tables = set(inspect(connection).get_table_names())
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            upgraded = [tuple(row) for row in session.execute(text(f'SELECT * FROM {RECORDS_TABLE}'))]
+
+        expect(len(committed) == 1)
+        expect(checks == RECORD_CHECKS)
+        expect(downgraded == committed)
+        expect(OLD_RECORDS_TABLE in tables and RECORDS_TABLE not in tables)
+        expect(upgraded == committed)
         assert_expectations()
 
 
@@ -1196,7 +1239,7 @@ class TestEnv:
     @pytest.mark.parametrize(
         ('table', 'column', 'new_type'),
         [
-            pytest.param('projects', 'title', 'Integer', id='string-reflected-by-name'),
+            pytest.param('book_records', 'title', 'Integer', id='string-reflected-by-name'),
             pytest.param('pages', 'scan_id', 'String', id='guid-compared-by-affinity'),
         ],
     )
@@ -1205,7 +1248,7 @@ class TestEnv:
     ) -> None:
         """Verify ``alembic check`` fails on a column of another type, so autogenerate writes type changes too.
 
-        ``projects.title`` has a type SQLite reflects by name, and ``pages.scan_id`` a ``GUID`` it reflects by affinity.
+        ``book_records.title`` has a type SQLite reflects by name, and ``pages.scan_id`` a ``GUID`` it reflects by affinity.
 
         :param fx_empty_book: Database of a book with no table.
         :type fx_empty_book: SqlDatabase
