@@ -2,8 +2,8 @@
 
 The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
 ``page_step_states``, ``step_changes``, ``page_history``, ``page_groups``, ``step_values``, ``group_values``,
-``pagination_sections``, ``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped``
-annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
+``pagination_sections``, ``book_places``, ``recipes`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative
+style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
 :class:`BookTable`, which carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData``
 of their own, apart from the tables of the catalogue in :mod:`bookreviver.adapters.persistence.sqlalchemy.catalogue`,
 and the migrations of the two schemas never meet. The base also brings the portable ``GUID`` and ``DateTimeUTC`` column
@@ -14,17 +14,17 @@ database.
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
 
-The file of a book holds the record of the book. The book owns its sources, scans, pages and recipes, a source owns
-its scans, and a page owns its versions, its stage records, its step states and its history. The foreign keys carry
-``ON DELETE CASCADE``, so the database removes them with their owner. An optional reference carries
+The file of a book holds the record of the book. The book owns its sources, scans, pages, recipes and recipe profiles,
+a source owns its scans, and a page owns its versions, its stage records, its step states and its history. The
+foreign keys carry ``ON DELETE CASCADE``, so the database removes them with their owner. An optional reference carries
 ``ON DELETE SET NULL`` instead: a page keeps its row when its scan is deleted, a version when its input version is,
 and a stage record when its head version or its recipe is, because a page of the book holds its own copy of its
 image. The relationships use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` so
 that no query runs unseen on attribute access, inside a transaction or after its session has closed. Unique keys are
 declared with their table, and the shared naming convention names them.
 
-No table of a book names an account. The owner of the book is a row of the library in the catalogue, and the profile a
-recipe was made from is named by its identifier alone, since no key can reach another file.
+No table of a book names an account. The owner of the book is a row of the library in the catalogue. A recipe names the
+profile it was made from by its identifier alone, and the service that deletes the profile empties the name.
 """
 
 import enum
@@ -48,6 +48,7 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     LabelStyle,
     NumberDisplay,
+    OrderMode,
     Orthography,
     PageFilter,
     PageKind,
@@ -89,6 +90,7 @@ PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
 RECIPES_TABLE: Final = 'recipes'
+RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 # Columns that several keys, indexes and constraints name
 ID_COLUMN: Final = 'id'
 PAGE_ID_COLUMN: Final = 'page_id'
@@ -734,7 +736,7 @@ class RecipeRow(BookTable):
     :ivar stage: Stage the recipe processes, stored by value.
     :ivar kind: Kind of the pages the recipe processes, stored by value.
     :ivar steps: The steps in order, as JSON.
-    :ivar profile_id: Profile of the catalogue the recipe was made from, which the service empties with the profile.
+    :ivar profile_id: Profile of the book the recipe was made from, which the service empties with the profile.
     :ivar created_at: Time the recipe was created.
     :ivar updated_at: Time the recipe last changed.
     """
@@ -747,7 +749,33 @@ class RecipeRow(BookTable):
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     kind: Mapped[RecipeKind] = mapped_column(enum_by_value(RecipeKind))
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
-    # The profile lives in the catalogue, which no key of this file can reach
+    # No key, so the recipes that name a profile do not block its deletion, and the service empties the name
     profile_id: Mapped[UUID | None] = mapped_column(index=True)
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+class RecipeProfileRow(BookTable):
+    """Row of one recipe profile of a book.
+
+    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. A recipe may
+    name the profile it was made from, with no key to check the name.
+
+    :ivar id: Profile identifier, assigned by the domain.
+    :ivar stage: Stage whose recipes the profile can be applied to, stored by value.
+    :ivar name: Name the user sees.
+    :ivar steps: The steps in order, as JSON.
+    :ivar order: Whether the steps were saved in the usual order or the free one, stored by value.
+    :ivar created_at: Time the profile was saved.
+    :ivar updated_at: Time the profile last changed.
+    """
+
+    __tablename__ = RECIPE_PROFILES_TABLE
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    name: Mapped[str]
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    order: Mapped[OrderMode] = mapped_column(enum_by_value(OrderMode), server_default=OrderMode.USUAL.value)
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]

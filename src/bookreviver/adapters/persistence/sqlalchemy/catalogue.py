@@ -45,13 +45,12 @@ class LibraryRow(DefaultBase):
     added_at: Mapped[datetime]
 
 
-class RecipeProfileRow(DefaultBase):
-    """Row of one recipe profile of an account.
+class AccountProfileRow(DefaultBase):
+    """Row of one recipe profile of an account, which the profiles of the books replace.
 
     The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. No column of the
-    profile refers to a book. A recipe of a book may name the profile it was made from, which lives in another file, so
-    the service that deletes a profile empties that name in the owner's books, and a profile is removed only with its
-    account or by its owner.
+    profile refers to a book. The profiles now live in the books, and ``bookreviver-migrate copy-recipe-profiles``
+    copies these rows into every book of their account.
 
     :ivar id: Profile identifier, assigned by the domain.
     :ivar account_id: Account owning the profile, whose deletion removes the profile.

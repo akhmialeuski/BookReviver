@@ -44,7 +44,6 @@ pytestmark = pytest.mark.anyio
 
 API_PATH: str = '/api/v1'
 PROCESSORS_PATH: str = f'{API_PATH}/processors'
-PROFILES_PATH: str = f'{API_PATH}/recipe-profiles'
 ITEMS: str = 'items'
 DETAIL: str = 'detail'
 NAME: str = 'Ordered'
@@ -297,17 +296,20 @@ class TestProfileOrder:
     """Tests for saving and applying a profile whose steps stand off their places."""
 
     async def test_a_profile_is_refused_a_step_where_it_cannot_work_unless_the_order_is_free(
-        self, fx_client: httpx.AsyncClient
+        self, fx_client: httpx.AsyncClient, fx_book: BookId
     ) -> None:
         """Verify saving the steps on the screen as a profile keeps the order as saving a recipe does.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookId
         """
         steps = [{'processor_key': THIRD_KEY}, {'processor_key': SECOND_KEY}]
         body = {'name': NAME, 'stage': 'geometry', 'steps': steps}
-        refused = await fx_client.post(PROFILES_PATH, json=body)
-        saved = await fx_client.post(PROFILES_PATH, json=body | {'order': OrderMode.FREE})
+        profiles_path = f'{API_PATH}/books/{fx_book}/recipe-profiles'
+        refused = await fx_client.post(profiles_path, json=body)
+        saved = await fx_client.post(profiles_path, json=body | {'order': OrderMode.FREE})
         expect(refused.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect(refused.json()[DETAIL] == THIRD_REASON)
         expect(saved.status_code == status.HTTP_201_CREATED)
@@ -324,11 +326,10 @@ class TestProfileOrder:
         :type fx_book: BookId
         """
         steps = [{'processor_key': SECOND_KEY}, {'processor_key': FIRST_KEY}]
-        created = await fx_client.post(PROFILES_PATH, json={'name': NAME, 'stage': 'geometry', 'steps': steps})
+        profiles_path = f'{API_PATH}/books/{fx_book}/recipe-profiles'
+        created = await fx_client.post(profiles_path, json={'name': NAME, 'stage': 'geometry', 'steps': steps})
         profile_id = created.json()['id']
-        applied = await fx_client.post(
-            f'{API_PATH}/books/{fx_book}/recipe-profiles/{profile_id}/apply', json={'kind': 'text'}
-        )
+        applied = await fx_client.post(f'{profiles_path}/{profile_id}/apply', json={'kind': 'text'})
         answer = AppliedProfileSchema.model_validate_json(applied.content)
         expect(applied.status_code == status.HTTP_201_CREATED)
         expect([issue.reason for issue in answer.recipe.order_issues] == [SECOND_REASON])

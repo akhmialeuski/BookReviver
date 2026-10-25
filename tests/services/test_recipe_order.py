@@ -269,11 +269,12 @@ class TestSavePaths:
         :type fx_open_book: BookOpener
         """
         actor, book_id = await fx_ordered_kit.seed_book()
+        book = fx_open_book(actor, book_id)
         profiles = fx_ordered_kit.profiles()
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await profiles.save(actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY))
+            await profiles.save(book, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY))
         profile = await profiles.save(
-            actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
+            book, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
-        applied = await profiles.apply(fx_open_book(actor, book_id), profile, kind=RecipeKind.TEXT)
+        applied = await profiles.apply(book, profile.id, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]

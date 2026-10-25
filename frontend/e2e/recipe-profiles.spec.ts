@@ -10,9 +10,9 @@ import {
 import { closeStepsWindow, openStepsWindow, windowStepOf } from './support/steps';
 
 /**
- * A recipe set up in one book is kept as a profile of the account and applied in another: the steps are put in another
- * order and one is switched off, the steps on the screen are kept as a profile from the profile menu in one go, applied
- * in a second book, and renamed in the settings of the account.
+ * A recipe set up in a book is kept as a profile of the book: the steps are put in another order and one is switched off,
+ * the steps on the screen are kept as a profile from the profile menu in one go, and the profile is renamed in the
+ * library of the book.
  */
 
 const PAGES = 2;
@@ -79,14 +79,14 @@ async function newBookWithPages(page: Page, title: string, folder: string): Prom
   return new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
 }
 
-test('a recipe is saved as a profile, applied in another book, and renamed in the settings of the account', async ({
+test('a recipe is saved as a profile and the profile is renamed in the library of the book', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   let setUp: ScreenStep[] = [];
 
-  await test.step('the steps of the first book are reordered and one is switched off', async () => {
+  await test.step('the steps of the book are reordered and one is switched off', async () => {
     await registerAndSignIn(page);
     await openGeometry(page, await newBookWithPages(page, 'A photographed book', folder));
     expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
@@ -136,34 +136,15 @@ test('a recipe is saved as a profile, applied in another book, and renamed in th
     await expect(page.getByTestId('profile-saved')).toContainText(PROFILE_NAME);
   });
 
-  await test.step('another book applies the profile to its recipe for text, with the same steps in the same order', async () => {
-    const secondBookPath = await newBookWithPages(page, 'A flatbed book', folder);
-    await openGeometry(page, secondBookPath);
-    // The built-in recipe has the steps in their own order
-    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
-    // The library is opened from the profile menu and applies the profile to the recipe for text, the kind of the open page
+  await test.step('the profile is renamed in the library of the book', async () => {
     await page.getByTestId('profile-button').click();
     await page.getByTestId('profile-manage').click();
     await expect(page.getByTestId('profile-library-panel')).toBeVisible();
-    const card = page.locator(`[data-testid="profile-row"][data-name="${PROFILE_NAME}"]`);
-    await expect(card).toHaveCount(1);
-    await snap(page, 'apply-profile-from-library');
-    await card.getByTestId('profile-apply-book').click();
-    await expect(card.getByTestId('profile-notice')).toContainText(PROFILE_NAME);
-    await expect(page.getByTestId('profile-left-out')).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(page.getByTestId('profile-library-panel')).toHaveCount(0);
-    await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
-  });
-
-  await test.step('the profile is renamed in the settings of the account', async () => {
-    await page.getByRole('button', { name: MESSAGES.workspace.header.accountMenu }).click();
-    await page.getByTestId('account-profiles').click();
-    await expect(page.getByRole('heading', { name: 'Recipe profiles' })).toBeVisible();
     const row = page.locator(`[data-testid="profile-row"][data-name="${PROFILE_NAME}"]`);
     await expect(row.getByTestId('profile-steps')).toContainText(
       'Select content · Perspective (off) · Deskew',
     );
+    await snap(page, 'profile-in-library');
     await row.getByTestId('profile-rename').click();
     await page.getByLabel('New name').fill(RENAMED);
     await page.getByTestId('profile-rename-submit').click();
@@ -171,6 +152,6 @@ test('a recipe is saved as a profile, applied in another book, and renamed in th
     await expect(renamed).toHaveCount(1);
     // The picture is taken once the dialog has faded out
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await snap(page, 'profiles-in-account-settings');
+    await snap(page, 'profile-renamed');
   });
 });

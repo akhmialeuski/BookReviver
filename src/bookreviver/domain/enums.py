@@ -743,7 +743,7 @@ class BookResource(LabeledStrEnum):
     STAGES = 'stages', 'Where every page stands in every stage'
     SETTINGS = 'settings', 'The settings and the edits of the steps on the pages'
     HISTORY = 'history', 'The history of the steps on the pages'
-    RECIPES = 'recipes', 'The recipes of the stages'
+    RECIPES = 'recipes', 'The recipes of the stages and the recipe profiles'
 
 
 class NewPageOrigin(LabeledStrEnum):

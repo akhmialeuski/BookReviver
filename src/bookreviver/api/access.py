@@ -1,10 +1,11 @@
-"""Who may work on what: the one place that opens a book or a recipe profile for the signed-in account.
+"""Who may work on what: the one place that opens a book for the signed-in account.
 
-The services, the domain and the jobs never check an owner. A route of a book or of a profile takes it from a
-dependency of this module, which reads it from the catalogue, compares its owner with the signed-in account and answers
-a book or a profile of another account exactly like a missing one, so the identifiers of other accounts cannot be
-probed. A list of the account's books or profiles is read here too, so a service is handed the objects it works on and
-never chooses whose they are. The books service opens each book with its database, and takes no part in the choice.
+The services, the domain and the jobs never check an owner. A route of a book takes it from a dependency of this
+module, which reads it from the catalogue, compares its owner with the signed-in account and answers a book of another
+account exactly like a missing one, so the identifiers of other accounts cannot be probed. A list of the account's books
+is read here too, so a service is handed the objects it works on and never chooses whose they are. The books service
+opens each book with its database, and takes no part in the choice. The recipe profiles live in the book, so whoever
+may open the book may work on its profiles.
 
 Every route of one book takes ``Annotated[Book, Depends(open_book)]``, written in place so that ruff sees the
 ``book_id`` of the path the dependency reads. FastAPI resolves a dependency once per request, so ``fresh_book`` and the
@@ -20,10 +21,9 @@ from fastapi_pagination import Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import slice_request
-from bookreviver.api.schemas.profiles import ProfileLinkBody, ProfileQuery
-from bookreviver.domain.entities import LibraryEntry, RecipeProfile
+from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import BookId, RecipeProfileId
+from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import Slice, SliceRequest
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.services.book import Book
@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import CatalogueRepositories
 
 BOOK_ID_DESCRIPTION: Final = 'Identifier of the book'
-PROFILE_ID_DESCRIPTION: Final = 'Identifier of the recipe profile'
 # Entries of the library read at a time when every book of an account is wanted
 ENTRY_WINDOW: Final = 1_000
 
@@ -71,21 +70,6 @@ async def entries_of(catalogue: CatalogueDatabase, account_id: AccountId) -> lis
         entries.extend(window.items)
         if len(entries) >= window.total or not window.items:
             return entries
-
-
-async def books_of(catalogue: CatalogueDatabase, books_service: BooksService, account_id: AccountId) -> list[Book]:
-    """Read every book of an account, the latest added first.
-
-    :param catalogue: Catalogue database of the request, whose ``read`` of the catalogue lists the library.
-    :type catalogue: CatalogueDatabase
-    :param books_service: Books service of the request, which opens each book with its database.
-    :type books_service: BooksService
-    :param account_id: The account.
-    :type account_id: AccountId
-    :returns: The books of the account.
-    :rtype: list[Book]
-    """
-    return [books_service.book(entry) for entry in await entries_of(catalogue, account_id)]
 
 
 class AccountBooks:
@@ -165,103 +149,3 @@ async def own_books(
     """
     request = slice_request(params)
     return await catalogue.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))
-
-
-@inject
-async def all_own_books(
-    actor: ActorDep, catalogue: FromDishka[CatalogueDatabase], books: FromDishka[BooksService]
-) -> list[Book]:
-    """Read every book of the signed-in account, which a change of one of its profiles reaches.
-
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param catalogue: Catalogue database of the request.
-    :type catalogue: CatalogueDatabase
-    :param books: Books service of the request, which opens each book with its database.
-    :type books: BooksService
-    :returns: The books of the account.
-    :rtype: list[Book]
-    """
-    return await books_of(catalogue, books, actor.account_id)
-
-
-def _owned_profile(repos: CatalogueRepositories, account_id: AccountId, profile_id: RecipeProfileId) -> RecipeProfile:
-    """Read a profile in a read of the catalogue, when the account owns it.
-
-    :param repos: Repositories of the read.
-    :type repos: CatalogueRepositories
-    :param account_id: The signed-in account.
-    :type account_id: AccountId
-    :param profile_id: Identifier of the profile.
-    :type profile_id: RecipeProfileId
-    :returns: The profile.
-    :rtype: RecipeProfile
-    :raises NotFoundError: If there is no such profile, or it belongs to another account.
-    """
-    profile = repos.recipe_profiles.get(profile_id)
-    if profile.account_id != account_id:
-        raise NotFoundError(profile_id)
-    return profile
-
-
-@inject
-async def open_profile(
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
-    actor: ActorDep,
-    catalogue: FromDishka[CatalogueDatabase],
-) -> RecipeProfile:
-    """Open the profile the path names, when the signed-in account owns it.
-
-    :param profile_id: Identifier of the profile, from the path.
-    :type profile_id: RecipeProfileId
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param catalogue: Catalogue database of the request.
-    :type catalogue: CatalogueDatabase
-    :returns: The profile.
-    :rtype: RecipeProfile
-    :raises NotFoundError: If there is no such profile, or it belongs to another account.
-    """
-    return await catalogue.read(lambda repos: _owned_profile(repos, actor.account_id, profile_id))
-
-
-@inject
-async def linked_profile(
-    body: ProfileLinkBody, actor: ActorDep, catalogue: FromDishka[CatalogueDatabase]
-) -> RecipeProfile | None:
-    """Open the profile the body of a link names, when the signed-in account owns it, or none for an unlink.
-
-    :param body: The profile, or null to unlink the recipe.
-    :type body: ProfileLinkBody
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param catalogue: Catalogue database of the request.
-    :type catalogue: CatalogueDatabase
-    :returns: The profile, or None when the body names none.
-    :rtype: RecipeProfile | None
-    :raises NotFoundError: If there is no such profile, or it belongs to another account.
-    """
-    profile_id = body.profile_id
-    if profile_id is None:
-        return None
-    return await catalogue.read(lambda repos: _owned_profile(repos, actor.account_id, profile_id))
-
-
-@inject
-async def own_profiles(
-    query: Annotated[ProfileQuery, Depends()], actor: ActorDep, catalogue: FromDishka[CatalogueDatabase]
-) -> Slice[RecipeProfile]:
-    """Read the window of the signed-in account's profiles, in the order of the stages, then by creation.
-
-    :param query: Page number and size, and the stage to list, from the query.
-    :type query: ProfileQuery
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param catalogue: Catalogue database of the request.
-    :type catalogue: CatalogueDatabase
-    :returns: The profiles of the window, and the number of all that match.
-    :rtype: Slice[RecipeProfile]
-    """
-    request = slice_request(query)
-    profiles = await catalogue.read(lambda repos: repos.recipe_profiles.list_for_account(actor.account_id, query.stage))
-    return Slice(items=profiles[request.offset : request.offset + request.limit], total=len(profiles))

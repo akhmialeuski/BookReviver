@@ -22,7 +22,6 @@ from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
@@ -183,13 +182,9 @@ class ProcessingProvider(Provider):
         return ProcessingService(processors=processors, parts=parts)
 
     @provide(scope=Scope.REQUEST)
-    def recipe_profiles(
-        self, catalogue: CatalogueDatabase, parts: ProcessingParts, processing: ProcessingService
-    ) -> RecipeProfiles:
+    def recipe_profiles(self, parts: ProcessingParts, processing: ProcessingService) -> RecipeProfiles:
         """Build the service of the recipe profiles of a request.
 
-        :param catalogue: Catalogue database of the current request.
-        :type catalogue: CatalogueDatabase
         :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
         :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
@@ -197,7 +192,7 @@ class ProcessingProvider(Provider):
         :returns: The profiles service.
         :rtype: RecipeProfiles
         """
-        return RecipeProfiles(catalogue=catalogue, recipes=parts.recipes, processing=processing)
+        return RecipeProfiles(recipes=parts.recipes, processing=processing)
 
     @provide(scope=Scope.APP)
     def stage_runtime(

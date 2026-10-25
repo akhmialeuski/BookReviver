@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AppliedProfileSchema, LibraryProfileSchema, RecipeKind } from '@/api';
+import type { AppliedProfileSchema, RecipeKind, RecipeProfileSchema } from '@/api';
 import type { Processing } from '@/features/processing/useProcessing';
 import { DeleteProfileDialog, RenameProfileDialog } from '@/features/profiles/ProfileDialogs';
 import { fileNameOf, saveTextFile, writeProfileFile } from '@/features/profiles/profileFile';
@@ -14,23 +14,23 @@ import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * One profile of the library: its name, the books that use it, the steps it holds, and what can be done with it.
+ * One profile of the library of a book: its name, the steps it holds, and what can be done with it.
  *
- * Inside a book the profile is applied to the recipe of one kind of page, which the library lets the reader choose. The
- * rest works without a book: copying the profile, saving it to a file, renaming
- * and deleting it. What an action did is written under the card, with the steps that had to be left out.
+ * The profile is applied to the recipe of one kind of page of the book, which the library lets the reader choose. It
+ * can also be copied, saved to a file, renamed and deleted. What an action did is written under the card, with the steps
+ * that had to be left out.
  */
 
 const labels = MESSAGES.profiles.library;
 const page = MESSAGES.profiles.page;
 
-/** The book the library is opened from, which is what makes applying a profile possible. */
+/** The book the library is opened from, whose profiles it lists and whose recipes take them. */
 export interface LibraryBook {
   processing: Processing;
 }
 
 /** Write the steps of a profile in one line, with the steps that are off. */
-function stepsLine(profile: LibraryProfileSchema, titles: ReadonlyMap<string, string>): string {
+function stepsLine(profile: RecipeProfileSchema, titles: ReadonlyMap<string, string>): string {
   if (profile.steps.length === 0) {
     return labels.steps.none;
   }
@@ -45,17 +45,14 @@ function stepsLine(profile: LibraryProfileSchema, titles: ReadonlyMap<string, st
 /** What an action of a card did: a sentence, or the answer of an apply. */
 type CardNotice = string | AppliedProfileSchema;
 
-/**
- * The button that applies a profile inside a book. It is a component of its own because it reads the state of the
- * recipe of the book, which a library opened from the account has none of.
- */
+/** The button that applies a profile to a recipe of the book. It is a component of its own because it reads the state of the recipe. */
 function BookActions({
   profile,
   book,
   kind,
   onApplied,
 }: {
-  profile: LibraryProfileSchema;
+  profile: RecipeProfileSchema;
   book: LibraryBook;
   /** The kind of page whose recipe takes the steps of the profile. */
   kind: RecipeKind;
@@ -109,16 +106,17 @@ export function ProfileCard({
   book,
   kind = 'text',
 }: {
-  profile: LibraryProfileSchema;
+  profile: RecipeProfileSchema;
   /** Titles of the installed processors by key, for the steps of the profile. */
   titles: ReadonlyMap<string, string>;
-  /** The book the library is opened from, or nothing when it is opened from the account. */
-  book?: LibraryBook;
+  /** The book the library is opened from. */
+  book: LibraryBook;
   /** The kind of page whose recipe applying to the book changes, which the library lets the reader choose. */
   kind?: RecipeKind;
 }): React.JSX.Element {
-  const duplicate = useDuplicateProfile();
-  const exporter = useExportProfile();
+  const { bookId } = book.processing;
+  const duplicate = useDuplicateProfile(bookId);
+  const exporter = useExportProfile(bookId);
   const [notice, setNotice] = useState<CardNotice | null>(null);
   const error = duplicate.error ?? exporter.error;
 
@@ -128,21 +126,14 @@ export function ProfileCard({
       data-testid="profile-row"
       data-name={profile.name}
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-        <h3 className="min-w-0 truncate font-medium" data-testid="profile-name">
-          {profile.name}
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          <span data-testid="profile-books">{labels.usedIn(profile.books)}</span>
-        </p>
-      </div>
+      <h3 className="min-w-0 truncate font-medium" data-testid="profile-name">
+        {profile.name}
+      </h3>
       <p className="text-sm text-muted-foreground" data-testid="profile-steps">
         {stepsLine(profile, titles)}
       </p>
       <div className="flex flex-wrap gap-2">
-        {book === undefined ? null : (
-          <BookActions profile={profile} book={book} kind={kind} onApplied={setNotice} />
-        )}
+        <BookActions profile={profile} book={book} kind={kind} onApplied={setNotice} />
         <Button
           variant="outline"
           size="sm"
@@ -151,7 +142,7 @@ export function ProfileCard({
           data-testid="profile-duplicate"
           onClick={() =>
             duplicate.mutate(
-              { path: { profile_id: profile.id } },
+              { path: { book_id: bookId, profile_id: profile.id } },
               { onSuccess: (copy) => setNotice(labels.duplicated(copy.name)) },
             )
           }
@@ -177,12 +168,12 @@ export function ProfileCard({
         </Button>
       </div>
       <div className="flex flex-wrap gap-1">
-        <RenameProfileDialog profile={profile}>
+        <RenameProfileDialog bookId={bookId} profile={profile}>
           <Button variant="ghost" size="sm" data-testid="profile-rename">
             {page.rename}
           </Button>
         </RenameProfileDialog>
-        <DeleteProfileDialog profile={profile}>
+        <DeleteProfileDialog bookId={bookId} profile={profile}>
           <Button variant="ghost" size="sm" data-testid="profile-delete">
             {page.remove}
           </Button>

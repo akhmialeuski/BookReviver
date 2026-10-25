@@ -17,6 +17,7 @@ uv run fastapi dev                       # API on http://127.0.0.1:8000, data in
 uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # catalogue revision
 uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
 uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
+uv run bookreviver-migrate copy-recipe-profiles  # the profiles of the catalogue into the books of their owners, again safely
 uv run pytest tests/contracts            # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
@@ -64,11 +65,11 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   with `FromDishka[StageSummaries]` and calls with the `Book`: the resource schema, or
   fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
   domain errors in the one handler registered in `app`.
-- Who may work on what is decided only by the FastAPI dependencies of `api/access.py`. `open_book` and `open_profile`
-  open a book or a recipe profile of the signed-in account and answer one of another account like a missing one, and
-  `own_books` and `own_profiles` read the account's lists. Services, the domain and the jobs check no owner and choose
-  no account's records: a use case works on the `Book` or `RecipeProfile` it is given, and takes an account only as the
-  owner of a record it creates. A route of a book declares `Annotated[Book, Depends(open_book)]` in place.
+- Who may work on what is decided only by the FastAPI dependencies of `api/access.py`. `open_book` opens a book of the
+  signed-in account and answers one of another account like a missing one, and `own_books` reads the account's list.
+  Services, the domain and the jobs check no owner and choose no account's records: a use case works on the `Book` it
+  is given, and takes an account only as the owner of a record it creates. A recipe profile lives in its book and is
+  reached through the routes of the book. A route of a book declares `Annotated[Book, Depends(open_book)]` in place.
 - All request input is validated by Pydantic before the route runs: bodies, query models (`Annotated[Model, Query()]`),
   forms and headers, built on the shared `RequestModel` base and the constrained types in `api/schemas/types.py`.
   Handlers never check raw input by hand.

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { LibraryProfileSchema, RecipeKind, Stage } from '@/api';
+import type { RecipeKind, RecipeProfileSchema, Stage } from '@/api';
 import { useProcessors } from '@/features/processing/queries';
 import { type LibraryBook, ProfileCard } from '@/features/profiles/ProfileCard';
 import { type FileProblem, readProfileFile } from '@/features/profiles/profileFile';
@@ -13,12 +13,12 @@ import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The library of the profiles of the account: a tab for each stage that has profiles and one for all of them, a card
- * for each profile, and under them the two ways to add one, from the steps of the open book and from a file.
+ * The library of the profiles of a book: a tab for each stage that has profiles and one for all of them, a card for
+ * each profile, and under them the two ways to add one, from the steps of the book and from a file.
  *
- * Opened from a book, it starts on the stage of the book and its cards apply profiles to the recipe of the kind of page
- * chosen above the list. Opened from the account it starts on all stages and the cards leave out what needs a book. A file is read here
- * and sent as it is, and the server's answer, which names what is wrong with it, is shown under the list.
+ * It starts on the stage of the book and its cards apply profiles to the recipe of the kind of page chosen above the
+ * list. A file is read here and sent as it is, and the server's answer, which names what is wrong with it, is shown
+ * under the list.
  */
 
 const labels = MESSAGES.profiles.library;
@@ -30,7 +30,7 @@ const RECIPE_KINDS = Object.keys(MESSAGES.processing.recipe.kinds) as RecipeKind
 type Tab = Stage | typeof ALL;
 
 /** The stages that have a profile, and the stage of the book, in the order of the pipeline. */
-function stagesOf(profiles: readonly LibraryProfileSchema[], current: Stage | undefined): Stage[] {
+function stagesOf(profiles: readonly RecipeProfileSchema[], current: Stage | undefined): Stage[] {
   const present = new Set<Stage>(profiles.map((profile) => profile.stage));
   if (current !== undefined) {
     present.add(current);
@@ -38,13 +38,14 @@ function stagesOf(profiles: readonly LibraryProfileSchema[], current: Stage | un
   return STAGES.map((entry) => entry.stage).filter((stage) => present.has(stage));
 }
 
-export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Element {
-  const profiles = useProfiles(undefined);
+export function ProfileLibrary({ book }: { book: LibraryBook }): React.JSX.Element {
+  const { bookId } = book.processing;
+  const profiles = useProfiles(bookId, undefined);
   const processors = useProcessors();
-  const importer = useImportProfile();
-  const [tab, setTab] = useState<Tab>(book?.processing.stage ?? ALL);
+  const importer = useImportProfile(bookId);
+  const [tab, setTab] = useState<Tab>(book.processing.stage);
   const [saveOpen, setSaveOpen] = useState(false);
-  const [kind, setKind] = useState<RecipeKind>(book?.processing.recipe?.kind ?? 'text');
+  const [kind, setKind] = useState<RecipeKind>(book.processing.recipe?.kind ?? 'text');
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<FileProblem | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
@@ -52,7 +53,7 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
     (processors.data ?? []).map((processor) => [processor.key, processor.title]),
   );
   const all = profiles.data ?? [];
-  const stages = stagesOf(all, book?.processing.stage);
+  const stages = stagesOf(all, book.processing.stage);
   const tabs: Tab[] = [...stages, ALL];
   const shown = tab === ALL ? all : all.filter((profile) => profile.stage === tab);
 
@@ -67,7 +68,7 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
       return;
     }
     importer.mutate(
-      { body: read.file },
+      { path: { book_id: bookId }, body: read.file },
       { onSuccess: (profile) => setNotice(labels.imported(profile.name)) },
     );
   };
@@ -144,35 +145,31 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
           </button>
         ))}
       </div>
-      {book === undefined ? null : (
-        <select
-          aria-label={labels.applyKind}
-          data-testid="profile-kind"
-          className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          value={kind}
-          onChange={(event) => setKind(event.target.value as RecipeKind)}
-        >
-          {RECIPE_KINDS.map((entry) => (
-            <option key={entry} value={entry}>
-              {MESSAGES.processing.recipe.kinds[entry]}
-            </option>
-          ))}
-        </select>
-      )}
+      <select
+        aria-label={labels.applyKind}
+        data-testid="profile-kind"
+        className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        value={kind}
+        onChange={(event) => setKind(event.target.value as RecipeKind)}
+      >
+        {RECIPE_KINDS.map((entry) => (
+          <option key={entry} value={entry}>
+            {MESSAGES.processing.recipe.kinds[entry]}
+          </option>
+        ))}
+      </select>
       {body}
       <div className="flex flex-wrap gap-2 border-t pt-3">
-        {book === undefined ? null : (
-          <Button
-            variant="outline"
-            size="sm"
-            title={labels.fromBookHint}
-            disabled={book.processing.recipe === undefined}
-            data-testid="profile-from-book"
-            onClick={() => setSaveOpen(true)}
-          >
-            {labels.fromBook}
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          title={labels.fromBookHint}
+          disabled={book.processing.recipe === undefined}
+          data-testid="profile-from-book"
+          onClick={() => setSaveOpen(true)}
+        >
+          {labels.fromBook}
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -215,14 +212,12 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
           <ErrorAlert message={describeError(importer.error)} />
         </div>
       ) : null}
-      {book === undefined ? null : (
-        <SaveProfileDialog
-          processing={book.processing}
-          open={saveOpen}
-          onOpenChange={setSaveOpen}
-          onSaved={(name) => setNotice(MESSAGES.profiles.save.saved(name))}
-        />
-      )}
+      <SaveProfileDialog
+        processing={book.processing}
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        onSaved={(name) => setNotice(MESSAGES.profiles.save.saved(name))}
+      />
     </div>
   );
 }

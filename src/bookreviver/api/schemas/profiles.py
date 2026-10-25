@@ -1,8 +1,9 @@
-"""Schemas of the recipe profiles of an account: the steps of a recipe saved to apply to other books.
+"""Schemas of the recipe profiles of a book: the steps of a recipe saved to apply to its recipes.
 
 A profile is saved from the steps on the screen, so its body is the body of a recipe with the stage added. Applying a
-profile to a book answers with the recipe it made and the processors whose steps had to be left out. A profile is
-exchanged as a file, whose format has a version, so a later change of the format can still read an older file.
+profile to a recipe of its book answers with the recipe it made and the processors whose steps had to be left out. A
+profile reaches another book as a file, whose format has a version, so a later change of the format can still read an
+older file.
 """
 
 from collections.abc import Sequence
@@ -22,11 +23,10 @@ from bookreviver.domain.values import ProfileDraft, Step
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
-    from bookreviver.services.recipe_profiles import ListedProfile
 
 
 class RecipeProfileSchema(ResponseModel):
-    """A recipe profile of the signed-in account.
+    """A recipe profile of a book.
 
     :ivar id: Identifier of the profile.
     :ivar stage: Stage whose recipes the profile can be applied to.
@@ -44,27 +44,6 @@ class RecipeProfileSchema(ResponseModel):
     order: OrderMode
     created_at: datetime
     updated_at: datetime
-
-
-class LibraryProfileSchema(RecipeProfileSchema):
-    """A recipe profile of the signed-in account with the number of books that use it.
-
-    :ivar books: Number of books that have a recipe made from the profile.
-    """
-
-    books: int
-
-    @classmethod
-    def of(cls, listed: ListedProfile) -> Self:
-        """Build the schema of a profile of the library.
-
-        :param listed: The profile with its books.
-        :type listed: ListedProfile
-        :returns: The schema.
-        :rtype: Self
-        """
-        profile = RecipeProfileSchema.model_validate(listed.profile)
-        return cls.model_validate({**profile.model_dump(), 'books': listed.books})
 
 
 class ProfileBody(RecipeBody):
@@ -106,7 +85,7 @@ class RecipeProfileName(RequestModel):
 
 
 class ProfileQuery(Params):
-    """The query of the list of profiles: the page parameters, and the stage to list.
+    """The query of the list of the profiles of a book: the page parameters, and the stage to list.
 
     :ivar page: Number of the page of the list, from one.
     :ivar size: Number of profiles in one page of the list.
@@ -117,7 +96,7 @@ class ProfileQuery(Params):
 
 
 class ApplyProfileBody(RequestModel):
-    """How to apply a profile to a book.
+    """How to apply a profile to a recipe of its book.
 
     :ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile.
     """
@@ -210,7 +189,7 @@ class ProfileFileV1(ProfileFileBody):
 
 
 class ProfileFileSchema(ProfileFileBody):
-    """A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.
+    """A profile as a file that is exchanged between books: the answer of an export, and a body of an import.
 
     :ivar version: Version of the format of the file, the second, whose steps have no condition.
     :ivar steps: The steps in the order they run.

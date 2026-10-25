@@ -1,9 +1,10 @@
 """Persistence ports: repositories per aggregate and the catalogue database that runs a use case's work on them.
 
 The data lives in two kinds of store. The catalogue is one for the application and holds what belongs to the
-accounts: the library, which says which account owns which book, and the recipe profiles. Each book has a store of its
-own that holds everything of the book and nothing of any account, so a book moves between instances as it is. Nothing
-refers across two stores by a key the store checks, and every list of books goes through the library.
+accounts: the library, which says which account owns which book, and the recipe profiles that are still to move into
+the books. Each book has a store of its own that holds everything of the book, its recipe profiles included, and nothing
+of any account, so a book moves between instances as it is. Nothing refers across two stores by a key the store checks,
+and every list of books goes through the library.
 
 Services never see a database. They hand a function over the repositories of one store, and the store runs that
 function whole on one transaction: the ``CatalogueDatabase`` does so with ``read`` and ``change`` over the
@@ -24,6 +25,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
+    AccountProfile,
     LibraryEntry,
     Page,
     PageStage,
@@ -884,16 +886,14 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
         """
 
 
-class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
-    """The recipe profiles of the accounts.
+class AccountProfileRepository(Repository[AccountProfile, RecipeProfileId]):
+    """The recipe profiles of the accounts, which only the command that copies them into the books still reads.
 
-    Deleting an account removes its profiles. A recipe of a book may name the profile it was made from, but a book
-    lives in a store of its own, so no key checks that name, and the service that deletes a profile empties it in the
-    owner's books.
+    Deleting an account removes its profiles.
     """
 
     @abstractmethod
-    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[AccountProfile]:
         """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
 
         :param account_id: Account owning the profiles.
@@ -901,6 +901,24 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         :param stage: The stage whose profiles are wanted, or None for every stage.
         :type stage: Stage | None
         :returns: The profiles of the account.
+        :rtype: Sequence[AccountProfile]
+        """
+
+
+class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
+    """The recipe profiles of the book, which the recipes of the book may name as the profile they were made from.
+
+    A recipe names its profile by identifier alone, so deleting a profile clears the name in the recipes of the book in
+    the same transaction, which the service that deletes it does.
+    """
+
+    @abstractmethod
+    def list_all(self, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+        """Return the profiles of the book in the order of the stages, then by creation, ties by identifier.
+
+        :param stage: The stage whose profiles are wanted, or None for every stage.
+        :type stage: Stage | None
+        :returns: The profiles of the book.
         :rtype: Sequence[RecipeProfile]
         """
 
@@ -940,7 +958,7 @@ class CatalogueRepositories(ABC):
     """
 
     library: LibraryRepository
-    recipe_profiles: RecipeProfileRepository
+    recipe_profiles: AccountProfileRepository
 
 
 class BookRepositories(ABC):
@@ -958,6 +976,7 @@ class BookRepositories(ABC):
     :ivar step_values: Repository of the values of the steps for the odd pages, the even pages and the groups, of this
                        transaction.
     :ivar recipes: Recipe repository of this transaction.
+    :ivar recipe_profiles: Repository of the recipe profiles of the book, of this transaction.
     :ivar book_places: Repository of the place the reader left the book at, of this transaction.
     """
 
@@ -972,6 +991,7 @@ class BookRepositories(ABC):
     page_history: PageHistoryRepository
     step_values: StepValuesRepository
     recipes: RecipeRepository
+    recipe_profiles: RecipeProfileRepository
     book_places: BookPlaceRepository
 
 

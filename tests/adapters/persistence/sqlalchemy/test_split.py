@@ -31,11 +31,11 @@ from bookreviver.adapters.persistence.sqlalchemy.split import SHARED_REVISION, S
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import (
+    make_account_profile,
     make_book_place,
     make_page,
     make_page_stage,
     make_page_version,
-    make_recipe_profile,
     make_record,
     make_scan,
     make_source,
@@ -187,7 +187,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
             )
         )
         session.flush()
-        SqlAlchemyCatalogueRepositories(session).recipe_profiles.add(make_recipe_profile(account_id=owner_id))
+        SqlAlchemyCatalogueRepositories(session).recipe_profiles.add(make_account_profile(account_id=owner_id))
 
     def store_first(session: Session) -> None:
         """Store the first book, with every kind of row the split copies.

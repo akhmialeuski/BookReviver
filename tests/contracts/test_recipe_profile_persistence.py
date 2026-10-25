@@ -13,11 +13,11 @@ from attrs import evolve
 from bookreviver.domain.enums import OrderMode, Stage
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import Step
-from tests.helpers.builders import make_recipe, make_recipe_profile, make_record
+from tests.helpers.builders import make_account_profile, make_recipe, make_record
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import RecipeProfile
+    from bookreviver.domain.entities import AccountProfile
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, CatalogueRepositories
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
@@ -36,13 +36,13 @@ STEPS: tuple[Step, ...] = (
 )
 
 
-async def _store(catalogue_factory: CatalogueDatabaseFactory, *profiles: RecipeProfile) -> CatalogueDatabase:
+async def _store(catalogue_factory: CatalogueDatabaseFactory, *profiles: AccountProfile) -> CatalogueDatabase:
     """Store profiles in one change, and open a new catalogue database to read them back through.
 
     :param catalogue_factory: Function opening a new catalogue database over the catalogue and the books of the test.
     :type catalogue_factory: CatalogueDatabaseFactory
     :param profiles: The profiles to store.
-    :type profiles: RecipeProfile
+    :type profiles: AccountProfile
     :returns: A new catalogue database.
     :rtype: CatalogueDatabase
     """
@@ -50,7 +50,7 @@ async def _store(catalogue_factory: CatalogueDatabaseFactory, *profiles: RecipeP
     return catalogue_factory()
 
 
-class TestRecipeProfileRepository:
+class TestAccountProfileRepository:
     """Tests for the recipe profiles of the accounts."""
 
     async def test_a_profile_reads_back_with_its_steps_in_order(
@@ -63,7 +63,7 @@ class TestRecipeProfileRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        profile = make_recipe_profile(account_id=await fx_new_owner(), steps=STEPS)
+        profile = make_account_profile(account_id=await fx_new_owner(), steps=STEPS)
         catalogue = await _store(fx_catalogue, profile)
         assert await catalogue.read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
 
@@ -78,15 +78,15 @@ class TestRecipeProfileRepository:
         :type fx_new_owner: OwnerFactory
         """
         account_id = await fx_new_owner()
-        late_geometry = make_recipe_profile(account_id=account_id, minutes=THIRD_MINUTE)
-        early_geometry = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
-        page_split = make_recipe_profile(
+        late_geometry = make_account_profile(account_id=account_id, minutes=THIRD_MINUTE)
+        early_geometry = make_account_profile(account_id=account_id, minutes=FIRST_MINUTE)
+        page_split = make_account_profile(
             account_id=account_id,
             stage=Stage.PAGE_SPLIT,
             steps=(Step(processor_key='split.none'),),
             minutes=SECOND_MINUTE,
         )
-        foreign = make_recipe_profile(account_id=await fx_new_owner())
+        foreign = make_account_profile(account_id=await fx_new_owner())
         catalogue = await _store(fx_catalogue, late_geometry, foreign, early_geometry, page_split)
         listed = await catalogue.read(lambda repos: repos.recipe_profiles.list_for_account(account_id))
         assert listed == [page_split, early_geometry, late_geometry]
@@ -102,8 +102,8 @@ class TestRecipeProfileRepository:
         :type fx_new_owner: OwnerFactory
         """
         account_id = await fx_new_owner()
-        geometry = make_recipe_profile(account_id=account_id)
-        cleanup = make_recipe_profile(account_id=account_id, stage=Stage.CLEANUP)
+        geometry = make_account_profile(account_id=account_id)
+        cleanup = make_account_profile(account_id=account_id, stage=Stage.CLEANUP)
         catalogue = await _store(fx_catalogue, geometry, cleanup)
         listed = await catalogue.read(lambda repos: repos.recipe_profiles.list_for_account(account_id, Stage.CLEANUP))
         assert listed == [cleanup]
@@ -118,7 +118,7 @@ class TestRecipeProfileRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        profile = make_recipe_profile(account_id=await fx_new_owner())
+        profile = make_account_profile(account_id=await fx_new_owner())
         catalogue = await _store(fx_catalogue, profile)
         renamed = evolve(profile, name=CLEAN_SCAN_NAME)
         await catalogue.change(lambda repos: repos.recipe_profiles.update(renamed))
@@ -135,8 +135,8 @@ class TestRecipeProfileRepository:
         :type fx_new_owner: OwnerFactory
         """
         account_id = await fx_new_owner()
-        gone = make_recipe_profile(account_id=account_id)
-        kept = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
+        gone = make_account_profile(account_id=account_id)
+        kept = make_account_profile(account_id=account_id, minutes=FIRST_MINUTE)
         catalogue = await _store(fx_catalogue, gone, kept)
         await catalogue.change(lambda repos: repos.recipe_profiles.delete(gone.id))
         reading = fx_catalogue()
@@ -155,8 +155,8 @@ class TestRecipeProfileRepository:
         :type fx_new_owner: OwnerFactory
         """
         account_id = await fx_new_owner()
-        free = evolve(make_recipe_profile(account_id=account_id), order=OrderMode.FREE)
-        usual = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
+        free = evolve(make_account_profile(account_id=account_id), order=OrderMode.FREE)
+        usual = make_account_profile(account_id=account_id, minutes=FIRST_MINUTE)
         catalogue = await _store(fx_catalogue, free, usual)
 
         def orders(repos: CatalogueRepositories) -> list[OrderMode]:
@@ -187,7 +187,7 @@ class TestRecipeProfileRepository:
         :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
-        profile = make_recipe_profile(account_id=owner_id)
+        profile = make_account_profile(account_id=owner_id)
         linked = evolve(make_recipe(), profile_id=profile.id)
         unlinked = make_recipe(stage=Stage.CLEANUP)
 

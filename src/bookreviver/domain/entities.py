@@ -614,9 +614,9 @@ class Recipe:
     :ivar stage: Stage the recipe processes.
     :ivar kind: Kind of the pages the recipe processes, which is unique among the recipes of the stage.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
-    :ivar profile_id: The profile of the account the recipe was made from, or None for a recipe that was not. The
-                      steps may have changed since, and the link survives that, so the book can tell how it differs
-                      from the profile. Deleting the profile clears it.
+    :ivar profile_id: The profile of the book the recipe was made from, or None for a recipe that was not. The steps
+                      may have changed since, and the link survives that, so the book can tell how it differs from
+                      the profile. Deleting the profile clears it.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
     """
@@ -678,30 +678,41 @@ class Recipe:
 
 @frozen(kw_only=True)
 class RecipeProfile:
-    """The steps of a recipe of one stage that an account saved, to apply to its books.
+    """The steps of a recipe of one stage that are saved in a book, to apply to its recipes.
 
-    A recipe belongs to one book, and a profile to the account, so a book that is set up once can be set up again in
-    another by applying the profile. The steps keep their order, their parameters and their ``enabled`` switch.
+    A profile belongs to one book, like the recipes made from it, so a book that is set up once can be set up again by
+    applying the profile to another recipe of it. A profile reaches another book only as a file. The steps keep their
+    order, their parameters and their ``enabled`` switch.
 
     :ivar id: Identifier of the profile.
-    :ivar account_id: Account owning the profile, the only one that may read or change it.
     :ivar stage: Stage whose recipes the profile can be applied to.
     :ivar name: Name the user sees, such as ``Photographed book``.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
     :ivar order: Whether the steps were saved in the usual order, which refuses a step where it cannot work, or in the
-                 free order, which lets it stand with a warning. A book opened from the profile starts in this mode.
+                 free order, which lets it stand with a warning. A recipe made from the profile starts in this mode.
     :ivar created_at: When the profile was saved.
     :ivar updated_at: When the profile was last changed.
     """
 
     id: RecipeProfileId
-    account_id: AccountId
     stage: Stage
     name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...]
     order: OrderMode = OrderMode.USUAL
     created_at: datetime
     updated_at: datetime
+
+
+@frozen(kw_only=True)
+class AccountProfile(RecipeProfile):
+    """A recipe profile as the catalogue still keeps it, with the account that owns it.
+
+    The profiles moved into the books, and the catalogue table is read only by the command that copies them there.
+
+    :ivar account_id: Account owning the profile.
+    """
+
+    account_id: AccountId
 
 
 @frozen(kw_only=True)

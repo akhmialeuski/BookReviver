@@ -20,8 +20,8 @@ from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import contains_eager
 
 from bookreviver.adapters.persistence.sqlalchemy.book_record import SqlAlchemyBookRecordRepository
-from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
-from bookreviver.adapters.persistence.sqlalchemy.catalogue_mappers import LibraryEntryMapper, RecipeProfileMapper
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import AccountProfileRow, LibraryRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_mappers import AccountProfileMapper, LibraryEntryMapper
 from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
@@ -37,7 +37,9 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     SourceMapper,
     StepValuesMapper,
 )
+from bookreviver.adapters.persistence.sqlalchemy.profile_mappers import RecipeProfileMapper
 from bookreviver.adapters.persistence.sqlalchemy.rows import (
+    AccountProfileRows,
     BookPlaceRows,
     GroupValuesRows,
     LibraryRows,
@@ -64,6 +66,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
+    RecipeProfileRow,
     RecipeRow,
     ScanRow,
     SourceRow,
@@ -71,6 +74,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     StepValuesRow,
 )
 from bookreviver.domain.entities import (
+    AccountProfile,
     LibraryEntry,
     Page,
     PageStage,
@@ -112,6 +116,7 @@ from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
+    AccountProfileRepository,
     BookPlaceRepository,
     BookRepositories,
     CatalogueRepositories,
@@ -1556,10 +1561,10 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
 class SqlAlchemyRecipeProfileRepository(
     SqlAlchemyRepository[RecipeProfile, RecipeProfileId, RecipeProfileRow], RecipeProfileRepository
 ):
-    """The recipe profiles of the accounts, of which a stage has one default for each account."""
+    """The recipe profiles of a book."""
 
     def __init__(self, session: Session) -> None:
-        """Create the repository over the ``recipe_profiles`` table.
+        """Create the repository over the ``recipe_profiles`` table of a book.
 
         :param session: Session of the transaction.
         :type session: Session
@@ -1567,7 +1572,36 @@ class SqlAlchemyRecipeProfileRepository(
         super().__init__(rows=RecipeProfileRows(session=session), mapper=RecipeProfileMapper())
 
     @override
-    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+    def list_all(self, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+        """Return the profiles of the book in the order of the stages, then by creation, ties by identifier.
+
+        :param stage: The stage whose profiles are wanted, or None for every stage.
+        :type stage: Stage | None
+        :returns: The profiles of the book.
+        :rtype: Sequence[RecipeProfile]
+        """
+        rows = self._rows.get_many(order_by=[RecipeProfileRow.created_at.asc(), RecipeProfileRow.id.asc()])
+        return sorted(
+            (self._mapper.to_entity(row) for row in rows if stage is None or row.stage is stage),
+            key=lambda profile: profile.stage.position,
+        )
+
+
+class SqlAlchemyAccountProfileRepository(
+    SqlAlchemyRepository[AccountProfile, RecipeProfileId, AccountProfileRow], AccountProfileRepository
+):
+    """The recipe profiles of the accounts, which the profiles of the books replace."""
+
+    def __init__(self, session: Session) -> None:
+        """Create the repository over the ``recipe_profiles`` table of the catalogue.
+
+        :param session: Session of the transaction.
+        :type session: Session
+        """
+        super().__init__(rows=AccountProfileRows(session=session), mapper=AccountProfileMapper())
+
+    @override
+    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[AccountProfile]:
         """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
 
         :param account_id: Account owning the profiles.
@@ -1575,10 +1609,10 @@ class SqlAlchemyRecipeProfileRepository(
         :param stage: The stage whose profiles are wanted, or None for every stage.
         :type stage: Stage | None
         :returns: The profiles of the account.
-        :rtype: Sequence[RecipeProfile]
+        :rtype: Sequence[AccountProfile]
         """
         rows = self._rows.get_many(
-            order_by=[RecipeProfileRow.created_at.asc(), RecipeProfileRow.id.asc()], account_id=account_id
+            order_by=[AccountProfileRow.created_at.asc(), AccountProfileRow.id.asc()], account_id=account_id
         )
         return sorted(
             (self._mapper.to_entity(row) for row in rows if stage is None or row.stage is stage),
@@ -1593,7 +1627,7 @@ class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
     session, and with it the transaction, and are dropped with it.
 
     :ivar library: Library repository bound to the session.
-    :ivar recipe_profiles: Recipe profile repository bound to the session.
+    :ivar recipe_profiles: Account profile repository bound to the session.
     """
 
     def __init__(self, session: Session) -> None:
@@ -1603,7 +1637,7 @@ class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
         :type session: Session
         """
         self.library = SqlAlchemyLibraryRepository(session)
-        self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
+        self.recipe_profiles = SqlAlchemyAccountProfileRepository(session)
 
 
 class SqlAlchemyBookRepositories(BookRepositories):
@@ -1624,6 +1658,7 @@ class SqlAlchemyBookRepositories(BookRepositories):
     :ivar page_history: Page history repository bound to the session.
     :ivar step_values: Step values repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
+    :ivar recipe_profiles: Recipe profile repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
     """
 
@@ -1645,4 +1680,5 @@ class SqlAlchemyBookRepositories(BookRepositories):
         self.page_history = SqlAlchemyPageHistoryRepository(session, self.groups)
         self.step_values = SqlAlchemyStepValuesRepository(session, self.groups)
         self.recipes = SqlAlchemyRecipeRepository(session)
+        self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

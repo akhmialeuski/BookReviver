@@ -1158,7 +1158,6 @@ export const MESSAGES = {
     },
   },
   profiles: {
-    menu: 'Recipe profiles',
     link: {
       label: 'Profile',
       none: 'No profile',
@@ -1171,11 +1170,12 @@ export const MESSAGES = {
         'These steps are not kept in a profile. Save them as a new profile, and later changes are compared with it.',
       loadFailed: 'The profile could not be read.',
       others: 'Other profiles',
-      othersEmpty: 'You have no other profile for this stage.',
+      othersEmpty: 'This book has no other profile for this stage.',
       switchHint: 'Apply this profile to the recipe shown, which replaces its steps',
       switchBlocked: 'Save the recipe or revert it before applying a profile.',
       manage: 'Manage profiles…',
-      manageHint: 'Open the library of your profiles, to apply, copy, import and export them',
+      manageHint:
+        'Open the library of the profiles of this book, to apply, copy, import and export them',
       save: 'Save',
       saveHint: 'Replace the steps of the profile with the steps of this book',
       saveAsNew: 'Save as new…',
@@ -1199,15 +1199,14 @@ export const MESSAGES = {
     },
     save: {
       open: 'Save as profile',
-      hint: 'Keep these steps in your account, to apply them to other books',
+      hint: 'Keep these steps as a profile of this book, to apply them to its other recipes',
       title: 'Save as a profile',
       description:
-        'The steps of this book are kept in your account, in their order and with their settings and switches, and the book is compared with the new profile from now on. Any of your books can apply it.',
+        'The steps of this recipe are kept as a profile of this book, in their order and with their settings and switches, and the recipe is compared with the new profile from now on. Export the profile to a file to use it in another book.',
       nameLabel: 'Name of the profile',
       submit: 'Save the profile',
       submitting: 'Saving…',
-      saved: (name: string) =>
-        `Saved the profile “${name}”. Rename it or make it the default for new books in the profiles of your account.`,
+      saved: (name: string) => `Saved the profile “${name}”.`,
     },
     apply: {
       leftOut: (processors: readonly string[]) =>
@@ -1216,15 +1215,14 @@ export const MESSAGES = {
     library: {
       title: 'Profiles',
       description:
-        'Your recipe profiles, by stage. Apply one to the recipe of a kind of page in this book, copy it, or exchange it as a file.',
+        'The recipe profiles of this book, by stage. Apply one to the recipe of a kind of page, copy it, or exchange it as a file.',
       stages: 'Stages',
       allStages: 'All stages',
       empty: (stage: string) =>
-        `You have no ${stage} profile yet. Save the steps of this book with “From this book”, or import a profile file.`,
-      emptyAll: 'You have no profiles yet. Import a profile file, or save the steps of a book.',
+        `This book has no ${stage} profile yet. Save the steps of this book with “From this book”, or import a profile file.`,
+      emptyAll:
+        'This book has no profiles yet. Import a profile file, or save the steps of this book.',
       loadFailed: 'The profiles could not be read.',
-      usedIn: (books: number) =>
-        books === 0 ? 'Used in no book' : `Used in ${books} ${pluralize(books, 'book', 'books')}`,
       steps: {
         label: 'Steps',
         titleOff: (title: string) => `${title} (off)`,
@@ -1242,13 +1240,13 @@ export const MESSAGES = {
       duplicateHint: 'Keep a copy of this profile under another name',
       duplicated: (name: string) => `Saved the copy “${name}”.`,
       export: 'Export',
-      exportHint: 'Save this profile as a file, to give to another user or keep',
+      exportHint: 'Save this profile as a file, to import it into another book or keep it',
       exported: (name: string) => `Saved the profile “${name}” to a file.`,
       more: (name: string) => `More about the profile ${name}`,
       fromBook: 'From this book',
       fromBookHint: 'Keep the steps of this book as a new profile',
       import: 'Import a profile file',
-      importHint: 'Add the profile a file holds to your account',
+      importHint: 'Add the profile a file holds to this book',
       importing: 'Importing…',
       imported: (name: string) => `Imported the profile “${name}”.`,
       fileLabel: 'Profile file',
@@ -1261,8 +1259,6 @@ export const MESSAGES = {
       } satisfies Record<FileProblem, string>,
     },
     page: {
-      title: 'Recipe profiles',
-      description: 'The recipes you saved from your books, by stage.',
       loading: 'Loading the profiles…',
       rename: 'Rename',
       renameTitle: 'Rename the profile',
@@ -1272,7 +1268,7 @@ export const MESSAGES = {
       remove: 'Delete',
       removeTitle: 'Delete the profile',
       removeDescription: (name: string) =>
-        `The profile “${name}” will be deleted from your account. The recipes of the books that were made from it stay as they are.`,
+        `The profile “${name}” will be deleted from this book. The recipes that were made from it stay as they are.`,
       removeSubmit: 'Delete the profile',
       removing: 'Deleting…',
     },

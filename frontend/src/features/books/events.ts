@@ -10,6 +10,7 @@ import {
   invalidateCollectable,
   invalidateJobs,
   invalidatePages,
+  invalidateProfiles,
   invalidateScans,
   invalidateSections,
   invalidateSources,
@@ -154,6 +155,7 @@ const BookRead = {
   PageLayers: 'page-layers',
   History: 'history',
   Recipes: 'recipes',
+  Profiles: 'profiles',
   Jobs: 'jobs',
 } as const;
 
@@ -183,7 +185,8 @@ const READS_OF_PART: Record<BookResource, readonly BookRead[]> = {
   stages: [BookRead.StageSummary, BookRead.StageRows, BookRead.Book, BookRead.BookList],
   settings: [BookRead.PageLayers],
   history: [BookRead.History],
-  recipes: [BookRead.Recipes],
+  // The recipe profiles of the book are kept with its recipes
+  recipes: [BookRead.Recipes, BookRead.Profiles],
 };
 
 /** The reads that show the jobs of a book, which change with every job and raise no version of the book. */
@@ -225,6 +228,8 @@ function readAgain(queryClient: QueryClient, bookId: string, read: BookRead): Pr
       return invalidateHistory(queryClient);
     case BookRead.Recipes:
       return invalidateAllRecipes(queryClient, bookId);
+    case BookRead.Profiles:
+      return invalidateProfiles(queryClient, bookId);
     case BookRead.Jobs:
       return invalidateJobs(queryClient, bookId);
   }

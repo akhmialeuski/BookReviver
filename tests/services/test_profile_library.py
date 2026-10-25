@@ -1,4 +1,4 @@
-"""Tests for the library of profiles: the books that use a profile, copying, importing, and importing."""
+"""Tests for the library of profiles of a book: listing, deleting, copying and importing."""
 
 from typing import TYPE_CHECKING
 
@@ -9,14 +9,11 @@ from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
 from bookreviver.services.recipe_profiles import COPY_NAME
-from tests.helpers.builders import make_record
-from tests.helpers.processing import account_books, account_profiles
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
-from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Recipe, RecipeProfile
-    from bookreviver.domain.ids import BookId, RecipeId
+    from bookreviver.domain.entities import RecipeProfile
+    from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
@@ -35,102 +32,33 @@ STEPS: tuple[Step, ...] = (
 )
 # The third processor has to stand after the second, so these steps break a required place
 BROKEN_ORDER: tuple[Step, ...] = (Step(processor_key=THIRD_KEY), Step(processor_key=SECOND_KEY))
-BOOKS_OF_ONE_PROFILE: int = 2
 FILE_NAME: str = 'From a file'
 CLEANUP_KEY: str = 'cleanup.fake'
 
 
-async def save_profile(kit: ProcessingKit, actor: Actor, *, stage: Stage = Stage.GEOMETRY) -> RecipeProfile:
-    """Save the steps of the tests as a profile of the account.
+async def save_profile(kit: ProcessingKit, book: Book, *, stage: Stage = Stage.GEOMETRY) -> RecipeProfile:
+    """Save the steps of the tests as a profile of the book.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account saving the profile.
-    :type actor: Actor
+    :param book: The open book.
+    :type book: Book
     :param stage: Stage of the profile.
     :type stage: Stage
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
     steps = STEPS if stage is Stage.GEOMETRY else (Step(processor_key=CLEANUP_KEY),)
-    return await kit.profiles().save(actor, stage, ProfileDraft(name=PROFILE_NAME, steps=steps))
+    return await kit.profiles().save(book, stage, ProfileDraft(name=PROFILE_NAME, steps=steps))
 
 
-async def another_book(kit: ProcessingKit, actor: Actor) -> BookId:
-    """Commit another book of the same account.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the book.
-    :type actor: Actor
-    :returns: The book.
-    :rtype: BookId
-    """
-    book_id = await store_book(
-        kit.catalogue(), make_record(title='Another book'), owner=actor.account_id, databases=kit.databases
-    )
-    return book_id
-
-
-class TestBooksOfAProfile:
-    """Tests for the number of books that use each profile of the library."""
-
-    async def test_a_book_counts_once_however_many_recipes_it_made_from_the_profile(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify two books count two, and a second recipe of the same profile in one book adds none.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        other = await another_book(fx_kit, actor)
-        profile = await save_profile(fx_kit, actor)
-        for target in (book_id, other, book_id):
-            await fx_kit.profiles().apply(fx_open_book(actor, target), profile, kind=RecipeKind.TEXT)
-        listed = await fx_kit.profiles().library(
-            await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
-        )
-        assert [(item.profile.id, item.books) for item in listed.items] == [(profile.id, BOOKS_OF_ONE_PROFILE)]
-
-    async def test_a_profile_that_no_book_uses_has_none(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
-        """Verify a profile that was never applied is listed with no books, beside one that was.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        used = await save_profile(fx_kit, actor)
-        unused = await fx_kit.profiles().duplicate(used)
-        await fx_kit.profiles().apply(fx_open_book(actor, book_id), used, kind=RecipeKind.TEXT)
-        listed = await fx_kit.profiles().library(
-            await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
-        )
-        assert {item.profile.id: item.books for item in listed.items} == {used.id: 1, unused.id: 0}
-
-    async def test_the_books_of_another_account_do_not_count(self, fx_kit: ProcessingKit) -> None:
-        """Verify the listing holds the profiles of the account only, and the total is the number of them.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, _ = await fx_kit.seed_book()
-        stranger, _ = await fx_kit.seed_book()
-        await save_profile(fx_kit, stranger)
-        mine = await save_profile(fx_kit, actor)
-        listed = await fx_kit.profiles().library(
-            await account_profiles(fx_kit, actor, Stage.GEOMETRY), await account_books(fx_kit, actor)
-        )
-        assert ([item.profile.id for item in listed.items], listed.total) == ([mine.id], 1)
+class TestLibraryOfABook:
+    """Tests for the profiles a book lists."""
 
     async def test_deleting_a_profile_removes_it_from_the_library(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Verify a deleted profile is no longer listed, and the book that used it keeps its recipe.
+        """Verify a deleted profile is no longer listed, and the recipe that was made from it keeps its steps.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -138,66 +66,33 @@ class TestBooksOfAProfile:
         :type fx_open_book: BookOpener
         """
         actor, book_id = await fx_kit.seed_book()
-        profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(fx_open_book(actor, book_id), profile, kind=RecipeKind.TEXT)
-        await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
-        listed = await fx_kit.profiles().library(
-            await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
-        )
-        kept = await fx_open_book.databases.open(book_id).read(lambda repos: repos.recipes.get(applied.recipe.id))
+        book = fx_open_book(actor, book_id)
+        profile = await save_profile(fx_kit, book)
+        applied = await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().remove(book, profile.id)
+        listed = await fx_kit.profiles().library(book, None, EVERYTHING)
+        kept = await book.read(lambda repos: repos.recipes.get(applied.recipe.id))
         assert (listed.total, kept.profile_id) == (0, None)
-
-    async def test_deleting_a_profile_clears_the_link_in_every_book_of_the_owner(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify the recipes of both books that were made from the profile lose the link, and keep their steps.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        other = await another_book(fx_kit, actor)
-        profile = await save_profile(fx_kit, actor)
-        applied = [
-            await fx_kit.profiles().apply(fx_open_book(actor, target), profile, kind=RecipeKind.TEXT)
-            for target in (book_id, other)
-        ]
-
-        await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
-
-        async def recipe_of(target: BookId, recipe_id: RecipeId) -> Recipe:
-            """Read a recipe of a book as committed.
-
-            :param target: The book.
-            :type target: BookId
-            :param recipe_id: The recipe.
-            :type recipe_id: RecipeId
-            :returns: The recipe.
-            :rtype: Recipe
-            """
-            return await fx_open_book.databases.open(target).read(lambda repos: repos.recipes.get(recipe_id))
-
-        kept = [await recipe_of(target, done.recipe.id) for target, done in zip((book_id, other), applied, strict=True)]
-        expect([recipe.profile_id for recipe in kept] == [None, None])
-        expect([recipe.steps for recipe in kept] == [done.recipe.steps for done in applied])
-        assert_expectations()
 
 
 class TestDuplicateProfile:
     """Tests for the copy of a profile."""
 
-    async def test_the_copy_has_the_steps_of_the_profile_and_a_name_of_its_own(self, fx_kit: ProcessingKit) -> None:
+    async def test_the_copy_has_the_steps_of_the_profile_and_a_name_of_its_own(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the steps, the order and the stage are copied, and the name says it is a copy.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_kit.seed_book()
-        profile = await save_profile(fx_kit, actor)
-        copy = await fx_kit.profiles().duplicate(profile)
-        stored = await fx_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(copy.id))
+        actor, book_id = await fx_kit.seed_book()
+        book = fx_open_book(actor, book_id)
+        profile = await save_profile(fx_kit, book)
+        copy = await fx_kit.profiles().duplicate(book, profile.id)
+        stored = await book.read(lambda repos: repos.recipe_profiles.get(copy.id))
         expect(stored.id != profile.id)
         expect(stored.name == COPY_NAME.format(name=PROFILE_NAME))
         expect(stored.steps == profile.steps)
@@ -208,90 +103,109 @@ class TestDuplicateProfile:
 class TestImportProfile:
     """Tests for saving the profile a file holds."""
 
-    async def test_an_imported_profile_keeps_its_steps_and_gets_new_identifiers(self, fx_kit: ProcessingKit) -> None:
+    async def test_an_imported_profile_keeps_its_steps_and_gets_new_identifiers(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the file's steps are stored in their order with their parameters, and the file's order is kept.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_kit.seed_book()
-        source = await save_profile(fx_kit, actor)
+        actor, book_id = await fx_kit.seed_book()
+        book = fx_open_book(actor, book_id)
+        source = await save_profile(fx_kit, book)
         draft = ProfileDraft(
             name=FILE_NAME,
             steps=[Step(processor_key=FAKE_KEY, params={STRENGTH: 3}, enabled=False), Step(processor_key=FAKE_KEY)],
         )
-        imported = await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
-        stored = await fx_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(imported.id))
+        imported = await fx_kit.profiles().import_profile(book, Stage.GEOMETRY, draft)
+        stored = await book.read(lambda repos: repos.recipe_profiles.get(imported.id))
         expect(stored.name == FILE_NAME)
         expect([(step.params[STRENGTH], step.enabled) for step in stored.steps] == [(3, False), (1, True)])
         expect(stored.id != source.id)
         assert_expectations()
 
     async def test_a_file_that_needs_a_missing_processor_is_refused_and_names_every_one(
-        self, fx_kit: ProcessingKit
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Reject a file one of whose processors is not installed, saving nothing, and name the missing ones.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_kit.seed_book()
+        actor, book_id = await fx_kit.seed_book()
+        book = fx_open_book(actor, book_id)
         draft = ProfileDraft(
             name='Foreign',
             steps=[Step(processor_key=FAKE_KEY), Step(processor_key=MISSING_KEY), Step(processor_key='geometry.also')],
         )
         with pytest.raises(InvalidParametersError, match=f'{MISSING_KEY}, geometry.also'):
-            await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
-        assert (await account_profiles(fx_kit, actor, None)).total == 0
+            await fx_kit.profiles().import_profile(book, Stage.GEOMETRY, draft)
+        assert (await fx_kit.profiles().library(book, None, EVERYTHING)).total == 0
 
-    async def test_a_file_whose_steps_do_not_fit_their_processor_is_refused(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_file_whose_steps_do_not_fit_their_processor_is_refused(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Reject a file with a parameter the processor does not know, as saving a profile rejects it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_kit.seed_book()
+        actor, book_id = await fx_kit.seed_book()
         draft = ProfileDraft(name='Odd', steps=[Step(processor_key=FAKE_KEY, params={'unknown': 1})])
         with pytest.raises(InvalidParametersError):
-            await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
+            await fx_kit.profiles().import_profile(fx_open_book(actor, book_id), Stage.GEOMETRY, draft)
 
-    async def test_a_file_of_the_wrong_stage_is_refused(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_file_of_the_wrong_stage_is_refused(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
         """Reject a file that puts a processor of the geometry stage into the cleanup stage.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_kit.seed_book()
+        actor, book_id = await fx_kit.seed_book()
         draft = ProfileDraft(name='Misfiled', steps=[Step(processor_key=FAKE_KEY)])
         with pytest.raises(InvalidParametersError):
-            await fx_kit.profiles().import_profile(actor, Stage.CLEANUP, draft)
+            await fx_kit.profiles().import_profile(fx_open_book(actor, book_id), Stage.CLEANUP, draft)
 
-    async def test_a_file_with_all_steps_off_is_refused(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_file_with_all_steps_off_is_refused(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
         """Reject a file none of whose steps is on, since nothing in it could run.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_kit.seed_book()
+        actor, book_id = await fx_kit.seed_book()
         draft = ProfileDraft(name='Idle', steps=[Step(processor_key=FAKE_KEY, enabled=False)])
         with pytest.raises(InvalidParametersError):
-            await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
+            await fx_kit.profiles().import_profile(fx_open_book(actor, book_id), Stage.GEOMETRY, draft)
 
     async def test_a_file_off_a_required_place_is_refused_in_the_usual_order_only(
-        self, fx_ordered_kit: ProcessingKit
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify the order of a file is checked as a saved profile's is: refused when usual, kept when free.
 
         :param fx_ordered_kit: Kit over processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        actor, _ = await fx_ordered_kit.seed_book()
+        actor, book_id = await fx_ordered_kit.seed_book()
+        book = fx_open_book(actor, book_id)
         usual = ProfileDraft(name='Usual', steps=BROKEN_ORDER)
         with pytest.raises(InvalidParametersError):
-            await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, usual)
+            await fx_ordered_kit.profiles().import_profile(book, Stage.GEOMETRY, usual)
         free = ProfileDraft(name='Free', steps=BROKEN_ORDER, order=OrderMode.FREE)
-        imported = await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, free)
-        stored = await fx_ordered_kit.catalogue().read(lambda repos: repos.recipe_profiles.get(imported.id))
+        imported = await fx_ordered_kit.profiles().import_profile(book, Stage.GEOMETRY, free)
+        stored = await book.read(lambda repos: repos.recipe_profiles.get(imported.id))
         assert ([step.processor_key for step in stored.steps], stored.order) == (
             [THIRD_KEY, SECOND_KEY],
             OrderMode.FREE,

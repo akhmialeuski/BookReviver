@@ -144,7 +144,7 @@ class RecipeSchema(ResponseModel):
     :ivar stage: Stage the recipe processes.
     :ivar kind: Kind of the pages the recipe processes, which is also its name.
     :ivar steps: The steps in the order they run.
-    :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
+    :ivar profile_id: The profile of the book the recipe was made from, or null for a recipe that was not.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
     :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual

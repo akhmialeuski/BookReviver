@@ -6,9 +6,9 @@ translate the tables of a book, and share its base class.
 
 from typing import override
 
-from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import AccountProfileRow, LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-from bookreviver.domain.entities import LibraryEntry, RecipeProfile
+from bookreviver.domain.entities import AccountProfile, LibraryEntry
 from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId, RecipeProfileId
 from bookreviver.domain.values import Step
 
@@ -46,19 +46,19 @@ class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
         )
 
 
-class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
-    """Translation of a recipe profile, whose steps are a JSON list."""
+class AccountProfileMapper(RowMapper[AccountProfile, AccountProfileRow]):
+    """Translation of the recipe profile of an account, whose steps are a JSON list."""
 
     @override
-    def to_entity(self, row: RecipeProfileRow) -> RecipeProfile:
+    def to_entity(self, row: AccountProfileRow) -> AccountProfile:
         """Build the profile stored in ``row``.
 
         :param row: Profile row loaded from the database.
-        :type row: RecipeProfileRow
+        :type row: AccountProfileRow
         :returns: The profile with its steps.
-        :rtype: RecipeProfile
+        :rtype: AccountProfile
         """
-        return RecipeProfile(
+        return AccountProfile(
             id=RecipeProfileId(row.id),
             account_id=AccountId(row.account_id),
             stage=row.stage,
@@ -70,15 +70,15 @@ class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
         )
 
     @override
-    def to_row(self, entity: RecipeProfile) -> RecipeProfileRow:
+    def to_row(self, entity: AccountProfile) -> AccountProfileRow:
         """Build the row of ``entity``.
 
         :param entity: Profile to store.
-        :type entity: RecipeProfile
+        :type entity: AccountProfile
         :returns: Transient profile row.
-        :rtype: RecipeProfileRow
+        :rtype: AccountProfileRow
         """
-        return RecipeProfileRow(
+        return AccountProfileRow(
             id=entity.id,
             account_id=entity.account_id,
             stage=entity.stage,

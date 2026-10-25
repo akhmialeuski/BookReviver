@@ -27,7 +27,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.save,
   listStagesApiV1BooksBookIdStagesGet: sdk.stages,
-  listProfilesApiV1RecipeProfilesGet: sdk.profiles,
+  listProfilesApiV1BooksBookIdRecipeProfilesGet: sdk.profiles,
 }));
 vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({
   ProfileLibraryPanel: ({ open }: { open: boolean }) =>

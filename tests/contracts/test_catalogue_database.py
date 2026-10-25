@@ -29,6 +29,7 @@ from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import (
     EPOCH,
     directory_of,
+    make_account_profile,
     make_book_place,
     make_page,
     make_page_history_entry,
@@ -36,7 +37,6 @@ from tests.helpers.builders import (
     make_page_step_state,
     make_page_version,
     make_recipe,
-    make_recipe_profile,
     make_record,
     make_scan,
     make_section,
@@ -180,7 +180,7 @@ class ChangeKind(NamedTuple):
                 make_source(name=f'{number}.pdf'),
             )
         return (
-            make_recipe_profile(account_id=book.owner_id, minutes=number),
+            make_account_profile(account_id=book.owner_id, minutes=number),
             LibraryEntry(
                 book_id=BookId(uuid4()),
                 owner_id=book.owner_id,
@@ -447,7 +447,7 @@ async def fx_rows(
     :rtype: dict[str, Row]
     """
     owner_id = fx_book.owner_id
-    profile = make_recipe_profile(account_id=owner_id)
+    profile = make_account_profile(account_id=owner_id)
     entry = await fx_catalogue().read(lambda repos: repos.library.get(fx_book.book_id))
     await fx_catalogue().change(lambda repos: repos.recipe_profiles.add(profile))
     return {
@@ -466,7 +466,7 @@ async def fx_rows(
         'recipe_profiles': Row(
             profile,
             evolve(profile, updated_at=profile.updated_at + ONE_MINUTE),
-            make_recipe_profile(account_id=owner_id, stage=Stage.CLEANUP),
+            make_account_profile(account_id=owner_id, stage=Stage.CLEANUP),
             profile.id,
         ),
     }

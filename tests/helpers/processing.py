@@ -13,7 +13,6 @@ from attrs import evolve
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.api.access import books_of
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import ProcessingSettings
 from bookreviver.domain.entities import Actor, PageStage
@@ -28,7 +27,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, Slice, SliceRequest
+from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.ports.runtime import BookJobs
@@ -72,9 +71,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, RecipeProfile, Scan
+    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, Scan
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageVersionId
-    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft
+    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, PageVersionRepository
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
@@ -189,15 +188,14 @@ class ProcessingKit:
         return ProcessingService(processors=self.processors, parts=self.parts())
 
     def profiles(self) -> RecipeProfiles:
-        """Build the service of the recipe profiles over a new catalogue database.
+        """Build the service of the recipe profiles.
 
-        :returns: The service, which applies a profile through a processing service of the same catalogue database.
+        :returns: The service, which applies a profile through a processing service.
         :rtype: RecipeProfiles
         """
-        catalogue = self.catalogue()
         parts = self.parts()
         processing = ProcessingService(processors=self.processors, parts=parts)
-        return RecipeProfiles(catalogue=catalogue, recipes=parts.recipes, processing=processing)
+        return RecipeProfiles(recipes=parts.recipes, processing=processing)
 
     async def recipe_of(
         self, actor: Actor, book_id: BookId, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
@@ -659,33 +657,3 @@ class InProcessExecutorProvider(Provider):
         :rtype: StepExecutor
         """
         return InProcessStepExecutor(processors)
-
-
-async def account_profiles(kit: ProcessingKit, actor: Actor, stage: Stage | None = None) -> Slice[RecipeProfile]:
-    """Read every profile of an account, as the access dependency ``own_profiles`` reads one window of them.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the profiles.
-    :type actor: Actor
-    :param stage: The stage whose profiles are wanted, or None for every stage.
-    :type stage: Stage | None
-    :returns: The profiles in the order of the stages, then by creation, and their number.
-    :rtype: Slice[RecipeProfile]
-    """
-    profiles = await kit.catalogue().read(lambda repos: repos.recipe_profiles.list_for_account(actor.account_id, stage))
-    return Slice(items=list(profiles), total=len(profiles))
-
-
-async def account_books(kit: ProcessingKit, actor: Actor) -> list[Book]:
-    """Read every book of an account, as the access dependencies hand them to a service.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the books.
-    :type actor: Actor
-    :returns: The open books of the account.
-    :rtype: list[Book]
-    """
-    catalogue = kit.catalogue()
-    return await books_of(catalogue, BooksService(catalogue=catalogue), actor.account_id)
