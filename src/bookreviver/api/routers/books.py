@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page, Params
 from pydantic import ValidationError
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book, own_books
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book, own_books, own_entry
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.route_names import RouteName
@@ -249,21 +249,20 @@ async def import_book(
     return book_id
 
 
-# The dependency answers 404 for a book of another account, and the service reads the library entry of the identifier
-@one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(open_book)])
+@one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_book(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    entry: Annotated[LibraryEntry, Depends(own_entry)],
     books: FromDishka[BooksService],
 ) -> None:
     """Delete a book with its pages, jobs and files.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
+    :param entry: The library entry of the book the path names, when the signed-in account owns it.
+    :type entry: LibraryEntry
     :param books: Books service of the request.
     :type books: BooksService
     """
-    await books.delete(book_id)
+    await books.delete(entry)
 
 
 router = APIRouter(tags=['books'])

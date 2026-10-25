@@ -359,7 +359,7 @@ class TestDelete:
         for book_id, page in ((doomed_id, doomed_page), (kept_id, kept_page)):
             await fx_files.store(book_id, page)
 
-        await fx_service().delete(doomed_id)
+        await fx_service().delete(await fx_catalogue().read(lambda repos: repos.library.get(doomed_id)))
 
         remaining = await fx_catalogue().read(
             lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest())
@@ -394,9 +394,10 @@ class TestDelete:
         )
         await fx_files.store(book_id, page)
         book = open_for(fx_actor, book_id)
+        entry = await fx_open_book.catalogue().read(lambda repos: repos.library.get(book_id))
 
         with pytest.raises(StoreFailedError):
-            await fx_service().delete(book_id)
+            await fx_service().delete(entry)
 
         expect(await fx_open_book.catalogue().read(lambda repos: repos.library.list_all()) == [])
         expect(fx_files.kept(page))
@@ -649,6 +650,7 @@ class TestDeleteWaitsForTheTransactionInProgress:
         book_id = await store_book(
             fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
+        entry = await fx_catalogue().read(lambda repos: repos.library.get(book_id))
         entered, release = anyio.Event(), anyio.Event()
         committed = False
 
@@ -673,7 +675,7 @@ class TestDeleteWaitsForTheTransactionInProgress:
         async with anyio.create_task_group() as group:
             group.start_soon(change)
             await entered.wait()
-            group.start_soon(fx_service().delete, book_id)
+            group.start_soon(fx_service().delete, entry)
             await anyio.wait_all_tasks_blocked()
             expect(not fx_files.gone(book_id), 'the directory stayed while the change ran')
             release.set()

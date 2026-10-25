@@ -7,8 +7,9 @@ is read here too, so a service is handed the objects it works on and never choos
 live in the book, so whoever may open the book may work on its profiles.
 
 Every route of one book takes ``Annotated[Book, Depends(open_book)]``, written in place so that ruff sees the
-``book_id`` of the path the dependency reads. FastAPI resolves a dependency once per request, so ``fresh_book`` and the
-route get the same ``Book``, and the owner of the book is checked once.
+``book_id`` of the path the dependency reads. ``open_book`` opens the book of the entry ``own_entry`` read, and the
+deletion of a book takes that entry itself. FastAPI resolves a dependency once per request, so ``fresh_book`` and the
+route get the same ``Book``, and the entry is read and its owner checked once.
 """
 
 from functools import partial
@@ -92,20 +93,23 @@ class AccountBooks:
     async def delete_all(self, account_id: AccountId) -> None:
         """Delete every book of an account with all its files, which must happen before the account is deleted.
 
+        Each book is deleted entry first, so a failure keeps the books not deleted yet, and calling this again deletes
+        them.
+
         :param account_id: The account.
         :type account_id: AccountId
         """
-        entries = await entries_of(self._catalogue, account_id)
-        await self._books.delete_all(entry.book_id for entry in entries)
+        for entry in await entries_of(self._catalogue, account_id):
+            await self._books.delete(entry)
 
 
 @inject
-async def open_book(
+async def own_entry(
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     catalogue: FromDishka[CatalogueDatabase],
-) -> Book:
-    """Open the book the path names, when the signed-in account owns it.
+) -> LibraryEntry:
+    """Read the library entry of the book the path names, when the signed-in account owns it.
 
     :param book_id: Identifier of the book, from the path.
     :type book_id: BookId
@@ -113,13 +117,24 @@ async def open_book(
     :type actor: Actor
     :param catalogue: Catalogue database of the request, whose library entry of the book names its owner.
     :type catalogue: CatalogueDatabase
-    :returns: The open book.
-    :rtype: Book
+    :returns: The library entry of the book.
+    :rtype: LibraryEntry
     :raises NotFoundError: If the library has no such book, or the book belongs to another account.
     """
     entry = await catalogue.read(lambda repos: repos.library.get(book_id))
     if entry.owner_id != actor.account_id:
         raise NotFoundError(book_id)
+    return entry
+
+
+def open_book(entry: Annotated[LibraryEntry, Depends(own_entry)]) -> Book:
+    """Open the book the path names, when the signed-in account owns it.
+
+    :param entry: The library entry of the book, read once for the request.
+    :type entry: LibraryEntry
+    :returns: The open book.
+    :rtype: Book
+    """
     return Book(entry.directory)
 
 

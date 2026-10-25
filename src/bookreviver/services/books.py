@@ -5,7 +5,7 @@ A use case works on the ``Book`` objects it is given and checks no owner: the ac
 book of the signed-in account, and they choose the books of a list. ``book_pages`` is a synchronous function over
 repositories: the work of ``Book.read`` or ``Book.change`` calls it with the repositories it receives, and a caller
 outside a transaction wraps the call in ``Book.read``. A book knows no identifier, so ``create`` and ``import_archive``
-return the identifier they gave the new book, and ``delete`` reads the library entry of the identifier it is given.
+return the identifier they gave the new book, and ``delete`` takes the library entry the caller has read.
 
 A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
 ``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
@@ -27,7 +27,7 @@ from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
+    from collections.abc import AsyncIterator
     from pathlib import Path
     from typing import BinaryIO
 
@@ -152,28 +152,15 @@ class BooksService:
             added_at=datetime.now(UTC),
         )
 
-    async def delete(self, book_id: BookId) -> None:
+    async def delete(self, entry: LibraryEntry) -> None:
         """Delete the book's entry in the library, then the book with its directory.
 
         The entry goes first, so a request that comes later finds no book. A failure after the entry leaves a directory
         nobody lists, and ``Book.delete`` of the same directory removes it.
 
-        :param book_id: Identifier of the book, whose library entry names its directory.
-        :type book_id: BookId
-        :raises NotFoundError: If the library has no such book.
+        :param entry: The library entry of the book, which names its directory.
+        :type entry: LibraryEntry
+        :raises NotFoundError: If the library holds the entry no more, as when another deletion took it first.
         """
-        entry = await self._catalogue.read(lambda repos: repos.library.get(book_id))
-        await self._catalogue.change(lambda repos: repos.library.delete(book_id))
+        await self._catalogue.change(lambda repos: repos.library.delete(entry.book_id))
         await Book(entry.directory).delete()
-
-    async def delete_all(self, book_ids: Iterable[BookId]) -> None:
-        """Delete the books with all their files, as the deletion of the account that owns them needs.
-
-        Each book is deleted in transactions of its own, entry first, so a failure keeps the books not yet deleted,
-        and calling this again with the identifiers that are left deletes them.
-
-        :param book_ids: Identifiers of the books to delete.
-        :type book_ids: Iterable[BookId]
-        """
-        for book_id in book_ids:
-            await self.delete(book_id)
