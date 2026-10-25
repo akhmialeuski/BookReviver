@@ -10,8 +10,8 @@ A section starts at a page and so does not survive the deletion of that page. ``
 to leave, and hands every section that starts at one of them to the next page that stays, or removes it when no page
 follows.
 
-A change of the pages or of a section is announced by the catalogue database once it committed, and the browser reads
-the pages and their labels again for it.
+A change of the pages or of a section is announced by the database of the book once it committed, and the browser
+reads the pages and their labels again for it.
 """
 
 from datetime import UTC, datetime

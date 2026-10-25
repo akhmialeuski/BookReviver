@@ -42,7 +42,7 @@ class OutdatedResults:
     """Marks the fresh stage records of all books stale when a processor that made their result has a new version."""
 
     def __init__(self, *, books: BooksService, processors: ProcessorCatalog) -> None:
-        """Work over the ports of one catalogue database.
+        """Work over the books of the application and the processors it can run.
 
         :param books: Books service that opens each listed book, whose transactions read the records and mark them.
         :type books: BooksService

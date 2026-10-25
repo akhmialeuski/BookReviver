@@ -1,8 +1,8 @@
 """The collaborators every processing use case is built from, and the starting of the jobs that do the heavy work.
 
 A use case of processing writes recipes and stage records, follows jobs and starts new ones. ``ProcessingParts`` gathers
-the objects that do these over one catalogue database, so ``ProcessingService`` and ``ProcessingJobs`` take one value
-for them and are built the same way.
+the objects that do these on the book a use case is given, so ``ProcessingService`` and ``ProcessingJobs`` take one
+value for them and are built the same way.
 
 A job is put on the job queue of its book, which queues it behind the jobs the book has already and runs one job of the
 book at a time. A book processes one thing at a time. The user asks for a run, a preview or a measure of the book, of

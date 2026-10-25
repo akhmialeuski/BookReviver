@@ -3,11 +3,11 @@
 The catalogue, the executor and the runner of processors keep no per-request state, so one of each serves the whole
 application. The catalogue loads the plugins of the pools the settings name when it is built, from the same source
 that each process of the executor builds its own catalogue from. The executor starts its processes when the container
-first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that works
-through a catalogue database is built per request or job: the parts the use cases share, the service of the requests,
-the jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a
-run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only
-``api`` knows, as it does for the import.
+first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that serves a
+request or a job is built for it, and works on the book it is given: the parts the use cases share, the service of the
+requests, the jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them
+over, of what a run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes,
+which only ``api`` knows, as it does for the import.
 """
 
 from collections.abc import AsyncIterator
@@ -203,7 +203,7 @@ class ProcessingProvider(Provider):
         order_keys: OrderKeys,
         config: ProcessingConfig,
     ) -> StageRuntime:
-        """Gather what a run of a stage works with, apart from the book and the catalogue database.
+        """Gather what a run of a stage works with, apart from the book.
 
         :param runner: Runner of processors.
         :type runner: StepRunner
