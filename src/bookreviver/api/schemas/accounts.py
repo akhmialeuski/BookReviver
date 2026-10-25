@@ -1,9 +1,15 @@
-"""Schemas of the account routes: fastapi-users' user schemas on the shared request and response bases."""
+"""Schemas of the account routes: fastapi-users' user schemas on the shared request and response bases.
+
+The schemas of fastapi-users declare an ``is_superuser`` field, which its routers are typed to expect. The application
+has no superuser, so each schema here keeps the field out of the OpenAPI schema, and the response out of the body.
+The override has to be as writable as the field it replaces, so these three schemas are not frozen like the bases.
+"""
 
 from uuid import UUID
 
 from fastapi_users import schemas
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, Field, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 
@@ -24,18 +30,26 @@ class SignInProvider(ResponseModel):
 class AccountRead(ResponseModel, schemas.BaseUser[UUID]):
     """The signed-in account."""
 
+    model_config = ConfigDict(frozen=False)
+
+    is_superuser: SkipJsonSchema[bool] = Field(default=False, exclude=True)
+
 
 class AccountCreate(RequestModel, schemas.BaseUserCreate):
     """Registration with an email address and a password; the account starts unverified."""
 
     # A password is kept exactly as typed, as the login form and the reset body that fastapi-users reads keep it
-    model_config = ConfigDict(str_strip_whitespace=False)
+    model_config = ConfigDict(str_strip_whitespace=False, frozen=False)
+
+    is_superuser: SkipJsonSchema[bool | None] = False
 
 
 class AccountUpdate(RequestModel, schemas.BaseUserUpdate):
     """A change to the signed-in account: its password."""
 
-    model_config = ConfigDict(str_strip_whitespace=False)
+    model_config = ConfigDict(str_strip_whitespace=False, frozen=False)
+
+    is_superuser: SkipJsonSchema[bool | None] = None
 
     @field_validator('email')
     @classmethod

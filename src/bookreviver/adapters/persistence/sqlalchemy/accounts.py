@@ -89,7 +89,8 @@ class AccountTable(DefaultBase):
         email: Mapped[str] = mapped_column(String(length=320), unique=True, index=True)
         hashed_password: Mapped[str] = mapped_column(String(length=1024))
         is_active: Mapped[bool] = mapped_column(default=True)
-        is_superuser: Mapped[bool] = mapped_column(default=False)
+        # fastapi-users reads the flag, and the application has no superuser, so it is no column and never set
+        is_superuser = False
         is_verified: Mapped[bool] = mapped_column(default=False)
         # Loaded with the user, as fastapi-users reads them when a provider signs the user in
         oauth_accounts: Mapped[list[OAuthAccountTable]] = relationship(

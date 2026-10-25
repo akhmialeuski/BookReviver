@@ -23,10 +23,6 @@ export type AccountCreate = {
      */
     is_active?: boolean | null;
     /**
-     * Is Superuser
-     */
-    is_superuser?: boolean | null;
-    /**
      * Is Verified
      */
     is_verified?: boolean | null;
@@ -51,10 +47,6 @@ export type AccountRead = {
      */
     is_active?: boolean;
     /**
-     * Is Superuser
-     */
-    is_superuser?: boolean;
-    /**
      * Is Verified
      */
     is_verified?: boolean;
@@ -78,10 +70,6 @@ export type AccountUpdate = {
      * Is Active
      */
     is_active?: boolean | null;
-    /**
-     * Is Superuser
-     */
-    is_superuser?: boolean | null;
     /**
      * Is Verified
      */

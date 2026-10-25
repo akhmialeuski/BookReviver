@@ -109,7 +109,7 @@ class TestRegister:
         fx_mailer.sent.clear()
         response = await fx_visitor.register(EMAIL, NEW_PASSWORD)
         expect(response.status_code == HTTPStatus.CREATED)
-        expect(response.json().keys() == AccountRead.model_fields.keys())
+        expect(response.json().keys() == AccountRead.model_json_schema()['properties'].keys())
         expect(AccountRead.model_validate(response.json()).is_verified is False)
         expect([message.subject for message in fx_mailer.sent] == [AccountMail.ALREADY_REGISTERED.subject])
         expect((await fx_visitor.login(EMAIL, NEW_PASSWORD)).status_code == HTTPStatus.BAD_REQUEST)
@@ -379,6 +379,7 @@ class TestUserRoutes:
         expect(response.status_code == HTTPStatus.OK)
         expect(account.email == EMAIL)
         expect(account.is_verified is True)
+        expect('is_superuser' not in response.json())
         assert_expectations()
 
     @pytest.mark.parametrize('method', ['GET', 'PATCH', 'DELETE'])

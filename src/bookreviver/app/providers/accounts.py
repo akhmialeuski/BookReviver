@@ -229,7 +229,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
         :param user_create: Registration data, email address and password.
         :type user_create: BaseUserCreate
-        :param safe: Whether to ignore the privileged fields of ``user_create``.
+        :param safe: Kept for the signature of the base class; privileged fields are always ignored.
         :type safe: bool
         :param request: Request that triggered the registration, if any.
         :type request: Request | None
@@ -243,11 +243,9 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
             # Spend the time a new account costs, and answer with an account that is never stored
             await self._hasher.hash(user_create.password)
             await self._mailer.send(AccountMail.ALREADY_REGISTERED.to(user_create.email, public_url=self._public_url))
-            return AccountTable(
-                id=uuid4(), email=user_create.email, is_active=True, is_superuser=False, is_verified=False
-            )
+            return AccountTable(id=uuid4(), email=user_create.email, is_active=True, is_verified=False)
 
-        user_dict = user_create.create_update_dict() if safe else user_create.create_update_dict_superuser()
+        user_dict = user_create.create_update_dict()
         password = user_dict.pop(PASSWORD_FIELD)
         user_dict[HASHED_PASSWORD_FIELD] = await self._hasher.hash(password)
         created_user = await self.user_db.create(user_dict)

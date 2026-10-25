@@ -54,9 +54,9 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     make_step_values,
+    new_account_id,
     new_book_id,
 )
-from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
+    from bookreviver.domain.ids import AccountId
 
 pytestmark = pytest.mark.anyio
 
@@ -105,6 +106,15 @@ BEFORE_RELATIVE_KEYS: str = 'ba87bba973f4'
 BEFORE_RECORD_KEY: str = '54f16295b19a'
 # The revision of the catalogue before the library entry kept the directory of its book
 BEFORE_DIRECTORIES: str = '0734365bee74'
+# The revision of the catalogue before the superuser flag of the accounts was dropped, and the one that drops it
+BEFORE_SUPERUSER: str = '87d63fb283ae'
+SUPERUSER_REVISION: str = '2d1c8cf7b6ea'
+SUPERUSER_COLUMN: str = 'is_superuser'
+USER_TABLE: str = 'user'
+# Stores a verified account as the schemas before that revision hold it, with the flag the tables no longer describe
+INSERT_FLAGGED_ACCOUNT = text(
+    "INSERT INTO user (id, email, hashed_password, is_active, is_superuser, is_verified) VALUES (:id, :email, '', 1, 0, 1)"
+)
 MESH_KEY: str = 'assets/pages/page/geometry/geometry.dewarp/version/mesh.json'
 MESH_PATH: str = '$.mesh_key'
 # The fields the change of that test sets
@@ -250,6 +260,20 @@ def _primary_keys(database: SqlDatabase) -> dict[str, list[str]]:
         inspector = inspect(connection)
         tables = set(inspector.get_table_names()) - {database.config.alembic_config.version_table_name}
         return {table: list(inspector.get_pk_constraint(table)['constrained_columns']) for table in tables}
+
+
+def _insert_flagged_account(database: SqlDatabase) -> AccountId:
+    """Store an account in a catalogue migrated to a revision before the superuser flag was dropped.
+
+    :param database: Catalogue migrated to such a revision.
+    :type database: SqlDatabase
+    :returns: Identifier of the account.
+    :rtype: AccountId
+    """
+    account_id = new_account_id()
+    with _session(database) as session, session.begin():
+        session.execute(INSERT_FLAGGED_ACCOUNT, {'id': account_id.bytes, 'email': f'{account_id}@example.org'})
+    return account_id
 
 
 async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: str) -> None:
@@ -484,7 +508,7 @@ class TestChecksRevision:
         :type fx_empty_catalogue: SqlDatabase
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, CATALOGUE_BASELINE)
-        owner = await commit_account(fx_empty_catalogue)
+        owner = _insert_flagged_account(fx_empty_catalogue)
         with _session(fx_empty_catalogue) as session, session.begin():
             session.add_all(
                 OAuthAccountTable(
@@ -896,7 +920,7 @@ class TestDirectoriesRevision:
         :type fx_empty_catalogue: SqlDatabase
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_DIRECTORIES)
-        owner, book_id = await commit_account(fx_empty_catalogue), new_book_id()
+        owner, book_id = _insert_flagged_account(fx_empty_catalogue), new_book_id()
         with _session(fx_empty_catalogue) as session, session.begin():
             session.execute(
                 text('INSERT INTO library (project_id, owner_id, added_at) VALUES (:book, :owner, :added)'),
@@ -908,6 +932,36 @@ class TestDirectoriesRevision:
         with _session(fx_empty_catalogue) as session:
             directories = session.scalars(text('SELECT directory FROM library')).all()
         assert directories == [str(book_id)]
+
+
+class TestSuperuserRevision:
+    """Tests for the revision of the catalogue that drops the superuser flag of the accounts."""
+
+    async def test_the_accounts_keep_their_rows_and_the_downgrade_puts_the_flag_back(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the upgrade drops only the column of the flag, and the downgrade restores it as false.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_SUPERUSER)
+        owner = _insert_flagged_account(fx_empty_catalogue)
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, SUPERUSER_REVISION)
+        with fx_empty_catalogue.engine.connect() as connection:
+            upgraded_columns = {column['name'] for column in inspect(connection).get_columns(USER_TABLE)}
+        with _session(fx_empty_catalogue) as session:
+            upgraded = session.scalars(text('SELECT id FROM user')).all()
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.downgrade, BEFORE_SUPERUSER)
+        with _session(fx_empty_catalogue) as session:
+            flags = session.scalars(text(f'SELECT {SUPERUSER_COLUMN} FROM user')).all()
+
+        expect(SUPERUSER_COLUMN not in upgraded_columns)
+        expect(upgraded == [owner.bytes])
+        expect(flags == [0])
+        assert_expectations()
 
 
 class TestEnv:
