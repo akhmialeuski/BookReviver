@@ -17,6 +17,7 @@ uv run fastapi dev                       # API on http://127.0.0.1:8000, data in
 uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # catalogue revision
 uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
 uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
+uv run bookreviver-migrate move-book-directories  # once: data/storage/projects/ to data/storage/books/
 uv run pytest tests/contracts            # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
@@ -109,7 +110,7 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - Python 3.14 with deferred annotations. SQLAlchemy 2.0 synchronous engines over SQLite in the persistence adapter, its
   tables private to it. SQLite is the only database: the catalogue `data/catalogue.db` holds the accounts, the library
   that says which account owns which book, and the recipe profiles, and every book is `book.db` in its own directory
-  `data/storage/projects/<id>/`, beside its files, with no account in it. Nothing refers across two files by a key.
+  `data/storage/books/<id>/`, beside its files, with no account in it. Nothing refers across two files by a key.
 - A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/catalogue/versions/`
   or `.../book/versions/`, generated with `make-migrations --autogenerate` (`--bind-key book` for a book), read by eye
   for every key and index, and formatted by the gate. `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails

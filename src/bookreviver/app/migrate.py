@@ -13,7 +13,8 @@ file made at the head revision for the command in a temporary directory: that is
 --autogenerate`` compares the tables of a book with.
 
 ``split-shared-database`` moves the shared database of the releases before the catalogue into the catalogue and the
-files of the books, once.
+files of the books, once. ``move-book-directories`` moves the directories of the books from ``projects/`` to ``books/``
+under the storage root, once.
 """
 
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from dishka import make_async_container
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.split import SharedDatabaseSplit
+from bookreviver.adapters.storage.move import OLD_BOOKS_DIRECTORY, BookDirectoriesMove, MoveRefusedError
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
@@ -114,6 +116,28 @@ def split_shared_database() -> None:
         click.echo(f'Moved {report.accounts} accounts and {report.books} books.')
 
     anyio.run(run)
+
+
+@migrate.command(name='move-book-directories')
+def move_book_directories() -> None:
+    """Move the directories of the books from ``projects/`` to ``books/`` under the storage root.
+
+    A storage root with no ``projects/`` directory is left as it is, so the command runs again without harm.
+
+    :raises click.ClickException: If a directory of ``projects/`` would overwrite one in ``books/``, or ``projects/``
+        holds something that is not the directory of a book.
+    """
+    root = Settings().storage_root
+    try:
+        report = anyio.run(BookDirectoriesMove(root).run)
+    except MoveRefusedError as error:
+        raise click.ClickException(str(error)) from error
+    if report.found:
+        click.echo(
+            f'Moved {report.moved} book directories from {root / OLD_BOOKS_DIRECTORY} to {root / KeySegment.BOOKS}.'
+        )
+    else:
+        click.echo(f'There is no {root / OLD_BOOKS_DIRECTORY}, so there is nothing to move.')
 
 
 add_migration_commands(migrate)

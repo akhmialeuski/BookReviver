@@ -72,7 +72,7 @@ def book_directory(root: Path, book_id: BookId) -> Path:
     :type root: Path
     :param book_id: The book.
     :type book_id: BookId
-    :returns: The path of ``projects/<book_id>``, under which the keys of the book name its files.
+    :returns: The path of ``books/<book_id>``, under which the keys of the book name its files.
     :rtype: Path
     """
     return root / KeySegment.BOOKS / str(book_id)

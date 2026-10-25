@@ -43,8 +43,8 @@ OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'empty': '',
     'absolute': '/etc/passwd',
     'climbing': '../outside',
-    'root': 'projects',
-    'book-directory': f'projects/{BOOK_ID}',
+    'root': 'books',
+    'book-directory': f'books/{BOOK_ID}',
     'incoming-area': BookKeys.INCOMING_AREA,
     'upload': BookKeys.incoming(JobId(uuid4())),
     'sources-area': BookKeys.SOURCES_AREA,
@@ -53,9 +53,9 @@ OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'assets-area': BookKeys.ASSETS_AREA,
     'climbing-out-of-assets': f'{BookKeys.ASSETS_AREA}/../sources',
     'empty-segment': f'{PAGE_PREFIX}//full.jpg',
-    'not-a-project': f'projects/book/assets/{Rendition.FULL_JPEG}',
+    'not-a-book': f'books/book/assets/{Rendition.FULL_JPEG}',
     # A key that names the directory of its book, as the keys of a book did before they named it from there
-    'with-the-book-directory': f'projects/{BOOK_ID}/assets/book/typesetting',
+    'with-the-book-directory': f'books/{BOOK_ID}/assets/book/typesetting',
 }
 OLD_CONTENT: bytes = b'old image'
 NEW_CONTENT: bytes = b'new image'

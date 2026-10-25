@@ -89,6 +89,10 @@ Run these once on a new machine, in this order, from the root of the repository.
 - A `data/` of the releases that kept everything in one `data/bookreviver.db` needs
   `uv run bookreviver-migrate split-shared-database` once, after `upgrade head` with the last of those releases. The
   command fills the catalogue and gives every book its own database, and leaves `bookreviver.db` as it was.
+- A `data/storage/projects/` directory, where the earlier releases kept the books, needs
+  `uv run bookreviver-migrate move-book-directories` once, with the server stopped, together with `upgrade head` for the
+  catalogue. The command renames every book directory into `data/storage/books/`, refuses to overwrite one that is
+  there, and does nothing when `projects/` is gone, so running it again is harmless.
 - A change of `pyproject.toml` or `uv.lock` needs `uv sync --extra cv`. Plain `uv sync` removes OpenCV, and the server
   then starts without the steps that split a spread and straighten a page. With the pre-commit hooks installed, the
   `uv-sync` hook does this by itself after every checkout, merge and rebase, with every optional group.

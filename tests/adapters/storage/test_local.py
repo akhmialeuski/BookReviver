@@ -27,7 +27,7 @@ pytestmark = pytest.mark.anyio
 BOOK_ID: BookId = BookId(uuid4())
 OTHER_BOOK_ID: BookId = BookId(uuid4())
 # The directory of the book under the storage root, as the local stores lay it out
-BOOK_DIRECTORY: str = f'projects/{BOOK_ID}'
+BOOK_DIRECTORY: str = f'books/{BOOK_ID}'
 JOB_ID: JobId = JobId(uuid4())
 SOURCE_ID: SourceId = SourceId(uuid4())
 PAGE_NAME: str = 'page.png'
@@ -54,19 +54,17 @@ class TestLocalSourceStore:
     """Tests for LocalSourceStore."""
 
     async def test_stages_into_the_jobs_incoming_directory(self, tmp_path: Path) -> None:
-        """Verify an upload lands in ``projects/<id>/incoming/<job_id>/`` under the root, as the architecture lays out.
+        """Verify an upload lands in ``books/<id>/incoming/<job_id>/`` under the root, as the architecture lays out.
 
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
-        assert (tmp_path / 'projects' / str(BOOK_ID) / 'incoming' / str(JOB_ID) / PAGE_NAME).read_bytes() == (
-            PAGE_CONTENT
-        )
+        assert (tmp_path / 'books' / str(BOOK_ID) / 'incoming' / str(JOB_ID) / PAGE_NAME).read_bytes() == (PAGE_CONTENT)
 
     async def test_promotes_into_the_sources_own_directory(self, tmp_path: Path) -> None:
-        """Verify a source lands in ``projects/<id>/sources/<source_id>/``, with nothing else left in ``sources/``.
+        """Verify a source lands in ``books/<id>/sources/<source_id>/``, with nothing else left in ``sources/``.
 
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -75,7 +73,7 @@ class TestLocalSourceStore:
 
         await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
-        sources_dir = tmp_path / 'projects' / str(BOOK_ID) / 'sources'
+        sources_dir = tmp_path / 'books' / str(BOOK_ID) / 'sources'
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
         assert (sources_dir / str(SOURCE_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT
 
@@ -122,7 +120,7 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         sources_dir = tmp_path / BOOK_DIRECTORY / BookKeys.SOURCES_AREA
-        other_incoming = tmp_path / 'projects' / str(OTHER_BOOK_ID) / BookKeys.INCOMING_AREA
+        other_incoming = tmp_path / 'books' / str(OTHER_BOOK_ID) / BookKeys.INCOMING_AREA
         await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
         await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)

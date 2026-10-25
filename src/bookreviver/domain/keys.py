@@ -1,7 +1,7 @@
 """Layout of storage keys, the one place that builds the key of any stored file of a book.
 
 A key names a file relative to the directory of its book, so a key stays true when the book moves under another
-identifier, as an imported book does, and the stores of one book alone place it under ``projects/<book_id>/``. The files
+identifier, as an imported book does, and the stores of one book alone place it under ``books/<book_id>/``. The files
 are divided between the two storage ports:
 
 - ``incoming/<job_id>/`` holds the upload of one import job while it is received and checked.
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 class KeySegment(LabeledStrEnum):
     """A fixed directory name of the storage layout."""
 
-    BOOKS = 'projects', 'Root of every book'
+    BOOKS = 'books', 'Root of every book'
     INCOMING = 'incoming', 'Uploads being received, owned by the source store'
     SOURCES = 'sources', 'Files of the sources as uploaded, owned by the source store'
     ASSETS = 'assets', 'Derived files, owned by the asset store'
