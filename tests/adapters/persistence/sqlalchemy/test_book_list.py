@@ -81,7 +81,7 @@ def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page
 async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: int) -> int:
     """List the owner's books as the list route does and count the statements every engine sends for their overviews.
 
-    The window of the owner's books is read from the catalogue first, as the access dependency reads it, and the
+    The window of the owner's books is read from the catalogue first, as ``Access.books`` reads it, and the
     counter then listens on the ``Engine`` class, so the statements of the file of every book count.
 
     :param stores: Opens the catalogue databases and the databases of the books of the test.

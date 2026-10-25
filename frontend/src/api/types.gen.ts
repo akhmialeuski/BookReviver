@@ -4278,17 +4278,17 @@ export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Source Id
-         *
-         * Identifier of the source
-         */
-        source_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Source Id
+         *
+         * Identifier of the source
+         */
+        source_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}';
@@ -4324,17 +4324,17 @@ export type GetSourceApiV1BooksBookIdSourcesSourceIdGetData = {
     body?: never;
     path: {
         /**
-         * Source Id
-         *
-         * Identifier of the source
-         */
-        source_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Source Id
+         *
+         * Identifier of the source
+         */
+        source_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}';
@@ -4423,17 +4423,17 @@ export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostData = {
     body: PageAnchorBody;
     path: {
         /**
-         * Source Id
-         *
-         * Identifier of the source
-         */
-        source_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Source Id
+         *
+         * Identifier of the source
+         */
+        source_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}/pages/move';
@@ -6237,17 +6237,17 @@ export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetData = 
     body?: never;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/export';
@@ -6283,17 +6283,17 @@ export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePost
     body?: never;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/duplicate';
@@ -6329,17 +6329,17 @@ export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
@@ -6375,17 +6375,17 @@ export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchData = {
     body: RecipeProfileName;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
@@ -6421,17 +6421,17 @@ export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutData = {
     body: ProfileBody;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
@@ -6467,17 +6467,17 @@ export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostData = {
     body: ApplyProfileBody;
     path: {
         /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/apply';
@@ -7242,17 +7242,17 @@ export type CancelJobApiV1BooksBookIdJobsJobIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Job Id
-         *
-         * Identifier of the job
-         */
-        job_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Job Id
+         *
+         * Identifier of the job
+         */
+        job_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/jobs/{job_id}';
@@ -7288,17 +7288,17 @@ export type ReadJobApiV1BooksBookIdJobsJobIdGetData = {
     body?: never;
     path: {
         /**
-         * Job Id
-         *
-         * Identifier of the job
-         */
-        job_id: string;
-        /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+        /**
+         * Job Id
+         *
+         * Identifier of the job
+         */
+        job_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/jobs/{job_id}';

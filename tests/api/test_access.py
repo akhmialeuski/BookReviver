@@ -8,7 +8,6 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 
-from bookreviver.api.auth import signed_in_user
 from bookreviver.api.routers.iiif import IIIF_PREFIX
 from bookreviver.api.routing import API_PREFIX
 from tests.helpers.builders import new_book_id
@@ -23,16 +22,6 @@ pytestmark = pytest.mark.anyio
 PUBLIC_PREFIXES: tuple[str, ...] = (f'{API_PREFIX}/auth', f'{API_PREFIX}/users', f'{API_PREFIX}{IIIF_PREFIX}')
 PROVIDERS_PATH: str = f'{API_PREFIX}/auth/providers'
 PATH_PARAMETER: re.Pattern[str] = re.compile(r'\{[^}]+\}')
-
-
-@pytest.fixture
-def fx_signed_out(fx_app: FastAPI) -> None:
-    """Take the test's sign-in off, so a request has no session.
-
-    :param fx_app: The running application, whose stub user is removed.
-    :type fx_app: FastAPI
-    """
-    fx_app.dependency_overrides.pop(signed_in_user)
 
 
 @pytest.mark.usefixtures('fx_signed_out')

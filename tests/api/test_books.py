@@ -434,6 +434,67 @@ class TestGetBook:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
+class TestAccess:
+    """Tests for the guard of the API on the list of books and on a book."""
+
+    async def test_serves_an_own_book(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a book of the signed-in account is served, and so is the list that holds it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+
+        book = await _get_book(fx_client, book_id)
+        listed = await _list_books(fx_client, {})
+
+        expect(book.id == book_id)
+        expect([item.id for item in listed.items] == [book_id])
+        assert_expectations()
+
+    @pytest.mark.usefixtures('fx_signed_out')
+    async def test_refuses_a_caller_without_a_session(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the list, a book that exists, and the creation of a book answer 401 with no session.
+
+        :param fx_client: Client without a session.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The account that owns the stored book.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+
+        listed = await fx_client.get(BOOKS_PATH)
+        read = await fx_client.get(_book_path(book_id))
+        created = await fx_client.post(BOOKS_PATH, json={TITLE_FIELD: TITLE})
+
+        expect(listed.status_code == status.HTTP_401_UNAUTHORIZED)
+        expect(read.status_code == status.HTTP_401_UNAUTHORIZED)
+        expect(created.status_code == status.HTTP_401_UNAUTHORIZED)
+        assert_expectations()
+
+
 class TestUpdateBook:
     """Tests for PATCH /books/{book_id}."""
 

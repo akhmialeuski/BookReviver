@@ -2,6 +2,7 @@
 
 import io
 import zipfile
+from functools import partial
 from typing import TYPE_CHECKING, override
 from uuid import uuid4
 
@@ -154,7 +155,7 @@ def fx_files(fx_storage_root: Path) -> BookFiles:
 
 
 class TestList:
-    """Tests for the list of books: the books of the access dependencies, then the overview of each Book."""
+    """Tests for the list of books: the books ``Access`` reads, then the overview of each Book."""
 
     async def test_lists_only_the_actors_books_newest_first(
         self,
@@ -358,7 +359,7 @@ class TestDelete:
         for book_id, page in ((doomed_id, doomed_page), (kept_id, kept_page)):
             await fx_files.store(book_id, page)
 
-        await fx_service().delete(await fx_catalogue().read(lambda repos: repos.library.get(doomed_id)))
+        await fx_service().delete(book_id=doomed_id, book=open_for(fx_actor, doomed_id))
 
         remaining = await fx_catalogue().read(
             lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest())
@@ -393,20 +394,19 @@ class TestDelete:
         )
         await fx_files.store(book_id, page)
         book = open_for(fx_actor, book_id)
-        entry = await fx_open_book.catalogue().read(lambda repos: repos.library.get(book_id))
 
         with pytest.raises(StoreFailedError):
-            await fx_service().delete(entry)
+            await fx_service().delete(book_id=book_id, book=book)
 
         expect(await fx_open_book.catalogue().read(lambda repos: repos.library.list_all()) == [])
         expect(fx_files.kept(page))
         assert_expectations()
-        await book.delete()
+        await open_for(fx_actor, book_id).delete()
         assert fx_files.gone(book_id)
 
 
 async def _listed(catalogue: CatalogueDatabase, actor: Actor) -> dict[BookId, BookOverview]:
-    """List the books of the actor as the list route does: the books the access dependencies read, then their overviews.
+    """List the books of the actor as the list route does: the books ``Access.books`` reads, then their overviews.
 
     :param catalogue: Catalogue database the books of the actor are read through.
     :type catalogue: CatalogueDatabase
@@ -587,7 +587,6 @@ class TestDeleteWaitsForTheTransactionInProgress:
         book_id = await store_book(
             fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
-        entry = await fx_catalogue().read(lambda repos: repos.library.get(book_id))
         entered, release = anyio.Event(), anyio.Event()
         committed = False
 
@@ -612,7 +611,7 @@ class TestDeleteWaitsForTheTransactionInProgress:
         async with anyio.create_task_group() as group:
             group.start_soon(change)
             await entered.wait()
-            group.start_soon(fx_service().delete, entry)
+            group.start_soon(partial(fx_service().delete, book_id=book_id, book=open_for(fx_actor, book_id)))
             await anyio.wait_all_tasks_blocked()
             expect(not fx_files.gone(book_id), 'the directory stayed while the change ran')
             release.set()

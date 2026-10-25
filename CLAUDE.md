@@ -45,9 +45,10 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - A route annotates its parameters in place (`Annotated[BookId, Path()]`, `FromDishka[BooksService]`), with no
   module-level alias made only to keep an import at runtime. `ruff.toml` lists the `fastapi.APIRouter` methods and
   `dishka.integrations.fastapi.inject` under `runtime-evaluated-decorators`, and ruff resolves `@router.get` to
-  them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `ActorDep`,
-  stays an alias in its own module. One that reads a path parameter, such as `open_book`, is written in place, since
-  ruff's `FAST003` does not follow an alias to the path parameter it reads. A route docstring puts a form feed
+  them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `AccessDep`,
+  stays an alias in its own module. A path parameter, such as the `book_id` of a book, is written in place on the
+  route (or in a dataclass the route takes with `Depends()`), since ruff's `FAST003` does not follow an alias to the
+  path parameter it reads. A route docstring puts a form feed
   (`\N{FORM FEED}`) before its reST fields, because FastAPI ends the OpenAPI description there.
 
 ## Architecture rules
@@ -64,11 +65,16 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   with `FromDishka[StageSummaries]` and calls with the `Book`: the resource schema, or
   fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
   domain errors in the one handler registered in `app`.
-- Who may work on what is decided only by the FastAPI dependencies of `api/access.py`. `open_book` opens a book of the
-  signed-in account and answers one of another account like a missing one, and `own_books` reads the account's list.
-  Services, the domain and the jobs check no owner and choose no account's records: a use case works on the `Book` it
-  is given, and takes an account only as the owner of a record it creates. A recipe profile lives in its book and is
-  reached through the routes of the book. A route of a book declares `Annotated[Book, Depends(open_book)]` in place.
+- Who may work on what is decided only by `Access` in `api/access.py`. Every route of the API is mounted under one
+  router whose dependency is `access`, so a request without a session is refused before any route runs; only sign-in,
+  the routes of the signed-in account and `/iiif` are mounted outside it. A route that needs the account, a book or the
+  list of books declares `access: AccessDep`. `Access.book` opens a book of the signed-in account and answers one of
+  another account like a missing one, `Access.books` reads the account's list, and `Access.actor` is the owner of a
+  record the route creates. Services, the domain and the jobs check no owner and choose no account's records: a use
+  case works on the `Book` it is given, and takes an account only as the owner of a record it creates. A recipe profile
+  lives in its book and is reached through the routes of the book. A route of a book declares
+  `book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]` in place (or takes it from a path dataclass) and
+  calls `await access.book(book_id)`. A new router is added to `GUARDED_ROUTERS` in `api/routing.py`.
 - All request input is validated by Pydantic before the route runs: bodies, query models (`Annotated[Model, Query()]`),
   forms and headers, built on the shared `RequestModel` base and the constrained types in `api/schemas/types.py`.
   Handlers never check raw input by hand.

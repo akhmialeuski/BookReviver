@@ -5,7 +5,7 @@ and of a digest of the path and the query asked for, and with ``Cache-Control: p
 keeps the answer and asks again with ``If-None-Match`` every time. When the tag it sends is still the tag of the book,
 the read is answered 304 without a body and its handler never runs. The routers of one book take :func:`fresh_book` as
 a dependency of every route, and it lets anything but a read of a book through. It takes the same open book as the
-route, so the owner is checked once for both.
+route from the same ``Access``, so the owner is checked once for both.
 
 A dependency cannot answer a request itself, so a read that still holds raises :class:`NotModifiedError`, which
 :func:`not_modified` answers. fastapi-problem answers every ``HTTPException`` with a problem body, which a 304 must not
@@ -18,10 +18,10 @@ from http import HTTPMethod, HTTPStatus
 from typing import TYPE_CHECKING, Annotated, Final
 
 from dishka.integrations.fastapi import FromDishka, inject
-from fastapi import Depends, Request, Response
+from fastapi import Path, Request, Response
 
-from bookreviver.api.access import open_book
-from bookreviver.services.book import Book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
+from bookreviver.domain.ids import BookId
 from bookreviver.services.freshness import BookFreshness
 
 if TYPE_CHECKING:
@@ -75,21 +75,27 @@ def _matches(sent: str | None, tag: str) -> bool:
 async def fresh_book(
     request: Request,
     response: Response,
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     freshness: FromDishka[BookFreshness],
 ) -> None:
     """Tag a read of a book, and answer it 304 when the client holds it as it still is.
 
+    The book is opened for every method, so a request for a book of another account is refused here, before the route.
+
     :param request: The request, whose method, path, query and ``If-None-Match`` are read.
     :type request: Request
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
     :param response: The response of a read that runs, which receives the tag and the caching.
     :type response: Response
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param freshness: Freshness of the reads of the books of the request.
     :type freshness: BookFreshness
     :raises NotModifiedError: If the client holds the read as it still is.
     """
+    book = await access.book(book_id)
     if request.method != HTTPMethod.GET:
         return
     asked = request.url.path if not request.url.query else f'{request.url.path}?{request.url.query}'

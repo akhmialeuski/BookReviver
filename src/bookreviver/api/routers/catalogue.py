@@ -2,7 +2,7 @@
 
 ``GET /processors`` lists the processors the application can run, each with the JSON Schema of its parameters,
 from which the interface builds the settings form. The catalogue is the same for every account, so the route asks for
-no book.
+no book, and only the guard of the API keeps out a caller who is not signed in.
 """
 
 from typing import Annotated
@@ -11,15 +11,12 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.auth import current_actor
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.processing import ProcessorSchema
 from bookreviver.domain.values import ProcessorSpec, Slice
 from bookreviver.services.processing import ProcessingService
 
-router = APIRouter(
-    prefix='/processors', tags=['processing'], route_class=DishkaRoute, dependencies=[Depends(current_actor)]
-)
+router = APIRouter(prefix='/processors', tags=['processing'], route_class=DishkaRoute)
 
 
 @router.get('')

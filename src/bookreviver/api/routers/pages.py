@@ -12,7 +12,7 @@ from typing import Annotated
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Body, Depends, Path, Request, Response, status
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName
@@ -33,7 +33,6 @@ from bookreviver.api.schemas.pages import (
 )
 from bookreviver.domain.entities import PageOverview
 from bookreviver.domain.ids import BookId, PageId
-from bookreviver.services.book import Book
 from bookreviver.services.pages import PageService
 from bookreviver.services.pagination import PaginationService
 
@@ -86,7 +85,7 @@ class PageLinks:
 
 @router.get('/{book_id}/pages')
 async def list_pages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     request: Request,
     params: Annotated[PageQuery, Depends()],
@@ -95,8 +94,8 @@ async def list_pages(
     """List the pages of a book in book order, up to a thousand at once, with the paths of their images.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param book_id: Identifier of the book, from the path.
     :type book_id: BookId
     :param request: The request, whose application knows the route that serves the images.
@@ -108,6 +107,7 @@ async def list_pages(
     :returns: One page of the manifest, whose items carry their position in the whole book.
     :rtype: ManifestPage[PageSchema]
     """
+    book = await access.book(book_id)
     schema_of = partial(PageSchema.from_overview, request=request, book_id=book_id)
     pager = Pager[PageOverview, PageSchema](params, schema_of)
     return pager.page(await pages.manifest(book, pager.request, included_only=params.included))
@@ -115,7 +115,7 @@ async def list_pages(
 
 @router.get('/{book_id}/pages/{page_id}', name=RouteName.PAGE)
 async def get_page(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)],
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     request: Request,
@@ -124,8 +124,8 @@ async def get_page(
     """Return one page of a book.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param page_id: Identifier of the page.
     :type page_id: PageId
     :param book_id: Identifier of the book, from the path.
@@ -137,12 +137,13 @@ async def get_page(
     :returns: The page with its position in the book.
     :rtype: PageSchema
     """
+    book = await access.book(book_id)
     return PageSchema.from_overview(await pages.get(book, page_id), request, book_id=book_id)
 
 
 @router.post('/{book_id}/pages/{page_id}/move')
 async def move_page(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[PagePath, Depends()],
     body: PageMove,
     request: Request,
@@ -153,8 +154,8 @@ async def move_page(
     The answer is 409 when the anchor is the page itself, or another request took the new place first.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and of the page to move.
     :type address: PagePath
     :param body: The page to put it next to, and the side.
@@ -166,13 +167,15 @@ async def move_page(
     :returns: The page at its new place.
     :rtype: PageSchema
     """
+    book = await access.book(address.book_id)
     moved = await pages.move(book, address.page_id, body.anchor)
     return PageSchema.from_overview(moved, request, book_id=address.book_id)
 
 
 @router.post('/{book_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
 async def move_pages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: PagesMove,
     pages: FromDishka[PageService],
 ) -> None:
@@ -182,19 +185,23 @@ async def move_pages(
     event, so the answer has no body.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The pages to move, the page to put them next to, and the side.
     :type body: PagesMove
     :param pages: Page service of the request.
     :type pages: PageService
     """
+    book = await access.book(book_id)
     await pages.move_group(book, body.page_ids, body.anchor)
 
 
 @router.post('/{book_id}/pages/blank-fill', status_code=status.HTTP_204_NO_CONTENT)
 async def fill_blank_pages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: BlankFillChange,
     pages: FromDishka[PageService],
 ) -> None:
@@ -208,19 +215,23 @@ async def fill_blank_pages(
     browser as a ``book-changed`` event, so the answer has no body.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The pages to change and the choice.
     :type body: BlankFillChange
     :param pages: Page service of the request.
     :type pages: PageService
     """
+    book = await access.book(book_id)
     await pages.set_blank_fill(book, body.page_ids, body.blank_fill)
 
 
 @router.post('/{book_id}/pages/content-types/detect', status_code=status.HTTP_202_ACCEPTED)
 async def detect_content_types(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: ContentDetectionRequest,
     pages: FromDishka[PageService],
 ) -> JobSchema:
@@ -235,8 +246,10 @@ async def detect_content_types(
     browser as a ``book-changed`` event.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The pages to detect, or none for those that are not detected yet.
     :type body: ContentDetectionRequest
     :param pages: Page service of the request.
@@ -244,12 +257,13 @@ async def detect_content_types(
     :returns: The queued job.
     :rtype: JobSchema
     """
+    book = await access.book(book_id)
     return JobSchema.model_validate(await pages.start_detection(book, body.page_ids))
 
 
 @router.patch('/{book_id}/pages/{page_id}')
 async def update_page(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[PagePath, Depends()],
     body: Annotated[PageUpdate, Body()],
     request: Request,
@@ -263,8 +277,8 @@ async def update_page(
     its scan again in place of a leaf.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param body: Fields to change, with null for a label or notes to clear.
@@ -276,13 +290,15 @@ async def update_page(
     :returns: The changed page.
     :rtype: PageSchema
     """
+    book = await access.book(address.book_id)
     changed = await pages.update(book, address.page_id, body.to_changes())
     return PageSchema.from_overview(changed, request, book_id=address.book_id)
 
 
 @router.post('/{book_id}/pages/labels', status_code=status.HTTP_204_NO_CONTENT)
 async def number_pages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: LabelRange,
     pagination: FromDishka[PaginationService],
 ) -> None:
@@ -295,19 +311,23 @@ async def number_pages(
     reach the browser as a ``book-changed`` event.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
     :type body: LabelRange
     :param pagination: Pagination service of the request.
     :type pagination: PaginationService
     """
+    book = await access.book(book_id)
     await pagination.number(book, body.to_numbering())
 
 
 @router.post('/{book_id}/pages/labels/preview')
 async def preview_page_numbers(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: LabelRange,
     pagination: FromDishka[PaginationService],
 ) -> list[NumberedPageSchema]:
@@ -317,8 +337,10 @@ async def preview_page_numbers(
     answer is 409 when the range runs backwards.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
     :type body: LabelRange
     :param pagination: Pagination service of the request.
@@ -326,13 +348,14 @@ async def preview_page_numbers(
     :returns: Every page the numbering counts, in book order, with the label it would get.
     :rtype: list[NumberedPageSchema]
     """
+    book = await access.book(book_id)
     numbered = await pagination.preview_numbers(book, body.to_numbering())
     return [NumberedPageSchema.model_validate(page) for page in numbered]
 
 
 @router.post('/{book_id}/pages', status_code=status.HTTP_201_CREATED)
 async def create_page(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[PageCreate, Body()],
     links: Annotated[PageLinks, Depends()],
@@ -345,8 +368,8 @@ async def create_page(
     leaf without a size when no page of the book has an image to take the median of.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param book_id: Identifier of the book, from the path.
     :type book_id: BookId
     :param body: The kind and origin of the page, its place, and the size of a blank leaf.
@@ -358,12 +381,13 @@ async def create_page(
     :returns: The new page.
     :rtype: PageSchema
     """
+    book = await access.book(book_id)
     return links.created(book_id, await pages.add(book, body.to_new_page()))
 
 
 @router.post('/{book_id}/pages/batch', status_code=status.HTTP_201_CREATED)
 async def create_pages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[PageCreateList, Body()],
     request: Request,
@@ -378,8 +402,8 @@ async def create_pages(
     median of, with its index in the detail.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param book_id: Identifier of the book, from the path.
     :type book_id: BookId
     :param body: The pages to add, in the order they stand in where they share a place.
@@ -391,30 +415,32 @@ async def create_pages(
     :returns: The new pages, in the order of the request.
     :rtype: list[PageSchema]
     """
+    book = await access.book(book_id)
     added = await pages.add_many(book, [page.to_new_page() for page in body])
     return [PageSchema.from_overview(overview, request, book_id=book_id) for overview in added]
 
 
 @router.delete('/{book_id}/pages/{page_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_page(
-    book: Annotated[Book, Depends(open_book)], address: Annotated[PagePath, Depends()], pages: FromDishka[PageService]
+    access: AccessDep, address: Annotated[PagePath, Depends()], pages: FromDishka[PageService]
 ) -> None:
     """Delete a page with its versions and files, leaving its scan and the source of the scan.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param pages: Page service of the request.
     :type pages: PageService
     """
+    book = await access.book(address.book_id)
     await pages.delete(book, address.page_id)
 
 
 @router.put('/{book_id}/pages/{page_id}/scan')
 async def attach_scan(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[PagePath, Depends()],
     body: ScanAttach,
     request: Request,
@@ -426,8 +452,8 @@ async def attach_scan(
     unless ``take_over`` is set, which deletes that page. A scan of another book is a 404.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and of the placeholder.
     :type address: PagePath
     :param body: The scan to bind, and whether to take it from the page that shows it.
@@ -439,5 +465,6 @@ async def attach_scan(
     :returns: The page, which has no images until the job is done.
     :rtype: PageSchema
     """
+    book = await access.book(address.book_id)
     bound = await pages.attach_scan(book, address.page_id, body.scan_id, take_over=body.take_over)
     return PageSchema.from_overview(bound, request, book_id=address.book_id)

@@ -2,9 +2,9 @@
 
 A book knows the name of its directory and opens its own parts by it: its directory, its database, its event channel
 and its job queue. It knows no identifier and no owner, which live in the library entry of the catalogue: a caller that
-needs them takes them where they already are, the routes from the path, the access dependency ``open_book`` from the
-library entry, and a job from the queue it was taken from. ``BooksService`` opens a book of a library entry already
-read. For a request, ``open_book`` of the API opens a book of the signed-in account after it has checked the
+needs them takes them where they already are, the routes from the path, the ``Access`` of the API from the library
+entry, and a job from the queue it was taken from. ``BooksService`` opens a book of a library entry already read. For a
+request, ``Access.book`` of the API opens a book of the signed-in account after it has checked the
 owner, so a use case that takes a ``Book`` works on it and checks nothing itself. A job opens the book of its queue
 from the name of the directory. A use case reads the book through ``read``, changes it through ``change``, and asks
 ``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any

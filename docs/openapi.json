@@ -852,18 +852,6 @@
         "operationId": "get_source_api_v1_books__book_id__sources__source_id__get",
         "parameters": [
           {
-            "name": "source_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the source",
-              "title": "Source Id"
-            },
-            "description": "Identifier of the source"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -874,6 +862,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the source",
+              "title": "Source Id"
+            },
+            "description": "Identifier of the source"
           }
         ],
         "responses": {
@@ -940,18 +940,6 @@
         "operationId": "delete_source_api_v1_books__book_id__sources__source_id__delete",
         "parameters": [
           {
-            "name": "source_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the source",
-              "title": "Source Id"
-            },
-            "description": "Identifier of the source"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -962,6 +950,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the source",
+              "title": "Source Id"
+            },
+            "description": "Identifier of the source"
           }
         ],
         "responses": {
@@ -1141,18 +1141,6 @@
         "operationId": "move_source_pages_api_v1_books__book_id__sources__source_id__pages_move_post",
         "parameters": [
           {
-            "name": "source_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the source",
-              "title": "Source Id"
-            },
-            "description": "Identifier of the source"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -1163,6 +1151,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the source",
+              "title": "Source Id"
+            },
+            "description": "Identifier of the source"
           }
         ],
         "requestBody": {
@@ -4947,18 +4947,6 @@
         "operationId": "export_profile_api_v1_books__book_id__recipe_profiles__profile_id__export_get",
         "parameters": [
           {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -4969,6 +4957,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
           }
         ],
         "responses": {
@@ -5037,18 +5037,6 @@
         "operationId": "duplicate_profile_api_v1_books__book_id__recipe_profiles__profile_id__duplicate_post",
         "parameters": [
           {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -5059,6 +5047,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
           }
         ],
         "responses": {
@@ -5127,18 +5127,6 @@
         "operationId": "put_profile_api_v1_books__book_id__recipe_profiles__profile_id__put",
         "parameters": [
           {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -5149,6 +5137,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
           }
         ],
         "requestBody": {
@@ -5225,18 +5225,6 @@
         "operationId": "rename_profile_api_v1_books__book_id__recipe_profiles__profile_id__patch",
         "parameters": [
           {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -5247,6 +5235,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
           }
         ],
         "requestBody": {
@@ -5323,18 +5323,6 @@
         "operationId": "delete_profile_api_v1_books__book_id__recipe_profiles__profile_id__delete",
         "parameters": [
           {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -5345,6 +5333,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
           }
         ],
         "responses": {
@@ -5406,18 +5406,6 @@
         "operationId": "apply_profile_api_v1_books__book_id__recipe_profiles__profile_id__apply_post",
         "parameters": [
           {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -5428,6 +5416,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
           }
         ],
         "requestBody": {
@@ -7050,18 +7050,6 @@
         "operationId": "read_job_api_v1_books__book_id__jobs__job_id__get",
         "parameters": [
           {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the job",
-              "title": "Job Id"
-            },
-            "description": "Identifier of the job"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -7072,6 +7060,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the job",
+              "title": "Job Id"
+            },
+            "description": "Identifier of the job"
           }
         ],
         "responses": {
@@ -7138,18 +7138,6 @@
         "operationId": "cancel_job_api_v1_books__book_id__jobs__job_id__delete",
         "parameters": [
           {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the job",
-              "title": "Job Id"
-            },
-            "description": "Identifier of the job"
-          },
-          {
             "name": "book_id",
             "in": "path",
             "required": true,
@@ -7160,6 +7148,18 @@
               "title": "Book Id"
             },
             "description": "Identifier of the book"
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the job",
+              "title": "Job Id"
+            },
+            "description": "Identifier of the job"
           }
         ],
         "responses": {

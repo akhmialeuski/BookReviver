@@ -3,17 +3,18 @@
 A profile lives in its book, so every route here opens the book first, and a profile the book does not have answers 404
 like a missing one. Applying a profile runs nothing and processes no page; it only puts the steps into the recipe of
 one kind of page, which marks the pages the recipe processed stale. A profile reaches another book as a file, through
-the export and the import. The dependency of ``bookreviver.api.access`` opens the book, so the service is handed what it
+the export and the import. ``Access`` of ``bookreviver.api.access`` opens the book, so the service is handed what it
 works on.
 """
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, status
 from fastapi_pagination import Page
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import RecipePath
@@ -31,9 +32,8 @@ from bookreviver.api.schemas.profiles import (
     RecipeProfileSchema,
 )
 from bookreviver.domain.entities import RecipeProfile
-from bookreviver.domain.ids import RecipeProfileId
+from bookreviver.domain.ids import BookId, RecipeProfileId
 from bookreviver.domain.values import RecipeKey
-from bookreviver.services.book import Book
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 
@@ -49,17 +49,32 @@ LINK_PATH: str = '/{book_id}/stages/{stage}/recipes/{recipe_id}/profile'
 router = APIRouter(prefix='/books', tags=['profiles'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
+@dataclass(frozen=True)
+class ProfilePath:
+    """The identifiers in the address of one recipe profile of a book, read together to keep a route to few parameters.
+
+    :ivar book_id: Identifier of the book.
+    :ivar profile_id: Identifier of the profile.
+    """
+
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
+    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)]
+
+
 @router.get(PROFILES_PATH)
 async def list_profiles(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     query: Annotated[ProfileQuery, Depends()],
     profiles: FromDishka[RecipeProfiles],
 ) -> Page[RecipeProfileSchema]:
     """List the profiles of a book in the order of the stages, then oldest first.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param query: Page number and size from the query, and the stage to list.
     :type query: ProfileQuery
     :param profiles: Profiles service of the request.
@@ -67,13 +82,17 @@ async def list_profiles(
     :returns: One page of the profiles.
     :rtype: Page[RecipeProfileSchema]
     """
+    book = await access.book(book_id)
     pager = Pager[RecipeProfile, RecipeProfileSchema](query, RecipeProfileSchema.model_validate)
     return pager.page(await profiles.library(book, query.stage, pager.request))
 
 
 @router.post(PROFILES_PATH, status_code=status.HTTP_201_CREATED)
 async def create_profile(
-    book: Annotated[Book, Depends(open_book)], body: RecipeProfileBody, profiles: FromDishka[RecipeProfiles]
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    body: RecipeProfileBody,
+    profiles: FromDishka[RecipeProfiles],
 ) -> RecipeProfileSchema:
     """Save the steps of a recipe as a profile of the book.
 
@@ -81,8 +100,10 @@ async def create_profile(
     step that stands where it cannot work, unless the body asks for the free order.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The stage, the name, the steps and the order to keep.
     :type body: RecipeProfileBody
     :param profiles: Profiles service of the request.
@@ -90,13 +111,17 @@ async def create_profile(
     :returns: The profile as stored.
     :rtype: RecipeProfileSchema
     """
+    book = await access.book(book_id)
     profile = await profiles.save(book, body.stage, body.to_draft())
     return RecipeProfileSchema.model_validate(profile)
 
 
 @router.post(IMPORT_PATH, status_code=status.HTTP_201_CREATED)
 async def import_profile(
-    book: Annotated[Book, Depends(open_book)], body: ProfileFile, profiles: FromDishka[RecipeProfiles]
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    body: ProfileFile,
+    profiles: FromDishka[RecipeProfiles],
 ) -> RecipeProfileSchema:
     """Save the profile a file holds as a profile of the book.
 
@@ -106,8 +131,10 @@ async def import_profile(
     a file that needs a processor that is not installed, which the answer names.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The content of the profile file, of the version it says.
     :type body: ProfileFile
     :param profiles: Profiles service of the request.
@@ -115,56 +142,55 @@ async def import_profile(
     :returns: The profile as stored.
     :rtype: RecipeProfileSchema
     """
+    book = await access.book(book_id)
     profile = await profiles.import_profile(book, body.stage, body.to_draft())
     return RecipeProfileSchema.model_validate(profile)
 
 
 @router.get(EXPORT_PATH)
 async def export_profile(
-    book: Annotated[Book, Depends(open_book)],
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
-    profiles: FromDishka[RecipeProfiles],
+    access: AccessDep, address: Annotated[ProfilePath, Depends()], profiles: FromDishka[RecipeProfiles]
 ) -> ProfileFileSchema:
     """Write a profile as a file, which another book can import.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
-    :param profile_id: Identifier of the profile, from the path.
-    :type profile_id: RecipeProfileId
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book and the profile.
+    :type address: ProfilePath
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
     :returns: The content of the profile file.
     :rtype: ProfileFileSchema
     """
-    return ProfileFileSchema.of(await profiles.get(book, profile_id))
+    book = await access.book(address.book_id)
+    return ProfileFileSchema.of(await profiles.get(book, address.profile_id))
 
 
 @router.post(DUPLICATE_PATH, status_code=status.HTTP_201_CREATED)
 async def duplicate_profile(
-    book: Annotated[Book, Depends(open_book)],
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
-    profiles: FromDishka[RecipeProfiles],
+    access: AccessDep, address: Annotated[ProfilePath, Depends()], profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
     """Save a copy of a profile under its name with "(copy)" after it.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
-    :param profile_id: Identifier of the profile to copy, from the path.
-    :type profile_id: RecipeProfileId
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book and the profile.
+    :type address: ProfilePath
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
     :returns: The copy as stored.
     :rtype: RecipeProfileSchema
     """
-    return RecipeProfileSchema.model_validate(await profiles.duplicate(book, profile_id))
+    book = await access.book(address.book_id)
+    return RecipeProfileSchema.model_validate(await profiles.duplicate(book, address.profile_id))
 
 
 @router.put(PROFILE_PATH)
 async def put_profile(
-    book: Annotated[Book, Depends(open_book)],
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
+    access: AccessDep,
+    address: Annotated[ProfilePath, Depends()],
     body: ProfileBody,
     profiles: FromDishka[RecipeProfiles],
 ) -> RecipeProfileSchema:
@@ -175,10 +201,10 @@ async def put_profile(
     cannot work, unless the body asks for the free order.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
-    :param profile_id: Identifier of the profile, from the path.
-    :type profile_id: RecipeProfileId
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book and the profile.
+    :type address: ProfilePath
     :param body: The new name, steps and order.
     :type body: ProfileBody
     :param profiles: Profiles service of the request.
@@ -186,24 +212,25 @@ async def put_profile(
     :returns: The profile as stored.
     :rtype: RecipeProfileSchema
     """
-    replaced = await profiles.replace(book, profile_id, body.to_draft())
+    book = await access.book(address.book_id)
+    replaced = await profiles.replace(book, address.profile_id, body.to_draft())
     return RecipeProfileSchema.model_validate(replaced)
 
 
 @router.patch(PROFILE_PATH)
 async def rename_profile(
-    book: Annotated[Book, Depends(open_book)],
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
+    access: AccessDep,
+    address: Annotated[ProfilePath, Depends()],
     body: RecipeProfileName,
     profiles: FromDishka[RecipeProfiles],
 ) -> RecipeProfileSchema:
     """Give a profile another name.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
-    :param profile_id: Identifier of the profile, from the path.
-    :type profile_id: RecipeProfileId
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book and the profile.
+    :type address: ProfilePath
     :param body: The new name.
     :type body: RecipeProfileName
     :param profiles: Profiles service of the request.
@@ -211,33 +238,33 @@ async def rename_profile(
     :returns: The profile as stored.
     :rtype: RecipeProfileSchema
     """
-    renamed = await profiles.rename(book, profile_id, body.name)
+    book = await access.book(address.book_id)
+    renamed = await profiles.rename(book, address.profile_id, body.name)
     return RecipeProfileSchema.model_validate(renamed)
 
 
 @router.delete(PROFILE_PATH, status_code=status.HTTP_204_NO_CONTENT)
 async def delete_profile(
-    book: Annotated[Book, Depends(open_book)],
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
-    profiles: FromDishka[RecipeProfiles],
+    access: AccessDep, address: Annotated[ProfilePath, Depends()], profiles: FromDishka[RecipeProfiles]
 ) -> None:
     """Delete a profile, which changes no step of any recipe and only clears the links to it.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
-    :param profile_id: Identifier of the profile, from the path.
-    :type profile_id: RecipeProfileId
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book and the profile.
+    :type address: ProfilePath
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
     """
-    await profiles.remove(book, profile_id)
+    book = await access.book(address.book_id)
+    await profiles.remove(book, address.profile_id)
 
 
 @router.post(APPLY_PATH, status_code=status.HTTP_201_CREATED)
 async def apply_profile(
-    book: Annotated[Book, Depends(open_book)],
-    profile_id: Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION)],
+    access: AccessDep,
+    address: Annotated[ProfilePath, Depends()],
     body: ApplyProfileBody,
     profiles: FromDishka[RecipeProfiles],
     order: FromDishka[RecipeOrder],
@@ -249,10 +276,10 @@ async def apply_profile(
     the profile, and the pages it processed become stale.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
-    :param profile_id: Identifier of the profile, from the path.
-    :type profile_id: RecipeProfileId
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book and the profile.
+    :type address: ProfilePath
     :param body: The kind of page whose recipe takes the steps.
     :type body: ApplyProfileBody
     :param profiles: Profiles service of the request.
@@ -262,7 +289,8 @@ async def apply_profile(
     :returns: The recipe, with the steps that are out of their place, and the processors whose steps were left out.
     :rtype: AppliedProfileSchema
     """
-    applied = await profiles.apply(book, profile_id, kind=body.kind)
+    book = await access.book(address.book_id)
+    applied = await profiles.apply(book, address.profile_id, kind=body.kind)
     return AppliedProfileSchema(
         recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
         missing_processors=list(applied.missing_processors),
@@ -271,7 +299,7 @@ async def apply_profile(
 
 @router.put(LINK_PATH)
 async def put_recipe_profile(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[RecipePath, Depends()],
     body: ProfileLinkBody,
     profiles: FromDishka[RecipeProfiles],
@@ -283,8 +311,8 @@ async def put_recipe_profile(
     the book does not have, and a profile of another stage answers 422.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param body: The profile of the book, or null to unlink the recipe.
@@ -296,5 +324,6 @@ async def put_recipe_profile(
     :returns: The recipe, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
+    book = await access.book(address.book_id)
     linked = await profiles.link(book, RecipeKey(address.stage, address.recipe_id), body.profile_id)
     return RecipeSchema.of(linked, order.issues(linked.steps))

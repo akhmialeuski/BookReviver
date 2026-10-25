@@ -1,36 +1,34 @@
 """Who may work on what: the one place that opens a book for the signed-in account.
 
-The services, the domain and the jobs never check an owner. A route of a book takes it from a dependency of this
-module, which reads it from the catalogue, compares its owner with the signed-in account and answers a book of another
-account exactly like a missing one, so the identifiers of other accounts cannot be probed. A list of the account's books
-is read here too, so a service is handed the objects it works on and never chooses whose they are. The recipe profiles
-live in the book, so whoever may open the book may work on its profiles.
+The services, the domain and the jobs never check an owner. Every route of the API is mounted under a router whose
+dependency is :func:`access`, so a request without a session is refused before any route runs. A route that works on a
+book, lists the account's books or creates a record the account then owns declares ``access: AccessDep`` and asks the
+:class:`Access` it gets. The recipe profiles live in the book, so whoever may open the book may work on its profiles.
 
-Every route of one book takes ``Annotated[Book, Depends(open_book)]``, written in place so that ruff sees the
-``book_id`` of the path the dependency reads. ``open_book`` opens the book of the entry ``own_entry`` read, and the
-deletion of a book takes that entry itself. FastAPI resolves a dependency once per request, so ``fresh_book`` and the
-route get the same ``Book``, and the entry is read and its owner checked once.
+A route of one book declares ``book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]`` in place, so that
+ruff sees the path parameter, and opens the book with ``await access.book(book_id)``. FastAPI resolves a dependency once
+per request, so the guard, ``fresh_book`` and the route share one :class:`Access`, which reads the library entry of a
+book once and checks its owner once.
 """
 
 from typing import TYPE_CHECKING, Annotated, Final
 from uuid import UUID
 
 from dishka.integrations.fastapi import FromDishka, inject
-from fastapi import Depends, Path
-from fastapi_pagination import Params
+from fastapi import Depends
 from fastapi_users.models import UserProtocol
 
-from bookreviver.api.auth import ActorDep, signed_in_user
-from bookreviver.api.pagination import slice_request
-from bookreviver.domain.entities import Actor, LibraryEntry
+from bookreviver.api.auth import signed_in_user
+from bookreviver.domain.entities import Actor
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import AccountId, BookId
-from bookreviver.domain.values import Slice
+from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.entities import LibraryEntry
+    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.values import Slice, SliceRequest
 
 BOOK_ID_DESCRIPTION: Final = 'Identifier of the book'
 
@@ -112,62 +110,3 @@ def access(
 
 
 AccessDep = Annotated[Access, Depends(access)]
-
-
-@inject
-async def own_entry(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    actor: ActorDep,
-    catalogue: FromDishka[CatalogueDatabase],
-) -> LibraryEntry:
-    """Read the library entry of the book the path names, when the signed-in account owns it.
-
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param catalogue: Catalogue database of the request, whose library entry of the book names its owner.
-    :type catalogue: CatalogueDatabase
-    :returns: The library entry of the book.
-    :rtype: LibraryEntry
-    :raises NotFoundError: If the library has no such book, or the book belongs to another account.
-    """
-    entry = await catalogue.read(lambda repos: repos.library.get(book_id))
-    if entry.owner_id != actor.account_id:
-        raise NotFoundError(book_id)
-    return entry
-
-
-def open_book(entry: Annotated[LibraryEntry, Depends(own_entry)]) -> Book:
-    """Open the book the path names, when the signed-in account owns it.
-
-    :param entry: The library entry of the book, read once for the request.
-    :type entry: LibraryEntry
-    :returns: The open book.
-    :rtype: Book
-    """
-    return Book(entry.directory)
-
-
-@inject
-async def own_books(
-    params: Annotated[Params, Depends()],
-    actor: ActorDep,
-    catalogue: FromDishka[CatalogueDatabase],
-) -> Slice[LibraryEntry]:
-    """Read the window of the library entries of the signed-in account's books the page parameters ask for.
-
-    The latest added comes first. A route opens the book of an entry with ``Book(entry.directory)``, and takes the
-    identifier of the book from the entry.
-
-    :param params: Page number and size from the query.
-    :type params: Params
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param catalogue: Catalogue database of the request.
-    :type catalogue: CatalogueDatabase
-    :returns: The entries of the window, and the number of all the account's books.
-    :rtype: Slice[LibraryEntry]
-    """
-    request = slice_request(params)
-    return await catalogue.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))

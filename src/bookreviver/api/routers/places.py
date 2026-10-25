@@ -7,11 +7,11 @@ puts a form feed before its reST fields, so the parameter lists stay in the code
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Body, Depends, Response, status
+from fastapi import APIRouter, Body, Path, Response, status
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.schemas.places import BookPlaceBody, BookPlaceSchema
-from bookreviver.services.book import Book
+from bookreviver.domain.ids import BookId
 from bookreviver.services.places import PlaceService
 
 NO_PLACE_DESCRIPTION: str = 'The account has not worked on the book yet'
@@ -25,19 +25,23 @@ router = APIRouter(prefix='/books', tags=['places'], route_class=DishkaRoute)
     responses={status.HTTP_204_NO_CONTENT: {'description': NO_PLACE_DESCRIPTION}},
 )
 async def get_place(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     places: FromDishka[PlaceService],
 ) -> BookPlaceSchema | Response:
     """Return the place the signed-in account left the book at, or 204 when it has not worked on the book yet.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param places: Place service of the request.
     :type places: PlaceService
     :returns: The place, or an empty answer.
     :rtype: BookPlaceSchema | Response
     """
+    book = await access.book(book_id)
     place = await places.find(book)
     if place is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -46,15 +50,18 @@ async def get_place(
 
 @router.put('/{book_id}/place')
 async def put_place(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[BookPlaceBody, Body()],
     places: FromDishka[PlaceService],
 ) -> BookPlaceSchema:
     """Replace the place the signed-in account left the book at.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: Where the reader is in the book.
     :type body: BookPlaceBody
     :param places: Place service of the request.
@@ -62,4 +69,5 @@ async def put_place(
     :returns: The place as stored.
     :rtype: BookPlaceSchema
     """
+    book = await access.book(book_id)
     return BookPlaceSchema.model_validate(await places.save(book, body.to_place()))

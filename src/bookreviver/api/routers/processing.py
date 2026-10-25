@@ -14,7 +14,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.pages import PagePath
@@ -35,7 +35,6 @@ from bookreviver.domain.entities import PageStage, PageVersion, Recipe
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
 from bookreviver.domain.values import RecipeKey
-from bookreviver.services.book import Book
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
@@ -53,9 +52,11 @@ router = APIRouter(prefix='/books', tags=['processing'], route_class=DishkaRoute
 class StagePath:
     """The identifiers in the address of one stage of a book, read together so a route keeps to a few parameters.
 
+    :ivar book_id: Identifier of the book.
     :ivar stage: The stage.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
 
 
@@ -63,10 +64,12 @@ class StagePath:
 class RecipePath:
     """The identifiers in the address of one recipe of a stage of a book.
 
+    :ivar book_id: Identifier of the book.
     :ivar stage: The stage.
     :ivar recipe_id: Identifier of the recipe.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
     recipe_id: Annotated[RecipeId, Path(description=RECIPE_ID_DESCRIPTION)]
 
@@ -75,10 +78,12 @@ class RecipePath:
 class PageStagePath:
     """The identifiers in the address of one stage of one page of a book.
 
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
 
@@ -99,7 +104,7 @@ class VersionPath:
 
 @router.get('/{book_id}/stages/{stage}/recipes')
 async def list_recipes(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[StagePath, Depends()],
     params: Annotated[Params, Depends()],
     processing: FromDishka[ProcessingService],
@@ -108,8 +113,8 @@ async def list_recipes(
     """List the recipes of a stage, one for each kind of page, which a book creates the first time it is asked.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param params: Page number and size from the query.
@@ -121,13 +126,14 @@ async def list_recipes(
     :returns: One page of the recipes of the stage, in the order of the kinds.
     :rtype: Page[RecipeSchema]
     """
+    book = await access.book(address.book_id)
     pager = Pager[Recipe, RecipeSchema](params, lambda recipe: RecipeSchema.of(recipe, order.issues(recipe.steps)))
     return pager.page(await processing.recipes(book, address.stage, pager.request))
 
 
 @router.put('/{book_id}/stages/{stage}/recipes/{recipe_id}')
 async def put_recipe(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[RecipePath, Depends()],
     body: RecipeBody,
     processing: FromDishka[ProcessingService],
@@ -141,8 +147,8 @@ async def put_recipe(
     answer.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param body: The steps and the order to keep.
@@ -155,13 +161,14 @@ async def put_recipe(
               place.
     :rtype: RecipeSchema
     """
+    book = await access.book(address.book_id)
     saved = await processing.save_recipe(book, RecipeKey(address.stage, address.recipe_id), body.to_draft())
     return RecipeSchema.of(saved, order.issues(saved.steps))
 
 
 @router.post('/{book_id}/stages/{stage}/recipes/{recipe_id}/reset')
 async def reset_recipe(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[RecipePath, Depends()],
     profiles: FromDishka[RecipeProfiles],
     order: FromDishka[RecipeOrder],
@@ -172,8 +179,8 @@ async def reset_recipe(
     step in it is new. The answer is 404 for a stage that has no steps by default.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param profiles: Recipe profile service of the request, which also puts the built-in steps back.
@@ -183,13 +190,14 @@ async def reset_recipe(
     :returns: The recipe as stored, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
+    book = await access.book(address.book_id)
     reset = await profiles.reset(book, RecipeKey(address.stage, address.recipe_id))
     return RecipeSchema.of(reset, order.issues(reset.steps))
 
 
 @router.post('/{book_id}/stages/{stage}/run', status_code=status.HTTP_202_ACCEPTED)
 async def run_stage(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[StagePath, Depends()],
     body: StageRunBody,
     processing: FromDishka[ProcessingService],
@@ -202,8 +210,8 @@ async def run_stage(
     until the body confirms it, when it would take them from any page.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param body: The pages, or every page with an image, and the mode.
@@ -213,12 +221,13 @@ async def run_stage(
     :returns: The queued job.
     :rtype: JobSchema
     """
+    book = await access.book(address.book_id)
     return JobSchema.model_validate(await processing.start_run(book, address.stage, body.to_run(address.stage)))
 
 
 @router.post('/{book_id}/stages/{stage}/run-impact')
 async def run_impact(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[StagePath, Depends()],
     body: StageRunBody,
     impact: FromDishka[RunImpactService],
@@ -230,8 +239,8 @@ async def run_impact(
     for them. Nothing is written and nothing is queued.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param body: The run, with its mode.
@@ -241,13 +250,14 @@ async def run_impact(
     :returns: The pages the run goes over and the pages that lose work to its mode.
     :rtype: RunImpactSchema
     """
+    book = await access.book(address.book_id)
     counted = await impact.impact(book, body.to_run(address.stage))
     return RunImpactSchema.model_validate(counted)
 
 
 @router.post('/{book_id}/stages/{stage}/preview', status_code=status.HTTP_202_ACCEPTED)
 async def preview_step(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[StagePath, Depends()],
     body: StepPreviewBody,
     processing: FromDishka[ProcessingService],
@@ -258,8 +268,8 @@ async def preview_step(
     version of the stage.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param body: The page, the steps as the form has them, and the step whose result is wanted.
@@ -269,12 +279,15 @@ async def preview_step(
     :returns: The queued job.
     :rtype: JobSchema
     """
+    book = await access.book(address.book_id)
     return JobSchema.model_validate(await processing.start_preview(book, body.to_preview(address.stage)))
 
 
 @router.post('/{book_id}/stages/geometry/measure', status_code=status.HTTP_202_ACCEPTED)
 async def measure_book(
-    book: Annotated[Book, Depends(open_book)], processing: FromDishka[ProcessingService]
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    processing: FromDishka[ProcessingService],
 ) -> JobSchema:
     """Measure the book in the background, and answer with the queued job.
 
@@ -284,19 +297,22 @@ async def measure_book(
     book is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param processing: Processing service of the request.
     :type processing: ProcessingService
     :returns: The queued job.
     :rtype: JobSchema
     """
+    book = await access.book(book_id)
     return JobSchema.model_validate(await processing.start_measure(book))
 
 
 @router.get('/{book_id}/pages/{page_id}/stages')
 async def list_page_stages(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[PagePath, Depends()],
     params: Annotated[Params, Depends()],
     processing: FromDishka[ProcessingService],
@@ -304,8 +320,8 @@ async def list_page_stages(
     """List the stages a page has been through, with the current version and the state of each, in pipeline order.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param params: Page number and size from the query.
@@ -315,13 +331,14 @@ async def list_page_stages(
     :returns: One page of the stage records.
     :rtype: Page[PageStageSchema]
     """
+    book = await access.book(address.book_id)
     pager = Pager[PageStage, PageStageSchema](params, PageStageSchema.of)
     return pager.page(await processing.page_stages(book, address.page_id, pager.request))
 
 
 @router.put('/{book_id}/pages/{page_id}/stages/{stage}')
 async def choose_version(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[PageStagePath, Depends()],
     body: HeadChoice,
     processing: FromDishka[ProcessingService],
@@ -331,8 +348,8 @@ async def choose_version(
     The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the page and the stage.
     :type address: PageStagePath
     :param body: The version to make current.
@@ -342,13 +359,14 @@ async def choose_version(
     :returns: The record of the stage in its new state.
     :rtype: PageStageSchema
     """
+    book = await access.book(address.book_id)
     chosen = await processing.choose_version(book, address.page_id, address.stage, body.version_id)
     return PageStageSchema.of(chosen)
 
 
 @router.get('/{book_id}/pages/{page_id}/versions')
 async def list_versions(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[PagePath, Depends()],
     query: Annotated[VersionQuery, Depends()],
     request: Request,
@@ -360,8 +378,8 @@ async def list_versions(
     recipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param query: Page number and size, and the stage, the step, the scale and the mark to list.
@@ -373,6 +391,7 @@ async def list_versions(
     :returns: One page of the versions, each with the paths of its images once they are written.
     :rtype: Page[PageVersionSchema]
     """
+    book = await access.book(address.book_id)
 
     def to_schema(version: PageVersion) -> PageVersionSchema:
         """Build the schema of one version of this book.
@@ -391,7 +410,7 @@ async def list_versions(
 
 @router.get('/{book_id}/pages/{page_id}/versions/{version_id}')
 async def get_version(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
     address: Annotated[VersionPath, Depends()],
     request: Request,
     processing: FromDishka[ProcessingService],
@@ -399,8 +418,8 @@ async def get_version(
     """Return one version of a page, with its provenance, its transform and the paths of its images.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the page and the version.
     :type address: VersionPath
     :param request: The request, whose application knows the route that serves the images.
@@ -410,21 +429,20 @@ async def get_version(
     :returns: The version.
     :rtype: PageVersionSchema
     """
+    book = await access.book(address.book_id)
     version = await processing.version(book, address.page_id, address.version_id)
     return PageVersionSchema.of(version, address.book_id, request)
 
 
 @router.post('/{book_id}/pages/{page_id}/versions/{version_id}/tiles', status_code=status.HTTP_202_ACCEPTED)
 async def cut_version_tiles(
-    book: Annotated[Book, Depends(open_book)],
-    address: Annotated[VersionPath, Depends()],
-    processing: FromDishka[ProcessingService],
+    access: AccessDep, address: Annotated[VersionPath, Depends()], processing: FromDishka[ProcessingService]
 ) -> JobSchema:
     """Cut the tile pyramid of a version in the background, which a viewer asks for when a version has none.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
     :param address: Identifiers of the book, the page and the version.
     :type address: VersionPath
     :param processing: Processing service of the request.
@@ -432,12 +450,14 @@ async def cut_version_tiles(
     :returns: The queued job; its end is announced as ``page-version-ready``.
     :rtype: JobSchema
     """
+    book = await access.book(address.book_id)
     return JobSchema.model_validate(await processing.start_tiles(book, address.page_id, address.version_id))
 
 
 @router.get('/{book_id}/versions/collectable')
 async def collectable_versions(
-    book: Annotated[Book, Depends(open_book)],
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     processing: FromDishka[ProcessingService],
 ) -> CollectionReportSchema:
     """Count the versions a collection would delete now and the space their files take, and change nothing.
@@ -445,19 +465,24 @@ async def collectable_versions(
     The versions are the ones ``POST /books/{book_id}/versions/collect`` deletes, chosen by the same rule.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param processing: Processing service of the request.
     :type processing: ProcessingService
     :returns: The number of versions and the bytes their files take.
     :rtype: CollectionReportSchema
     """
+    book = await access.book(book_id)
     return CollectionReportSchema.model_validate(await processing.collection_report(book))
 
 
 @router.post('/{book_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
 async def collect_versions(
-    book: Annotated[Book, Depends(open_book)], processing: FromDishka[ProcessingService]
+    access: AccessDep,
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    processing: FromDishka[ProcessingService],
 ) -> JobSchema:
     """Delete the versions nothing needs, in the background, and answer with the queued job.
 
@@ -466,11 +491,14 @@ async def collect_versions(
     its row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param processing: Processing service of the request.
     :type processing: ProcessingService
     :returns: The queued job.
     :rtype: JobSchema
     """
+    book = await access.book(book_id)
     return JobSchema.model_validate(await processing.start_collection(book))

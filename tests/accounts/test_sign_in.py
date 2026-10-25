@@ -8,10 +8,11 @@ from uuid import uuid4
 import httpx
 import pytest
 from delayed_assert import assert_expectations, expect
+from fastapi import APIRouter
 from fastapi_users.router.common import ErrorCode
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenDatabase
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.access import AccessDep
 from bookreviver.api.schemas.accounts import AccountRead
 from bookreviver.app.providers.accounts import SESSION_COOKIE, AccountMail, UserManager
 from tests.helpers.fakes_accounts import (
@@ -77,25 +78,29 @@ def _session_cookie_header(response: httpx.Response) -> str:
     return next(header for header in response.headers.get_list('set-cookie') if header.startswith(SESSION_COOKIE))
 
 
+actor_router = APIRouter()
+
+
+@actor_router.get(ACTOR_PATH)
+def whoami(access: AccessDep) -> str:
+    """Answer with the identifier of the acting account.
+
+    :param access: Access that resolved the account from the request's session.
+    :type access: Access
+    :returns: The account identifier as text.
+    :rtype: str
+    """
+    return str(access.actor.account_id)
+
+
 @pytest.fixture
 def fx_actor_route(fx_app: FastAPI) -> None:
-    """Serve ``ACTOR_PATH``, answering with the account ``current_actor`` resolves.
+    """Serve ``ACTOR_PATH``, answering with the account ``Access`` resolves.
 
     :param fx_app: The running application the route is added to.
     :type fx_app: FastAPI
     """
-
-    def whoami(actor: ActorDep) -> str:
-        """Answer with the identifier of the acting account.
-
-        :param actor: Actor ``current_actor`` resolved from the request's session.
-        :type actor: ActorDep
-        :returns: The account identifier as text.
-        :rtype: str
-        """
-        return str(actor.account_id)
-
-    fx_app.add_api_route(ACTOR_PATH, whoami)
+    fx_app.include_router(actor_router)
 
 
 class TestRegister:
@@ -234,10 +239,10 @@ class TestLogin:
 
 @pytest.mark.usefixtures('fx_actor_route')
 class TestCurrentActor:
-    """Tests for current_actor()."""
+    """Tests for the actor of Access."""
 
     async def test_resolves_the_signed_in_account(self, fx_visitor: Visitor) -> None:
-        """Verify ``current_actor`` resolves the account whose session the request carries.
+        """Verify ``Access`` resolves the account whose session the request carries.
 
         :param fx_visitor: Signed-out visitor of the application.
         :type fx_visitor: Visitor
