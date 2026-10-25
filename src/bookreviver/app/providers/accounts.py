@@ -180,8 +180,9 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     synchronous, so ``BaseUserManager`` runs it inside the event loop, where it stalls every other request and event.
     The methods that hash or verify a password (``create``, ``oauth_callback``, ``forgot_password``,
     ``reset_password``, ``authenticate`` and ``_update``) are therefore overridden to mirror ``BaseUserManager`` of
-    fastapi-users 15.0.5, step by step, with only the hashing moved to the worker threads of ``PasswordHasher``. Compare
-    them with the upstream methods when fastapi-users is upgraded.
+    fastapi-users 15.0.5, step by step, with only the hashing moved to the worker threads of ``PasswordHasher``.
+    ``tests/accounts/test_mirrored_methods.py`` holds a hash of the source of each upstream method and fails, naming
+    the method, when an upgrade of fastapi-users changes one, so that the two are compared again.
 
     :ivar password_min_length: Fewest characters a password may have.
     """
