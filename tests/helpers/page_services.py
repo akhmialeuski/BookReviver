@@ -10,9 +10,9 @@ from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.books import BooksService
 from bookreviver.services.pages import PageImaging, PageService
 from bookreviver.services.steps import StepRunner
-from tests.helpers.books_service import make_books_service
 from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
 
@@ -109,7 +109,7 @@ def make_page_service(
     BookJobs.register(board.open)
     tiler = FakeTiler()
     return PageService(
-        books=make_books_service(stores.catalogue(), databases=stores.databases, files=stores.files),
+        books=BooksService(catalogue=stores.catalogue()),
         order_keys=order_keys or FractionalOrderKeys(),
         imaging=PageImaging(
             base_versions=BaseVersions(tiler=tiler),

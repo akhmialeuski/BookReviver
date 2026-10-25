@@ -12,7 +12,7 @@ from dishka import make_async_container
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
-from bookreviver.ports.storage import BookDirectories
+from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import make_record
 from tests.helpers.job_boards import BoardAdapter
 from tests.helpers.seeding import commit_account, store_book
@@ -137,15 +137,16 @@ async def fx_storage(request: pytest.FixtureRequest, fx_settings: Settings) -> A
 
 
 @pytest.fixture
-async def fx_stores(fx_storage: AsyncContainer) -> BookDirectories:
-    """Return the directories of the books of the storage backend under test, with the stores of each book.
+async def fx_stores(fx_storage: AsyncContainer) -> type[BookDirectory]:
+    """Return the directory port with the storage backend under test registered, which opens the directory of a book.
 
     :param fx_storage: Container holding the provider of one storage backend.
     :type fx_storage: AsyncContainer
-    :returns: The directories the backend's provider builds.
-    :rtype: BookDirectories
+    :returns: The ``BookDirectory`` class, which opens the directory of each book by its name.
+    :rtype: type[BookDirectory]
     """
-    return await fx_storage.get(BookDirectories)
+    await fx_storage.get(type[BookDirectory])
+    return BookDirectory
 
 
 class Book(NamedTuple):

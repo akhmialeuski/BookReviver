@@ -84,7 +84,7 @@ class PageValues:
         :rtype: ValueChanges
         """
         return await self.kit.page_settings().change(
-            open_for(self.actor, self.book_id, databases=self.kit.databases, files=self.kit.files),
+            open_for(self.actor, self.book_id),
             _page_field(key, name),
             value,
         )
@@ -100,6 +100,6 @@ class PageValues:
         :rtype: ValueChanges
         """
         return await self.kit.page_settings().reset(
-            open_for(self.actor, self.book_id, databases=self.kit.databases, files=self.kit.files),
+            open_for(self.actor, self.book_id),
             _page_field(key, name),
         )

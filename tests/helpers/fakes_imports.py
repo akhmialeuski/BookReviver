@@ -30,11 +30,12 @@ from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
+from bookreviver.ports.storage import BookDirectory
+from bookreviver.services.books import BooksService
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
-from tests.helpers.books_service import make_books_service
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.in_process_executor import InProcessStepExecutor
@@ -454,7 +455,8 @@ class ImportRig:
         :param stores: Opens the catalogue databases over ``database`` and the databases of the books, such as
                        ``fx_open_book``.
         :type stores: BookOpener
-        :returns: The rig with nothing stored.
+        :returns: The rig with nothing stored, whose directories are registered as the ones the books of the test open,
+                  until the test registers others or ends.
         :rtype: ImportRig
         """
         imaging = ImagingSettings()
@@ -476,6 +478,8 @@ class ImportRig:
             jpeg_quality=imaging.jpeg_quality,
         )
         events = RecordingEventBus.current()
+        files = CrashingBookDirectories(root=root)
+        BookDirectory.register(files.open)
         # The board needs the service of the rig to run a job, and the rig needs the board, so the rig is found when a
         # job runs
         built: list[ImportRig] = []
@@ -498,7 +502,7 @@ class ImportRig:
             databases=stores.databases,
             fakes=JobFakes(events=events, runner=run),
             events=events,
-            files=CrashingBookDirectories(root=root),
+            files=files,
             inspector=WatchedInspector(reader),
             rasterizer=WatchedRasterizer(reader),
             tiler=WatchedTiler(tiler),
@@ -561,7 +565,7 @@ class ImportRig:
             ),
         )
         return ImportService(
-            books=make_books_service(catalogue, databases=self.databases, files=self.files),
+            books=BooksService(catalogue=catalogue),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),

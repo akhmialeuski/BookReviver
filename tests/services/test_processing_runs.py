@@ -917,7 +917,7 @@ async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
     recipe = await kit.recipe_of(seeded.actor, seeded.book_id, Stage.GEOMETRY)
     draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: STRENGTH_BY_HAND})])
     await kit.service().save_recipe(
-        open_for(seeded.actor, seeded.book_id, databases=kit.databases, files=kit.files),
+        open_for(seeded.actor, seeded.book_id),
         RecipeKey(Stage.GEOMETRY, recipe.id),
         draft,
     )
@@ -1037,7 +1037,7 @@ async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page
         await kit.seed_base_version(book_id, page)
         pages.append(page)
     job = await kit.service().start_run(
-        open_for(actor, book_id, databases=kit.databases, files=kit.files),
+        open_for(actor, book_id),
         Stage.GEOMETRY,
         StageRun(stage=Stage.GEOMETRY),
     )

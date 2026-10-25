@@ -7,7 +7,7 @@ refers across two stores by a key the store checks, and every list of books goes
 
 Services never see a database. They hand a function over the repositories of one store, and the store runs that
 function whole on one transaction: the ``CatalogueDatabase`` does so with ``read`` and ``change`` over the
-``CatalogueRepositories``, and the ``BookDatabase`` that ``BookDatabases.open`` returns for a book does so with
+``CatalogueRepositories``, and the ``BookDatabase``, which is opened by the directory name of a book, does so with
 ``read`` and ``change`` over the ``BookRepositories`` of that book alone, beside ``version`` and ``snapshot``. A read
 only reads, and a change commits when the function returns. The repositories are synchronous, because the function
 runs from its first statement to its commit without returning to the event loop, which is what keeps a write short:
@@ -47,11 +47,11 @@ from bookreviver.domain.ids import (
 )
 from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.values import PageStageKey, PageStepKey
+from bookreviver.ports.book_parts import BookPart
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
     from datetime import datetime
-    from pathlib import Path
 
     from bookreviver.domain.entities import (
         BookOverview,
@@ -68,7 +68,6 @@ if TYPE_CHECKING:
     )
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
-    from bookreviver.ports.runtime import BookEvents
 
 # How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
 DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0
@@ -1021,7 +1020,7 @@ class CatalogueDatabase(ABC):
         """
 
 
-class BookDatabase(ABC):
+class BookDatabase(BookPart, ABC):
     """Runs the work of a use case on the repositories of one transaction of one book, one transaction for each call.
 
     The work is a synchronous function over the ``BookRepositories`` of the book, and the database runs it whole: the
@@ -1035,8 +1034,9 @@ class BookDatabase(ABC):
     by one that came later, and each waits at most the wait limit of the database before it gives up with
     ``BookBusyError``. Changes of different books never wait for each other.
 
-    A new book has a database with no record, which ``create`` stores, and ``close`` ends the use of the database before
-    its file is deleted.
+    A new book has a database that ``create`` makes from the blank database of the schema and gives its first record,
+    the database of an imported book is taken in by ``adopt``, and ``close`` ends the use of the database before its
+    file is deleted. The file lies in the directory of the book, which the storage port makes and deletes.
     """
 
     @abstractmethod
@@ -1083,7 +1083,7 @@ class BookDatabase(ABC):
     async def snapshot(self) -> bytes:
         """Return a copy of the store of the book as one committed state of it, for the archive of the book.
 
-        The copy is the store in the form it keeps on disk, which :meth:`BookDatabases.adopt` takes back in another
+        The copy is the store in the form it keeps on disk, which :meth:`BookDatabase.adopt` takes back in another
         instance.
 
         :returns: The copy of the store.
@@ -1094,12 +1094,22 @@ class BookDatabase(ABC):
 
     @abstractmethod
     async def create(self, book_record: BookRecord) -> None:
-        """Store the record of a new book, whose database holds no record yet.
+        """Make the database of a new book from the blank database of the schema, and store the first record.
+
+        The directory of the book exists already and holds no database. The new database is at the head revision of the
+        schema, and nothing is announced, since nobody can watch a book that is not listed yet.
 
         :param book_record: The record of the book.
         :type book_record: BookRecord
-        :raises NotFoundError: If the book is not stored.
-        :raises ConflictError: If the database holds a record already.
+        :raises ConflictError: If the book has a database already.
+        """
+
+    @abstractmethod
+    async def adopt(self) -> None:
+        """Take the database file an archive placed as the database of a new book, bringing it to this release first.
+
+        :raises BookTooNewError: If the file is at a revision this code does not ship.
+        :raises InvalidArchiveError: If the file is not a database of a book, or holds no record of a book.
         """
 
     @abstractmethod
@@ -1109,48 +1119,4 @@ class BookDatabase(ABC):
         Every later call of the database, or of another database of the same book, raises ``NotFoundError``, so the
         file can be deleted. A database already closed is left as it is, so a deletion broken off half way can run
         again.
-        """
-
-
-class BookDatabases(ABC):
-    """Opens the database of a book from its file, so a use case runs the transactions of one book on it.
-
-    The file of a book lies in the directory of the book, which the storage owns: it copies the blank file of a new
-    book, unpacks the file of an imported one and deletes it with the directory, and this port only reads and writes it.
-    """
-
-    @abstractmethod
-    def open(self, book_id: BookId, path: Path, events: BookEvents) -> BookDatabase:
-        """Return the database of a book, without touching the file.
-
-        A file that does not exist is found on the first call of the returned database, which raises ``NotFoundError``.
-
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
-        :param path: The database file of the book.
-        :type path: Path
-        :param events: The event channel of the book, which the changes of the book are announced to.
-        :type events: BookEvents
-        :returns: The database of the book.
-        :rtype: BookDatabase
-        """
-
-    @abstractmethod
-    async def blank(self) -> Path:
-        """Return a database file of a book at the head revision with no rows, which a new book starts as a copy of.
-
-        :returns: The blank file, which nobody may change.
-        :rtype: Path
-        """
-
-    @abstractmethod
-    async def adopt(self, book_id: BookId, path: Path) -> None:
-        """Take as a new book the database file an archive placed, bringing it to the release of this code first.
-
-        :param book_id: Identifier of the new book.
-        :type book_id: BookId
-        :param path: The database file the archive placed.
-        :type path: Path
-        :raises BookTooNewError: If the file is at a revision this code does not ship.
-        :raises InvalidArchiveError: If the file is not a database of a book, or holds no record of a book.
         """

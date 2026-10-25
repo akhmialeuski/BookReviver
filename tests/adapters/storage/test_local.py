@@ -8,7 +8,7 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalBookDirectories, local
+from bookreviver.adapters.storage import LocalAssetStore, LocalBookDirectory, local
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.ids import StorageKey
+    from bookreviver.ports.storage import SourceStore
 
 pytestmark = pytest.mark.anyio
 
@@ -37,6 +38,19 @@ MAX_BYTES: int = 1024
 FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
 
 
+def _sources(root: Path, book_id: BookId = BOOK_ID) -> SourceStore:
+    """Open the source store of a book under a storage root, as the local directory of the book hands it out.
+
+    :param root: The storage root.
+    :type root: Path
+    :param book_id: The book.
+    :type book_id: BookId
+    :returns: The source store of the directory of the book.
+    :rtype: SourceStore
+    """
+    return LocalBookDirectory(directory_of(book_id), root=root).sources
+
+
 class TestLocalSourceStore:
     """Tests for LocalSourceStore."""
 
@@ -46,11 +60,7 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        stores = LocalBookDirectories(root=tmp_path)
-
-        await stores.directory(directory_of(BOOK_ID)).sources.stage(
-            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
-        )
+        await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
         assert (tmp_path / 'projects' / str(BOOK_ID) / 'incoming' / str(JOB_ID) / PAGE_NAME).read_bytes() == (
             PAGE_CONTENT
@@ -62,12 +72,9 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        stores = LocalBookDirectories(root=tmp_path)
-        await stores.directory(directory_of(BOOK_ID)).sources.stage(
-            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
-        )
+        await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
-        await stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         sources_dir = tmp_path / 'projects' / str(BOOK_ID) / 'sources'
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
@@ -79,16 +86,13 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        stores = LocalBookDirectories(root=tmp_path)
-        await stores.directory(directory_of(BOOK_ID)).sources.stage(
-            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
-        )
+        await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         sources_dir = tmp_path / BOOK_DIRECTORY / KEYS.sources_area
         (sources_dir / str(SOURCE_ID)).mkdir(parents=True)
         (sources_dir / str(SOURCE_ID) / PAGE_NAME).write_bytes(PAGE_CONTENT)
 
         with pytest.raises(ConflictError):
-            await stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
 
@@ -103,41 +107,35 @@ class TestLocalSourceStore:
         :type monkeypatch: pytest.MonkeyPatch
         """
         monkeypatch.setattr(local, '_publish', AsyncMock(side_effect=ConflictError(SOURCE_TAKEN)))
-        stores = LocalBookDirectories(root=tmp_path)
-        await stores.directory(directory_of(BOOK_ID)).sources.stage(
-            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
-        )
+        await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
         with pytest.raises(ConflictError):
-            await stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         expect((tmp_path / BOOK_DIRECTORY / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
         expect(list((tmp_path / BOOK_DIRECTORY / KEYS.sources_area).iterdir()) == [])
         assert_expectations()
 
     async def test_discarding_all_staged_removes_every_upload_and_keeps_the_sources(self, tmp_path: Path) -> None:
-        """Verify no book keeps an ``incoming/`` directory, and a book with a source keeps its sources.
+        """Verify the book keeps no ``incoming/`` directory and keeps its sources, and another book keeps its upload.
 
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        stores = LocalBookDirectories(root=tmp_path)
-        other_sources_dir = tmp_path / 'projects' / str(OTHER_BOOK_ID) / BookKeys().sources_area
-        await stores.directory(directory_of(BOOK_ID)).sources.stage(
-            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
-        )
-        await stores.directory(directory_of(OTHER_BOOK_ID)).sources.stage(
-            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
-        )
-        await stores.directory(directory_of(OTHER_BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
-        await stores.directory(directory_of(OTHER_BOOK_ID)).sources.stage(
+        sources_dir = tmp_path / BOOK_DIRECTORY / BookKeys().sources_area
+        other_incoming = tmp_path / 'projects' / str(OTHER_BOOK_ID) / KEYS.incoming_area
+        await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await _sources(tmp_path).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await _sources(tmp_path).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await _sources(tmp_path, OTHER_BOOK_ID).stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
 
-        await stores.discard_all_staged()
+        await _sources(tmp_path).discard_all_staged()
 
         expect(not (tmp_path / BOOK_DIRECTORY / KEYS.incoming_area).exists())
-        expect([path.name for path in other_sources_dir.parent.iterdir()] == [other_sources_dir.name])
+        expect([path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)])
+        expect(other_incoming.is_dir())
         assert_expectations()
 
 

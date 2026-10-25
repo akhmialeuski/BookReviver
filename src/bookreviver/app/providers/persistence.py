@@ -13,8 +13,8 @@ from bookreviver.ports.persistence import ChangeWaitSeconds
 class ChangeWaitProvider(Provider):
     """The limit a catalogue database waits for the write lock with, chosen by the context of the scope it lives in.
 
-    A catalogue database that serves an HTTP request must answer in seconds, so its limit is short and a busy book is
-    reported at once as a problem the interface can retry. A background job must not lose its work to a short wait,
+    A catalogue database that serves an HTTP request must answer in seconds, so its limit is short and a busy catalogue
+    is reported at once as a problem the interface can retry. A background job must not lose its work to a short wait,
     and the work of the startup in the lifespan is no request either, so both get the long limit. Neither is told
     apart by a flag that every caller would have to pass. dishka's FastAPI integration puts the ``Request`` into the
     context of the scope of every HTTP request, a job opens its scope with no ``Request``, and the lifespan puts

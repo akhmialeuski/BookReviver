@@ -93,7 +93,7 @@ class Rig:
             new_account_id(),
             directory_of(book_id),
             database=Mock(spec=BookDatabase),
-            directory=files.directory(directory_of(book_id)),
+            directory=files.open(directory_of(book_id)),
         )
         self.assets = self.book.assets
         self.tiler = FakeTiler()

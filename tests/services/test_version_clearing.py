@@ -8,8 +8,8 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import VersionData, VersionState
+from bookreviver.services.books import BooksService
 from bookreviver.services.version_clearing import BEING_COLLECTED, VersionClearing
-from tests.helpers.books_service import make_books_service
 from tests.helpers.builders import make_page, make_page_version, make_record, new_account_id
 from tests.helpers.seeding import commit_record
 
@@ -30,7 +30,6 @@ class TestClear:
         self,
         fx_database: SqlDatabase,
         fx_catalogue: CatalogueDatabaseFactory,
-        fx_directories: SharedBookDirectories,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a version a request deleted meanwhile neither fails the batch nor keeps the others from going.
@@ -39,8 +38,6 @@ class TestClear:
         :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
-        :param fx_directories: Opens the source store and the asset store of a book of the test.
-        :type fx_directories: SharedBookDirectories
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
@@ -62,9 +59,7 @@ class TestClear:
             .open(book_id)
             .change(lambda repos, _book_record: repos.page_versions.delete_many([deleted.id]))
         )
-        clearing = VersionClearing(
-            book=await make_books_service(fx_catalogue(), databases=fx_databases(), files=fx_directories).open(book_id)
-        )
+        clearing = VersionClearing(book=await BooksService(catalogue=fx_catalogue()).open(book_id))
 
         await clearing.clear([kept, deleted])
 
@@ -113,9 +108,7 @@ class TestClear:
         )
 
         monkeypatch.setattr(fx_directories.assets(book_id), 'delete_prefix', AsyncMock(side_effect=OSError))
-        clearing = VersionClearing(
-            book=await make_books_service(fx_catalogue(), databases=fx_databases(), files=fx_directories).open(book_id)
-        )
+        clearing = VersionClearing(book=await BooksService(catalogue=fx_catalogue()).open(book_id))
 
         await clearing.clear([chosen])
 

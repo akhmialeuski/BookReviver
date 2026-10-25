@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener
     from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.storage import SharedBookDirectories
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
@@ -56,17 +55,17 @@ async def fx_owner_id(fx_database: SqlDatabase) -> AccountId:
 
 
 @pytest.fixture
-def fx_book_sessions(fx_books: BookRegistry, fx_directories: SharedBookDirectories) -> BookSessions:
+def fx_book_sessions(fx_books: BookRegistry, fx_storage_root: Path) -> BookSessions:
     """Give the sessions of the files of the books of the test, for the tests that read and write rows directly.
 
     :param fx_books: Registry of the books of the test.
     :type fx_books: BookRegistry
-    :param fx_directories: The directories of the books of the test, which hold their database files.
-    :type fx_directories: SharedBookDirectories
+    :param fx_storage_root: Storage root of the test, which holds the database files of its books.
+    :type fx_storage_root: Path
     :returns: The sessions over the registry.
     :rtype: BookSessions
     """
-    return BookSessions(fx_books, fx_directories)
+    return BookSessions(fx_books, fx_storage_root)
 
 
 @pytest.fixture
@@ -247,14 +246,14 @@ def fx_traced_catalogue(fx_traced_database: SqlDatabase) -> Callable[..., Catalo
 
 @pytest.fixture
 def fx_traced_databases(
-    fx_traced_books: BookRegistry, fx_directories: SharedBookDirectories, fx_book_parts: RecordingEventBus
+    fx_traced_books: BookRegistry, fx_storage_root: Path, fx_book_parts: RecordingEventBus
 ) -> Callable[..., LocatedBookDatabases]:
     """Give a function opening the databases of the traced books, with the limit it is told.
 
     :param fx_traced_books: The traced registry of the books.
     :type fx_traced_books: BookRegistry
-    :param fx_directories: The directories of the books of the test, which hold their database files.
-    :type fx_directories: SharedBookDirectories
+    :param fx_storage_root: Storage root of the test, which holds the database files of its books.
+    :type fx_storage_root: Path
     :param fx_book_parts: The bus and the job board registered as the parts of the books the test opens.
     :type fx_book_parts: RecordingEventBus
     :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
@@ -270,21 +269,21 @@ def fx_traced_databases(
         :returns: A new opener of the databases of the books.
         :rtype: LocatedBookDatabases
         """
-        return LocatedBookDatabases(fx_traced_books, directories=fx_directories, wait_seconds=wait_seconds)
+        return LocatedBookDatabases(fx_traced_books, root=fx_storage_root, wait_seconds=wait_seconds)
 
     return open_databases
 
 
 @pytest.fixture
 def fx_impatient_databases(
-    fx_impatient_books: BookRegistry, fx_directories: SharedBookDirectories, fx_book_parts: RecordingEventBus
+    fx_impatient_books: BookRegistry, fx_storage_root: Path, fx_book_parts: RecordingEventBus
 ) -> Callable[..., LocatedBookDatabases]:
     """Give a function opening the databases of the impatient registry of the books, with the limit it is told.
 
     :param fx_impatient_books: The registry over the same books whose connections give up for the lock at once.
     :type fx_impatient_books: BookRegistry
-    :param fx_directories: The directories of the books of the test, which hold their database files.
-    :type fx_directories: SharedBookDirectories
+    :param fx_storage_root: Storage root of the test, which holds the database files of its books.
+    :type fx_storage_root: Path
     :param fx_book_parts: The bus and the job board registered as the parts of the books the test opens.
     :type fx_book_parts: RecordingEventBus
     :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
@@ -300,7 +299,7 @@ def fx_impatient_databases(
         :returns: A new opener of the databases of the books.
         :rtype: LocatedBookDatabases
         """
-        return LocatedBookDatabases(fx_impatient_books, directories=fx_directories, wait_seconds=wait_seconds)
+        return LocatedBookDatabases(fx_impatient_books, root=fx_storage_root, wait_seconds=wait_seconds)
 
     return open_databases
 

@@ -206,7 +206,7 @@ class TestListsLongerThanAChunk:
                 repos.page_versions.delete_many(version_ids)
             return counted
 
-        async with fx_books.use(book_id, fx_databases().directories.directory(directory_of(book_id)).database) as book:
+        async with fx_books.use(directory_of(book_id), fx_databases().path(book_id)) as book:
             reading = await fx_databases().open(book_id).read(list_versions)
             deleting = await fx_databases().open(book_id).change(delete_versions)
         remaining = (

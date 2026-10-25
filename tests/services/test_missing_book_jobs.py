@@ -47,15 +47,13 @@ MISSING_BOOK_JOBS: list[tuple[JobKind, MetadataMap]] = [
 MISSING_BOOK_IDS: list[str] = [kind for kind, _ in MISSING_BOOK_JOBS]
 
 
-def missing_book(kit: ProcessingKit) -> Book:
+def missing_book() -> Book:
     """Open a book the library does not list, which the starter queues jobs of like any other.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :returns: The book of a fresh identifier.
     :rtype: Book
     """
-    return open_for(Actor(account_id=new_account_id()), BookId(uuid4()), databases=kit.databases, files=kit.files)
+    return open_for(Actor(account_id=new_account_id()), BookId(uuid4()))
 
 
 class TestJobsOfAMissingBook:
@@ -71,7 +69,7 @@ class TestJobsOfAMissingBook:
         :type job: tuple[JobKind, MetadataMap]
         """
         kind, params = job
-        queued = await fx_kit.parts().starter.enqueue(missing_book(fx_kit), kind, params)
+        queued = await fx_kit.parts().starter.enqueue(missing_book(), kind, params)
 
         await fx_kit.work_queue()
 
@@ -90,9 +88,7 @@ class TestJobsOfAMissingBook:
         :type fx_open_book: BookOpener
         """
         kit = ProcessingKit(fx_database, fx_open_book, processors=[FakeContentProbe([])])
-        queued = await kit.parts().starter.enqueue(
-            missing_book(kit), JobKind.DETECT_CONTENT, ContentDetection().to_map()
-        )
+        queued = await kit.parts().starter.enqueue(missing_book(), JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
         await kit.work_queue()
 
@@ -105,7 +101,7 @@ class TestJobsOfAMissingBook:
         :type fx_kit: ProcessingKit
         """
         queued = await fx_kit.parts().starter.enqueue(
-            missing_book(fx_kit), JobKind.DETECT_CONTENT, ContentDetection().to_map()
+            missing_book(), JobKind.DETECT_CONTENT, ContentDetection().to_map()
         )
 
         await fx_kit.work_queue()

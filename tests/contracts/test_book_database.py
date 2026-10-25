@@ -2,11 +2,12 @@
 
 ``change`` runs its work on one transaction of the book, with the record of the book as the previous change committed
 it, and ``read`` runs its work on one committed state. ``version`` and ``snapshot`` read the version and a copy of the
-store of the book. A book that is not stored is found on the first call. ``create`` stores the first record of a new
-book, ``close`` ends the use of a book for good, and ``BookDatabases.adopt`` takes the file of an imported book in. Changes of one book that queue behind a held
-book keep the writes of each. That every kind of change commits, rolls back, waits and gives up, and that no read
-writes, is in ``test_catalogue_database.py``, where the book is run beside the catalogue. Concurrency is real: tasks of an
-``anyio`` task group, ordered by a held book, by events and by ``anyio.wait_all_tasks_blocked`` and never by a sleep.
+store of the book. A book that is not stored is found on the first call. ``create`` makes the database of a new book and
+stores its first record, ``close`` ends the use of a book for good, and ``adopt`` takes the file of an imported book in.
+Changes of one book that queue behind a held book keep the writes of each. That every kind of change commits, rolls
+back, waits and gives up, and that no read writes, is in ``test_catalogue_database.py``, where the book is run beside
+the catalogue. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held book, by events and by
+``anyio.wait_all_tasks_blocked`` and never by a sleep.
 """
 
 import sqlite3
@@ -21,17 +22,18 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
 from bookreviver.domain.enums import ImagePolicy
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
+from bookreviver.ports.storage import BookDirectory
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import directory_of, make_page, make_record, new_book_id
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import Book
     from tests.helpers.database import BookDatabasesFactory
-    from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 
@@ -208,18 +210,16 @@ class TestVersionAndSnapshot:
 class TestCreateAndClose:
     """Contract of BookDatabase.create() and close(), which begin and end the life of the database of a book."""
 
-    async def test_a_new_book_starts_with_no_record_and_create_stores_its_record(
-        self, fx_databases: BookDatabasesFactory, fx_directories: SharedBookDirectories
+    async def test_a_new_book_has_no_database_until_create_stores_its_record(
+        self, fx_databases: BookDatabasesFactory
     ) -> None:
-        """Verify the blank database of a new book holds no record until ``create``, which a read then returns.
+        """Verify the directory of a new book holds no database until ``create``, whose record a read then returns.
 
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
-        :param fx_directories: The directories of the books of the test.
-        :type fx_directories: SharedBookDirectories
         """
         databases, book_id, book_record = fx_databases(), new_book_id(), make_record()
-        await fx_directories.create(directory_of(book_id), await databases.blank())
+        await BookDirectory.open(directory_of(book_id)).create()
         database = databases.open(book_id)
         with pytest.raises(NotFoundError):
             await database.read(lambda repos: repos.book_record.get())
@@ -315,25 +315,23 @@ class TestCreateAndClose:
 
 
 class TestAdopt:
-    """Contract of BookDatabases.adopt(), which takes the database file an archive placed for a new book."""
+    """Contract of BookDatabase.adopt(), which takes the database file an archive placed for a new book."""
 
     async def test_a_copy_of_a_book_is_adopted_and_reads_as_the_book(
-        self, fx_databases: BookDatabasesFactory, fx_directories: SharedBookDirectories, fx_book: Book
+        self, fx_databases: BookDatabasesFactory, fx_book: Book
     ) -> None:
         """Verify the snapshot of a book, placed as the file of a new book, reads back with the same record.
 
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
-        :param fx_directories: The directories of the books of the test.
-        :type fx_directories: SharedBookDirectories
         :param fx_book: Stored book that is copied.
         :type fx_book: Book
         """
         databases, copy_id = fx_databases(), new_book_id()
-        directory = await fx_directories.create(directory_of(copy_id), await databases.blank())
-        directory.database.write_bytes(await databases.open(fx_book.book_id).snapshot())
+        await BookDirectory.open(directory_of(copy_id)).create()
+        databases.path(copy_id).write_bytes(await databases.open(fx_book.book_id).snapshot())
 
-        await databases.adopt(copy_id, directory.database)
+        await databases.open(copy_id).adopt()
 
         assert await databases.open(copy_id).read(lambda repos: repos.book_record.get()) == fx_book.book_record
 
@@ -341,21 +339,23 @@ class TestAdopt:
         CASE_ARG, [pytest.param(None, id='no-record'), pytest.param(NOT_A_DATABASE, id='not-a-database')]
     )
     async def test_a_file_that_is_no_book_is_refused(
-        self, fx_databases: BookDatabasesFactory, fx_directories: SharedBookDirectories, case: bytes | None
+        self, fx_databases: BookDatabasesFactory, fx_books: BookRegistry, case: bytes | None
     ) -> None:
         """Verify a blank database, which holds no record, and a file that is no database are refused.
 
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
-        :param fx_directories: The directories of the books of the test.
-        :type fx_directories: SharedBookDirectories
-        :param case: Content written over the blank file, or None to keep the blank file.
+        :param fx_books: Registry of the books of the test, whose blank database is copied.
+        :type fx_books: BookRegistry
+        :param case: Content of the file placed for the book, or None for a copy of the blank database.
         :type case: bytes | None
         """
         databases, copy_id = fx_databases(), new_book_id()
-        directory = await fx_directories.create(directory_of(copy_id), await databases.blank())
-        if case is not None:
-            directory.database.write_bytes(case)
+        await BookDirectory.open(directory_of(copy_id)).create()
+        if case is None:
+            await fx_books.copy_blank(databases.path(copy_id))
+        else:
+            databases.path(copy_id).write_bytes(case)
 
         with pytest.raises(InvalidArchiveError):
-            await databases.adopt(copy_id, directory.database)
+            await databases.open(copy_id).adopt()

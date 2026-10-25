@@ -1,7 +1,8 @@
 """Tests for the registry of the databases of the books: the blank file, opening, migrating and closing a book.
 
 The tests run on files in the directory of the test, since a book is a file and its migration is Alembic's, and the
-storage, which owns the directories of the books, is not needed to name a file. A book in use is held by
+storage, which owns the directories of the books, is not needed to name a file. The registry names a book by the name
+of its directory. A book in use is held by
 ``BookRegistry.use``, and the tests order the closing of a book in use by events, never by a sleep.
 """
 
@@ -19,7 +20,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.errors import BookTooNewError, NotFoundError
-from bookreviver.domain.ids import BookId
+from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.domain.keys import KeySegment
 
 if TYPE_CHECKING:
@@ -39,21 +40,21 @@ NEWER_REVISION: str = 'ffffffffffff'
 VERSION_TABLE: str = 'alembic_versions'
 
 
-async def _new_book(books: BookRegistry, directory: Path) -> tuple[BookId, Path]:
-    """Copy the blank file of the registry as the file of a new book, as the storage does for a new book.
+async def _new_book(books: BookRegistry, directory: Path) -> tuple[BookDirectoryName, Path]:
+    """Copy the blank file of the registry as the file of a new book, as the database of a new book does.
 
     :param books: The registry, whose blank file is copied.
     :type books: BookRegistry
     :param directory: Directory of the test, which gets a directory of the book.
     :type directory: Path
     :returns: The new book and its file.
-    :rtype: tuple[BookId, Path]
+    :rtype: tuple[BookDirectoryName, Path]
     """
-    book_id = BookId(uuid4())
-    path = directory / str(book_id) / KeySegment.DATABASE
+    dir_name = BookDirectoryName(str(uuid4()))
+    path = directory / dir_name / KeySegment.DATABASE
     path.parent.mkdir()
     shutil.copyfile(await books.blank(), path)
-    return book_id, path
+    return dir_name, path
 
 
 def _revisions(path: Path) -> list[str]:
@@ -132,9 +133,9 @@ class TestOpen:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id = BookId(uuid4())
-        with pytest.raises(NotFoundError, match=str(book_id)):
-            async with fx_books.use(book_id, tmp_path / KeySegment.DATABASE):
+        dir_name = BookDirectoryName(str(uuid4()))
+        with pytest.raises(NotFoundError, match=str(dir_name)):
+            async with fx_books.use(dir_name, tmp_path / KeySegment.DATABASE):
                 pass
 
     async def test_a_new_book_is_at_the_head_revision(self, fx_books: BookRegistry, tmp_path: Path) -> None:
@@ -145,8 +146,8 @@ class TestOpen:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
-        async with fx_books.use(book_id, path) as database:
+        dir_name, path = await _new_book(fx_books, tmp_path)
+        async with fx_books.use(dir_name, path) as database:
             heads = await _heads(database)
         assert tuple(_revisions(path)) == heads
 
@@ -160,10 +161,10 @@ class TestOpen:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = BookId(uuid4()), tmp_path / KeySegment.DATABASE
+        dir_name, path = BookDirectoryName(str(uuid4())), tmp_path / KeySegment.DATABASE
         with closing(sqlite3.connect(path)):
             pass
-        async with fx_books.use(book_id, path) as database:
+        async with fx_books.use(dir_name, path) as database:
             heads = await _heads(database)
         assert tuple(_revisions(path)) == heads
 
@@ -177,11 +178,11 @@ class TestOpen:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
+        dir_name, path = await _new_book(fx_books, tmp_path)
         with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute(f'UPDATE {VERSION_TABLE} SET version_num = ?', (NEWER_REVISION,))
         with pytest.raises(BookTooNewError):
-            async with fx_books.use(book_id, path):
+            async with fx_books.use(dir_name, path):
                 pass
         assert _revisions(path) == [NEWER_REVISION]
 
@@ -193,8 +194,8 @@ class TestOpen:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
-        async with fx_books.use(book_id, path) as first, fx_books.use(book_id, path) as second:
+        dir_name, path = await _new_book(fx_books, tmp_path)
+        async with fx_books.use(dir_name, path) as first, fx_books.use(dir_name, path) as second:
             assert first is second
 
 
@@ -211,15 +212,15 @@ class TestClose:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
+        dir_name, path = await _new_book(fx_books, tmp_path)
         closed = anyio.Event()
 
         async def close() -> None:
             """Close the book and tell the test it is closed."""
-            await fx_books.close(book_id)
+            await fx_books.close(dir_name)
             closed.set()
 
-        async with anyio.create_task_group() as group, fx_books.use(book_id, path):
+        async with anyio.create_task_group() as group, fx_books.use(dir_name, path):
             group.start_soon(close)
             await anyio.wait_all_tasks_blocked()
             expect(not closed.is_set(), 'the close waited for the use')
@@ -235,15 +236,15 @@ class TestClose:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
-        async with anyio.create_task_group() as group, fx_books.use(book_id, path):
-            group.start_soon(fx_books.close, book_id)
+        dir_name, path = await _new_book(fx_books, tmp_path)
+        async with anyio.create_task_group() as group, fx_books.use(dir_name, path):
+            group.start_soon(fx_books.close, dir_name)
             await anyio.wait_all_tasks_blocked()
             with pytest.raises(NotFoundError):
-                async with fx_books.use(book_id, path):
+                async with fx_books.use(dir_name, path):
                     pass
-        with pytest.raises(NotFoundError, match=str(book_id)):
-            async with fx_books.use(book_id, path):
+        with pytest.raises(NotFoundError, match=str(dir_name)):
+            async with fx_books.use(dir_name, path):
                 pass
 
     async def test_a_book_never_opened_is_closed_and_a_second_close_does_nothing(
@@ -256,11 +257,11 @@ class TestClose:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
-        await fx_books.close(book_id)
-        await fx_books.close(book_id)
+        dir_name, path = await _new_book(fx_books, tmp_path)
+        await fx_books.close(dir_name)
+        await fx_books.close(dir_name)
         with pytest.raises(NotFoundError):
-            async with fx_books.use(book_id, path):
+            async with fx_books.use(dir_name, path):
                 pass
 
 
@@ -277,11 +278,11 @@ class TestCloseIdle:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_idle_books, tmp_path)
-        async with fx_idle_books.use(book_id, path) as first:
+        dir_name, path = await _new_book(fx_idle_books, tmp_path)
+        async with fx_idle_books.use(dir_name, path) as first:
             pass
         await fx_idle_books.close_idle()
-        async with fx_idle_books.use(book_id, path) as second:
+        async with fx_idle_books.use(dir_name, path) as second:
             assert second is not first
 
     async def test_a_book_in_use_is_never_closed(self, fx_idle_books: BookRegistry, tmp_path: Path) -> None:
@@ -292,10 +293,10 @@ class TestCloseIdle:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_idle_books, tmp_path)
-        async with fx_idle_books.use(book_id, path) as held:
+        dir_name, path = await _new_book(fx_idle_books, tmp_path)
+        async with fx_idle_books.use(dir_name, path) as held:
             await fx_idle_books.close_idle()
-            async with fx_idle_books.use(book_id, path) as again:
+            async with fx_idle_books.use(dir_name, path) as again:
                 assert again is held
 
     async def test_a_book_used_within_the_limit_stays_open(self, fx_books: BookRegistry, tmp_path: Path) -> None:
@@ -306,9 +307,9 @@ class TestCloseIdle:
         :param tmp_path: Directory of the test.
         :type tmp_path: Path
         """
-        book_id, path = await _new_book(fx_books, tmp_path)
-        async with fx_books.use(book_id, path) as first:
+        dir_name, path = await _new_book(fx_books, tmp_path)
+        async with fx_books.use(dir_name, path) as first:
             pass
         await fx_books.close_idle()
-        async with fx_books.use(book_id, path) as second:
+        async with fx_books.use(dir_name, path) as second:
             assert second is first

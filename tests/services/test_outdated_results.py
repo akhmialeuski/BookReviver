@@ -11,8 +11,8 @@ from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemy
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageVersionRepository
 from bookreviver.domain.enums import Stage, StageState, VersionState
 from bookreviver.domain.values import PageStageKey, ProcessorRef
+from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
-from tests.helpers.books_service import make_books_service
 from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
@@ -155,7 +155,7 @@ async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
     """
     catalogue = kit.catalogue()
     return await OutdatedResults(
-        books=make_books_service(catalogue, databases=kit.databases, files=kit.files),
+        books=BooksService(catalogue=catalogue),
         processors=kit.processors,
     ).mark_stale()
 
@@ -232,7 +232,7 @@ class TestMarkStale:
 
         monkeypatch.setattr(SqlAlchemyBookDatabase, 'read', read_then_change)
         marked = await OutdatedResults(
-            books=make_books_service(catalogue, databases=fx_kit.databases, files=fx_kit.files),
+            books=BooksService(catalogue=catalogue),
             processors=fx_kit.processors,
         ).mark_stale()
 
@@ -366,7 +366,7 @@ class TestMarkStale:
 
         catalogue = fx_kit.catalogue()
         await OutdatedResults(
-            books=make_books_service(catalogue, databases=fx_kit.databases, files=fx_kit.files),
+            books=BooksService(catalogue=catalogue),
             processors=fx_kit.processors,
         ).mark_stale()
 

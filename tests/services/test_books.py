@@ -16,6 +16,7 @@ from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.values import PageStepKey, Slice, SliceRequest
+from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import (
@@ -33,7 +34,7 @@ from tests.helpers.seeding import commit_record, store_book
 from tests.helpers.storage import BookFiles, SharedBookDirectories, SharedDirectory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -64,39 +66,16 @@ def _stages() -> StageSummaries:
     return StageSummaries(processors=FakeCatalogue([]))
 
 
-def _service(
-    catalogue: CatalogueDatabase, stores: SharedBookDirectories, *, databases: LocatedBookDatabases
-) -> BooksService:
-    """Build the book service for one request, over a catalogue database.
-
-    :param catalogue: Catalogue database of the request.
-    :type catalogue: CatalogueDatabase
-    :param stores: The directories of the books of the test.
-    :type stores: SharedBookDirectories
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The service.
-    :rtype: BooksService
-    """
-    return BooksService(catalogue=catalogue, databases=databases, directories=stores)
-
-
 @pytest.fixture
-def fx_service(
-    fx_catalogue: CatalogueDatabaseFactory, fx_directories: SharedBookDirectories, fx_databases: BookDatabasesFactory
-) -> Callable[[], BooksService]:
+def fx_service(fx_catalogue: CatalogueDatabaseFactory) -> Callable[[], BooksService]:
     """Return a function building the service for one request.
 
     :param fx_catalogue: Function opening a new catalogue database over the database of the test.
     :type fx_catalogue: CatalogueDatabaseFactory
-    :param fx_directories: The directories of the books of the test.
-    :type fx_directories: SharedBookDirectories
-    :param fx_databases: Function opening a new opener of the databases of the books of the test.
-    :type fx_databases: BookDatabasesFactory
     :returns: Function building a service over a new catalogue database.
     :rtype: Callable[[], BooksService]
     """
-    return lambda: _service(fx_catalogue(), fx_directories, databases=fx_databases())
+    return lambda: BooksService(catalogue=fx_catalogue())
 
 
 class StoreFailedError(OSError):
@@ -132,15 +111,24 @@ class DirectoryFailingOnce(SharedDirectory):
 
 
 @pytest.fixture
-def fx_flaky_directories(fx_storage_root: Path) -> SharedBookDirectories:
-    """Return the directories of the books of the test, whose first deletion of a directory fails.
+def fx_flaky_directories(fx_storage_root: Path, fx_book_parts: RecordingEventBus) -> Iterator[SharedBookDirectories]:
+    """Register the directories of the books of the test, whose first deletion of a directory fails, for the test.
 
     :param fx_storage_root: Storage root of the directories.
     :type fx_storage_root: Path
-    :returns: The directories, each of whose deletion fails once.
-    :rtype: SharedBookDirectories
+    :param fx_book_parts: The parts registered for the books of the test, over which the directories are registered and
+                          which get their directory back after the test.
+    :type fx_book_parts: RecordingEventBus
+    :returns: Iterator yielding the directories, each of whose deletion fails once, and giving the registration back.
+    :rtype: Iterator[SharedBookDirectories]
     """
-    return SharedBookDirectories(root=fx_storage_root, directory_type=DirectoryFailingOnce)
+    del fx_book_parts
+    directories = SharedBookDirectories(root=fx_storage_root, directory_type=DirectoryFailingOnce)
+    previous = BookDirectory.register(directories.open)
+    try:
+        yield directories
+    finally:
+        BookDirectory.register(previous)
 
 
 async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> BookRecord:
@@ -157,18 +145,15 @@ async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> BookRe
 
 
 @pytest.fixture
-def fx_files(fx_directories: SharedBookDirectories, fx_storage_root: Path) -> BookFiles:
+def fx_files(fx_storage_root: Path) -> BookFiles:
     """Return the files of imported books in the stores the service works on.
 
-    :param fx_directories: Opens the source store and the asset store of a book of the test.
-
-    :type fx_directories: SharedBookDirectories
     :param fx_storage_root: Storage root both stores share.
     :type fx_storage_root: Path
     :returns: Files of the test's books.
     :rtype: BookFiles
     """
-    return BookFiles(stores=fx_directories, root=fx_storage_root)
+    return BookFiles(root=fx_storage_root)
 
 
 class TestList:
@@ -389,10 +374,10 @@ class TestDelete:
         expect(fx_files.kept(kept_page))
         assert_expectations()
 
+    @pytest.mark.usefixtures('fx_flaky_directories')
     async def test_a_failed_deletion_has_removed_the_entry_and_the_book_finishes_it_when_deleted_again(
         self,
         fx_service: Callable[[], BooksService],
-        fx_flaky_directories: SharedBookDirectories,
         fx_files: BookFiles,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -401,8 +386,6 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
-        :param fx_flaky_directories: The directories of the books, whose first deletion fails.
-        :type fx_flaky_directories: SharedBookDirectories
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -415,7 +398,7 @@ class TestDelete:
             fx_open_book.catalogue(), make_record(), page, owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         await fx_files.store(book_id, page)
-        book = open_for(fx_actor, book_id, databases=fx_open_book.databases, files=fx_flaky_directories)
+        book = open_for(fx_actor, book_id)
 
         with pytest.raises(StoreFailedError):
             await fx_service().delete(book)

@@ -178,7 +178,7 @@ class BookRecordRow(BookTable):
     :ivar created_at: Time the book was created.
     :ivar updated_at: Time of the last change, set by the domain.
     :ivar version: Number of the changes of the book committed so far, which only a change of the book raises, by one
-        for            every change that wrote a part of the book a reader asks for.
+                   for every change that wrote a part of the book a reader asks for.
     """
 
     __tablename__ = BOOK_RECORDS_TABLE

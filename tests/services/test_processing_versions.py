@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageVersion
     from bookreviver.domain.ids import BookId, StorageKey
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
@@ -182,7 +182,7 @@ async def previewed(
     """
     steps = (Step(processor_key=FakeProcessor.spec.key),)
     preview = await kit.service().start_preview(
-        open_for(actor, book_id, databases=kit.databases, files=kit.files),
+        open_for(actor, book_id),
         StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0),
     )
     if state is JobState.RUNNING:
@@ -1218,7 +1218,7 @@ class TestChooseVersionApplyStep:
         self,
         fx_kit: ProcessingKit,
         monkeypatch: pytest.MonkeyPatch,
-        change: Callable[[BookId, PageVersion, BookDatabases], Awaitable[None]],
+        change: Callable[[BookId, PageVersion, LocatedBookDatabases], Awaitable[None]],
         refusal: type[Exception],
         fx_open_book: BookOpener,
     ) -> None:
@@ -1233,7 +1233,7 @@ class TestChooseVersionApplyStep:
         :param monkeypatch: Fixture that restores the event bus.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: The change another request makes while the preview is cancelled.
-        :type change: Callable[[BookId, PageVersion, BookDatabases], Awaitable[None]]
+        :type change: Callable[[BookId, PageVersion, LocatedBookDatabases], Awaitable[None]]
         :param refusal: What the use case refuses with.
         :type refusal: type[Exception]
         :param fx_open_book: Opens the books of the test with their databases.

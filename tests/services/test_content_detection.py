@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageVersion
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
@@ -174,9 +174,7 @@ async def detect(kit: ProcessingKit, actor: Actor, book_id: BookId, page_ids: li
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
-    job = await pages_of(kit).start_detection(
-        open_for(actor, book_id, databases=kit.databases, files=kit.files), page_ids
-    )
+    job = await pages_of(kit).start_detection(open_for(actor, book_id), page_ids)
     await kit.work_queue()
     return stored_job(kit, job.id)
 
@@ -483,7 +481,7 @@ class TestStartDetection:
         """
         kit, _ = fx_probe_kit([])
         actor, book_id, _ = await book_of(kit, [PageKind.TEXT])
-        book = open_for(actor, book_id, databases=kit.databases, files=kit.files)
+        book = open_for(actor, book_id)
 
         pages_of(kit).detect_new_pages(book)
         pages_of(kit).detect_new_pages(book)
@@ -595,7 +593,7 @@ class TestApplyStep:
         self,
         fx_probe_kit: ProbeKitFactory,
         monkeypatch: pytest.MonkeyPatch,
-        change: Callable[[BookId, Page, BookDatabases], Awaitable[None]],
+        change: Callable[[BookId, Page, LocatedBookDatabases], Awaitable[None]],
         kept_type: ContentType | None,
         kept_source: ContentSource | None,
     ) -> None:
@@ -609,7 +607,7 @@ class TestApplyStep:
         :param monkeypatch: Fixture putting the change between the probe and the write.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: What another request does to the page while the job reads it.
-        :type change: Callable[[BookId, Page, BookDatabases], Awaitable[None]]
+        :type change: Callable[[BookId, Page, LocatedBookDatabases], Awaitable[None]]
         :param kept_type: The content type the page holds afterwards, or None for a page that is gone.
         :type kept_type: ContentType | None
         :param kept_source: Where the type the page holds afterwards comes from, or None for a page that is gone.

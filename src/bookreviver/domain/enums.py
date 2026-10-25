@@ -1275,7 +1275,7 @@ class SpanAttribute(LabeledStrEnum):
     STATUS = 'status', 'HTTP status of the answer'
     JOB_KIND = 'job.kind', 'Kind of the job'
     JOB_ID = 'job.id', 'Identifier of the job'
-    BOOK = 'book', 'Identifier of the book the block holds'
+    BOOK = 'book', 'Name of the directory of the book the block holds'
     PAGE = 'page', 'Identifier of the page'
     STAGE = 'stage', 'Stage of the run'
     RUN_OUTCOME = 'run.outcome', 'What the run came to on the page'

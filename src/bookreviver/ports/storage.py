@@ -1,10 +1,9 @@
-"""Storage ports: the directory of each book, with its database file, its uploads and sources, and its derived files.
+"""Storage ports: the directory of each book, with its uploads and sources, its derived files, and its archive.
 
-``BookDirectories`` owns the directories of the books, which the library entry of each book names: it makes the
-directory of a new book from the blank database file, unpacks the archive of a book into a new directory, and opens the
-``BookDirectory`` of a book, which deletes the
-directory whole and packs it into an archive. The database file is a file of the directory like any other, so it is
-written, copied, archived and deleted only here, and the persistence port opens it by its path.
+The ``BookDirectory`` of a book is opened by the name of the directory, which the library entry of the book keeps, as
+every part of a book is. It makes the empty directory of a new book, unpacks the archive of an exported book into one,
+deletes the directory whole and packs it into an archive. The database file of the book is a file of the directory like
+any other, which the persistence port creates, adopts and reads by its own path, and the directory deletes with it.
 
 Two stores of one book divide its other files by prefix, as ``BookKeys`` lays them out, so a use case reaches the files
 of the book it holds and names no book to any call. The ``SourceStore`` owns ``incoming/`` and ``sources/``: an upload
@@ -19,13 +18,15 @@ ports, because the imaging libraries and the database read and write paths.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol
 
+from bookreviver.ports.book_parts import BookPart
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from pathlib import Path
     from typing import BinaryIO
 
-    from bookreviver.domain.ids import BookDirectoryName, JobId, SourceId, StorageKey
+    from bookreviver.domain.ids import JobId, SourceId, StorageKey
     from bookreviver.domain.values import SourceFile
 
 
@@ -97,6 +98,14 @@ class SourceStore(ABC):
 
         :param job_id: Import job whose upload is removed.
         :type job_id: JobId
+        """
+
+    @abstractmethod
+    async def discard_all_staged(self) -> None:
+        """Remove the staged upload of every import job of the book, which no job can run any more.
+
+        The application calls it for each book when it starts, because the board of jobs is empty then and the uploads
+        that a restart interrupted would stay for good. The sources already promoted are not touched.
         """
 
     @abstractmethod
@@ -211,13 +220,8 @@ class AssetStore(ABC):
         """
 
 
-class BookDirectory(ABC):
-    """The directory of one book: its database file, its two stores, and its archive."""
-
-    @property
-    @abstractmethod
-    def database(self) -> Path:
-        """The local path of the database file of the book, which may not exist yet."""
+class BookDirectory(BookPart, ABC):
+    """The directory of one book: its two stores, its archive, and the files its database lives among."""
 
     @property
     @abstractmethod
@@ -228,6 +232,28 @@ class BookDirectory(ABC):
     @abstractmethod
     def assets(self) -> AssetStore:
         """The store of the derived files of the book."""
+
+    @abstractmethod
+    async def create(self) -> None:
+        """Make the empty directory of a new book, which holds no database file yet; one that exists is left as it is.
+
+        A directory that holds files of the book and no database, as one an earlier release left, is the directory of
+        the book too. The database port refuses a book that has a database already.
+        """
+
+    @abstractmethod
+    async def unpack(self, archive: BinaryIO) -> None:
+        """Place the content of an archive as the directory of a new book, its database first.
+
+        Every name in the archive is checked before anything is written, and a failure while writing removes what was
+        written, so a refused archive leaves nothing behind.
+
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
+                                     the archive of a book carries.
+        :raises ConflictError: If the directory exists already.
+        """
 
     @abstractmethod
     def export(self, database: bytes) -> AsyncIterator[bytes]:
@@ -247,57 +273,4 @@ class BookDirectory(ABC):
         """Remove the directory of the book whole, its database file included; a book with none is not an error.
 
         Whoever holds the database open closes it first. A deletion broken off half way runs again to the end.
-        """
-
-
-class BookDirectories(ABC):
-    """The directories of the books: the one place that makes, walks and opens them."""
-
-    @abstractmethod
-    def directory(self, name: BookDirectoryName) -> BookDirectory:
-        """Return the directory of a book, without touching its files.
-
-        :param name: Name of the directory of the book, which its library entry keeps.
-        :type name: BookDirectoryName
-        :returns: The directory of the book.
-        :rtype: BookDirectory
-        """
-
-    @abstractmethod
-    async def create(self, name: BookDirectoryName, blank: Path) -> BookDirectory:
-        """Make the directory of a new book, unless it exists, holding a copy of the blank database file.
-
-        :param name: Name of the directory of the new book, which no other book has.
-        :type name: BookDirectoryName
-        :param blank: A database file of a book with no rows, which the directory gets a copy of.
-        :type blank: Path
-        :returns: The directory of the new book.
-        :rtype: BookDirectory
-        :raises ConflictError: If the directory holds a database already.
-        """
-
-    @abstractmethod
-    async def unpack(self, name: BookDirectoryName, archive: BinaryIO) -> BookDirectory:
-        """Place the content of an archive as the directory of a new book, its database first.
-
-        Every name in the archive is checked before anything is written, and a failure while writing removes what was
-        written, so a refused archive leaves nothing behind.
-
-        :param name: Name of the directory of the new book, which does not exist yet.
-        :type name: BookDirectoryName
-        :param archive: The archive, a file that can be read from any position.
-        :type archive: BinaryIO
-        :returns: The directory of the new book.
-        :rtype: BookDirectory
-        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
-                                     the archive of a book carries.
-        :raises ConflictError: If the directory exists already.
-        """
-
-    @abstractmethod
-    async def discard_all_staged(self) -> None:
-        """Remove the staged upload of every import job of every book, which no job can run any more.
-
-        The application calls it when it starts, because the board of jobs is empty then and the uploads that a
-        restart interrupted would stay for good. The sources already promoted are not touched.
         """

@@ -476,7 +476,7 @@ async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
     """
     key = await kit.edit_key(book.book_id, book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
     await kit.edits().save(
-        open_for(book.actor, book.book_id, databases=kit.databases, files=kit.files),
+        open_for(book.actor, book.book_id),
         key,
         NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE),
         None,

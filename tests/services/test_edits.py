@@ -158,9 +158,7 @@ class TestSave:
         actor, book_id, page = await prepared(fx_kit)
         key = await fx_kit.edit_key(book_id, page, key_stage, processor)
         with pytest.raises(InvalidParametersError, match=match):
-            await fx_kit.edits().save(
-                open_for(actor, book_id, databases=fx_kit.databases, files=fx_kit.files), key, edit, None
-            )
+            await fx_kit.edits().save(open_for(actor, book_id), key, edit, None)
 
     async def test_edit_of_a_step_that_no_recipe_of_the_stage_has_is_not_found(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener

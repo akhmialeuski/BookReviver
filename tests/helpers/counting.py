@@ -70,12 +70,17 @@ class CountingBookDatabase(BookDatabase):
 
     @override
     async def create(self, book_record: BookRecord) -> None:
-        """Store the record of a new book on the wrapped book database.
+        """Make the database of a new book on the wrapped book database, with the first record.
 
         :param book_record: The record of the book.
         :type book_record: BookRecord
         """
         await self._inner.create(book_record)
+
+    @override
+    async def adopt(self) -> None:
+        """Take the database file an archive placed on the wrapped book database."""
+        await self._inner.adopt()
 
     @override
     async def close(self) -> None:

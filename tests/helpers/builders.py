@@ -67,15 +67,12 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
-from bookreviver.ports.runtime import BookEvents
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import BookDatabases
-    from bookreviver.ports.storage import BookDirectories
     from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.storage import SharedBookDirectories
 from bookreviver.domain.step_values import StepValues
@@ -215,34 +212,22 @@ class BookOpener:
         :returns: The open book.
         :rtype: Book
         """
-        return open_for(actor, book_id, databases=self.databases, files=self.files)
+        return open_for(actor, book_id)
 
 
-def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: BookDirectories) -> Book:
+def open_for(actor: Actor, book_id: BookId) -> Book:
     """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
+
+    The book opens its directory and its database by its directory name, so the test has registered them.
 
     :param actor: Account the book is opened for, which the test made its owner.
     :type actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
-    :param databases: Opens the database of the book from its file.
-    :type databases: BookDatabases
-    :param files: The directories of the books, which hold the directory of the book.
-    :type files: BookDirectories
     :returns: The open book.
     :rtype: Book
     """
-    dir_name = directory_of(book_id)
-    directory = files.directory(dir_name)
-    events = BookEvents.open(dir_name)
-    return Book(
-        book_id,
-        actor.account_id,
-        dir_name,
-        database=databases.open(book_id, directory.database, events),
-        directory=directory,
-        events=events,
-    )
+    return Book(book_id, actor.account_id, directory_of(book_id))
 
 
 def make_book_change(*, version: int = 1) -> BookChanged:

@@ -14,16 +14,17 @@ from bookreviver.domain.ids import SourceId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
 from bookreviver.ports.runtime import BookJobs
+from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.sources import SourceService
 from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import BookOpener, make_job, make_record, make_source
+from tests.helpers.builders import make_job, make_record, make_source
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
 from tests.helpers.storage import SharedBookDirectories, book_directory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
+    from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -101,18 +103,24 @@ def fx_service() -> Callable[[], SourceService]:
 
 
 @pytest.fixture
-def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookOpener:
-    """Return the opener of the books of the test over source stores whose first deletion fails.
+def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> Iterator[BookOpener]:
+    """Register source stores whose first deletion fails as the ones the books of the test open, and return the opener.
 
-    :param fx_open_book: Opens the books of the test, whose catalogue databases and databases the opener shares.
+    :param fx_open_book: Opens the books of the test, whose catalogue databases and databases the opener shares. It
+                         depends on the parts registered for the books, which get their directory back after the test.
     :type fx_open_book: BookOpener
     :param fx_storage_root: Storage root of the test, which holds the files of its books.
     :type fx_storage_root: Path
-    :returns: The opener, whose books fail the first deletion of a source.
-    :rtype: BookOpener
+    :returns: Iterator yielding the opener, whose books fail the first deletion of a source, and giving the registration
+              back.
+    :rtype: Iterator[BookOpener]
     """
     stores = SharedBookDirectories(root=fx_storage_root, source_store=SourceStoreFailingOnce)
-    return BookOpener(catalogue=fx_open_book.catalogue, databases=fx_open_book.databases, files=stores)
+    previous = BookDirectory.register(stores.open)
+    try:
+        yield evolve(fx_open_book, files=stores)
+    finally:
+        BookDirectory.register(previous)
 
 
 async def _record_unimported(book_id: BookId, *, databases: LocatedBookDatabases) -> tuple[Source, Source]:

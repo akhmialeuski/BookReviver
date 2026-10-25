@@ -156,10 +156,10 @@ class TestRunImportConnections:
         owner = Actor(account_id=fx_owner_id)
         catalogue = fx_open_book.catalogue()
         book_id = await store_book(catalogue, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
-        async with fx_books.use(book_id, fx_open_book.files.directory(directory_of(book_id)).database) as book:
+        async with fx_books.use(directory_of(book_id), fx_open_book.databases.path(book_id)) as book:
             with _counting_connections(book) as peak:
                 job = await rig.service(catalogue=catalogue).start_import(
-                    open_for(owner, book_id, databases=rig.databases, files=rig.files),
+                    open_for(owner, book_id),
                     [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)],
                 )
                 with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):

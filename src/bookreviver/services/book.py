@@ -1,6 +1,7 @@
-"""One open book, which runs every transaction of its own database and every use case that reads or changes it.
+"""One open book, which makes everything it needs through ports and runs every use case that reads or changes it.
 
-``BooksService.open`` opens a book with the database of its file, and so does ``BooksService.book`` for a library
+A book knows the name of its directory and opens its own parts by it: its directory, its database, its event channel
+and its job queue. ``BooksService.open`` opens a book of an identifier, and so does ``BooksService.book`` for a library
 entry already read. For a request, the access dependency ``open_book`` of the API opens a book of the signed-in account
 after it has checked the owner, so a use case that takes a ``Book`` works on it and checks nothing itself. A job opens
 the book of its job in the same way. A use case reads the book through ``read``, changes it through ``change``, and
@@ -8,9 +9,9 @@ asks ``version`` and ``snapshot`` for its version and a copy of its store, and n
 transaction. It reaches its uploads and sources through ``sources`` and its derived files through ``assets``, the stores
 of the directory of this book alone.
 
-The use cases of one open book are methods of the book: its first description, the change of its description and
-settings, its archive and its deletion. What a client draws from the book as a whole, its overview with the progress and
-the sums and rows of its stages, is read by ``StageSummaries`` through ``read``.
+The use cases of one open book are methods of the book: its creation, its unpacking from an archive, the change of its
+description and settings, its archive and its deletion. What a client draws from the book as a whole, its overview with
+the progress and the sums and rows of its stages, is read by ``StageSummaries`` through ``read``.
 """
 
 from datetime import UTC, datetime
@@ -20,21 +21,24 @@ from attrs import Factory, evolve, field, frozen
 
 from bookreviver.domain.entities import BookRecord
 from bookreviver.domain.values import ArchivedBook
+from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import BookEvents, BookJobs
+from bookreviver.ports.storage import BookDirectory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import BinaryIO
 
     from bookreviver.domain.changes import BookChanges
     from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import BookDatabase, BookRepositories
-    from bookreviver.ports.storage import AssetStore, BookDirectory, SourceStore
+    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.storage import AssetStore, SourceStore
 
 
 @frozen
 class Book:
-    """A book opened with its database, for the acting account or for a job.
+    """A book opened with its parts, for the acting account or for a job.
 
     :ivar id: Identifier of the book in the library.
     :ivar owner_id: The account that owns the book.
@@ -52,8 +56,12 @@ class Book:
     id: BookId
     owner_id: AccountId
     dir_name: BookDirectoryName
-    database: BookDatabase = field(eq=False, repr=False)
-    directory: BookDirectory = field(eq=False, repr=False)
+    database: BookDatabase = field(
+        default=Factory(lambda self: BookDatabase.open(self.dir_name), takes_self=True), eq=False, repr=False
+    )
+    directory: BookDirectory = field(
+        default=Factory(lambda self: BookDirectory.open(self.dir_name), takes_self=True), eq=False, repr=False
+    )
     events: BookEvents = field(
         default=Factory(lambda self: BookEvents.open(self.dir_name), takes_self=True), eq=False, repr=False
     )
@@ -153,15 +161,34 @@ class Book:
         database = await self.snapshot()
         return ArchivedBook(title=book_record.details.title, pieces=self.directory.export(database))
 
-    async def describe(self, details: BookDetails) -> None:
-        """Write the first description of a new book, whose database holds no record yet, created and changed now.
+    async def create(self, details: BookDetails) -> None:
+        """Make the empty book: its directory, then its database with the first description, created and changed now.
 
         :param details: Description of the book.
         :type details: BookDetails
-        :raises ConflictError: If the book is described already.
+        :raises ConflictError: If the book has a database already.
         """
         moment = datetime.now(UTC)
+        await self.directory.create()
         await self.database.create(BookRecord(details=details, created_at=moment, updated_at=moment))
+
+    async def unpack(self, archive: BinaryIO) -> None:
+        """Make the book from the archive of an exported book: its directory first, then its database brought to date.
+
+        A database that cannot be adopted removes the whole directory, so a refused archive leaves nothing behind.
+
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :raises InvalidArchiveError: If the file is not the archive of a book.
+        :raises BookTooNewError: If the book was exported by a newer release.
+        :raises ConflictError: If the directory of the book exists already.
+        """
+        await self.directory.unpack(archive)
+        try:
+            await self.database.adopt()
+        except Exception:
+            await self.delete()
+            raise
 
     async def delete(self) -> None:
         """Close the database of the book once its transactions have ended, then delete its directory whole.

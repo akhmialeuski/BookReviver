@@ -224,9 +224,7 @@ class LeafDesk:
         :type fill: BlankFill
         """
         ids = [book.pages[position].id for position in positions]
-        await self.service().set_blank_fill(
-            open_for(self.actor, book.book_id, databases=self.databases, files=self.files), ids, fill
-        )
+        await self.service().set_blank_fill(open_for(self.actor, book.book_id), ids, fill)
 
     async def add_blank_page(self, book: LeafBook) -> PageOverview:
         """Add a generated blank page at the end of the book, which asks for a ``prepare-pages`` job as a request does.
@@ -237,9 +235,7 @@ class LeafDesk:
         :rtype: PageOverview
         """
         new_page = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
-        return await self.service().add(
-            open_for(self.actor, book.book_id, databases=self.databases, files=self.files), new_page
-        )
+        return await self.service().add(open_for(self.actor, book.book_id), new_page)
 
     def prepare_jobs(self) -> list[Job]:
         """Read the ``prepare-pages`` jobs put on the board, as the board holds them now, in the order they were put.

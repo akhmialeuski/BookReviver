@@ -4,9 +4,8 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
+from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.processing import ProcessorCatalog
-from bookreviver.ports.storage import BookDirectories
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
@@ -44,21 +43,15 @@ class BooksProvider(Provider):
         return BookFreshness()
 
     @provide
-    def books(
-        self, catalogue: CatalogueDatabase, databases: BookDatabases, directories: BookDirectories
-    ) -> BooksService:
-        """Build the books service over the request's catalogue database, book databases and book directories.
+    def books(self, catalogue: CatalogueDatabase) -> BooksService:
+        """Build the books service over the request's catalogue database.
 
         :param catalogue: Catalogue database of the current request, which runs the transactions of the catalogue.
         :type catalogue: CatalogueDatabase
-        :param databases: Opens the database of a book from its file, which runs the transactions of that book.
-        :type databases: BookDatabases
-        :param directories: The directories of the books.
-        :type directories: BookDirectories
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(catalogue=catalogue, databases=databases, directories=directories)
+        return BooksService(catalogue=catalogue)
 
     @provide(scope=Scope.APP)
     def page_imaging(self, tiler: Tiler, runner: StepRunner) -> PageImaging:

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from fastapi import UploadFile
 
-    from bookreviver.ports.storage import BookDirectories
+    from bookreviver.ports.storage import BookDirectory
 
 pytestmark = pytest.mark.anyio
 
@@ -55,12 +55,12 @@ class RejectedUploadCase(NamedTuple):
 
 
 async def _stage(
-    stores: BookDirectories, job_id: JobId, *files: UploadFile, book_id: BookId = BOOK_ID
+    stores: type[BookDirectory], job_id: JobId, *files: UploadFile, book_id: BookId = BOOK_ID
 ) -> Sequence[SourceFile]:
     """Stage the files of an import job without a practical size limit.
 
     :param stores: Opens the source store of the book.
-    :type stores: BookDirectories
+    :type stores: type[BookDirectory]
     :param job_id: Import job owning the upload.
     :type job_id: JobId
     :param files: Uploaded files.
@@ -70,14 +70,16 @@ async def _stage(
     :returns: The staged files as the store reports them.
     :rtype: Sequence[SourceFile]
     """
-    return await stores.directory(directory_of(book_id)).sources.stage(job_id, files, max_bytes=UNLIMITED_BYTES)
+    return await stores.open(directory_of(book_id)).sources.stage(job_id, files, max_bytes=UNLIMITED_BYTES)
 
 
-async def _import(stores: BookDirectories, source_id: SourceId, *files: UploadFile, book_id: BookId = BOOK_ID) -> None:
+async def _import(
+    stores: type[BookDirectory], source_id: SourceId, *files: UploadFile, book_id: BookId = BOOK_ID
+) -> None:
     """Stage the files under a new import job and promote all of them to one source.
 
     :param stores: Opens the source store of the book.
-    :type stores: BookDirectories
+    :type stores: type[BookDirectory]
     :param source_id: Source the files become.
     :type source_id: SourceId
     :param files: Uploaded files.
@@ -87,16 +89,14 @@ async def _import(stores: BookDirectories, source_id: SourceId, *files: UploadFi
     """
     job_id = JobId(uuid4())
     staged = await _stage(stores, job_id, *files, book_id=book_id)
-    await stores.directory(directory_of(book_id)).sources.promote(
-        job_id, source_id, names=[file.name for file in staged]
-    )
+    await stores.open(directory_of(book_id)).sources.promote(job_id, source_id, names=[file.name for file in staged])
 
 
-async def _staged(stores: BookDirectories, job_id: JobId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
+async def _staged(stores: type[BookDirectory], job_id: JobId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
     """Return the files an import job has staged and not promoted, by relative name.
 
     :param stores: Opens the source store of the book.
-    :type stores: BookDirectories
+    :type stores: type[BookDirectory]
     :param job_id: Import job whose upload is read.
     :type job_id: JobId
     :param book_id: Book owning the upload.
@@ -105,15 +105,15 @@ async def _staged(stores: BookDirectories, job_id: JobId, *, book_id: BookId = B
     :rtype: dict[str, bytes]
     :raises NotFoundError: If the job has no staged upload.
     """
-    async with stores.directory(directory_of(book_id)).sources.staged_files(job_id) as paths:
+    async with stores.open(directory_of(book_id)).sources.staged_files(job_id) as paths:
         return {name: path.read_bytes() for name, path in paths.items()}
 
 
-async def _source(stores: BookDirectories, source_id: SourceId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
+async def _source(stores: type[BookDirectory], source_id: SourceId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
     """Return the files of a source by name.
 
     :param stores: Opens the source store of the book.
-    :type stores: BookDirectories
+    :type stores: type[BookDirectory]
     :param source_id: Source whose files are read.
     :type source_id: SourceId
     :param book_id: Book owning the source.
@@ -122,25 +122,25 @@ async def _source(stores: BookDirectories, source_id: SourceId, *, book_id: Book
     :rtype: dict[str, bytes]
     :raises NotFoundError: If the source has no files.
     """
-    async with stores.directory(directory_of(book_id)).sources.source_files(source_id) as paths:
+    async with stores.open(directory_of(book_id)).sources.source_files(source_id) as paths:
         return {path.name: path.read_bytes() for path in paths}
 
 
 class TestStage:
     """Contract of SourceStore.stage()."""
 
-    async def test_streams_files_under_their_relative_paths(self, fx_stores: BookDirectories) -> None:
+    async def test_streams_files_under_their_relative_paths(self, fx_stores: type[BookDirectory]) -> None:
         """Verify every file is kept whole under its relative path and reported with its size and digest.
 
         A backslash separates folders as a slash does, since a Windows client may send either.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         files = [upload('scans/page1.png', content=OLD_CONTENT), upload('scans\\page2.png', content=LARGE_CONTENT)]
 
         # A limit equal to the upload size admits it
-        staged = await fx_stores.directory(directory_of(BOOK_ID)).sources.stage(
+        staged = await fx_stores.open(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, files, max_bytes=len(OLD_CONTENT) + len(LARGE_CONTENT)
         )
 
@@ -160,11 +160,11 @@ class TestStage:
         expect(await _staged(fx_stores, JOB_ID) == {'scans/page1.png': OLD_CONTENT, 'scans/page2.png': LARGE_CONTENT})
         assert_expectations()
 
-    async def test_files_of_different_folders_with_one_name_are_two_files(self, fx_stores: BookDirectories) -> None:
+    async def test_files_of_different_folders_with_one_name_are_two_files(self, fx_stores: type[BookDirectory]) -> None:
         """Verify ``vol1/001.tif`` and ``vol2/001.tif`` are staged apart, and the report keeps their upload order.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         staged = await _stage(
             fx_stores,
@@ -177,11 +177,11 @@ class TestStage:
         expect(await _staged(fx_stores, JOB_ID) == {FIRST_VOLUME_PAGE: OLD_CONTENT, SECOND_VOLUME_PAGE: NEW_CONTENT})
         assert_expectations()
 
-    async def test_replaces_interrupted_upload_of_the_same_job(self, fx_stores: BookDirectories) -> None:
+    async def test_replaces_interrupted_upload_of_the_same_job(self, fx_stores: type[BookDirectory]) -> None:
         """Verify staging again for a job drops whatever the job's earlier upload left.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
@@ -189,11 +189,11 @@ class TestStage:
 
         assert await _staged(fx_stores, JOB_ID) == {NEW_NAME: NEW_CONTENT}
 
-    async def test_keeps_the_upload_of_another_job(self, fx_stores: BookDirectories) -> None:
+    async def test_keeps_the_upload_of_another_job(self, fx_stores: type[BookDirectory]) -> None:
         """Verify each import job receives its upload apart from the others.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
@@ -203,11 +203,11 @@ class TestStage:
         expect(await _staged(fx_stores, OTHER_JOB_ID) == {NEW_NAME: NEW_CONTENT})
         assert_expectations()
 
-    async def test_accepts_upload_to_book_with_sources(self, fx_stores: BookDirectories) -> None:
+    async def test_accepts_upload_to_book_with_sources(self, fx_stores: type[BookDirectory]) -> None:
         """Verify a book with a source takes another upload, and the source stays as it was.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
@@ -285,19 +285,19 @@ class TestStage:
         ],
     )
     async def test_rejected_upload_leaves_nothing_staged(
-        self, fx_stores: BookDirectories, case: RejectedUploadCase
+        self, fx_stores: type[BookDirectory], case: RejectedUploadCase
     ) -> None:
         """Verify a refused upload reports its problem and keeps nothing it wrote.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         :param case: An upload the store must refuse, and the problem it must report.
         :type case: RejectedUploadCase
         """
         files = [upload(name, content=content) for name, content in case.files]
 
         with pytest.raises(UploadRejectedError) as error:
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.stage(JOB_ID, files, max_bytes=case.max_bytes)
+            await fx_stores.open(directory_of(BOOK_ID)).sources.stage(JOB_ID, files, max_bytes=case.max_bytes)
 
         assert error.value.problem == case.problem
         with pytest.raises(NotFoundError):
@@ -307,41 +307,41 @@ class TestStage:
 class TestPromote:
     """Contract of SourceStore.promote()."""
 
-    async def test_each_source_takes_only_its_own_files(self, fx_stores: BookDirectories) -> None:
+    async def test_each_source_takes_only_its_own_files(self, fx_stores: type[BookDirectory]) -> None:
         """Verify an upload of two files becomes two sources, and nothing stays staged.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT), upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[NEW_NAME])
+        await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
+        await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[NEW_NAME])
 
         expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _source(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT})
         expect(await _staged(fx_stores, JOB_ID) == {})
         assert_expectations()
 
-    async def test_source_takes_several_files(self, fx_stores: BookDirectories) -> None:
+    async def test_source_takes_several_files(self, fx_stores: type[BookDirectory]) -> None:
         """Verify one source can hold several files, as an indirect DjVu document does.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT), upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME, NEW_NAME])
+        await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME, NEW_NAME])
 
         assert await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT, NEW_NAME: NEW_CONTENT}
 
     async def test_source_keeps_a_file_under_its_base_name_and_the_others_stay_staged(
-        self, fx_stores: BookDirectories
+        self, fx_stores: type[BookDirectory]
     ) -> None:
         """Verify a file of a folder is stored under its base name, and the same name of another folder stays staged.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(
             fx_stores,
@@ -350,10 +350,8 @@ class TestPromote:
             upload(SECOND_VOLUME_PAGE, content=NEW_CONTENT),
         )
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(
-            JOB_ID, OTHER_SOURCE_ID, names=[SECOND_VOLUME_PAGE]
-        )
+        await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
+        await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[SECOND_VOLUME_PAGE])
 
         expect(await _source(fx_stores, SOURCE_ID) == {'001.tif': OLD_CONTENT})
         expect(await _source(fx_stores, OTHER_SOURCE_ID) == {'001.tif': NEW_CONTENT})
@@ -361,12 +359,12 @@ class TestPromote:
         assert_expectations()
 
     async def test_two_files_ending_in_one_name_raise_conflict_and_move_nothing(
-        self, fx_stores: BookDirectories
+        self, fx_stores: type[BookDirectory]
     ) -> None:
         """Reject a source whose files would share a name in its directory, keeping every file staged.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(
             fx_stores,
@@ -376,7 +374,7 @@ class TestPromote:
         )
 
         with pytest.raises(ConflictError):
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(
+            await fx_stores.open(directory_of(BOOK_ID)).sources.promote(
                 JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE, SECOND_VOLUME_PAGE]
             )
 
@@ -387,147 +385,145 @@ class TestPromote:
 
     @pytest.mark.parametrize(NAMES_ARG, [(PAGE_NAME,), (OLD_NAME, PAGE_NAME), ('../escape.pdf',)])
     async def test_name_not_staged_raises_not_found_and_moves_nothing(
-        self, fx_stores: BookDirectories, names: Sequence[str]
+        self, fx_stores: type[BookDirectory], names: Sequence[str]
     ) -> None:
         """Reject a promotion naming a file the job has not staged, keeping every staged file where it was.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         :param names: Names of the files to promote, at least one of them not staged.
         :type names: Sequence[str]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         with pytest.raises(NotFoundError):
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=names)
+            await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=names)
 
         assert await _staged(fx_stores, JOB_ID) == {OLD_NAME: OLD_CONTENT}
         with pytest.raises(NotFoundError):
             await _source(fx_stores, SOURCE_ID)
 
-    async def test_job_without_upload_raises_not_found(self, fx_stores: BookDirectories) -> None:
+    async def test_job_without_upload_raises_not_found(self, fx_stores: type[BookDirectory]) -> None:
         """Reject a promotion from a job that has staged nothing.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         with pytest.raises(NotFoundError):
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
+            await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
 
-    async def test_existing_source_is_never_replaced(self, fx_stores: BookDirectories) -> None:
+    async def test_existing_source_is_never_replaced(self, fx_stores: type[BookDirectory]) -> None:
         """Verify a source keeps its files, and the refused files stay staged for another attempt.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         with pytest.raises(ConflictError):
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[NEW_NAME])
+            await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[NEW_NAME])
 
         expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _staged(fx_stores, JOB_ID) == {NEW_NAME: NEW_CONTENT})
         assert_expectations()
 
-    async def test_refused_promotion_leaves_a_file_in_its_folder(self, fx_stores: BookDirectories) -> None:
+    async def test_refused_promotion_leaves_a_file_in_its_folder(self, fx_stores: type[BookDirectory]) -> None:
         """Verify the files of a refused promotion stay staged under the relative paths they had.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, JOB_ID, upload(FIRST_VOLUME_PAGE, content=NEW_CONTENT))
 
         with pytest.raises(ConflictError):
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(
-                JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE]
-            )
+            await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
 
         assert await _staged(fx_stores, JOB_ID) == {FIRST_VOLUME_PAGE: NEW_CONTENT}
 
-    async def test_no_names_raises_value_error(self, fx_stores: BookDirectories) -> None:
+    async def test_no_names_raises_value_error(self, fx_stores: type[BookDirectory]) -> None:
         """Reject a source without files, which a caller can only ask for by mistake.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         with pytest.raises(ValueError, match='needs at least one file'):
-            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[])
+            await fx_stores.open(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[])
 
 
 class TestDiscard:
     """Contract of SourceStore.discard()."""
 
-    async def test_removes_the_upload_of_that_job_only(self, fx_stores: BookDirectories) -> None:
+    async def test_removes_the_upload_of_that_job_only(self, fx_stores: type[BookDirectory]) -> None:
         """Verify a failed import drops its own upload and leaves another job's upload alone.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.discard(JOB_ID)
+        await fx_stores.open(directory_of(BOOK_ID)).sources.discard(JOB_ID)
 
         assert await _staged(fx_stores, OTHER_JOB_ID) == {NEW_NAME: NEW_CONTENT}
         with pytest.raises(NotFoundError):
             await _staged(fx_stores, JOB_ID)
 
-    async def test_nothing_staged_is_not_an_error(self, fx_stores: BookDirectories) -> None:
+    async def test_nothing_staged_is_not_an_error(self, fx_stores: type[BookDirectory]) -> None:
         """Verify discarding twice succeeds, so a failed import can always clean up.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.discard(JOB_ID)
+        await fx_stores.open(directory_of(BOOK_ID)).sources.discard(JOB_ID)
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.discard(JOB_ID)
+        await fx_stores.open(directory_of(BOOK_ID)).sources.discard(JOB_ID)
 
         with pytest.raises(NotFoundError):
             await _staged(fx_stores, JOB_ID)
 
 
 class TestDiscardAllStaged:
-    """Contract of BookFileStores.discard_all_staged()."""
+    """Contract of SourceStore.discard_all_staged()."""
 
-    async def test_removes_every_staged_upload_of_every_book_and_keeps_the_sources(
-        self, fx_stores: BookDirectories
+    async def test_removes_every_staged_upload_of_the_book_and_keeps_its_sources(
+        self, fx_stores: type[BookDirectory]
     ) -> None:
-        """Verify the uploads of several jobs in several books are gone and the promoted sources are untouched.
+        """Verify the uploads of several jobs of the book are gone, its source stays, and another book keeps its upload.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
-        await _import(fx_stores, OTHER_SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT), book_id=OTHER_BOOK_ID)
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
         await _stage(fx_stores, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
         await _stage(fx_stores, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT), book_id=OTHER_BOOK_ID)
 
-        await fx_stores.discard_all_staged()
+        await fx_stores.open(directory_of(BOOK_ID)).sources.discard_all_staged()
 
-        for book_id, job_id in [(BOOK_ID, JOB_ID), (BOOK_ID, OTHER_JOB_ID), (OTHER_BOOK_ID, OTHER_JOB_ID)]:
+        for job_id in (JOB_ID, OTHER_JOB_ID):
             with pytest.raises(NotFoundError):
-                await _staged(fx_stores, job_id, book_id=book_id)
+                await _staged(fx_stores, job_id)
         expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
-        expect(await _source(fx_stores, OTHER_SOURCE_ID, book_id=OTHER_BOOK_ID) == {OLD_NAME: OLD_CONTENT})
+        expect(await _staged(fx_stores, OTHER_JOB_ID, book_id=OTHER_BOOK_ID) == {NEW_NAME: NEW_CONTENT})
         assert_expectations()
 
-    async def test_nothing_staged_is_not_an_error(self, fx_stores: BookDirectories) -> None:
+    async def test_nothing_staged_is_not_an_error(self, fx_stores: type[BookDirectory]) -> None:
         """Verify discarding on a store that never received an upload succeeds, as the first start of the application.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
-        await fx_stores.discard_all_staged()
+        sources = fx_stores.open(directory_of(BOOK_ID)).sources
+        await sources.discard_all_staged()
 
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
-        await fx_stores.discard_all_staged()
-        await fx_stores.discard_all_staged()
+        await sources.discard_all_staged()
+        await sources.discard_all_staged()
 
         with pytest.raises(NotFoundError):
             await _staged(fx_stores, JOB_ID)
@@ -536,11 +532,11 @@ class TestDiscardAllStaged:
 class TestSourceFiles:
     """Contract of SourceStore.source_files()."""
 
-    async def test_source_never_promoted_raises_not_found(self, fx_stores: BookDirectories) -> None:
+    async def test_source_never_promoted_raises_not_found(self, fx_stores: type[BookDirectory]) -> None:
         """Verify staged files are not the files of any source until they are promoted.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
@@ -551,31 +547,31 @@ class TestSourceFiles:
 class TestDeleteSource:
     """Contract of SourceStore.delete_source()."""
 
-    async def test_removes_that_source_only(self, fx_stores: BookDirectories) -> None:
+    async def test_removes_that_source_only(self, fx_stores: type[BookDirectory]) -> None:
         """Verify the deleted source's files are gone and another source of the book keeps its own.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _import(fx_stores, OTHER_SOURCE_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
+        await fx_stores.open(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
         assert await _source(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT}
         with pytest.raises(NotFoundError):
             await _source(fx_stores, SOURCE_ID)
 
-    async def test_missing_source_is_not_an_error(self, fx_stores: BookDirectories) -> None:
+    async def test_missing_source_is_not_an_error(self, fx_stores: type[BookDirectory]) -> None:
         """Verify deleting a source twice succeeds, so a failed deletion can be repeated.
 
         :param fx_stores: Opens the stores of a book of the storage backend under test.
-        :type fx_stores: BookDirectories
+        :type fx_stores: type[BookDirectory]
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
+        await fx_stores.open(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
-        await fx_stores.directory(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
+        await fx_stores.open(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
         with pytest.raises(NotFoundError):
             await _source(fx_stores, SOURCE_ID)

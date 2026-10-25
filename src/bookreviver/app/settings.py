@@ -208,9 +208,9 @@ class ChangeWaitSettings(BaseModel):
     other than the application, such as a migration run by hand, holds the write lock of the file.
 
     :ivar request_seconds: Limit of a catalogue database that serves an HTTP request, 3 seconds by default, so an
-        interface                    never hangs for the long wait of a job and is told at once to try again.
-    :ivar job_seconds: Limit of every other catalogue database, the background jobs and the work of the startup, 30
-        seconds by                default, so a job does not lose its work to a short wait.
+                           interface never hangs for the long wait of a job and is told at once to try again.
+    :ivar job_seconds: Limit of every other catalogue database, the background jobs, the work of the startup and every
+                       change of a book, 30 seconds by default, so a job does not lose its work to a short wait.
     """
 
     request_seconds: PositiveFloat = 3.0

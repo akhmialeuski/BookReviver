@@ -17,7 +17,7 @@ from tests.helpers.storage import WriterFailedError, abandon_write
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.ports.storage import AssetStore, BookDirectories
+    from bookreviver.ports.storage import AssetStore, BookDirectory
 
 pytestmark = pytest.mark.anyio
 
@@ -64,15 +64,15 @@ TILE_CONTENT: bytes = b'a tile of the pyramid of the image'
 
 
 @pytest.fixture
-def fx_asset_store(fx_stores: BookDirectories) -> AssetStore:
+def fx_asset_store(fx_stores: type[BookDirectory]) -> AssetStore:
     """Return the asset store of the book ``BOOK_ID`` in the storage backend under test.
 
     :param fx_stores: Opens the stores of a book of the storage backend under test.
-    :type fx_stores: BookDirectories
+    :type fx_stores: type[BookDirectory]
     :returns: The asset store of the book.
     :rtype: AssetStore
     """
-    return fx_stores.directory(directory_of(BOOK_ID)).assets
+    return fx_stores.open(directory_of(BOOK_ID)).assets
 
 
 def _fill_file(path: Path, content: bytes) -> None:

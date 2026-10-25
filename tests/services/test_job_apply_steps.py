@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageVersion
     from bookreviver.domain.enums import RunOutcome
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
@@ -116,7 +115,7 @@ class TestCutTiles:
         self,
         fx_kit: ProcessingKit,
         monkeypatch: pytest.MonkeyPatch,
-        change: Callable[[BookId, PageVersion, BookDatabases], Awaitable[None]],
+        change: Callable[[BookId, PageVersion, LocatedBookDatabases], Awaitable[None]],
         kept: tuple[VersionState, bool] | None,
     ) -> None:
         """Verify a version changed after its pyramid was cut keeps the change, and the viewer is not told it is cut.
@@ -126,7 +125,7 @@ class TestCutTiles:
         :param monkeypatch: Fixture putting the change between the cut and the change that marks the version.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: What another request does to the version while its pyramid is cut.
-        :type change: Callable[[BookId, PageVersion, BookDatabases], Awaitable[None]]
+        :type change: Callable[[BookId, PageVersion, LocatedBookDatabases], Awaitable[None]]
         :param kept: The state of the version afterwards and whether it holds a cut pyramid, or None for a version that
                      is gone.
         :type kept: tuple[VersionState, bool] | None

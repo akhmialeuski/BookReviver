@@ -16,6 +16,7 @@ file made at the head revision for the command in a temporary directory: that is
 files of the books, once.
 """
 
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -26,10 +27,11 @@ from advanced_alchemy.utils.cli_tools import click, group
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.split import SharedDatabaseSplit
-from bookreviver.adapters.storage import LocalBookDirectories
+from bookreviver.adapters.storage import LocalBookDirectory
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import Settings
 from bookreviver.domain.keys import KeySegment
+from bookreviver.ports.storage import BookDirectory
 
 # The shared database of the releases before the catalogue, in the data directory
 SHARED_DATABASE: str = 'bookreviver.db'
@@ -96,8 +98,9 @@ def split_shared_database() -> None:
         settings.data_dir.resolve() / SHARED_DATABASE,
         catalogue_db=catalogue,
         books=books,
-        directories=LocalBookDirectories(root=settings.storage_root),
+        root=settings.storage_root,
     )
+    BookDirectory.register(partial(LocalBookDirectory, root=settings.storage_root))
 
     async def run() -> None:
         """Run the split and close the databases it opened."""

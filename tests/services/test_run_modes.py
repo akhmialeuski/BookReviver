@@ -53,7 +53,7 @@ async def worked_book(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page], li
     keys = [await kit.edit_key(book_id, page, Stage.GEOMETRY, FAKE_KEY) for page in pages]
     for key in keys[:WORKED_PAGES]:
         await PageValues(kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
-    await kit.edits().save(open_for(actor, book_id, databases=kit.databases, files=kit.files), keys[0], ROTATION, None)
+    await kit.edits().save(open_for(actor, book_id), keys[0], ROTATION, None)
     return actor, book_id, pages, keys
 
 

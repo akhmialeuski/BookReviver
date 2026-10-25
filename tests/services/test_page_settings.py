@@ -165,9 +165,7 @@ async def strengths(kit: ProcessingKit, actor: Actor, book_id: BookId, pages: li
     """
     found: list[object] = []
     for page in pages:
-        listed = await kit.page_settings().list(
-            open_for(actor, book_id, databases=kit.databases, files=kit.files), page.id, Stage.GEOMETRY
-        )
+        listed = await kit.page_settings().list(open_for(actor, book_id), page.id, Stage.GEOMETRY)
         found.append(listed[0].effective[STRENGTH_PARAMETER] if listed else RECIPE_STRENGTH)
     return found
 

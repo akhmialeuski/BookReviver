@@ -1,8 +1,10 @@
-"""Provider of the catalogue, of the databases of the books and of the catalogue database over them.
+"""Provider of the catalogue, of the registry of the databases of the books and of the catalogue database over it.
 
-The catalogue and the registry of the books are one per application, and the catalogue database and the book databases
-over them are built per request or job. The same catalogue database is the ``CatalogueDatabase`` of the port and the one
-the accounts run on, so the accounts add no second connection pool and no second catalogue database.
+The catalogue and the registry of the books are one per application, and the catalogue database over the catalogue is
+built per request or job. The same catalogue database is the ``CatalogueDatabase`` of the port and the one the accounts
+run on, so the accounts add no second connection pool and no second catalogue database. The registry is also where a
+book opens its database, so building it registers the opener of ``BookDatabase``, which ``prepare_start`` does before
+the first request. A book waits for its writer as long as a job does, since the opener knows no scope.
 
 The application never changes the schema of the catalogue. Its migrations are applied by hand, after a copy of the data
 directory if it matters, and the provider only compares the revision of the catalogue with the head of the migrations
@@ -14,16 +16,17 @@ restore. A book is brought to the head revision of its schema by the registry wh
 """
 
 from collections.abc import AsyncIterator
+from functools import partial
 
 from dishka import Provider, Scope, alias, provide
 from sqlalchemy.orm import configure_mappers
 
-from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.app.settings import Settings
-from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase, ChangeWaitSeconds
+from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase, ChangeWaitSeconds
 from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -46,7 +49,6 @@ class DatabaseProvider(Provider):
     The catalogue is at its head revision.
 
     :ivar catalogue_database_port: The catalogue database of the request as the ``CatalogueDatabase`` port.
-    :ivar book_databases_port: The opener of the books of the request as the ``BookDatabases`` port.
     """
 
     @provide(scope=Scope.APP)
@@ -99,9 +101,13 @@ class DatabaseProvider(Provider):
 
     @provide(scope=Scope.APP)
     async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookRegistry]:
-        """Open the registry of the databases of the books, and close every open book with the application.
+        """Open the registry of the databases of the books, and register how a book opens its database over it.
 
-        :param settings: Application settings, of which the wait limit of a job and the idle limit of a book are read.
+        Every open book is closed, and the registration is given back, when the application closes the container, so
+        the books of another application stay registered.
+
+        :param settings: Application settings, of which the storage root, the wait limit of a job and the idle limit of
+                         a book are read.
         :type settings: Settings
         :param tracer: Tracer the write blocks of the books are timed with.
         :type tracer: Tracer
@@ -113,9 +119,18 @@ class DatabaseProvider(Provider):
             wait_seconds=settings.change_wait.job_seconds,
             idle_seconds=settings.book_idle_seconds,
         )
+        previous = BookDatabase.register(
+            partial(
+                SqlAlchemyBookDatabase,
+                root=settings.storage_root,
+                books=books,
+                wait_seconds=settings.change_wait.job_seconds,
+            )
+        )
         try:
             yield books
         finally:
+            BookDatabase.register(previous)
             await books.dispose()
 
     @provide(scope=Scope.REQUEST)
@@ -139,20 +154,3 @@ class DatabaseProvider(Provider):
         return SqlAlchemyCatalogueDatabase(database, wait_seconds=wait_seconds)
 
     catalogue_database_port = alias(source=SqlAlchemyCatalogueDatabase, provides=CatalogueDatabase)
-
-    @provide(scope=Scope.REQUEST)
-    def book_databases(self, books: BookRegistry, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyBookDatabases:
-        """Build the opener of the books of a request or job, which keeps no state but the wait limit of its scope.
-
-        It holds no session or connection, so it needs no closing.
-
-        :param books: The registry of the databases of the books.
-        :type books: BookRegistry
-        :param wait_seconds: How long a change of a book waits for a writer, by the scope it lives in.
-        :type wait_seconds: ChangeWaitSeconds
-        :returns: The opener of the databases of the books.
-        :rtype: SqlAlchemyBookDatabases
-        """
-        return SqlAlchemyBookDatabases(books, wait_seconds=wait_seconds)
-
-    book_databases_port = alias(source=SqlAlchemyBookDatabases, provides=BookDatabases)

@@ -567,7 +567,7 @@ async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, BookId, Page, P
     steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)]
     recipe = await kit.recipe_of(actor, book_id, Stage.GEOMETRY)
     await kit.service().save_recipe(
-        open_for(actor, book_id, databases=kit.databases, files=kit.files),
+        open_for(actor, book_id),
         RecipeKey(Stage.GEOMETRY, recipe.id),
         RecipeDraft(steps=steps),
     )
@@ -760,7 +760,7 @@ async def seed_measured_book(kit: ProcessingKit) -> tuple[BookId, StepId]:
         pages.append(page)
     recipe = await kit.recipe_of(actor, book_id, Stage.GEOMETRY)
     await kit.service().save_recipe(
-        open_for(actor, book_id, databases=kit.databases, files=kit.files),
+        open_for(actor, book_id),
         RecipeKey(Stage.GEOMETRY, recipe.id),
         RecipeDraft(steps=[Step(processor_key=MEASURING_KEY)]),
     )

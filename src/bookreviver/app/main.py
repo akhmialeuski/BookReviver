@@ -25,8 +25,9 @@ from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
 from bookreviver.ports.processing import StepExecutor
-from bookreviver.ports.storage import BookDirectories
+from bookreviver.ports.storage import BookDirectory
 from bookreviver.ports.tracing import Tracer
+from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
 from bookreviver.services.recipes import DefaultRecipes
@@ -48,16 +49,17 @@ async def prepare_start(container: AsyncContainer) -> None:
     opened here: a database the migrations were not applied to stops the start instead of failing a request. The pool of
     processes that run the steps is started too, so every process has built its catalogue before the first request and
     the first preview does not wait for it. The file of default recipes is read here too, so a file that does not fit
-    stops the start. The event channels and the job board are built here as well, which registers them as the way a
-    book opens its event channel and its job queue, so every book opened afterwards finds them.
+    stops the start. The storage, the registry of the databases of the books, the event channels and the job board are
+    built here as well, which registers them as the way a book opens its directory, its database, its event channel and
+    its job queue, so every book opened afterwards finds them.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
-    left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
-    it any more, and its sources that were stored stay. The stages whose result a replaced version of a processor made
-    are marked stale, so the workspace never shows them as up to date, and the blank leaves among them are given a
-    pending version, which the next ``prepare-pages`` job of the book writes. The two passes run in a request scope of
-    their own, as a job does, go over the books the library lists and write one book at a time, in a ``Book.change`` of
-    that book.
+    left half done is left as it is. The upload an import was receiving or running on is removed from each book the
+    library lists, since no job can use it any more, and its sources that were stored stay. The stages whose result a
+    replaced version of a processor made are marked stale, so the workspace never shows them as up to date, and the
+    blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the book writes. The
+    passes run in a request scope of their own, as a job does, go over the books the library lists and write one book
+    at a time, in a ``Book.change`` of that book.
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer
@@ -68,8 +70,11 @@ async def prepare_start(container: AsyncContainer) -> None:
     await container.get(InMemoryJobBoard)
     await container.get(StepExecutor)
     await container.get(DefaultRecipes)
-    await (await container.get(BookDirectories)).discard_all_staged()
+    await container.get(type[BookDirectory])
+    await container.get(BookRegistry)
     async with container() as request:
+        for book in await (await request.get(BooksService)).listed():
+            await book.sources.discard_all_staged()
         await (await request.get(OutdatedResults)).mark_stale()
         await (await request.get(PageService)).remake_outdated_leaves()
 

@@ -14,9 +14,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
-from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase
-from bookreviver.ports.runtime import BookEvents
-from bookreviver.ports.storage import BookDirectories
+from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase
 from tests.helpers.builders import directory_of, make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account, store_book
@@ -57,26 +55,18 @@ async def fx_container(
     await container.close()
 
 
-async def _stored(container: AsyncContainer, book_id: BookId) -> bool:
+async def _stored(book_id: BookId) -> bool:
     """Return whether the book is still stored.
 
-    :param container: The application's container.
-    :type container: AsyncContainer
     :param book_id: The book to look up.
     :type book_id: BookId
     :returns: True when a new book database still finds the book in its directory.
     :rtype: bool
     """
-    async with container() as scope:
-        directory = (await scope.get(BookDirectories)).directory(directory_of(book_id))
-        try:
-            await (
-                (await scope.get(BookDatabases))
-                .open(book_id, directory.database, BookEvents.open(directory_of(book_id)))
-                .read(lambda repos: repos.book_record.get())
-            )
-        except NotFoundError:
-            return False
+    try:
+        await BookDatabase.open(directory_of(book_id)).read(lambda repos: repos.book_record.get())
+    except NotFoundError:
+        return False
     return True
 
 
@@ -106,10 +96,7 @@ class TestDelete:
                 page = make_page()
                 pages[await store_book(catalogue, make_record(), page, owner=owner, databases=fx_databases())] = page
         *owned, kept = pages
-        files = BookFiles(
-            stores=await fx_container.get(BookDirectories),
-            root=fx_settings.storage_root,
-        )
+        files = BookFiles(root=fx_settings.storage_root)
         for book_id, page in pages.items():
             await files.store(book_id, page)
 
@@ -120,9 +107,9 @@ class TestDelete:
         async with fx_container() as scope:
             accounts = await scope.get(UserManager)
             expect(await accounts.user_db.get(AccountId(owner_id)) is None)
-        expect([await _stored(fx_container, book_id) for book_id in owned] == [False] * OWNED_BOOKS)
+        expect([await _stored(book_id) for book_id in owned] == [False] * OWNED_BOOKS)
         expect(all(files.gone(book_id) for book_id in owned))
-        expect(await _stored(fx_container, kept))
+        expect(await _stored(kept))
         expect(files.kept(pages[kept]))
         assert_expectations()
 

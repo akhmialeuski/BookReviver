@@ -34,18 +34,18 @@ from sqlalchemy import MetaData, create_engine
 from sqlalchemy.engine import make_url
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import USER_TABLE
+from bookreviver.adapters.persistence.sqlalchemy.book_database import database_file
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema
 from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
-from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookDirectoryName, BookId
+from bookreviver.ports.storage import BookDirectory
 
 if TYPE_CHECKING:
     from sqlalchemy import Table
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.ports.storage import BookDirectories
 
 # The last revision of the shared database, the only one the split reads
 SHARED_REVISION: Final = '15e015051f5c'
@@ -92,9 +92,7 @@ class SplitReport:
 class SharedDatabaseSplit:
     """Moves the rows of the shared database into the catalogue and the files of the books."""
 
-    def __init__(
-        self, shared: Path, *, catalogue_db: SqlDatabase, books: BookRegistry, directories: BookDirectories
-    ) -> None:
+    def __init__(self, shared: Path, *, catalogue_db: SqlDatabase, books: BookRegistry, root: Path) -> None:
         """Split ``shared`` into the given catalogue and books.
 
         :param shared: The shared database file of the earlier releases.
@@ -103,13 +101,14 @@ class SharedDatabaseSplit:
         :type catalogue_db: SqlDatabase
         :param books: The registry of the databases of the books, which opens their files.
         :type books: BookRegistry
-        :param directories: The directories of the books, which make the directory of each book with its file.
-        :type directories: BookDirectories
+        :param root: Storage root of the directories of the books, where the file of each book is made. The directory of
+                     a book is made through ``BookDirectory``, which the caller registers an implementation of.
+        :type root: Path
         """
         self._shared = shared
         self._catalogue_db = catalogue_db
         self._books = books
-        self._directories = directories
+        self._root = root
 
     async def run(self) -> SplitReport:
         """Fill the catalogue, then make and fill the file of every book.
@@ -125,16 +124,19 @@ class SharedDatabaseSplit:
         accounts = await to_thread.run_sync(self._fill_catalogue, catalogue)
         book_ids = await to_thread.run_sync(self._book_ids)
         for book_id in book_ids:
+            name = BookDirectoryName(str(book_id))
+            await BookDirectory.open(name).create()
+            path = database_file(self._root, name)
             try:
-                directory = await self._directories.create(BookDirectoryName(str(book_id)), await self._books.blank())
-            except ConflictError as error:
+                await self._books.copy_blank(path)
+            except FileExistsError as error:
                 err_msg = f'The book {book_id} has a database already, so the split would overwrite it.'
                 raise SplitRefusedError(err_msg) from error
-            async with self._books.use(book_id, directory.database) as database:
+            async with self._books.use(name, path) as database:
                 await to_thread.run_sync(database.migrations.downgrade, BOOK_BASELINE)
                 await database.dispose()
                 versions = database.config.alembic_config.version_table_name
-                await to_thread.run_sync(self._fill_book, directory.database, book_id, versions)
+                await to_thread.run_sync(self._fill_book, path, book_id, versions)
                 await to_thread.run_sync(database.migrations.upgrade)
         return SplitReport(accounts=accounts, books=len(book_ids))
 

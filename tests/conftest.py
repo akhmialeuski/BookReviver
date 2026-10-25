@@ -1,11 +1,13 @@
 """Fixtures shared by the whole suite."""
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from starlette.requests import Request
 
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
@@ -14,7 +16,9 @@ from bookreviver.api.auth import current_actor
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
+from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import BookJobs
+from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import BookOpener, new_account_id
 from tests.helpers.database import (
     LocatedBookDatabases,
@@ -107,23 +111,43 @@ def fx_settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def fx_book_parts() -> Iterator[RecordingEventBus]:
-    """Register the event bus and a job board that run nothing as the parts every book of the test opens.
+def fx_book_parts(
+    fx_directories: SharedBookDirectories, fx_books: BookRegistry, fx_settings: Settings
+) -> Iterator[RecordingEventBus]:
+    """Register the parts every book of the test opens: its directory, its database, its events and its job queue.
 
-    A book opens its event channel and its job queue by the name of its directory, so every test has both registered.
-    A test that builds a job board of its own registers that one in place of this board, and the registrations before
-    the test are given back after it.
+    A book opens its parts by the name of its directory, so every test has them registered. The directory is a local
+    one under the storage root of the test, and the database is the SQLAlchemy one over the registry of the test. The
+    event bus records what is published, and the job board runs nothing. A test that builds a part of its own registers
+    that one in place of the one registered here, and the registrations before the test are given back after it.
 
+    :param fx_directories: The directories of the books of the test, which every book opens its directory from.
+    :type fx_directories: SharedBookDirectories
+    :param fx_books: Registry of the books of the test, which every book opens its database over.
+    :type fx_books: BookRegistry
+    :param fx_settings: Settings of the test, whose job limit is the wait of the databases of the books.
+    :type fx_settings: Settings
     :returns: The recording bus that is the event channel of every book of the test.
     :rtype: Iterator[RecordingEventBus]
     """
     previous_jobs = BookJobs.register(None)
+    previous_directory = BookDirectory.register(fx_directories.open)
+    previous_database = BookDatabase.register(
+        partial(
+            SqlAlchemyBookDatabase,
+            root=fx_settings.storage_root,
+            books=fx_books,
+            wait_seconds=fx_settings.change_wait.job_seconds,
+        )
+    )
     with RecordingEventBus().installed() as bus:
         BookJobs.register(FakeJobBoard(runner=ScriptedRunner()).open)
         try:
             yield bus
         finally:
             BookJobs.register(previous_jobs)
+            BookDirectory.register(previous_directory)
+            BookDatabase.register(previous_database)
 
 
 @pytest.fixture
@@ -156,8 +180,7 @@ def fx_directories(fx_storage_root: Path) -> SharedBookDirectories:
 
     :param fx_storage_root: Storage root of the test, which holds the directories of its books.
     :type fx_storage_root: Path
-    :returns: The local directories of the books under the storage root, one of each per book, the test adapter of the
-              port.
+    :returns: The opener of the local directories of the books under the storage root, one directory per book.
     :rtype: SharedBookDirectories
     """
     return SharedBookDirectories(root=fx_storage_root)
@@ -276,21 +299,18 @@ def fx_catalogue(fx_database: SqlDatabase, fx_settings: Settings) -> CatalogueDa
 
 @pytest.fixture
 def fx_databases(
-    fx_books: BookRegistry,
-    fx_directories: SharedBookDirectories,
-    fx_settings: Settings,
-    fx_book_parts: RecordingEventBus,
+    fx_books: BookRegistry, fx_storage_root: Path, fx_settings: Settings, fx_book_parts: RecordingEventBus
 ) -> BookDatabasesFactory:
     """Return a function opening a new opener of the databases of the books of the test, as a request would get.
 
     :param fx_books: Registry of the books of the test.
     :type fx_books: BookRegistry
-    :param fx_directories: The directories of the books of the test, which hold their database files.
-    :type fx_directories: SharedBookDirectories
+    :param fx_storage_root: Storage root of the test, which holds the database files of its books.
+    :type fx_storage_root: Path
     :param fx_settings: Settings of the test, whose job limit is the wait of an opener made with none.
     :type fx_settings: Settings
-    :param fx_book_parts: The bus and the job board registered as the parts of the books the test opens, which an opener
-                          reaches the event channel of a book through.
+    :param fx_book_parts: The parts registered for the books the test opens, which a database reaches the event channel
+                          of its book through and a book is created in the directory of.
     :type fx_book_parts: RecordingEventBus
     :returns: Function opening the databases of ``fx_books``.
     :rtype: BookDatabasesFactory
@@ -306,7 +326,7 @@ def fx_databases(
         :rtype: LocatedBookDatabases
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return LocatedBookDatabases(fx_books, directories=fx_directories, wait_seconds=seconds)
+        return LocatedBookDatabases(fx_books, root=fx_storage_root, wait_seconds=seconds)
 
     return open_databases
 

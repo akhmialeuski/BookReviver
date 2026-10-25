@@ -93,14 +93,14 @@ async def tune_recipes(kit: ProcessingKit, actor: Actor, book_id: BookId) -> dic
     tuned: dict[RecipeKind, Recipe] = {}
     for recipe in (
         await service.recipes(
-            open_for(actor, book_id, databases=kit.databases, files=kit.files),
+            open_for(actor, book_id),
             Stage.GEOMETRY,
             SliceRequest(limit=10),
         )
     ).items:
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: STRENGTHS[recipe.kind]})])
         tuned[recipe.kind] = await service.save_recipe(
-            open_for(actor, book_id, databases=kit.databases, files=kit.files),
+            open_for(actor, book_id),
             RecipeKey(Stage.GEOMETRY, recipe.id),
             draft,
         )

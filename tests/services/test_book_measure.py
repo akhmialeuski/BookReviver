@@ -175,7 +175,7 @@ async def measure(kit: ProcessingKit, actor: Actor, book_id: BookId) -> Job:
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
-    job = await kit.service().start_measure(open_for(actor, book_id, databases=kit.databases, files=kit.files))
+    job = await kit.service().start_measure(open_for(actor, book_id))
     await kit.work_queue()
     return stored_job(kit, job.id)
 

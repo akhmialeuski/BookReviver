@@ -101,7 +101,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, PaginationSection, Scan, Source
     from bookreviver.domain.ids import JobId, PageId, StorageKey
     from bookreviver.domain.values import SourceFile
-    from bookreviver.ports.persistence import BookDatabases
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from bookreviver.services.book import Book
@@ -348,7 +347,7 @@ async def _import(rig: ImportRig, actor: Actor, book_id: BookId, files: list[Upl
     :returns: The job as the board holds it after the run.
     :rtype: Job
     """
-    job = await rig.service().start_import(open_for(actor, book_id, databases=rig.databases, files=rig.files), files)
+    job = await rig.service().start_import(open_for(actor, book_id), files)
     await rig.fakes.board.run_queued()
     return rig.stored_job(job)
 
@@ -368,7 +367,7 @@ async def _running_import(rig: ImportRig, actor: Actor, book_id: BookId, files: 
     :returns: Iterator yielding the running job once its run is held, and letting it go when the block ends.
     :rtype: AsyncIterator[Job]
     """
-    job = await rig.service().start_import(open_for(actor, book_id, databases=rig.databases, files=rig.files), files)
+    job = await rig.service().start_import(open_for(actor, book_id), files)
     inspecting, released = anyio.Event(), anyio.Event()
 
     async def hold() -> None:
@@ -754,7 +753,7 @@ class TestStartImport:
 
         with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
             await fx_rig.service().start_import(
-                open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+                open_for(fx_owner, fx_book),
                 [image_upload(fx_samples, IMAGE_NAME)],
             )
 
@@ -787,7 +786,7 @@ class TestStartImport:
         async with _running_import(fx_rig, fx_owner, fx_book, first) as running:
             with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
                 await fx_rig.service().start_import(
-                    open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+                    open_for(fx_owner, fx_book),
                     [image_upload(fx_samples, 'again.png')],
                 )
 
@@ -851,7 +850,7 @@ class TestStartImport:
 
         with pytest.raises(UploadRejectedError) as refusal:
             await fx_rig.service(max_files=case.max_files, max_bytes=case.max_bytes).start_import(
-                open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files), files
+                open_for(fx_owner, fx_book), files
             )
 
         expect(refusal.value.problem is case.problem)
@@ -1940,7 +1939,7 @@ class TestRunImportLifecycle:
         :type fx_storage_root: Path
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+            open_for(fx_owner, fx_book),
             [pdf_upload(fx_samples, PDF_NAME, pages=1), pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)],
         )
 
@@ -1988,7 +1987,7 @@ class TestRunImportLifecycle:
         :type fx_storage_root: Path
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+            open_for(fx_owner, fx_book),
             [
                 upload(TEXT_NAME, content=BROKEN_PDF),
                 pdf_upload(fx_samples, PDF_NAME, pages=1),
@@ -2042,7 +2041,7 @@ class TestRunImportLifecycle:
         """
         one_at_a_time = _tuned(fx_rig, parallel_scans=1)
         job = await one_at_a_time.service().start_import(
-            open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+            open_for(fx_owner, fx_book),
             [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)],
         )
 
@@ -2107,7 +2106,7 @@ class TestRunImportLifecycle:
         content = pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES).file.read()
         crashing = _tuned(fx_rig, parallel_scans=1)
         await crashing.service().start_import(
-            open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+            open_for(fx_owner, fx_book),
             [upload(PDF_NAME, content=content)],
         )
         fx_rig.tiler.crash_on_preview = CRASHING_PREVIEW
@@ -2115,7 +2114,7 @@ class TestRunImportLifecycle:
             await crashing.fakes.board.run_queued()
         stored = await _sources(fx_book, databases=fx_rig.databases)
 
-        await fx_rig.files.discard_all_staged()
+        await fx_rig.files.sources(fx_book).discard_all_staged()
         restarted = _tuned(fx_rig, parallel_scans=1)
         job = await _import(
             restarted,
@@ -2280,7 +2279,7 @@ class TestRunImportQueue:
         :type fx_book_changes: RecordingEventBus
         """
         job = await fx_rig.service().start_import(
-            open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+            open_for(fx_owner, fx_book),
             [pdf_upload(fx_samples, QUEUE_PDF, pages=FOUR_PAGES)],
         )
         cancelled = anyio.Event()
@@ -2665,7 +2664,7 @@ class TestRunImportApplyStep:
         fx_owner: Actor,
         fx_book: BookId,
         fx_samples: Path,
-        case: Callable[[BookId, BookDatabases], Awaitable[None]],
+        case: Callable[[BookId, LocatedBookDatabases], Awaitable[None]],
     ) -> None:
         """Verify a scan whose book changed after the cut writes no version and announces nothing, and the job ends well.
 
@@ -2681,7 +2680,7 @@ class TestRunImportApplyStep:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         :param case: What another request does to the book while the scan is cut.
-        :type case: Callable[[BookId, BookDatabases], Awaitable[None]]
+        :type case: Callable[[BookId, LocatedBookDatabases], Awaitable[None]]
         """
         cut: list[Scan] = []
 
@@ -2776,7 +2775,7 @@ class TestStartImportConcurrently:
             """
             try:
                 outcomes[name] = await fx_rig.service().start_import(
-                    open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files),
+                    open_for(fx_owner, fx_book),
                     [image_upload(fx_samples, name)],
                 )
             except ConflictError as error:
@@ -2968,8 +2967,6 @@ class TestSourceReport:
         fx_rig.fakes.board.put(make_job(book_id=fx_book))
 
         with pytest.raises(ConflictError, match=SOURCE_IMPORTING):
-            await fx_sources.delete_unimported(
-                open_for(fx_owner, fx_book, databases=fx_rig.databases, files=fx_rig.files)
-            )
+            await fx_sources.delete_unimported(open_for(fx_owner, fx_book))
 
         assert await _report(fx_book, databases=fx_rig.databases) == fx_files[1:]

@@ -1,15 +1,15 @@
 """The databases of the books: one SQLite file in the directory of each book, opened on first use and closed when idle.
 
-The file of a book lies in the directory of the book, which the storage owns: it copies the blank file of a new book
-into the directory, unpacks the file of an imported one and deletes the directory whole, and the registry is given the
-path of the file. :class:`BookRegistry` opens a
+The file of a book lies in the directory of the book, which the storage owns: it unpacks the file of an imported book
+and deletes the directory whole, and the registry is given the path of the file by the book database that asks for it.
+:class:`BookRegistry` opens a
 :class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the book schema the first time a
 transaction asks for the book, brings the file to the head revision of that schema when it is behind, and refuses a file
 at a revision this code does not ship with ``BookTooNewError``, leaving the file as it is for the newer code. Each open
 book has engines and a write queue of its own, so a change of one book never waits for a change of another.
 
-A new book starts as a copy of a blank file at the head revision, made once for the registry: running the revisions
-takes about a second, and copying a file a few milliseconds.
+A new book starts as a copy of a blank file at the head revision, made once for the registry and copied by the book
+database that creates the book: running the revisions takes about a second, and copying a file a few milliseconds.
 
 A book that no transaction has used for the idle limit is closed, which disposes of its engines and their
 connections, and the next use opens it again. :meth:`BookRegistry.keep_closing_idle` looks for such books ten times
@@ -39,7 +39,7 @@ from bookreviver.domain.keys import KeySegment
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.ids import BookDirectoryName
     from bookreviver.ports.tracing import Tracer
 
 
@@ -96,18 +96,18 @@ class BookRegistry:
         self._blank = blank
         self._blank_directory: TemporaryDirectory[str] | None = None
         self._revisions: tuple[tuple[str, ...], frozenset[str]] | None = None
-        self._open: dict[BookId, OpenBook] = {}
+        self._open: dict[BookDirectoryName, OpenBook] = {}
         # Never emptied: a closed book is deleted, and a new book gets a new identifier
-        self._closed: set[BookId] = set()
+        self._closed: set[BookDirectoryName] = set()
         # Taken to open, create and close books, never around a transaction
         self._lock = anyio.Lock()
 
     @asynccontextmanager
-    async def use(self, book_id: BookId, path: Path) -> AsyncIterator[SqlDatabase]:
+    async def use(self, dir_name: BookDirectoryName, path: Path) -> AsyncIterator[SqlDatabase]:
         """Hold the database of a book open for the caller, opening it from its file first when it is closed.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
         :param path: The database file of the book.
         :type path: Path
         :returns: Iterator yielding the open database of the book once.
@@ -115,7 +115,7 @@ class BookRegistry:
         :raises NotFoundError: If the file does not exist, or the book was closed for good.
         :raises BookTooNewError: If the database is at a revision of the book schema that this code does not ship.
         """
-        book = await self._acquire(book_id, path)
+        book = await self._acquire(dir_name, path)
         try:
             yield book.database
         finally:
@@ -124,18 +124,18 @@ class BookRegistry:
             if not book.users and book.released is not None:
                 book.released.set()
 
-    async def close(self, book_id: BookId) -> None:
+    async def close(self, dir_name: BookDirectoryName) -> None:
         """Close the database of a book for good, once no transaction uses it, so its file can be deleted.
 
         A book that is not open, or closed already, is only marked closed, so a deletion broken off half way can run
         again.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
         """
         async with self._lock:
-            self._closed.add(book_id)
-            book = self._open.pop(book_id, None)
+            self._closed.add(dir_name)
+            book = self._open.pop(dir_name, None)
         if book is None:
             return
         if book.users:
@@ -147,8 +147,8 @@ class BookRegistry:
         """Close every open book that no transaction has used for the idle limit."""
         since = monotonic() - self._idle_seconds
         async with self._lock:
-            idle = [book_id for book_id, book in self._open.items() if not book.users and book.idle_since <= since]
-            closing = [self._open.pop(book_id) for book_id in idle]
+            idle = [dir_name for dir_name, book in self._open.items() if not book.users and book.idle_since <= since]
+            closing = [self._open.pop(dir_name) for dir_name in idle]
         for book in closing:
             await book.database.dispose()
 
@@ -169,14 +169,14 @@ class BookRegistry:
             await to_thread.run_sync(self._blank_directory.cleanup)
             self._blank_directory = None
 
-    async def _acquire(self, book_id: BookId, path: Path) -> OpenBook:
+    async def _acquire(self, dir_name: BookDirectoryName, path: Path) -> OpenBook:
         """Count one more user of a book, opening its database first when it is closed.
 
         The open book is looked up and counted with no await between, so a removal or a closing never finds it unused
         while a caller has it in hand.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
         :param path: The database file of the book.
         :type path: Path
         :returns: The open book, counted.
@@ -184,22 +184,22 @@ class BookRegistry:
         :raises NotFoundError: If the file does not exist, or the book was closed for good.
         :raises BookTooNewError: If the database is at a revision of the book schema that this code does not ship.
         """
-        if (book := self._open.get(book_id)) is not None:
+        if (book := self._open.get(dir_name)) is not None:
             book.users += 1
             return book
         async with self._lock:
-            if book_id in self._closed:
-                raise NotFoundError(book_id)
-            if (book := self._open.get(book_id)) is None:
+            if dir_name in self._closed:
+                raise NotFoundError(dir_name)
+            if (book := self._open.get(dir_name)) is None:
                 if not await anyio.Path(path).is_file():
-                    raise NotFoundError(book_id)
+                    raise NotFoundError(dir_name)
                 database = self._database(path)
                 try:
                     await self._migrate(database)
                 except BaseException:
                     await database.dispose()
                     raise
-                book = self._open[book_id] = OpenBook(database=database)
+                book = self._open[dir_name] = OpenBook(database=database)
             book.users += 1
             return book
 
@@ -251,6 +251,18 @@ class BookRegistry:
                     await database.dispose()
                 self._blank = blank
             return self._blank
+
+    async def copy_blank(self, path: Path) -> None:
+        """Copy the blank file to ``path``, which becomes the database file of a new book.
+
+        :param path: Where the copy is made, in an existing directory.
+        :type path: Path
+        :raises FileExistsError: If a file exists at ``path`` already.
+        """
+        blank = await self.blank()
+        # The exclusive mode refuses a file that exists, which a check before the write could not
+        async with await anyio.open_file(path, 'xb') as copy:
+            await copy.write(await anyio.Path(blank).read_bytes())
 
 
 def _shipped_revisions() -> tuple[tuple[str, ...], frozenset[str]]:

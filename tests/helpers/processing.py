@@ -32,6 +32,7 @@ from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Rend
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.ports.runtime import BookJobs
+from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
@@ -43,7 +44,6 @@ from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
-from tests.helpers.books_service import make_books_service
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
@@ -217,7 +217,7 @@ class ProcessingKit:
         :rtype: Recipe
         """
         listed = await self.service().recipes(
-            open_for(actor, book_id, databases=self.databases, files=self.files),
+            open_for(actor, book_id),
             stage,
             SliceRequest(limit=len(RecipeKind)),
         )
@@ -248,7 +248,7 @@ class ProcessingKit:
         """
         recipe = await self.recipe_of(actor, book_id, stage, kind)
         return await self.service().save_recipe(
-            open_for(actor, book_id, databases=self.databases, files=self.files),
+            open_for(actor, book_id),
             RecipeKey(stage, recipe.id),
             draft,
         )
@@ -276,7 +276,7 @@ class ProcessingKit:
             tracer=self.tracer,
         )
         return ProcessingJobs(
-            books=make_books_service(catalogue, databases=self.databases, files=self.files),
+            books=BooksService(catalogue=catalogue),
             runtime=runtime,
             parts=self.parts(),
             pages=self._pages(),
@@ -534,7 +534,7 @@ async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
     :rtype: Book
     :raises NotFoundError: If the library has no such book.
     """
-    return await make_books_service(kit.catalogue(), databases=kit.databases, files=kit.files).open(book_id)
+    return await BooksService(catalogue=kit.catalogue()).open(book_id)
 
 
 async def change_versions(
@@ -685,6 +685,4 @@ async def account_books(kit: ProcessingKit, actor: Actor) -> list[Book]:
     :rtype: list[Book]
     """
     catalogue = kit.catalogue()
-    return await books_of(
-        catalogue, make_books_service(catalogue, databases=kit.databases, files=kit.files), actor.account_id
-    )
+    return await books_of(catalogue, BooksService(catalogue=catalogue), actor.account_id)

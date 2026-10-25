@@ -94,7 +94,7 @@ async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: i
     :rtype: int
     """
     catalogue = stores.catalogue()
-    service = BooksService(catalogue=catalogue, databases=stores.databases, directories=stores.files)
+    service = BooksService(catalogue=catalogue)
     stages = StageSummaries(processors=FakeCatalogue([]))
     request = SliceRequest(limit=window)
     entries = await catalogue.read(lambda repos: repos.library.list_for_owner(owner_id, request))

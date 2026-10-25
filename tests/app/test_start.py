@@ -6,19 +6,25 @@ from uuid import uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalBookDirectories
+from bookreviver.adapters.storage import LocalBookDirectory
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import BookId, JobId, SourceId
-from tests.helpers.builders import directory_of
+from bookreviver.domain.ids import JobId, SourceId
+from tests.helpers.builders import directory_of, make_record
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
+from tests.helpers.seeding import store_book
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from dishka import Provider
 
     from bookreviver.app.settings import Settings
+    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.ids import BookId
+    from bookreviver.ports.storage import SourceStore
+    from tests.helpers.builders import BookOpener
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -31,34 +37,52 @@ PROMOTED_NAME: str = 'part.pdf'
 class Uploads:
     """The uploads and the source the test left on disk before the application started.
 
-    :ivar stores: Opens the source store of a book over the storage root of the application.
+    :ivar root: The storage root of the application.
     :ivar interrupted: The books with an upload an interrupted import left staged, each with the job it belonged to.
     :ivar kept: The book and the source whose files an earlier import had promoted.
     """
 
-    def __init__(self, stores: LocalBookDirectories) -> None:
+    def __init__(self, root: Path) -> None:
         """Start with nothing on disk.
 
-        :param stores: Opens the source store of a book over the storage root.
-        :type stores: LocalBookDirectories
+        :param root: The storage root of the application.
+        :type root: Path
         """
-        self.stores = stores
+        self.root = root
         self.interrupted: list[tuple[BookId, JobId]] = []
         self.kept: tuple[BookId, SourceId] | None = None
 
-    async def leave(self) -> None:
-        """Stage an upload in each of two books, and promote the files of a source in a third."""
+    def sources(self, book_id: BookId) -> SourceStore:
+        """Open the source store of a book over the storage root.
+
+        :param book_id: The book.
+        :type book_id: BookId
+        :returns: The source store of the directory of the book.
+        :rtype: SourceStore
+        """
+        return LocalBookDirectory(directory_of(book_id), root=self.root).sources
+
+    async def leave(self, opener: BookOpener, actor: Actor) -> None:
+        """Stage an upload in each of two listed books, and promote the files of a source in a third.
+
+        :param opener: Opens the catalogue databases and the databases of the books of the test, which list the books.
+        :type opener: BookOpener
+        :param actor: Account that owns the books.
+        :type actor: Actor
+        """
         for _ in range(2):
-            book_id, job_id = BookId(uuid4()), JobId(uuid4())
-            await self.stores.directory(directory_of(book_id)).sources.stage(
-                job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+            book_id = await store_book(
+                opener.catalogue(), make_record(), owner=actor.account_id, databases=opener.databases
             )
+            job_id = JobId(uuid4())
+            await self.sources(book_id).stage(job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
             self.interrupted.append((book_id, job_id))
-        book_id, job_id, source_id = BookId(uuid4()), JobId(uuid4()), SourceId(uuid4())
-        await self.stores.directory(directory_of(book_id)).sources.stage(
-            job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+        book_id = await store_book(
+            opener.catalogue(), make_record(), owner=actor.account_id, databases=opener.databases
         )
-        await self.stores.directory(directory_of(book_id)).sources.promote(job_id, source_id, names=[PROMOTED_NAME])
+        job_id, source_id = JobId(uuid4()), SourceId(uuid4())
+        await self.sources(book_id).stage(job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+        await self.sources(book_id).promote(job_id, source_id, names=[PROMOTED_NAME])
         self.kept = (book_id, source_id)
 
 
@@ -75,16 +99,20 @@ def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
 
 
 @pytest.fixture
-async def fx_uploads(fx_settings: Settings) -> Uploads:
-    """Leave the uploads on disk before the application starts.
+async def fx_uploads(fx_settings: Settings, fx_open_book: BookOpener, fx_actor: Actor) -> Uploads:
+    """Leave the uploads on disk, in books the library lists, before the application starts.
 
     :param fx_settings: Settings of the application, which name the storage root.
     :type fx_settings: Settings
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
+    :type fx_open_book: BookOpener
+    :param fx_actor: Account that owns the books.
+    :type fx_actor: Actor
     :returns: The uploads left on disk.
     :rtype: Uploads
     """
-    uploads = Uploads(LocalBookDirectories(root=fx_settings.storage_root))
-    await uploads.leave()
+    uploads = Uploads(fx_settings.storage_root)
+    await uploads.leave(fx_open_book, fx_actor)
     return uploads
 
 
@@ -118,13 +146,13 @@ class TestStart:
         gone: list[bool] = []
         for book_id, job_id in fx_uploads.interrupted:
             try:
-                async with fx_uploads.stores.directory(directory_of(book_id)).sources.staged_files(job_id):
+                async with fx_uploads.sources(book_id).staged_files(job_id):
                     gone.append(False)
             except NotFoundError:
                 gone.append(True)
         assert fx_uploads.kept is not None
         kept_book, kept_source = fx_uploads.kept
-        async with fx_uploads.stores.directory(directory_of(kept_book)).sources.source_files(kept_source) as files:
+        async with fx_uploads.sources(kept_book).source_files(kept_source) as files:
             kept = [file.name for file in files]
         expect(gone == [True, True])
         expect(kept == [PROMOTED_NAME])

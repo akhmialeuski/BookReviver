@@ -5,15 +5,14 @@ A use case works on the ``Book`` objects it is given and checks no owner: the ac
 book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
 synchronous functions over repositories: the work of ``Book.read`` or ``Book.change`` calls them with the repositories
 it receives, and a caller outside a transaction wraps the call in ``Book.read``. ``open`` opens the book of an
-identifier with its database, which the jobs use, and ``book`` does the same for a library entry that is already read,
-which the access dependencies of the API use. Neither checks an owner.
+identifier, which the jobs use, and ``book`` does the same for a library entry that is already read, which the access
+dependencies of the API use. Neither checks an owner.
 
-A new book is a directory with the blank database file, described through its ``Book``, and its library entry comes
-last, so a creation broken off half way leaves a directory nobody lists. An imported book is the content of its archive
-in a new directory, adopted by the database port, and gets its entry last in the same way. A book is deleted entry
-first, then ``Book.delete`` closes its database and removes its directory whole. Once the entry is gone no request can
-open the book, so a deletion broken off half way leaves a directory nobody lists, which only takes room on the disk,
-and the use case that holds the book can repeat ``Book.delete`` to remove what is left.
+A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
+``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
+lists. A book is deleted entry first, then ``Book.delete`` closes its database and removes its directory whole. Once the
+entry is gone no request can open the book, so a deletion broken off half way leaves a directory nobody lists, which
+only takes room on the disk, and the use case that holds the book can repeat ``Book.delete`` to remove what is left.
 """
 
 from contextlib import asynccontextmanager
@@ -26,7 +25,6 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
-from bookreviver.ports.runtime import BookEvents
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
@@ -37,8 +35,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import StorageKey
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import BookDatabases, CatalogueDatabase, PageRepository
-    from bookreviver.ports.storage import BookDirectories
+    from bookreviver.ports.persistence import CatalogueDatabase, PageRepository
 
 # How many pages are read from the book at a time, when a use case needs all of them
 PAGE_WINDOW: int = 1_000
@@ -63,48 +60,27 @@ def book_pages(pages: PageRepository) -> list[Page]:
 class BooksService:
     """Books of the acting account, with their description and their files."""
 
-    def __init__(
-        self,
-        *,
-        catalogue: CatalogueDatabase,
-        databases: BookDatabases,
-        directories: BookDirectories,
-    ) -> None:
-        """Work over the ports of one request.
+    def __init__(self, *, catalogue: CatalogueDatabase) -> None:
+        """Work over the catalogue database of one request, which keeps the library entries of the books.
 
         :param catalogue: Catalogue database of the request, which runs the work of every use case on the catalogue in
-            one         transaction.
+                          one transaction.
         :type catalogue: CatalogueDatabase
-        :param databases: Opens the database of a book from its file, which runs the transactions of that book.
-        :type databases: BookDatabases
-        :param directories: The directories of the books, which make, unpack and open the directory of a book.
-        :type directories: BookDirectories
         """
         self._catalogue = catalogue
-        self._databases = databases
-        self._directories = directories
 
     def book(self, entry: LibraryEntry) -> Book:
-        """Open the book a library entry names with its database, without reading anything.
+        """Open the book a library entry names, without reading anything.
 
         :param entry: The entry of the library.
         :type entry: LibraryEntry
         :returns: The book, whose owner is the one the entry names.
         :rtype: Book
         """
-        directory = self._directories.directory(entry.directory)
-        events = BookEvents.open(entry.directory)
-        return Book(
-            entry.book_id,
-            entry.owner_id,
-            entry.directory,
-            database=self._databases.open(entry.book_id, directory.database, events),
-            directory=directory,
-            events=events,
-        )
+        return Book(entry.book_id, entry.owner_id, entry.directory)
 
     async def open(self, book_id: BookId) -> Book:
-        """Open the book of an identifier with its database, whoever owns it.
+        """Open the book of an identifier, whoever owns it.
 
         Who may work on the book is decided by the caller: the access dependencies of the API for a request, and
         nobody for a job, which acts for no account.
@@ -137,7 +113,7 @@ class BooksService:
         if not BookKeys.is_asset(key):
             raise NotFoundError(key)
         entry = await self._catalogue.read(lambda repos: repos.library.get(book_id))
-        async with self._directories.directory(entry.directory).assets.readable(key) as path:
+        async with self.book(entry).assets.readable(key) as path:
             yield path
 
     async def listed(self) -> list[Book]:
@@ -150,7 +126,7 @@ class BooksService:
         return [self.book(entry) for entry in entries]
 
     async def create(self, owner: Actor, details: BookDetails) -> Book:
-        """Create an empty book of an account: its directory with a blank database, its description, then its entry.
+        """Create an empty book of an account: its directory, its database with its description, then its entry.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
@@ -160,18 +136,17 @@ class BooksService:
         :rtype: Book
         """
         entry = self._new_entry(owner)
-        await self._directories.create(entry.directory, await self._databases.blank())
         book = self.book(entry)
-        await book.describe(details)
+        await book.create(details)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
         return book
 
     async def import_archive(self, owner: Actor, archive: BinaryIO) -> Book:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
-        The archive is unpacked into a new directory, database first, then the database is brought to this release, and
-        the entry of the library comes last, as for a book created here. The record of the book names no book, so
-        nothing in it changes. A database that cannot be adopted removes the whole directory.
+        The book unpacks the archive into its new directory and brings its database to this release, and the entry of
+        the library comes last, as for a book created here. The record of the book names no book, so nothing in it
+        changes. An archive that is refused removes the whole directory.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
@@ -183,13 +158,8 @@ class BooksService:
         :raises BookTooNewError: If the book was exported by a newer release.
         """
         entry = self._new_entry(owner)
-        directory = await self._directories.unpack(entry.directory, archive)
         book = self.book(entry)
-        try:
-            await self._databases.adopt(entry.book_id, directory.database)
-        except Exception:
-            await book.delete()
-            raise
+        await book.unpack(archive)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
         return book
 

@@ -45,6 +45,7 @@ from bookreviver.domain.ids import BookId, ChangeBatchId, PageHistoryEntryId, Pa
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import (
     EPOCH,
+    directory_of,
     make_book_place,
     make_page,
     make_page_history_entry,
@@ -606,7 +607,7 @@ class TestBookKeyRevision:
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
             kind=BlockKind.BOOK,
-            book=BOOK_ID,
+            book=directory_of(BOOK_ID),
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_BOOK_KEYS)
@@ -632,7 +633,7 @@ class TestBookKeyRevision:
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
             kind=BlockKind.BOOK,
-            book=BOOK_ID,
+            book=directory_of(BOOK_ID),
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         with _session(fx_empty_book) as session, pytest.raises(IntegrityError, match='CHECK constraint failed'):
@@ -672,7 +673,7 @@ class TestHistoryRevision:
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).page_history.add(entry),
             kind=BlockKind.BOOK,
-            book=BOOK_ID,
+            book=directory_of(BOOK_ID),
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_HISTORY)
@@ -716,7 +717,9 @@ class TestGroupsRevision:
                 evolve(make_page_history_entry(page_id=page_id), scope=ValueScope.GROUP, group_label=GROUP)
             )
 
-        await database.write(group, kind=BlockKind.BOOK, book=BOOK_ID, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
+        await database.write(
+            group, kind=BlockKind.BOOK, book=directory_of(BOOK_ID), wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
+        )
         return page_id
 
     async def test_a_group_keeps_its_page_values_and_changes_both_ways(self, fx_empty_book: SqlDatabase) -> None:
@@ -798,7 +801,9 @@ class TestChangesRevision:
             repos.pages.add(second)
             repos.page_history.add_many([*change, *undo])
 
-        await fx_empty_book.write(record, kind=BlockKind.BOOK, book=BOOK_ID, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
+        await fx_empty_book.write(
+            record, kind=BlockKind.BOOK, book=directory_of(BOOK_ID), wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
+        )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_CHANGES)
         with _session(fx_empty_book) as session:
             rows = session.execute(text('SELECT id, page_id, undoes_id FROM page_history')).all()

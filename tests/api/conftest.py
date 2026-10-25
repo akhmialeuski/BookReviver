@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import pytest
 from dishka import AsyncContainer
 
-from bookreviver.ports.storage import BookDirectories
 from tests.helpers.board_idle import JobsIdle
 from tests.helpers.storage import BookFiles
 
@@ -45,17 +44,15 @@ def fx_idle() -> JobsIdle:
 
 
 @pytest.fixture
-async def fx_files(fx_container: AsyncContainer, fx_settings: Settings) -> BookFiles:
+def fx_files(fx_container: AsyncContainer, fx_settings: Settings) -> BookFiles:
     """Return the files of imported books in the stores of the running application.
 
-    :param fx_container: Container of the application, holding the local stores.
+    :param fx_container: Container of the application, which has registered its local storage by the time it runs.
     :type fx_container: AsyncContainer
     :param fx_settings: Settings of the application, which name the storage root.
     :type fx_settings: Settings
     :returns: Files of the test's books, in the application's own stores.
     :rtype: BookFiles
     """
-    return BookFiles(
-        stores=await fx_container.get(BookDirectories),
-        root=fx_settings.storage_root,
-    )
+    del fx_container
+    return BookFiles(root=fx_settings.storage_root)

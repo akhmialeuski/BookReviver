@@ -95,9 +95,7 @@ async def history_of(kit: ProcessingKit, actor: Actor, book_id: BookId, key: Pag
     :returns: The changes.
     :rtype: list[PageHistoryEntry]
     """
-    return list(
-        (await kit.page_history().list(open_for(actor, book_id, databases=kit.databases, files=kit.files), key)).changes
-    )
+    return list((await kit.page_history().list(open_for(actor, book_id), key)).changes)
 
 
 async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: LocatedBookDatabases) -> PageEdit | None:
