@@ -115,6 +115,8 @@ async def fx_extra_providers(
 ) -> Sequence[Provider]:
     """Store the book before the application starts, and give the application the fakes and the fake catalogue.
 
+    The changes that store the book are not recorded as published, so the events the test sees are the start's.
+
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
     :param fx_catalogue: Function opening a new catalogue database over the database of the test.
@@ -152,6 +154,7 @@ async def fx_extra_providers(
             repos.page_stages.save(record)
 
     await fx_databases().open(fx_book.book_id).change(save_records)
+    fx_fakes.events.published.clear()
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 

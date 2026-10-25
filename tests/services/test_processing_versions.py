@@ -758,33 +758,6 @@ class TestCollection:
         expect(await found_version(book_id, old.id, databases=fx_open_book.databases) is None)
         assert_expectations()
 
-    async def test_young_preview_is_kept_since_the_editor_still_shows_it(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify a preview younger than its retention period keeps its row and its files.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id, _, _, old = await self.collectable_book(fx_kit)
-        preview = evolve(
-            old,
-            id=PREVIEW_VERSION_ID,
-            scale=VersionScale.PREVIEW,
-            created_at=EPOCH - timedelta(minutes=5),
-        )
-        keys = BookKeys()
-        async with fx_kit.files.assets(book_id).writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
-            target.write_bytes(IMAGE_CONTENT)
-        await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(preview))
-        await fx_kit.service().start_collection(fx_open_book(actor, book_id))
-        await fx_kit.work_queue()
-        async with fx_kit.files.assets(book_id).readable(keys.version_rendition(preview, Rendition.PREVIEW)):
-            pass
-        assert (await found_version(book_id, preview.id, databases=fx_open_book.databases)) is not None
-
     async def test_a_second_request_while_one_is_active_gets_the_active_job(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:

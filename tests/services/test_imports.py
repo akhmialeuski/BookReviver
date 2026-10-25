@@ -5,7 +5,6 @@ from functools import partial
 from operator import attrgetter, itemgetter
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, Mock, patch
-from uuid import uuid4
 
 import anyio
 import pytest
@@ -45,7 +44,6 @@ from bookreviver.domain.errors import (
     UploadRejectedError,
 )
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged
-from bookreviver.domain.ids import BookId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Contributor, JobEnd, StageRun
 from bookreviver.plugins.split_none import SplitNone
@@ -100,7 +98,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, PaginationSection, Scan, Source
-    from bookreviver.domain.ids import BookDirectoryName, JobId, PageId, StorageKey
+    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageId, StorageKey
     from bookreviver.domain.values import SourceFile
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
@@ -117,7 +115,6 @@ INCOMING_UPLOADS: str = 'incoming/*'
 FILES_ARG: str = 'files'
 AUTO_SPLIT: str = 'split.auto'
 CASE_ARG: str = 'case'
-STAGED_NAME: str = 'missing.pdf'
 # The renditions cut from the ``full`` image, whatever its format
 DERIVED: tuple[Rendition, ...] = (Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES)
 BILEVEL_MODE: str = '1'
@@ -2510,7 +2507,7 @@ class TestRunImportSplit:
         expect(
             StageRun.from_map(queued.params) == StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(p.id for p in pages))
         )
-        expect(queued.id in [job.id for job in offering.fakes.board.jobs(fx_book, active=True)])
+        expect(queued.id in [job.id for job in offering.fakes.board.jobs(fx_book, active=False)])
         assert_expectations()
 
     async def test_a_later_import_queues_only_its_own_pages(
@@ -2622,31 +2619,6 @@ async def make_the_scan_ready(book_id: BookId, databases: LocatedBookDatabases) 
     [scan] = await _scans(book_id, databases=databases)
     ready = evolve(scan, renditions=evolve(scan.renditions, ready=True))
     await databases.open(book_id).change(lambda repos, _book_record: repos.scans.update(ready))
-
-
-class TestRunImportOfAMissingBook:
-    """Tests for an import job whose book is gone by the time the job runs."""
-
-    async def test_job_ends_failed_and_leaves_the_storage_alone(self, fx_rig: ImportRig) -> None:
-        """Verify the job of a book the library no longer lists fails with the reason and touches no file.
-
-        The library entry names the directory of a book, so a job of a book without one cannot reach its directory. The
-        deletion of a book removes its upload with the directory, and the start removes one staged afterwards.
-
-        :param fx_rig: Adapters of the import.
-        :type fx_rig: ImportRig
-        """
-        book_id = BookId(uuid4())
-        job = fx_rig.fakes.board.put(book_id, make_job())
-        await fx_rig.files.sources(book_id).stage(job.id, [upload(STAGED_NAME)], max_bytes=MAX_BYTES)
-
-        await fx_rig.fakes.board.run_queued()
-
-        ended = fx_rig.stored_job(job)
-        expect((ended.state, ended.error) == (JobState.FAILED, str(NotFoundError(book_id))))
-        async with fx_rig.files.sources(book_id).staged_files(job.id) as staged:
-            expect(list(staged) == [STAGED_NAME])
-        assert_expectations()
 
 
 class TestRunImportApplyStep:

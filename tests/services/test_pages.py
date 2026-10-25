@@ -459,9 +459,10 @@ class TestJobsQueuedTogether:
         :type fx_open_book: BookOpener
         """
         book_id = new_book_id()
+        services = [fx_service() for _ in range(requests)]
         book = fx_open_book(fx_actor, book_id)
 
-        for _ in range(requests):
-            fx_service().detect_new_pages(book)
+        for service in services:
+            service.detect_new_pages(book)
 
         assert [job.kind for job in fx_board.jobs(book_id, active=False)] == [JobKind.DETECT_CONTENT]

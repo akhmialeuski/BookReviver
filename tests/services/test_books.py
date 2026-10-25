@@ -602,6 +602,7 @@ class TestExportAndImport:
         async with imported.book.assets.readable(state.edit.mask_key) as path:
             assert path.read_bytes() == MASK_CONTENT
 
+    @pytest.mark.usefixtures('fx_book_parts')
     async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
         self,
         fx_service: Callable[[], BooksService],

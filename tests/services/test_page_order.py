@@ -320,6 +320,7 @@ class TestMove:
             fx_runtime,
             order_keys=TakenKey(book.pages[2].order_key),
         )
+        fx_runtime[0].published.clear()
 
         with pytest.raises(ConflictError):
             await service.move(

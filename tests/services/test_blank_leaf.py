@@ -871,6 +871,7 @@ class TestRefusals:
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.BLANK, PageKind.TEXT])
+        fx_desk.events.published.clear()
 
         with pytest.raises(ConflictError, match='not a blank page'):
             await fx_desk.choose(book, [0, 1], BlankFill.WHITE)
@@ -943,6 +944,7 @@ class TestRefusals:
         await fx_desk.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.page_versions.update(evolve(book.versions[0], data={})),
         )
+        fx_desk.events.published.clear()
 
         with pytest.raises(ConflictError, match='no size'):
             await fx_desk.choose(book, [0], BlankFill.WHITE)
