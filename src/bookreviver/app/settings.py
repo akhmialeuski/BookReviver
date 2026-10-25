@@ -54,6 +54,8 @@ class AuthSettings(BaseModel):
 
     :ivar secret: Key signing verification and reset tokens and the CSRF cookie; required.
     :ivar session_lifetime_seconds: How long a sign-in lasts, 30 days by default.
+    :ivar session_cleanup_interval_seconds: How often the sessions that outlived their lifetime are deleted, daily by
+                                            default.
     :ivar cookie_secure: Whether the session cookie requires HTTPS; off only for local development over HTTP.
     :ivar password_hash_concurrency: Most password hashes and checks run at once, each in a worker thread of its own.
                                      An argon2id hash holds 64 MiB and four lanes, so the bound keeps a burst of
@@ -64,6 +66,7 @@ class AuthSettings(BaseModel):
 
     secret: SecretStr = Field(description='Signs verification and reset tokens, and the CSRF cookie')
     session_lifetime_seconds: PositiveInt = 30 * 24 * 60 * 60
+    session_cleanup_interval_seconds: PositiveInt = 24 * 60 * 60
     cookie_secure: bool = True
     password_hash_concurrency: PositiveInt = 2
     google: OAuthClient = OAuthClient()

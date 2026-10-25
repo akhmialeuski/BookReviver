@@ -45,9 +45,12 @@ PROVIDER_EMAIL: str = 'reader@gmail.example'
 RENEWED_EMAIL: str = 'renewed@gmail.example'
 SESSION_TOKEN: str = 't' * 43
 OTHER_TOKEN: str = 'u' * 43
+NEWER_TOKEN: str = 'v' * 43
 # The time a stored session token was created, and the step the tests move a limit away from it
 CREATED_AT: datetime = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 STEP: timedelta = timedelta(seconds=1)
+# How many of the three tokens of the test of the cutoff stay
+EXPECTED_KEPT: int = 2
 # How many times a write opens a transaction that writes
 ONE_BLOCK: int = 1
 # The columns a test gives a new user and a linked provider account, and the new values of an update of each
@@ -690,11 +693,44 @@ class TestAccessTokenDatabase:
         expect(await _count(fx_counting_catalogue, AccessTokenTable) == 0)
         assert_expectations()
 
+    async def test_delete_created_before_removes_only_the_tokens_older_than_the_cutoff(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+    ) -> None:
+        """Verify a token created before the cutoff goes, and one created at the cutoff or after it stays.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the tokens are for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        for value, created_at in (
+            (SESSION_TOKEN, CREATED_AT),
+            (OTHER_TOKEN, CREATED_AT + STEP),
+            (NEWER_TOKEN, CREATED_AT + 2 * STEP),
+        ):
+            await fx_tokens.create(_token(fx_user, token=value, created_at=created_at))
+
+        await fx_tokens.delete_created_before(CREATED_AT + STEP)
+
+        expect(await fx_tokens.get_by_token(SESSION_TOKEN) is None)
+        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is not None)
+        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(await _count(fx_counting_catalogue, AccessTokenTable) == EXPECTED_KEPT)
+        assert_expectations()
+
     @pytest.mark.parametrize(
         'operation',
         [
             pytest.param(
                 lambda tokens, _stored, user: tokens.create(_token(user, token=OTHER_TOKEN)), id='create-token'
+            ),
+            pytest.param(
+                lambda tokens, _stored, _user: tokens.delete_created_before(CREATED_AT), id='delete-created-before'
             ),
             pytest.param(lambda tokens, stored, _user: tokens.update(stored, dict(LATER)), id='update-token'),
             pytest.param(lambda tokens, stored, _user: tokens.delete(stored), id='delete-token'),

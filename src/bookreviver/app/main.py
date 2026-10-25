@@ -20,7 +20,7 @@ from bookreviver.api.freshness import NotModifiedError, not_modified
 from bookreviver.api.problems import problem_handler
 from bookreviver.api.routing import API_PREFIX, ROUTERS
 from bookreviver.app.container import build_container
-from bookreviver.app.providers.accounts import account_routes
+from bookreviver.app.providers.accounts import SessionCleanup, account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
@@ -109,9 +109,10 @@ def create_app(
         """Prepare the start, run the application, and close the container at shutdown, which cancels the jobs running.
 
         ``prepare_start`` does what is done once before the first request. A task group runs around the application:
-        it closes the books nobody used for their idle limit, and, while the measurements are on, it runs the probe of
-        the event-loop lag. The group is cancelled before the container closes, so the last tick of the probe is
-        recorded before the exporter flushes the file and no book is closed under the disposal of the registry.
+        it closes the books nobody used for their idle limit, deletes the sessions that outlived their lifetime, and,
+        while the measurements are on, it runs the probe of the event-loop lag. The group is cancelled before the
+        container closes, so the last tick of the probe is recorded before the exporter flushes the file and no book is
+        closed under the disposal of the registry.
 
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
@@ -126,6 +127,7 @@ def create_app(
                 # Registered after the group, so it runs first on exit and the group has nothing left to wait for
                 stack.callback(group.cancel_scope.cancel)
                 group.start_soon((await container.get(BookRegistry)).keep_closing_idle)
+                group.start_soon((await container.get(SessionCleanup)).run)
                 if resolved.tracing.enabled:
                     probe = LoopLagProbe(
                         tracer=await container.get(Tracer),

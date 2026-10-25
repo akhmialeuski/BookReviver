@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 from advanced_alchemy.base import DefaultBase
 from fastapi_users.authentication.strategy.db import AccessTokenDatabase as AccessTokenDatabaseProtocol
 from fastapi_users.db import BaseUserDatabase
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, select, text
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, delete, func, select, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE
@@ -368,3 +368,12 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         :type access_token: AccessTokenTable
         """
         await self.catalogue.change_session(lambda session: session.delete(access_token))
+
+    async def delete_created_before(self, cutoff: datetime) -> None:
+        """Remove every token created before ``cutoff``, which no sign-in can use any more, in one statement.
+
+        :param cutoff: Earliest creation time a token may have and stay, with its time zone.
+        :type cutoff: datetime
+        """
+        statement = delete(AccessTokenTable).where(ACCESS_TOKENS.created_at < cutoff)
+        await self.catalogue.change_session(lambda session: session.execute(statement))

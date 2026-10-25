@@ -1,13 +1,15 @@
 """Provider of the accounts feature: users, sessions, OAuth clients and mail, all on fastapi-users."""
 
 import enum
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, override
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
 import jwt
-from anyio import CapacityLimiter, to_thread
-from dishka import FromDishka, Provider, Scope, provide
+from anyio import CapacityLimiter, sleep, to_thread
+from dishka import AsyncContainer, FromDishka, Provider, Scope, provide
 from dishka.integrations.fastapi import inject
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport
@@ -42,6 +44,8 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import AuthSettings, OAuthClient
 
 SessionStrategy = DatabaseStrategy[AccountTable, UUID, AccessTokenTable]
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE: str = 'bookreviver_session'
 AUTH_BACKEND: str = 'cookie'
@@ -528,8 +532,52 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         await self.user_db.update(user, {IS_VERIFIED_FIELD: True, HASHED_PASSWORD_FIELD: unknown_password})
 
 
+class SessionCleanup:
+    """Deletes the session tokens that outlived the session lifetime, which nothing but a sign-out removed before.
+
+    A token older than the lifetime is refused when it is read, so a stored one is only dead weight in the catalogue.
+    The cleanup runs in a request scope of its own, as a job does, and fails soft: a run that cannot write is logged
+    and tried again at the next interval, so it never takes the application down with it.
+    """
+
+    def __init__(
+        self,
+        container: AsyncContainer,
+        *,
+        interval_seconds: float,
+        lifetime_seconds: float,
+    ) -> None:
+        """Clean up through the scopes of ``container``, once for every ``interval_seconds``.
+
+        :param container: Application container, which gives each run the token database of a scope of its own.
+        :type container: AsyncContainer
+        :param interval_seconds: How long the loop sleeps between two runs.
+        :type interval_seconds: float
+        :param lifetime_seconds: How long a session lasts, which puts the cutoff that far behind the present.
+        :type lifetime_seconds: float
+        """
+        self._container = container
+        self._interval_seconds = interval_seconds
+        self._lifetime = timedelta(seconds=lifetime_seconds)
+
+    async def purge(self) -> None:
+        """Delete every token created before the present less the session lifetime, in one statement."""
+        async with self._container() as scope:
+            tokens = await scope.get(AccessTokenDatabase)
+            await tokens.delete_created_before(datetime.now(UTC) - self._lifetime)
+
+    async def run(self) -> None:
+        """Purge at once and then after every interval, for ever; the caller stops the loop by cancelling it."""
+        while True:
+            try:
+                await self.purge()
+            except Exception:
+                logger.exception('The expired sessions could not be deleted')
+            await sleep(self._interval_seconds)
+
+
 class AccountsProvider(Provider):
-    """Builds the mailer and the password hasher, and per request the user manager and the session strategy."""
+    """Builds the mailer, the password hasher and the session cleanup, and per request the user manager and sessions."""
 
     @provide(scope=Scope.APP)
     def mailer(self, settings: Settings) -> Mailer:
@@ -586,6 +634,35 @@ class AccountsProvider(Provider):
         return AccountDatabase(catalogue)
 
     @provide(scope=Scope.REQUEST)
+    def access_token_database(self, catalogue: SqlAlchemyCatalogueDatabase) -> AccessTokenDatabase:
+        """Build the session tokens of the request, read and written through its catalogue database.
+
+        :param catalogue: Catalogue database of the request, whose transactions the token reads and writes run in.
+        :type catalogue: SqlAlchemyCatalogueDatabase
+        :returns: The session tokens of the request.
+        :rtype: AccessTokenDatabase
+        """
+        return AccessTokenDatabase(catalogue)
+
+    @provide(scope=Scope.APP)
+    def session_cleanup(self, container: AsyncContainer, settings: Settings) -> SessionCleanup:
+        """Build the loop that deletes the expired sessions, which the application runs beside its other tasks.
+
+        :param container: Application container, whose request scopes give the loop its token database.
+        :type container: AsyncContainer
+        :param settings: Application settings holding the session lifetime and the interval of the cleanup.
+        :type settings: Settings
+        :returns: The session cleanup.
+        :rtype: SessionCleanup
+        """
+        auth = settings.auth
+        return SessionCleanup(
+            container,
+            interval_seconds=auth.session_cleanup_interval_seconds,
+            lifetime_seconds=auth.session_lifetime_seconds,
+        )
+
+    @provide(scope=Scope.REQUEST)
     def user_manager(
         self,
         user_db: AccountDatabase,
@@ -609,17 +686,17 @@ class AccountsProvider(Provider):
         return UserManager(user_db, hasher=hasher, mailer=mailer, settings=settings)
 
     @provide(scope=Scope.REQUEST)
-    def session_strategy(self, catalogue: SqlAlchemyCatalogueDatabase, settings: Settings) -> SessionStrategy:
+    def session_strategy(self, tokens: AccessTokenDatabase, settings: Settings) -> SessionStrategy:
         """Build the strategy that keeps session tokens in the database, so signing out revokes them.
 
-        :param catalogue: Catalogue database of the request, whose transactions the token reads and writes run in.
-        :type catalogue: SqlAlchemyCatalogueDatabase
+        :param tokens: Session tokens of the request.
+        :type tokens: AccessTokenDatabase
         :param settings: Application settings holding the session lifetime.
         :type settings: Settings
         :returns: The session strategy of the request.
         :rtype: SessionStrategy
         """
-        return DatabaseStrategy(AccessTokenDatabase(catalogue), lifetime_seconds=settings.auth.session_lifetime_seconds)
+        return DatabaseStrategy(tokens, lifetime_seconds=settings.auth.session_lifetime_seconds)
 
 
 @inject

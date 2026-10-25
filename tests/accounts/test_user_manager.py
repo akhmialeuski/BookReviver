@@ -11,18 +11,13 @@ from pwdlib.hashers.bcrypt import BcryptHasher
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import OAuthAccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import UserManager
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from dishka import AsyncContainer
 
-    from bookreviver.app.settings import Settings
-    from tests.helpers.database import SharedDatabaseProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -36,25 +31,6 @@ ISSUED_REFRESH_TOKEN: str = 'provider-refresh-token'
 ISSUED_EXPIRY: int = 1_900_000_000
 # The columns of a link to a provider account, none of them a token
 LINK_COLUMNS: frozenset[str] = frozenset({'id', 'user_id', 'oauth_name', 'account_id', 'account_email'})
-
-
-@pytest.fixture
-async def fx_container(
-    fx_settings: Settings, fx_shared_database: SharedDatabaseProvider
-) -> AsyncIterator[AsyncContainer]:
-    """Yield the application's container on the catalogue and the books of the test, where the library is checked.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :param fx_shared_database: The catalogue and the books of the test, which the container is given in place of its
-                               own.
-    :type fx_shared_database: SharedDatabaseProvider
-    :returns: Iterator yielding the container and closing it afterwards.
-    :rtype: AsyncIterator[AsyncContainer]
-    """
-    container = build_container(fx_settings, [fx_shared_database])
-    yield container
-    await container.close()
 
 
 class TestAuthenticate:

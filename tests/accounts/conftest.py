@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bookreviver.api.auth import current_actor
+from bookreviver.app.container import build_container
 from tests.helpers.fakes_accounts import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -17,11 +18,14 @@ from tests.helpers.fakes_accounts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     import httpx
-    from dishka import Provider
+    from dishka import AsyncContainer, Provider
     from fastapi import FastAPI
+
+    from bookreviver.app.settings import Settings
+    from tests.helpers.database import SharedDatabaseProvider
 
 
 @pytest.fixture
@@ -90,3 +94,22 @@ def fx_visitor(fx_browser: httpx.AsyncClient, fx_mailer: RecordingMailer) -> Vis
     :rtype: Visitor
     """
     return Visitor(fx_browser, fx_mailer)
+
+
+@pytest.fixture
+async def fx_container(
+    fx_settings: Settings, fx_shared_database: SharedDatabaseProvider
+) -> AsyncIterator[AsyncContainer]:
+    """Yield the application's container on the catalogue and the books of the test.
+
+    :param fx_settings: Settings pointing at a fresh data directory of the test.
+    :type fx_settings: Settings
+    :param fx_shared_database: The catalogue and the books of the test, which the container is given in place of its
+                               own.
+    :type fx_shared_database: SharedDatabaseProvider
+    :returns: Iterator yielding the container and closing it afterwards.
+    :rtype: AsyncIterator[AsyncContainer]
+    """
+    container = build_container(fx_settings, [fx_shared_database])
+    yield container
+    await container.close()
