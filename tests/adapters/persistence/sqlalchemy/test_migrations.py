@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
@@ -117,6 +118,11 @@ TOKENS_REVISION: str = 'df4b7a534833'
 # The revision before the unique index of the addresses ignored their case, and the one that makes it so
 BEFORE_ADDRESS_INDEX: str = TOKENS_REVISION
 ADDRESS_INDEX_REVISION: str = '7306aaee3202'
+# The revision before the key column of the library was renamed, and the one that renames it
+BEFORE_BOOK_COLUMN: str = ADDRESS_INDEX_REVISION
+BOOK_COLUMN_REVISION: str = 'cb21262f1e2e'
+# The directory the entry of the library of that test names
+LIBRARY_DIRECTORY: str = 'the-directory'
 # Two spellings of one address
 ADDRESS: str = 'Reader@Example.org'
 OTHER_ADDRESS: str = 'stranger@example.org'
@@ -1074,6 +1080,61 @@ class TestAddressIndexRevision:
         with pytest.raises(IntegrityError, match='UNIQUE constraint failed'):
             self._add_accounts(fx_empty_catalogue, ADDRESS.upper())
         expect(kept == {ADDRESS, OTHER_ADDRESS})
+        assert_expectations()
+
+
+class TestBookColumnRevision:
+    """Tests for the revision of the catalogue that names the key column of the library book_id."""
+
+    async def test_the_entry_keeps_its_row_and_the_keys_and_the_downgrade_names_the_old_column(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the rename keeps the row and every key, index and unique constraint, and the downgrade renames it back.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_BOOK_COLUMN)
+        owner, book_id = await commit_account(fx_empty_catalogue), new_book_id()
+        with _session(fx_empty_catalogue) as session, session.begin():
+            session.execute(
+                text(
+                    'INSERT INTO library (project_id, owner_id, directory, added_at) '
+                    'VALUES (:book, :owner, :directory, :added)'
+                ),
+                {
+                    'book': book_id.bytes,
+                    'owner': owner.bytes,
+                    'directory': LIBRARY_DIRECTORY,
+                    'added': EPOCH.isoformat(),
+                },
+            )
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BOOK_COLUMN_REVISION)
+        with fx_empty_catalogue.engine.connect() as connection:
+            inspector = inspect(connection)
+            upgraded_columns = {column['name'] for column in inspector.get_columns(LIBRARY_TABLE)}
+            primary_key = inspector.get_pk_constraint(LIBRARY_TABLE)
+            foreign_keys = inspector.get_foreign_keys(LIBRARY_TABLE)
+            unique = inspector.get_unique_constraints(LIBRARY_TABLE)
+            indexes = inspector.get_indexes(LIBRARY_TABLE)
+        with _session(fx_empty_catalogue) as session:
+            upgraded = [tuple(row) for row in session.execute(text('SELECT book_id, owner_id, directory FROM library'))]
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.downgrade, BEFORE_BOOK_COLUMN)
+        with _session(fx_empty_catalogue) as session:
+            downgraded = session.scalars(text('SELECT project_id FROM library')).all()
+
+        expect(upgraded_columns == {'book_id', 'owner_id', 'directory', 'added_at'})
+        expect((primary_key['name'], primary_key['constrained_columns']) == ('pk_library', ['book_id']))
+        expect(
+            [(key['name'], key['options']['ondelete']) for key in foreign_keys]
+            == [('fk_library_owner_id_user', 'RESTRICT')]
+        )
+        expect([(key['name'], key['column_names']) for key in unique] == [('uq_library_directory', ['directory'])])
+        expect([(index['name'], index['column_names']) for index in indexes] == [('ix_library_owner_id', ['owner_id'])])
+        expect(upgraded == [(book_id.bytes, owner.bytes, LIBRARY_DIRECTORY)])
+        expect(downgraded == [book_id.bytes])
         assert_expectations()
 
 

@@ -203,7 +203,7 @@ class SharedDatabaseSplit:
             _insert(
                 connection,
                 LIBRARY_TABLE,
-                'project_id, owner_id, directory, added_at',
+                'book_id, owner_id, directory, added_at',
                 _select(f'id, owner_id, {DIRECTORY_OF_THE_BOOK}, created_at', BOOK_RECORDS_TABLE, condition=None),
             )
             _commit_checked(connection)
