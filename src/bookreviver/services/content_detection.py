@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book
-    from bookreviver.services.books import BooksService
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
 
@@ -61,26 +60,25 @@ class ContentDetector:
     # How many pages are read from the database at once
     WINDOW: ClassVar[int] = 500
 
-    def __init__(self, *, books: BooksService, runtime: StageRuntime, records: StageRecords) -> None:
+    def __init__(self, *, runtime: StageRuntime, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param books: Books service of the job, which opens the book the job detects in once it has work to do.
-        :type books: BooksService
         :param runtime: The runner of the processor that finds the content of an image.
         :type runtime: StageRuntime
         :param records: Writer of the stage records, which marks the stages of a page stale.
         :type records: StageRecords
         """
-        self._books = books
         self._runner = runtime.runner
         self._processors = runtime.processors
         self._records = records
 
-    async def run(self, job: Job, control: JobControl) -> tuple[int, int]:
+    async def run(self, book: Book, job: Job, control: JobControl) -> tuple[int, int]:
         """Detect the content of the pages of a running job, a task for each page.
 
         Each page is written in a ``Book.change`` of its own, so what a page was given stays when the job is cancelled.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each page.
@@ -95,7 +93,6 @@ class ContentDetector:
         # A machine without OpenCV offers no such processor, and then the kind of a page is all that says what it shows
         if all(spec.key != PROBE_KEY for spec in self._processors.specs()):
             return 0, 0
-        book = await self._books.open(job.book_id)
         pages = await self._pages(book, detection)
         control.plan(len(pages))
         read = failed = 0

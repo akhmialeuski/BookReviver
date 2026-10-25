@@ -81,21 +81,17 @@ class TestJobStage:
 
     def test_a_run_stage_job_names_the_stage_of_its_parameters(self) -> None:
         """Verify the stage comes out of the parameters the job stores."""
-        job = make_job(
-            book_id=new_book_id(),
-            kind=JobKind.RUN_STAGE,
-            params=StageRun(stage=Stage.CLEANUP).to_map(),
-        )
+        job = make_job(kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.CLEANUP).to_map())
         assert job.stage is Stage.CLEANUP
 
     def test_a_job_of_another_kind_has_no_stage(self) -> None:
         """Verify an import job has no stage, whatever its parameters hold."""
-        job = make_job(book_id=new_book_id(), params=StageRun(stage=Stage.CLEANUP).to_map())
+        job = make_job(params=StageRun(stage=Stage.CLEANUP).to_map())
         assert job.stage is None
 
     def test_a_run_stage_job_with_unreadable_parameters_has_no_stage(self) -> None:
         """Verify parameters that are not those of a stage run give no stage and no error."""
-        job = make_job(book_id=new_book_id(), kind=JobKind.RUN_STAGE)
+        job = make_job(kind=JobKind.RUN_STAGE)
         assert job.stage is None
 
 

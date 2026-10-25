@@ -21,7 +21,7 @@ from fastapi_pagination import Params
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import slice_request
 from bookreviver.api.schemas.profiles import ProfileLinkBody, ProfileQuery
-from bookreviver.domain.entities import RecipeProfile
+from bookreviver.domain.entities import LibraryEntry, RecipeProfile
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId, RecipeProfileId
 from bookreviver.domain.values import Slice, SliceRequest
@@ -30,7 +30,6 @@ from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import LibraryEntry
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import CatalogueRepositories
 
@@ -55,8 +54,27 @@ def _owner_window(repos: CatalogueRepositories, *, account_id: AccountId, reques
     return repos.library.list_for_owner(account_id, request)
 
 
+async def entries_of(catalogue: CatalogueDatabase, account_id: AccountId) -> list[LibraryEntry]:
+    """Read the library entry of every book of an account, window by window, the latest added first.
+
+    :param catalogue: Catalogue database of the request, whose ``read`` of the catalogue lists the library.
+    :type catalogue: CatalogueDatabase
+    :param account_id: The account.
+    :type account_id: AccountId
+    :returns: The entries of the books of the account.
+    :rtype: list[LibraryEntry]
+    """
+    entries: list[LibraryEntry] = []
+    while True:
+        request = SliceRequest(offset=len(entries), limit=ENTRY_WINDOW)
+        window = await catalogue.read(partial(_owner_window, account_id=account_id, request=request))
+        entries.extend(window.items)
+        if len(entries) >= window.total or not window.items:
+            return entries
+
+
 async def books_of(catalogue: CatalogueDatabase, books_service: BooksService, account_id: AccountId) -> list[Book]:
-    """Read every book of an account, window by window, the latest added first.
+    """Read every book of an account, the latest added first.
 
     :param catalogue: Catalogue database of the request, whose ``read`` of the catalogue lists the library.
     :type catalogue: CatalogueDatabase
@@ -67,13 +85,7 @@ async def books_of(catalogue: CatalogueDatabase, books_service: BooksService, ac
     :returns: The books of the account.
     :rtype: list[Book]
     """
-    books: list[Book] = []
-    while True:
-        request = SliceRequest(offset=len(books), limit=ENTRY_WINDOW)
-        window = await catalogue.read(partial(_owner_window, account_id=account_id, request=request))
-        books.extend(books_service.book(entry) for entry in window.items)
-        if len(books) >= window.total or not window.items:
-            return books
+    return [books_service.book(entry) for entry in await entries_of(catalogue, account_id)]
 
 
 class AccountBooks:
@@ -100,13 +112,15 @@ class AccountBooks:
         :param account_id: The account.
         :type account_id: AccountId
         """
-        await self._books.delete_all(await books_of(self._catalogue, self._books, account_id))
+        entries = await entries_of(self._catalogue, account_id)
+        await self._books.delete_all(entry.book_id for entry in entries)
 
 
 @inject
 async def open_book(
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
+    catalogue: FromDishka[CatalogueDatabase],
     books: FromDishka[BooksService],
 ) -> Book:
     """Open the book the path names, when the signed-in account owns it.
@@ -115,16 +129,18 @@ async def open_book(
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
+    :param catalogue: Catalogue database of the request, whose library entry of the book names its owner.
+    :type catalogue: CatalogueDatabase
     :param books: Books service of the request, which opens the book with its database.
     :type books: BooksService
     :returns: The open book.
     :rtype: Book
     :raises NotFoundError: If the library has no such book, or the book belongs to another account.
     """
-    book = await books.open(book_id)
-    if book.owner_id != actor.account_id:
+    entry = await catalogue.read(lambda repos: repos.library.get(book_id))
+    if entry.owner_id != actor.account_id:
         raise NotFoundError(book_id)
-    return book
+    return books.book(entry)
 
 
 @inject
@@ -132,9 +148,11 @@ async def own_books(
     params: Annotated[Params, Depends()],
     actor: ActorDep,
     catalogue: FromDishka[CatalogueDatabase],
-    books: FromDishka[BooksService],
-) -> Slice[Book]:
-    """Read the window of the signed-in account's books the page parameters ask for, the latest added first.
+) -> Slice[LibraryEntry]:
+    """Read the window of the library entries of the signed-in account's books the page parameters ask for.
+
+    The latest added comes first. A route opens the book of an entry with ``BooksService.book``, and takes the
+    identifier of the book from the entry.
 
     :param params: Page number and size from the query.
     :type params: Params
@@ -142,14 +160,11 @@ async def own_books(
     :type actor: Actor
     :param catalogue: Catalogue database of the request.
     :type catalogue: CatalogueDatabase
-    :param books: Books service of the request, which opens each book with its database.
-    :type books: BooksService
-    :returns: The books of the window, and the number of all the account's books.
-    :rtype: Slice[Book]
+    :returns: The entries of the window, and the number of all the account's books.
+    :rtype: Slice[LibraryEntry]
     """
     request = slice_request(params)
-    window = await catalogue.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))
-    return Slice(items=[books.book(entry) for entry in window.items], total=window.total)
+    return await catalogue.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))
 
 
 @inject

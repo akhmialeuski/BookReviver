@@ -7,7 +7,8 @@ difference. The rules of the queues, the control a job reports through and the c
 contract of the port holds for both, and nothing about the order in which jobs run is faked.
 
 A test names a book by its identifier, and the books of the tests are in directories named by ``directory_of``, so the
-board puts, reads and cancels a job by the identifier of its book. A test that wants the books it opens to use the board
+board puts, reads and cancels a job by the identifier of its book. A job knows no book, so the board remembers the
+directory each job was put for. A test that wants the books it opens to use the board
 registers ``board.open`` as ``BookJobs``, and the ``fx_book_parts`` fixture of the suite gives the previous registration
 back after each test.
 """
@@ -46,6 +47,7 @@ class FakeJobBoard(InMemoryJobBoard):
         """
         super().__init__(runner=runner, kept_ended=kept_ended)
         self.put_jobs: list[Job] = []
+        self._homes: dict[JobId, BookDirectoryName] = {}
         self._being_run: set[BookDirectoryName] = set()
 
     @override
@@ -60,18 +62,21 @@ class FakeJobBoard(InMemoryJobBoard):
         :rtype: Job
         """
         self.put_jobs.append(job)
+        self._homes[job.id] = dir_name
         self._ledger.add(dir_name, job)
         return job
 
-    def put(self, job: Job) -> Job:
-        """Queue the job at the end of the queue of its book, as the book would.
+    def put(self, book_id: BookId, job: Job) -> Job:
+        """Queue the job at the end of the queue of a book, as the book would.
 
+        :param book_id: The book the job works on.
+        :type book_id: BookId
         :param job: The job to queue, in the queued state.
         :type job: Job
         :returns: The job.
         :rtype: Job
         """
-        return self.open(directory_of(job.book_id)).put(job)
+        return self.open(directory_of(book_id)).put(job)
 
     def get(self, job_id: JobId) -> Job:
         """Return a job put on the board, from the queue of its book.
@@ -113,9 +118,8 @@ class FakeJobBoard(InMemoryJobBoard):
 
         The jobs of a book run one at a time in the order they were put, and a job a running job puts is run too.
         """
-        books = {directory_of(job.book_id) for job in self.put_jobs}
         async with anyio.create_task_group() as group:
-            for dir_name in books:
+            for dir_name in set(self._homes.values()):
                 group.start_soon(self._run_book, dir_name)
 
     def _directory_of_job(self, job_id: JobId) -> BookDirectoryName:
@@ -127,10 +131,9 @@ class FakeJobBoard(InMemoryJobBoard):
         :rtype: BookDirectoryName
         :raises NotFoundError: If no job with the identifier was put on this board.
         """
-        for job in self.put_jobs:
-            if job.id == job_id:
-                return directory_of(job.book_id)
-        raise NotFoundError(job_id)
+        if (dir_name := self._homes.get(job_id)) is None:
+            raise NotFoundError(job_id)
+        return dir_name
 
     async def _run_book(self, dir_name: BookDirectoryName) -> None:
         """Run the queue of one book, unless a call that is still running is running it already.

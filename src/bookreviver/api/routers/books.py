@@ -12,19 +12,20 @@ from typing import TYPE_CHECKING, Annotated
 from urllib.parse import quote
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Body, Depends, Request, Response, UploadFile, status
+from fastapi import APIRouter, Body, Depends, Path, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page, Params
 from pydantic import ValidationError
 
-from bookreviver.api.access import open_book, own_books
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book, own_books
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.books import ArchiveForm, BookCreate, BookSchema, BookUpdate
-from bookreviver.domain.entities import BookOverview
+from bookreviver.domain.entities import BookOverview, LibraryEntry
+from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import Slice
 from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
@@ -80,13 +81,13 @@ class BookLinks:
         self._request = request
         self._response = response
 
-    def created(self, book: Book) -> None:
+    def created(self, book_id: BookId) -> None:
         """Point to a book just created in the ``Location`` header.
 
-        :param book: The new book.
-        :type book: Book
+        :param book_id: Identifier of the new book.
+        :type book_id: BookId
         """
-        self._response.headers[LOCATION_HEADER] = str(self._request.url_for(RouteName.BOOK, book_id=book.id))
+        self._response.headers[LOCATION_HEADER] = str(self._request.url_for(RouteName.BOOK, book_id=book_id))
 
 
 # The routes of the whole collection name no book, and those of one book take the freshness of its reads
@@ -97,7 +98,8 @@ one_book = APIRouter(prefix='/books', route_class=DishkaRoute, dependencies=[Dep
 @collection.get('')
 async def list_books(
     params: Annotated[Params, Depends()],
-    window: Annotated[Slice[Book], Depends(own_books)],
+    window: Annotated[Slice[LibraryEntry], Depends(own_books)],
+    books: FromDishka[BooksService],
     stages: FromDishka[StageSummaries],
 ) -> Page[BookSchema]:
     """List the books of the signed-in account, the latest added first.
@@ -105,15 +107,18 @@ async def list_books(
     \N{FORM FEED}
     :param params: Page number and size from the query.
     :type params: Params
-    :param window: The books of the signed-in account the page asks for.
-    :type window: Slice[Book]
+    :param window: The library entries of the books of the signed-in account the page asks for.
+    :type window: Slice[LibraryEntry]
+    :param books: Books service of the request, which opens the book of each entry.
+    :type books: BooksService
     :param stages: Stage summaries of the request, which give each book its progress.
     :type stages: StageSummaries
     :returns: One page of the account's books.
     :rtype: Page[BookSchema]
     """
     pager = Pager[BookOverview, BookSchema](params, BookSchema.from_overview)
-    return pager.page(Slice(items=[await stages.overview(book) for book in window.items], total=window.total))
+    overviews = [await stages.overview(books.book(entry), entry.book_id) for entry in window.items]
+    return pager.page(Slice(items=overviews, total=window.total))
 
 
 @collection.post('', status_code=status.HTTP_201_CREATED)
@@ -140,14 +145,15 @@ async def create_book(
     :returns: The new book.
     :rtype: BookSchema
     """
-    book = await books.create(actor, body.to_details())
-    links.created(book)
-    return BookSchema.from_overview(await stages.overview(book))
+    created = await books.create(actor, body.to_details())
+    links.created(created.book_id)
+    return BookSchema.from_overview(await stages.overview(created.book, created.book_id))
 
 
 @one_book.get('/{book_id}', name=RouteName.BOOK)
 async def get_book(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     stages: FromDishka[StageSummaries],
 ) -> BookSchema:
     """Return one book of the signed-in account.
@@ -155,12 +161,14 @@ async def get_book(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param stages: Stage summaries of the request, which give the book its progress.
     :type stages: StageSummaries
     :returns: The book.
     :rtype: BookSchema
     """
-    return BookSchema.from_overview(await stages.overview(book))
+    return BookSchema.from_overview(await stages.overview(book, book_id))
 
 
 @one_book.patch('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -244,25 +252,26 @@ async def import_book(
     :returns: The new book.
     :rtype: BookSchema
     """
-    book = await books.import_archive(actor, archive.file)
-    links.created(book)
-    return BookSchema.from_overview(await stages.overview(book))
+    imported = await books.import_archive(actor, archive.file)
+    links.created(imported.book_id)
+    return BookSchema.from_overview(await stages.overview(imported.book, imported.book_id))
 
 
-@one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
+# The dependency answers 404 for a book of another account, and the service reads the library entry of the identifier
+@one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(open_book)])
 async def delete_book(
-    book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     books: FromDishka[BooksService],
 ) -> None:
     """Delete a book with its pages, jobs and files.
 
     \N{FORM FEED}
-    :param book: The book the path names, open for the signed-in account.
-    :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param books: Books service of the request.
     :type books: BooksService
     """
-    await books.delete(book)
+    await books.delete(book_id)
 
 
 router = APIRouter(tags=['books'])

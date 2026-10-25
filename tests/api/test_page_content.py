@@ -248,7 +248,7 @@ class TestDetectContent:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        queued = fx_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.DETECT_CONTENT))
+        queued = fx_board.put(fx_book.book_id, make_job(kind=JobKind.DETECT_CONTENT))
 
         response = await fx_client.post(fx_book.detect_path, json={})
 

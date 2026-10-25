@@ -1,13 +1,15 @@
 """One open book, which makes everything it needs through ports and runs every use case that reads or changes it.
 
 A book knows the name of its directory and opens its own parts by it: its directory, its database, its event channel
-and its job queue. ``BooksService.open`` opens a book of an identifier, and so does ``BooksService.book`` for a library
-entry already read. For a request, the access dependency ``open_book`` of the API opens a book of the signed-in account
-after it has checked the owner, so a use case that takes a ``Book`` works on it and checks nothing itself. A job opens
-the book of its job in the same way. A use case reads the book through ``read``, changes it through ``change``, and
-asks ``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any
-transaction. It reaches its uploads and sources through ``sources`` and its derived files through ``assets``, the stores
-of the directory of this book alone.
+and its job queue. It knows no identifier and no owner, which live in the library entry of the catalogue: a caller that
+needs them takes them where they already are, the routes from the path, the access dependency ``open_book`` from the
+library entry, and a job from the queue it was taken from. ``BooksService.book`` opens a book of a library entry
+already read. For a request, ``open_book`` of the API opens a book of the signed-in account after it has checked the
+owner, so a use case that takes a ``Book`` works on it and checks nothing itself. A job opens the book of its queue
+from the name of the directory. A use case reads the book through ``read``, changes it through ``change``, and asks
+``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any
+transaction. It reaches its uploads and sources through ``sources`` and its derived files through ``assets``, the
+stores of the directory of this book alone.
 
 The use cases of one open book are methods of the book: its creation, its unpacking from an archive, the change of its
 description and settings, its archive and its deletion. What a client draws from the book as a whole, its overview with
@@ -30,7 +32,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
     from bookreviver.domain.changes import BookChanges
-    from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId
+    from bookreviver.domain.ids import BookDirectoryName
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore, SourceStore
@@ -40,8 +42,6 @@ if TYPE_CHECKING:
 class Book:
     """A book opened with its parts, for the acting account or for a job.
 
-    :ivar id: Identifier of the book in the library.
-    :ivar owner_id: The account that owns the book.
     :ivar dir_name: The name of the directory of the book, by which the parts of the book are opened.
     :ivar database: The database of the book, which runs the transactions of the book. It is no part of what makes two
                     books equal.
@@ -53,8 +53,6 @@ class Book:
                 makes two books equal.
     """
 
-    id: BookId
-    owner_id: AccountId
     dir_name: BookDirectoryName
     database: BookDatabase = field(
         default=Factory(lambda self: BookDatabase.open(self.dir_name), takes_self=True), eq=False, repr=False

@@ -7,6 +7,7 @@ import pytest
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
+from bookreviver.services.book import Book
 from bookreviver.services.pagination import PaginationService
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.page_services import make_page_service
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job
+    from bookreviver.domain.ids import BookDirectoryName
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
@@ -73,9 +75,11 @@ def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobB
     :rtype: FakeJobBoard
     """
 
-    async def run(job: Job, control: JobControl) -> JobEnd:
+    async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
         """Run a job the way the application would, over a page service of its own.
 
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
         :param job: The job the board took from its queue.
         :type job: Job
         :param control: What the job reports through.
@@ -86,7 +90,7 @@ def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobB
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
         service = make_page_service(fx_open_book, (fx_events, board))
-        return await service.prepare_images(job, control)
+        return await service.prepare_images(Book(dir_name), job, control)
 
     board = FakeJobBoard(runner=run)
     return board

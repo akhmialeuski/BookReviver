@@ -58,7 +58,6 @@ from bookreviver.domain.errors import (
     ConflictError,
     DomainError,
     JobCancelledError,
-    NotFoundError,
     UnsupportedSourceError,
     UploadRejectedError,
 )
@@ -83,7 +82,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import IncomingFile
     from bookreviver.services.book import Book
-    from bookreviver.services.books import BooksService
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 
@@ -597,15 +595,12 @@ class ImportService:
     def __init__(
         self,
         *,
-        books: BooksService,
         imaging: ImportImaging,
         runtime: ImportRuntime,
         parts: ProcessingParts,
     ) -> None:
         """Build the service over the ports of one request or job.
 
-        :param books: Books service of the current job, which opens the book the job imports into.
-        :type books: BooksService
         :param imaging: The inspector, the rasterizer and the tiler.
         :type imaging: ImportImaging
         :param runtime: The order keys and the limits.
@@ -613,7 +608,6 @@ class ImportService:
         :param parts: The recipes and the job starter, with which the split of the new pages is queued.
         :type parts: ProcessingParts
         """
-        self._books = books
         self._imaging = imaging
         self._runtime = runtime
         self._recipes = parts.recipes
@@ -677,7 +671,6 @@ class ImportService:
             return book.jobs.put(
                 Job(
                     id=job_id,
-                    book_id=book.id,
                     kind=JobKind.IMPORT_SOURCE,
                     request=ImportRequest(files=staged),
                     created_at=datetime.now(UTC),
@@ -687,13 +680,15 @@ class ImportService:
             await book.sources.discard(job_id)
             raise
 
-    async def run_import(self, job: Job, control: JobControl) -> JobEnd:
+    async def run_import(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run an import job the board took from its queue, and remove its upload however it ends while its book exists.
 
         The import is one task. A cancellation stores every file the run did not reach as a skipped source and goes
         on as ``JobCancelledError``. An import that took in at least one source succeeds and queues the split of its
         pages, and one that took in none fails.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job, whose request lists the staged files.
         :type job: Job
         :param control: What the job reports its progress through, and learns of its cancellation from.
@@ -702,11 +697,6 @@ class ImportService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled.
         """
-        try:
-            book = await self._books.open(job.book_id)
-        except NotFoundError as error:
-            # The deletion of the book removed the upload with its directory, and the start removes a later one
-            return JobEnd(state=JobState.FAILED, error=str(error))
         run = ImportRun(
             running=RunningImport(job=job, control=control), book=book, imaging=self._imaging, runtime=self._runtime
         )

@@ -565,7 +565,6 @@ class Job:
     import the whole import, which reports its files and scans inside the task.
 
     :ivar id: Identifier of the job.
-    :ivar book_id: Book the job works on.
     :ivar kind: What the job does.
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its tasks are done.
@@ -579,7 +578,6 @@ class Job:
     """
 
     id: JobId
-    book_id: BookId
     kind: JobKind
     state: JobState = JobState.QUEUED
     progress: Progress = field(factory=Progress)

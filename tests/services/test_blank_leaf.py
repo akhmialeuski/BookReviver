@@ -38,6 +38,7 @@ from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPage, ProcessorRef, Renditions, Step
 from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
+from bookreviver.services.book import Book
 from tests.helpers.acting_renditions import ActingRenditionWriter
 from tests.helpers.builders import (
     EPOCH,
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageOverview, PageStage, PageVersion
-    from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.ids import BookDirectoryName, BookId, PageId
     from bookreviver.domain.values import JobEnd
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.persistence import BookRepositories
@@ -249,11 +250,13 @@ class LeafDesk:
         """Run the queues of the board, which runs every ``prepare-pages`` job put on it through a page service."""
         await self.board.run_queued()
 
-    async def prepare_with(self, renditions: RenditionWriter) -> Job:
+    async def prepare_with(self, book_id: BookId, renditions: RenditionWriter) -> Job:
         """Run the ``prepare-pages`` job that was put last through a page service that writes with the given writer.
 
         The job runs on a board of its own, so the jobs the service puts meanwhile stay on the board of the desk.
 
+        :param book_id: The book of the job.
+        :type book_id: BookId
         :param renditions: Writer of the files of a version the job uses.
         :type renditions: RenditionWriter
         :returns: The job as it ended.
@@ -261,9 +264,11 @@ class LeafDesk:
         """
         job = self.prepare_jobs()[-1]
 
-        async def run(queued: Job, control: JobControl) -> JobEnd:
+        async def run(dir_name: BookDirectoryName, queued: Job, control: JobControl) -> JobEnd:
             """Run the job over a page service whose files are written by the given writer.
 
+            :param dir_name: Name of the directory of the book whose queue the job was taken from.
+            :type dir_name: BookDirectoryName
             :param queued: The job the board took from its queue.
             :type queued: Job
             :param control: What the job reports through.
@@ -271,10 +276,10 @@ class LeafDesk:
             :returns: How the job ended.
             :rtype: JobEnd
             """
-            return await self.service(renditions=renditions).prepare_images(queued, control)
+            return await self.service(renditions=renditions).prepare_images(Book(dir_name), queued, control)
 
         board = FakeJobBoard(runner=run)
-        board.put(job)
+        board.put(book_id, job)
         await board.run_queued()
         return board.get(job.id)
 
@@ -974,7 +979,7 @@ class TestJobsReCheckWhatTheyApply:
             """
             await fx_desk.choose(book, [1], BlankFill.SCAN)
 
-        job = await fx_desk.prepare_with(ActingRenditionWriter(take_the_scan_back))
+        job = await fx_desk.prepare_with(book.book_id, ActingRenditionWriter(take_the_scan_back))
 
         expect(job.state is JobState.SUCCEEDED)
         expect(await fx_desk.leaves(book.book_id, blank) == [])

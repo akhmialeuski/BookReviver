@@ -356,7 +356,7 @@ class TestDeleteSource:
         :param fx_storage_root: Storage root of the application.
         :type fx_storage_root: Path
         """
-        fx_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
+        fx_board.put(fx_book.book_id, make_job(kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/{fx_book.first.id}')
 
@@ -429,7 +429,7 @@ class TestDeleteUnimportedSources:
         :type fx_databases: BookDatabasesFactory
         """
         kept = await _add_unimported(fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5, databases=fx_databases())
-        fx_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
+        fx_board.put(fx_book.book_id, make_job(kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
 

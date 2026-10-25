@@ -1,7 +1,7 @@
 """Tests for the job routes and the server-sent event stream of a book."""
 
 from http import HTTPStatus
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 import anyio
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Job
+    from bookreviver.domain.ids import BookId
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import JobFakes
@@ -66,10 +67,21 @@ ERROR_FIELD: str = 'error'
 ITEMS_FIELD: str = 'items'
 
 
+class QueuedJob(NamedTuple):
+    """A job on the board with the book it was put for, since a job knows no book.
+
+    :ivar book_id: The book of the job.
+    :ivar job: The queued job.
+    """
+
+    book_id: BookId
+    job: Job
+
+
 @pytest.fixture
 async def fx_queued_job(
     fx_fakes: JobFakes, fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
-) -> Job:
+) -> QueuedJob:
     """Store a book of the signed-in account with a queued job that nothing runs.
 
     :param fx_fakes: Adapters the application runs on.
@@ -80,11 +92,11 @@ async def fx_queued_job(
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
-    :returns: The queued job.
-    :rtype: Job
+    :returns: The queued job with its book.
+    :rtype: QueuedJob
     """
     book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
-    return fx_fakes.board.put(make_job(book_id=book_id))
+    return QueuedJob(book_id=book_id, job=fx_fakes.board.put(book_id, make_job()))
 
 
 @pytest.fixture
@@ -93,7 +105,7 @@ async def fx_strangers_job(
     fx_database: SqlDatabase,
     fx_catalogue: CatalogueDatabaseFactory,
     fx_databases: BookDatabasesFactory,
-) -> Job:
+) -> QueuedJob:
     """Store a book of another account with a queued job.
 
     :param fx_fakes: Adapters the application runs on.
@@ -104,30 +116,30 @@ async def fx_strangers_job(
     :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
-    :returns: The queued job of the other account.
-    :rtype: Job
+    :returns: The queued job of the other account with its book.
+    :rtype: QueuedJob
     """
     book_id = await commit_record(
         fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
     )
-    return fx_fakes.board.put(make_job(book_id=book_id))
+    return QueuedJob(book_id=book_id, job=fx_fakes.board.put(book_id, make_job()))
 
 
 class TestReadJob:
     """Tests for GET /books/{book_id}/jobs/{job_id}."""
 
-    async def test_owner_reads_job(self, fx_client: httpx.AsyncClient, fx_queued_job: Job) -> None:
+    async def test_owner_reads_job(self, fx_client: httpx.AsyncClient, fx_queued_job: QueuedJob) -> None:
         """Verify the owner reads the job's state and progress.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
         :param fx_queued_job: Queued job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
-        response = await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+        response = await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))
         expect(response.status_code == HTTPStatus.OK)
         body = response.json()
-        expect((body[JOB_ID_FIELD], body[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.QUEUED))
+        expect((body[JOB_ID_FIELD], body[JOB_STATE_FIELD]) == (str(fx_queued_job.job.id), JobState.QUEUED))
         expect(body[PROGRESS_FIELD] == {DONE_FIELD: 0, TOTAL_FIELD: 0, FRACTION_FIELD: 0.0})
         assert_expectations()
 
@@ -136,7 +148,7 @@ class TestReadJob:
         fx_client: httpx.AsyncClient,
         fx_fakes: JobFakes,
         fx_actor: Actor,
-        fx_queued_job: Job,
+        fx_queued_job: QueuedJob,
         fx_open_book: BookOpener,
     ) -> None:
         """Verify the job of a stage run carries its stage and the import job carries none.
@@ -148,7 +160,7 @@ class TestReadJob:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_queued_job: Queued import job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -156,38 +168,40 @@ class TestReadJob:
             fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         run = fx_fakes.board.put(
-            make_job(book_id=book_id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
+            book_id, make_job(kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )
-        run_body = (await fx_client.get(JOB_PATH.format(book_id=run.book_id, job_id=run.id))).json()
+        run_body = (await fx_client.get(JOB_PATH.format(book_id=book_id, job_id=run.id))).json()
         import_body = (
-            await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+            await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))
         ).json()
         expect((run_body[KIND_FIELD], run_body[STAGE_FIELD]) == (JobKind.RUN_STAGE, Stage.GEOMETRY))
         expect((import_body[KIND_FIELD], import_body[STAGE_FIELD]) == (JobKind.IMPORT_SOURCE, None))
         assert_expectations()
 
     async def test_job_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_strangers_job: Job
+        self, fx_client: httpx.AsyncClient, fx_strangers_job: QueuedJob
     ) -> None:
         """Verify a job of another account's book answers 404.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_strangers_job: Job of another account.
-        :type fx_strangers_job: Job
+        :param fx_strangers_job: QueuedJob of another account.
+        :type fx_strangers_job: QueuedJob
         """
-        response = await fx_client.get(JOB_PATH.format(book_id=fx_strangers_job.book_id, job_id=fx_strangers_job.id))
+        response = await fx_client.get(
+            JOB_PATH.format(book_id=fx_strangers_job.book_id, job_id=fx_strangers_job.job.id)
+        )
         assert response.status_code == HTTPStatus.NOT_FOUND
 
     async def test_job_the_process_does_not_hold_is_a_404_problem(
-        self, fx_client: httpx.AsyncClient, fx_queued_job: Job
+        self, fx_client: httpx.AsyncClient, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a job the board does not hold, such as one of before a restart, answers 404 as a problem document.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
         :param fx_queued_job: Queued job of the signed-in account, whose book the missing job is asked under.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         response = await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=uuid4()))
         expect(response.status_code == HTTPStatus.NOT_FOUND)
@@ -199,7 +213,7 @@ class TestListJobs:
     """Tests for GET /books/{book_id}/jobs."""
 
     async def test_lists_the_jobs_of_the_book_newest_first_and_the_active_ones_alone(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify the list answers the jobs of the book the board holds, newest first, and ``active`` drops the ended.
 
@@ -208,14 +222,14 @@ class TestListJobs:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         await fx_fakes.board.run_queued()
-        later = fx_fakes.board.put(make_job(book_id=fx_queued_job.book_id, minutes=1))
+        later = fx_fakes.board.put(fx_queued_job.book_id, make_job(minutes=1))
         path = JOBS_PATH.format(book_id=fx_queued_job.book_id)
         everything = (await fx_client.get(path)).json()
         active = (await fx_client.get(path, params={ACTIVE_PARAMETER: 'true'})).json()
-        expect([job[JOB_ID_FIELD] for job in everything[ITEMS_FIELD]] == [str(later.id), str(fx_queued_job.id)])
+        expect([job[JOB_ID_FIELD] for job in everything[ITEMS_FIELD]] == [str(later.id), str(fx_queued_job.job.id)])
         expect([job[JOB_ID_FIELD] for job in active[ITEMS_FIELD]] == [str(later.id)])
         assert_expectations()
 
@@ -223,35 +237,35 @@ class TestListJobs:
 class TestCancelJob:
     """Tests for DELETE /books/{book_id}/jobs/{job_id}."""
 
-    async def test_queued_job_is_cancelled(self, fx_client: httpx.AsyncClient, fx_queued_job: Job) -> None:
+    async def test_queued_job_is_cancelled(self, fx_client: httpx.AsyncClient, fx_queued_job: QueuedJob) -> None:
         """Verify cancelling a queued job answers with the job in its cancelled state.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
         :param fx_queued_job: Queued job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
-        response = await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+        response = await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))
         expect(response.status_code == HTTPStatus.OK)
         expect(response.json()[JOB_STATE_FIELD] == JobState.CANCELLED)
         assert_expectations()
 
-    async def test_finished_job_is_a_conflict(self, fx_client: httpx.AsyncClient, fx_queued_job: Job) -> None:
+    async def test_finished_job_is_a_conflict(self, fx_client: httpx.AsyncClient, fx_queued_job: QueuedJob) -> None:
         """Verify cancelling a job twice answers the second time with a conflict problem.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
         :param fx_queued_job: Queued job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
-        await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
-        response = await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+        await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))
+        response = await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))
         expect(response.status_code == HTTPStatus.CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
         assert_expectations()
 
     async def test_job_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: Job
+        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: QueuedJob
     ) -> None:
         """Verify cancelling a job of another account's book answers 404 and leaves the job queued.
 
@@ -259,12 +273,14 @@ class TestCancelJob:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_strangers_job: Job of another account.
-        :type fx_strangers_job: Job
+        :param fx_strangers_job: QueuedJob of another account.
+        :type fx_strangers_job: QueuedJob
         """
-        response = await fx_client.delete(JOB_PATH.format(book_id=fx_strangers_job.book_id, job_id=fx_strangers_job.id))
+        response = await fx_client.delete(
+            JOB_PATH.format(book_id=fx_strangers_job.book_id, job_id=fx_strangers_job.job.id)
+        )
         expect(response.status_code == HTTPStatus.NOT_FOUND)
-        expect(fx_fakes.board.get(fx_strangers_job.id).state is JobState.QUEUED)
+        expect(fx_fakes.board.get(fx_strangers_job.job.id).state is JobState.QUEUED)
         assert_expectations()
 
 
@@ -272,7 +288,7 @@ class TestStreamBookEvents:
     """Tests for GET /books/{book_id}/events."""
 
     async def test_stream_delivers_job_and_book_changes(
-        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a cancellation and a committed change of the book reach the stream as named events, in order.
 
@@ -285,7 +301,7 @@ class TestStreamBookEvents:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         book_id = fx_queued_job.book_id
         reader = EventStreamReader(count=2)
@@ -293,19 +309,19 @@ class TestStreamBookEvents:
             group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id))
             # Change things only once the stream has subscribed, which happens before the endpoint runs
             await fx_fakes.events.subscribed.wait()
-            await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+            await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))
             await fx_fakes.events.open(directory_of(book_id)).publish(make_book_change())
 
         expect((reader.status, reader.content_type.split(';')[0]) == (HTTPStatus.OK, EVENT_STREAM_TYPE))
         expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.BOOK_CHANGED])
-        expect(reader.events[0].data[JOB_ID_FIELD] == str(fx_queued_job.id))
+        expect(reader.events[0].data[JOB_ID_FIELD] == str(fx_queued_job.job.id))
         expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
         expect(reader.events[1].data[BOOK_ID_FIELD] == str(book_id))
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 
     async def test_a_committed_change_of_the_book_is_announced_with_its_version_as_id(
-        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a change of the description reaches the stream as ``book-changed`` with the version and its part.
 
@@ -316,7 +332,7 @@ class TestStreamBookEvents:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account, whose book is changed.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         book_id = fx_queued_job.book_id
         reader = EventStreamReader(count=1)
@@ -331,13 +347,13 @@ class TestStreamBookEvents:
         expect(changed.id == str(changed.data[VERSION_FIELD]))
         assert_expectations()
 
-    async def test_a_stream_opens_with_the_version_of_the_book(self, fx_app: FastAPI, fx_queued_job: Job) -> None:
+    async def test_a_stream_opens_with_the_version_of_the_book(self, fx_app: FastAPI, fx_queued_job: QueuedJob) -> None:
         """Verify a browser that names no version is first told the version of the book, as the id of the event.
 
         :param fx_app: The running application.
         :type fx_app: FastAPI
         :param fx_queued_job: Queued job of the signed-in account, whose book is listened to.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         reader = EventStreamReader(count=0)
         path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_queued_job.book_id)
@@ -350,14 +366,14 @@ class TestStreamBookEvents:
         assert_expectations()
 
     async def test_a_browser_back_with_an_old_version_is_told_to_read_the_book_again(
-        self, fx_app: FastAPI, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a stream opened with the id of another version starts with ``book-reset`` naming the version now.
 
         :param fx_app: The running application.
         :type fx_app: FastAPI
         :param fx_queued_job: Queued job of the signed-in account, whose book is listened to.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         book_id = fx_queued_job.book_id
         reader = EventStreamReader(count=1)
@@ -371,7 +387,7 @@ class TestStreamBookEvents:
         assert_expectations()
 
     async def test_stream_delivers_the_progress_of_a_running_job(
-        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a job that runs is announced as running, and the tasks it plans reach the stream as its progress.
 
@@ -380,9 +396,9 @@ class TestStreamBookEvents:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account, which a runner holds inside its first task.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
-        release = fx_fakes.scripted.hold(fx_queued_job)
+        release = fx_fakes.scripted.hold(fx_queued_job.job)
         reader = EventStreamReader(count=2)
         async with anyio.create_task_group() as group:
             group.start_soon(
@@ -395,12 +411,12 @@ class TestStreamBookEvents:
             release.set()
         running, planned = (event.data for event in reader.events)
         expect([event.name for event in reader.events] == [EventName.JOB_CHANGED] * 2)
-        expect((running[JOB_ID_FIELD], running[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.RUNNING))
+        expect((running[JOB_ID_FIELD], running[JOB_STATE_FIELD]) == (str(fx_queued_job.job.id), JobState.RUNNING))
         expect(planned[PROGRESS_FIELD][TOTAL_FIELD] == TASKS_PER_JOB)
         assert_expectations()
 
     async def test_stream_delivers_the_end_of_a_job(
-        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify every task of a job reaches the stream, and the last event is the job as succeeded with its tasks done.
 
@@ -409,7 +425,7 @@ class TestStreamBookEvents:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         # The running state, the three tasks, and the end
         reader = EventStreamReader(count=TASKS_PER_JOB + 2)
@@ -426,7 +442,7 @@ class TestStreamBookEvents:
         assert_expectations()
 
     async def test_stream_delivers_the_failure_of_a_job_with_its_reason(
-        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a job that stops on an error nobody expected reaches the stream as failed, with the standard reason.
 
@@ -435,9 +451,9 @@ class TestStreamBookEvents:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account, which the runner is told to break.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
-        fx_fakes.scripted.fail(fx_queued_job)
+        fx_fakes.scripted.fail(fx_queued_job.job)
         reader = EventStreamReader(count=2)
         async with anyio.create_task_group() as group:
             group.start_soon(
@@ -451,7 +467,7 @@ class TestStreamBookEvents:
         assert_expectations()
 
     async def test_stream_names_a_ready_version_by_identifier(
-        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: QueuedJob
     ) -> None:
         """Verify a ready version of a page reaches the stream by the identifiers of the page and the version.
 
@@ -460,7 +476,7 @@ class TestStreamBookEvents:
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_queued_job: Queued job of the signed-in account, whose book the event belongs to.
-        :type fx_queued_job: Job
+        :type fx_queued_job: QueuedJob
         """
         book_id = fx_queued_job.book_id
         version = make_page_version(page_id=PageId(uuid4()))
@@ -478,7 +494,7 @@ class TestStreamBookEvents:
         ]
 
     async def test_book_of_another_account_is_not_found(
-        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: Job
+        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: QueuedJob
     ) -> None:
         """Verify listening to another account's book answers 404 before any stream starts.
 
@@ -488,8 +504,8 @@ class TestStreamBookEvents:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_strangers_job: Job of another account, whose book is listened to.
-        :type fx_strangers_job: Job
+        :param fx_strangers_job: QueuedJob of another account, whose book is listened to.
+        :type fx_strangers_job: QueuedJob
         """
         path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_strangers_job.book_id)
         # A stream that started by mistake would never end, so the request is bounded

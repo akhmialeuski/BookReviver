@@ -464,4 +464,4 @@ class TestJobsQueuedTogether:
         for _ in range(requests):
             fx_service().detect_new_pages(book)
 
-        assert [job.kind for job in fx_board.put_jobs if job.book_id == book_id] == [JobKind.DETECT_CONTENT]
+        assert [job.kind for job in fx_board.jobs(book_id, active=False)] == [JobKind.DETECT_CONTENT]

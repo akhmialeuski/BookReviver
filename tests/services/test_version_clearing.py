@@ -8,9 +8,9 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import VersionData, VersionState
-from bookreviver.services.books import BooksService
+from bookreviver.services.book import Book
 from bookreviver.services.version_clearing import BEING_COLLECTED, VersionClearing
-from tests.helpers.builders import make_page, make_page_version, make_record, new_account_id
+from tests.helpers.builders import directory_of, make_page, make_page_version, make_record, new_account_id
 from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class TestClear:
             .open(book_id)
             .change(lambda repos, _book_record: repos.page_versions.delete_many([deleted.id]))
         )
-        clearing = VersionClearing(book=await BooksService(catalogue=fx_catalogue()).open(book_id))
+        clearing = VersionClearing(book=Book(directory_of(book_id)))
 
         await clearing.clear([kept, deleted])
 
@@ -108,7 +108,7 @@ class TestClear:
         )
 
         monkeypatch.setattr(fx_directories.assets(book_id), 'delete_prefix', AsyncMock(side_effect=OSError))
-        clearing = VersionClearing(book=await BooksService(catalogue=fx_catalogue()).open(book_id))
+        clearing = VersionClearing(book=Book(directory_of(book_id)))
 
         await clearing.clear([chosen])
 

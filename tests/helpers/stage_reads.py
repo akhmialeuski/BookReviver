@@ -46,7 +46,7 @@ async def book_summaries(kit: ProcessingKit, book_id: BookId) -> list[StageSumma
     :returns: One summary for each stage, in the order of the pipeline.
     :rtype: list[StageSummary]
     """
-    return list((await kit.stages().stages(await open_book(kit, book_id), SliceRequest())).items)
+    return list((await kit.stages().stages(await open_book(kit, book_id), book_id, SliceRequest())).items)
 
 
 async def books_with_progress(kit: ProcessingKit, *books: BookId) -> list[BookOverview]:
@@ -69,6 +69,6 @@ async def books_with_progress(kit: ProcessingKit, *books: BookId) -> list[BookOv
         :returns: The overview with the progress.
         :rtype: BookOverview
         """
-        return await stages.overview(await open_book(kit, book_id))
+        return await stages.overview(await open_book(kit, book_id), book_id)
 
     return [await overview_of(book_id) for book_id in books]

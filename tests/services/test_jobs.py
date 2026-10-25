@@ -140,8 +140,8 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.RUN_STAGE))
-        assert await fx_job_service.get(fx_open_book(fx_owner, job.book_id), job.id) == job
+        job = fx_fakes.board.put(fx_book, make_job(kind=JobKind.RUN_STAGE))
+        assert await fx_job_service.get(fx_open_book(fx_owner, fx_book), job.id) == job
 
     async def test_job_of_another_book_is_not_found(
         self,
@@ -164,7 +164,7 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        job = fx_fakes.board.put(make_job(book_id=fx_book))
+        job = fx_fakes.board.put(fx_book, make_job())
         with pytest.raises(NotFoundError):
             await fx_job_service.get(fx_open_book(fx_owner, BookId(uuid4())), job.id)
 
@@ -208,10 +208,10 @@ class TestList:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        ended = fx_fakes.board.put(make_job(book_id=fx_book, minutes=0))
+        ended = fx_fakes.board.put(fx_book, make_job(minutes=0))
         await fx_fakes.board.run_queued()
-        queued = fx_fakes.board.put(make_job(book_id=fx_book, minutes=1))
-        elsewhere = fx_fakes.board.put(make_job(book_id=new_book_id(), minutes=2))
+        queued = fx_fakes.board.put(fx_book, make_job(minutes=1))
+        elsewhere = fx_fakes.board.put(new_book_id(), make_job(minutes=2))
         everything = await fx_job_service.list_for_book(fx_open_book(fx_owner, fx_book), WINDOW, active=False)
         active = await fx_job_service.list_for_book(fx_open_book(fx_owner, fx_book), WINDOW, active=True)
         expect([job.id for job in everything.items] == [queued.id, ended.id])
@@ -245,14 +245,14 @@ class TestCancel:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.RUN_STAGE))
+        job = fx_fakes.board.put(fx_book, make_job(kind=JobKind.RUN_STAGE))
         release = fx_fakes.scripted.hold(job)
         running = cancelled = None
         async with anyio.create_task_group() as group:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
             running = fx_fakes.board.get(job.id).state
-            cancelled = await fx_job_service.cancel(fx_open_book(fx_owner, job.book_id), job.id)
+            cancelled = await fx_job_service.cancel(fx_open_book(fx_owner, fx_book), job.id)
             release.set()
         expect(running is JobState.RUNNING)
         expect(cancelled is not None and cancelled.state is JobState.CANCELLED)
@@ -281,9 +281,9 @@ class TestCancel:
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], Book]
         """
-        job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.IMPORT_SOURCE))
+        job = fx_fakes.board.put(fx_book, make_job(kind=JobKind.IMPORT_SOURCE))
         await fx_directories.sources(fx_book).stage(job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-        await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
+        await fx_job_service.cancel(fx_open_own_book(fx_book), job.id)
         with pytest.raises(NotFoundError):
             async with fx_directories.sources(fx_book).staged_files(job.id):
                 pass
@@ -309,14 +309,14 @@ class TestCancel:
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], Book]
         """
-        job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.IMPORT_SOURCE))
+        job = fx_fakes.board.put(fx_book, make_job(kind=JobKind.IMPORT_SOURCE))
         await fx_directories.sources(fx_book).stage(job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
         release = fx_fakes.scripted.hold(job)
         names: list[str] = []
         async with anyio.create_task_group() as group:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
-            await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
+            await fx_job_service.cancel(fx_open_own_book(fx_book), job.id)
             async with fx_directories.sources(fx_book).staged_files(job.id) as staged:
                 names.extend(staged)
             release.set()
@@ -343,11 +343,11 @@ class TestCancel:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        job = fx_fakes.board.put(make_job(book_id=fx_book))
+        job = fx_fakes.board.put(fx_book, make_job())
         await fx_fakes.board.run_queued()
         published = list(fx_fakes.events.published)
         with pytest.raises(ConflictError):
-            await fx_job_service.cancel(fx_open_book(fx_owner, job.book_id), job.id)
+            await fx_job_service.cancel(fx_open_book(fx_owner, fx_book), job.id)
         expect(fx_fakes.board.get(job.id).state is JobState.SUCCEEDED)
         expect(fx_fakes.events.published == published)
         assert_expectations()

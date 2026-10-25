@@ -29,6 +29,7 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import JobEnd, NewPage, PageAnchor, PageSize, Renditions
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
+from bookreviver.services.book import Book
 from bookreviver.services.books import book_pages
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
 from tests.helpers.acting_renditions import ActingRenditionWriter
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageOverview, PageVersion, Scan, Source
     from bookreviver.domain.enums import ColorMode
-    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.domain.values import RenditionInfo
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
@@ -326,9 +327,11 @@ def _board_that_runs(service: Callable[[], PageService]) -> FakeJobBoard:
     :rtype: FakeJobBoard
     """
 
-    async def run(job: Job, control: JobControl) -> JobEnd:
+    async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
         """Run a job the way the application would, over the page service of the test.
 
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
         :param job: The job the board took from its queue.
         :type job: Job
         :param control: What the job reports through.
@@ -338,7 +341,7 @@ def _board_that_runs(service: Callable[[], PageService]) -> FakeJobBoard:
         """
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
-        return await service().prepare_images(job, control)
+        return await service().prepare_images(Book(dir_name), job, control)
 
     return FakeJobBoard(runner=run)
 
@@ -1380,7 +1383,7 @@ class TestPrepareImages:
         :type fx_databases: BookDatabasesFactory
         """
         book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
-        job = fx_board.put(make_job(book_id=book_id, kind=JobKind.PREPARE_PAGES))
+        job = fx_board.put(book_id, make_job(kind=JobKind.PREPARE_PAGES))
 
         await fx_board.run_queued()
 
@@ -1503,7 +1506,7 @@ class TestPrepareImagesWhileTheBookChanges:
 
         # The board of the fixture holds the job of the two leaves, and it runs here through the service that deletes
         runner_board = _board_that_runs(lambda: service)
-        queued = runner_board.put(board.put_jobs[0])
+        queued = runner_board.put(book_id, board.put_jobs[0])
         await runner_board.run_queued()
 
         [gone] = deleted

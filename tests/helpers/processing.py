@@ -32,6 +32,7 @@ from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Rend
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.ports.runtime import BookJobs
+from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
@@ -72,12 +73,11 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, RecipeProfile, Scan
-    from bookreviver.domain.ids import BookId, JobId, PageVersionId
+    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageVersionId
     from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, PageVersionRepository
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
@@ -97,13 +97,12 @@ DEFAULTS: DefaultRecipes = DefaultRecipes(
 
 # The recipes of a kit with the OpenCV plugins, which are the ones the application starts with
 CV_DEFAULTS: DefaultRecipes = load_default_recipes(ProcessingSettings().recipes_file)
-# The method of ``ProcessingJobs`` that runs each kind of job it does
+# The method of ``ProcessingJobs`` that runs each kind of job it does that takes the book, the job and the control
 JOB_METHODS: dict[JobKind, str] = {
     JobKind.RUN_STAGE: 'run_stage',
     JobKind.PREVIEW_STEP: 'preview_step',
     JobKind.CUT_TILES: 'cut_tiles',
     JobKind.COLLECT_VERSIONS: 'collect_versions',
-    JobKind.MEASURE_BOOK: 'measure_book',
     JobKind.DETECT_CONTENT: 'detect_content',
 }
 
@@ -267,7 +266,6 @@ class ProcessingKit:
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        catalogue = self.catalogue()
         runtime = StageRuntime(
             runner=self._runner,
             processors=self.processors,
@@ -276,7 +274,6 @@ class ProcessingKit:
             tracer=self.tracer,
         )
         return ProcessingJobs(
-            books=BooksService(catalogue=catalogue),
             runtime=runtime,
             parts=self.parts(),
             pages=self._pages(),
@@ -290,9 +287,11 @@ class ProcessingKit:
         """
         await self.board.run_queued()
 
-    async def _run_job(self, job: Job, control: JobControl) -> JobEnd:
+    async def _run_job(self, dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
         """Run a job through the entry of its kind, over services built on a new catalogue database, as the application does.
 
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
         :param job: The job the board took from its queue.
         :type job: Job
         :param control: What the job reports through.
@@ -300,9 +299,12 @@ class ProcessingKit:
         :returns: How the job ended.
         :rtype: JobEnd
         """
+        book = Book(dir_name)
         if job.kind is JobKind.PREPARE_PAGES:
-            return await self._pages().prepare_images(job, control)
-        return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(job, control))
+            return await self._pages().prepare_images(book, job, control)
+        if job.kind is JobKind.MEASURE_BOOK:
+            return await self.jobs().measure_book(book, control)
+        return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(book, job, control))
 
     def _pages(self) -> PageService:
         """Build the page service over a new catalogue database, which prepares the images and queues the detection.
@@ -530,11 +532,12 @@ async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
     :type kit: ProcessingKit
     :param book_id: Identifier of the book.
     :type book_id: BookId
-    :returns: The open book, whose owner is the one the library names.
+    :returns: The open book.
     :rtype: Book
     :raises NotFoundError: If the library has no such book.
     """
-    return await BooksService(catalogue=kit.catalogue()).open(book_id)
+    catalogue = kit.catalogue()
+    return BooksService(catalogue=catalogue).book(await catalogue.read(lambda repos: repos.library.get(book_id)))
 
 
 async def change_versions(

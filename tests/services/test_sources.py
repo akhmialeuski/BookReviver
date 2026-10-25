@@ -503,7 +503,7 @@ class TestDelete:
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], OpenedBook]
         """
-        fx_import_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(fx_book.book_id, make_job(kind=JobKind.IMPORT_SOURCE))
 
         with pytest.raises(ConflictError):
             await fx_service().delete(fx_open_own_book(fx_book.book_id), fx_book.first.id)
@@ -533,7 +533,7 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        fx_import_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(fx_book.book_id, make_job(kind=JobKind.IMPORT_SOURCE))
         await fx_import_board.run_queued()
 
         await fx_service().delete(fx_open_book(fx_actor, fx_book.book_id), fx_book.first.id)
@@ -633,7 +633,7 @@ class TestDeleteUnimported:
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], OpenedBook]
         """
-        fx_import_board.put(make_job(book_id=fx_book.book_id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(fx_book.book_id, make_job(kind=JobKind.IMPORT_SOURCE))
 
         with pytest.raises(ConflictError):
             await fx_service().delete_unimported(fx_open_own_book(fx_book.book_id))

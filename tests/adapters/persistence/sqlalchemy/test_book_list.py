@@ -62,7 +62,7 @@ async def _store_books(
         page = make_page()
         book_id = await store_book(catalogue, make_record(minutes=minutes), page, owner=owner_id, databases=databases)
         await databases.open(book_id).change(partial(_add_stage_record, page_id=page.id))
-        board.put(make_job(book_id=book_id, minutes=minutes))
+        board.put(book_id, make_job(minutes=minutes))
 
 
 def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page_id: PageId) -> None:
@@ -98,11 +98,11 @@ async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: i
     stages = StageSummaries(processors=FakeCatalogue([]))
     request = SliceRequest(limit=window)
     entries = await catalogue.read(lambda repos: repos.library.list_for_owner(owner_id, request))
-    opened = [service.book(entry) for entry in entries.items]
+    opened = [(service.book(entry), entry.book_id) for entry in entries.items]
     counter = StatementCounter()
     event.listen(Engine, STATEMENT_EVENT, counter)
     try:
-        books = [await stages.overview(book) for book in opened]
+        books = [await stages.overview(book, book_id) for book, book_id in opened]
     finally:
         event.remove(Engine, STATEMENT_EVENT, counter)
     assert len(books) == window

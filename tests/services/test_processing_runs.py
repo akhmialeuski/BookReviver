@@ -493,7 +493,7 @@ class TestRunStage:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        job = fx_kit.board.put(make_job(book_id=book_id, kind=JobKind.RUN_STAGE, params={'stage': 'nowhere'}))
+        job = fx_kit.board.put(book_id, make_job(kind=JobKind.RUN_STAGE, params={'stage': 'nowhere'}))
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
         assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
@@ -1141,6 +1141,6 @@ class TestStartRun:
         book = evolve(fx_open_book(actor, book_id), database=database)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
 
-        job = await fx_kit.service().start_run(book, Stage.GEOMETRY, run)
+        await fx_kit.service().start_run(book, Stage.GEOMETRY, run)
 
-        assert (database.reads, job.book_id) == (1, book_id)
+        assert database.reads == 1

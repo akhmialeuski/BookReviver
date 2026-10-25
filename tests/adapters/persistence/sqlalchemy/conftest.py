@@ -15,6 +15,7 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAl
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
+from bookreviver.services.book import Book
 from tests.helpers.builders import make_record
 from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Job
-    from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId
     from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener
@@ -98,9 +99,11 @@ def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: 
         # The runner needs the service of the rig and the rig needs the runner, so the rig is found when a job runs
         built: list[ImportRig] = []
 
-        async def run(job: Job, control: JobControl) -> JobEnd:
+        async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
             """Run an import job on the database, and let any other job succeed at once.
 
+            :param dir_name: Name of the directory of the book whose queue the job was taken from.
+            :type dir_name: BookDirectoryName
             :param job: The job the board took from its queue.
             :type job: Job
             :param control: What the job reports through.
@@ -110,7 +113,7 @@ def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: 
             """
             if job.kind is not JobKind.IMPORT_SOURCE:
                 return JobEnd(state=JobState.SUCCEEDED)
-            return await built[0].service(parallel_scans=parallel_scans).run_import(job, control)
+            return await built[0].service(parallel_scans=parallel_scans).run_import(Book(dir_name), job, control)
 
         rig = evolve(base, fakes=JobFakes(events=base.events, runner=run))
         built.append(rig)

@@ -121,7 +121,7 @@ class JobStarter:
         taken = previews if kind in JobKind.preemptive() else []
         if any(job.kind in group for job in [*others, *(previews if not taken else [])]):
             return None
-        job = book.jobs.put(self._new_job(book, kind, params))
+        job = book.jobs.put(self._new_job(kind, params))
         await self._cancel(book, taken)
         return job
 
@@ -234,13 +234,12 @@ class JobStarter:
         :returns: The queued job.
         :rtype: Job
         """
-        return book.jobs.put(self._new_job(book, JobKind.COLLECT_VERSIONS, self.collection().to_map()))
+        return book.jobs.put(self._new_job(JobKind.COLLECT_VERSIONS, self.collection().to_map()))
 
-    def _new_job(self, book: Book, kind: JobKind, params: MetadataMap) -> Job:
+    @staticmethod
+    def _new_job(kind: JobKind, params: MetadataMap) -> Job:
         """Build a queued job.
 
-        :param book: The open book the job works on.
-        :type book: Book
         :param kind: What the job does.
         :type kind: JobKind
         :param params: What the job was asked to do.
@@ -248,7 +247,7 @@ class JobStarter:
         :returns: The job, queued as of now.
         :rtype: Job
         """
-        return Job(id=JobId(uuid4()), book_id=book.id, kind=kind, params=params, created_at=datetime.now(UTC))
+        return Job(id=JobId(uuid4()), kind=kind, params=params, created_at=datetime.now(UTC))
 
 
 @frozen(kw_only=True)

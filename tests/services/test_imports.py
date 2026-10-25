@@ -51,6 +51,7 @@ from bookreviver.domain.values import Contributor, JobEnd, StageRun
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.runtime import JobControl
 from bookreviver.services.base_versions import SPLIT_NONE
+from bookreviver.services.book import Book
 from bookreviver.services.imports import IMPORT_ACTIVE, NO_SOURCE_IMPORTED, ImportRun
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.sources import SOURCE_IMPORTING, SourceService
@@ -99,11 +100,10 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, PaginationSection, Scan, Source
-    from bookreviver.domain.ids import JobId, PageId, StorageKey
+    from bookreviver.domain.ids import BookDirectoryName, JobId, PageId, StorageKey
     from bookreviver.domain.values import SourceFile
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
-    from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import RecordingEventBus
@@ -308,9 +308,11 @@ def _tuned(
     # The service is built by the rig and the board by its fakes, which the runner needs, so it finds the rig later
     built: list[ImportRig] = []
 
-    async def run(job: Job, control: JobControl) -> JobEnd:
+    async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
         """Run an import job on a service of the tuned rig, and let any other job succeed at once.
 
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
         :param job: The job the board took from its queue.
         :type job: Job
         :param control: What the job reports through.
@@ -320,7 +322,7 @@ def _tuned(
         """
         if job.kind is not JobKind.IMPORT_SOURCE:
             return JobEnd(state=JobState.SUCCEEDED)
-        return await built[0].service(parallel_scans=parallel_scans).run_import(job, control)
+        return await built[0].service(parallel_scans=parallel_scans).run_import(Book(dir_name), job, control)
 
     fakes = JobFakes(events=rig.events, runner=run)
     tuned = evolve(
@@ -749,7 +751,7 @@ class TestStartImport:
         :param fx_storage_root: Storage root of the test, which holds the database of the book as well.
         :type fx_storage_root: Path
         """
-        queued = fx_rig.fakes.board.put(make_job(book_id=fx_book))
+        queued = fx_rig.fakes.board.put(fx_book, make_job())
 
         with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
             await fx_rig.service().start_import(
@@ -896,7 +898,7 @@ class TestAuthorizeUpload:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        fx_rig.fakes.board.put(make_job(book_id=fx_book))
+        fx_rig.fakes.board.put(fx_book, make_job())
 
         with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
             await fx_rig.service().authorize_upload(fx_open_book(fx_owner, fx_book))
@@ -1999,7 +2001,7 @@ class TestRunImportLifecycle:
         control.report = AsyncMock(side_effect=[None, JobCancelledError])
 
         with pytest.raises(JobCancelledError):
-            await fx_rig.service().run_import(job, control)
+            await fx_rig.service().run_import(open_for(fx_owner, fx_book), job, control)
 
         rows = {row.file_name: row for row in await _report(fx_book, databases=fx_rig.databases)}
         expect(
@@ -2508,7 +2510,7 @@ class TestRunImportSplit:
         expect(
             StageRun.from_map(queued.params) == StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(p.id for p in pages))
         )
-        expect(queued.book_id == fx_book)
+        expect(queued.id in [job.id for job in offering.fakes.board.jobs(fx_book, active=True)])
         assert_expectations()
 
     async def test_a_later_import_queues_only_its_own_pages(
@@ -2576,7 +2578,7 @@ class TestRunImportSplit:
             fx_open_book(fx_owner, fx_book), [pdf_upload(fx_samples, PDF_NAME, pages=1)]
         )
         # A run queued behind the import, which is still queued when the import ends and asks for its own
-        busy = offering.fakes.board.put(make_job(book_id=fx_book, kind=JobKind.RUN_STAGE))
+        busy = offering.fakes.board.put(fx_book, make_job(kind=JobKind.RUN_STAGE))
 
         await offering.fakes.board.run_queued()
 
@@ -2635,7 +2637,7 @@ class TestRunImportOfAMissingBook:
         :type fx_rig: ImportRig
         """
         book_id = BookId(uuid4())
-        job = fx_rig.fakes.board.put(make_job(book_id=book_id))
+        job = fx_rig.fakes.board.put(book_id, make_job())
         await fx_rig.files.sources(book_id).stage(job.id, [upload(STAGED_NAME)], max_bytes=MAX_BYTES)
 
         await fx_rig.fakes.board.run_queued()
@@ -2964,7 +2966,7 @@ class TestSourceReport:
         :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         """
-        fx_rig.fakes.board.put(make_job(book_id=fx_book))
+        fx_rig.fakes.board.put(fx_book, make_job())
 
         with pytest.raises(ConflictError, match=SOURCE_IMPORTING):
             await fx_sources.delete_unimported(open_for(fx_owner, fx_book))

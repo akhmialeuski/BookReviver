@@ -23,7 +23,6 @@ from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.runtime import BookJobs
-from bookreviver.services.books import BooksService
 from bookreviver.services.imports import (
     ImportImaging,
     ImportLimits,
@@ -123,17 +122,9 @@ class ImportsProvider(Provider):
         return ImportRuntime(order_keys=order_keys, limits=limits)
 
     @provide(scope=Scope.REQUEST)
-    def import_service(
-        self,
-        books: BooksService,
-        imaging: ImportImaging,
-        runtime: ImportRuntime,
-        parts: ProcessingParts,
-    ) -> ImportService:
-        """Build the import service over the books service of the request or job.
+    def import_service(self, imaging: ImportImaging, runtime: ImportRuntime, parts: ProcessingParts) -> ImportService:
+        """Build the import service of the request or job.
 
-        :param books: Books service of the current request or job, which opens the book a job imports into.
-        :type books: BooksService
         :param imaging: The imaging ports of the application.
         :type imaging: ImportImaging
         :param runtime: The order keys and limits of the application.
@@ -143,4 +134,4 @@ class ImportsProvider(Provider):
         :returns: The import service.
         :rtype: ImportService
         """
-        return ImportService(books=books, imaging=imaging, runtime=runtime, parts=parts)
+        return ImportService(imaging=imaging, runtime=runtime, parts=parts)

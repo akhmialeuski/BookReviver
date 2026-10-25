@@ -4,9 +4,10 @@ What reads or changes one open book, such as its description or its archive, is 
 A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
 book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
 synchronous functions over repositories: the work of ``Book.read`` or ``Book.change`` calls them with the repositories
-it receives, and a caller outside a transaction wraps the call in ``Book.read``. ``open`` opens the book of an
-identifier, which the jobs use, and ``book`` does the same for a library entry that is already read, which the access
-dependencies of the API use. Neither checks an owner.
+it receives, and a caller outside a transaction wraps the call in ``Book.read``. ``book`` opens the book a library entry
+names, which the access dependencies of the API use, and checks no owner. A book knows no identifier, so ``create`` and
+``import_archive`` return the identifier of the new book with it, and ``delete`` reads the library entry of the
+identifier it is given.
 
 A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
 ``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
@@ -19,6 +20,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
+
+from attrs import frozen
 
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
@@ -57,6 +60,18 @@ def book_pages(pages: PageRepository) -> list[Page]:
             return book
 
 
+@frozen
+class NewBook:
+    """A book just made, with the identifier its library entry gives it.
+
+    :ivar book_id: Identifier of the book in the library.
+    :ivar book: The book, open for its owner.
+    """
+
+    book_id: BookId
+    book: Book
+
+
 class BooksService:
     """Books of the acting account, with their description and their files."""
 
@@ -74,24 +89,10 @@ class BooksService:
 
         :param entry: The entry of the library.
         :type entry: LibraryEntry
-        :returns: The book, whose owner is the one the entry names.
-        :rtype: Book
-        """
-        return Book(entry.book_id, entry.owner_id, entry.directory)
-
-    async def open(self, book_id: BookId) -> Book:
-        """Open the book of an identifier, whoever owns it.
-
-        Who may work on the book is decided by the caller: the access dependencies of the API for a request, and
-        nobody for a job, which acts for no account.
-
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
         :returns: The book.
         :rtype: Book
-        :raises NotFoundError: If the library has no such book.
         """
-        return self.book(await self._catalogue.read(lambda repos: repos.library.get(book_id)))
+        return Book(entry.directory)
 
     @asynccontextmanager
     async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
@@ -125,23 +126,23 @@ class BooksService:
         entries = await self._catalogue.read(lambda repos: repos.library.list_all())
         return [self.book(entry) for entry in entries]
 
-    async def create(self, owner: Actor, details: BookDetails) -> Book:
+    async def create(self, owner: Actor, details: BookDetails) -> NewBook:
         """Create an empty book of an account: its directory, its database with its description, then its entry.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
         :param details: Description of the book.
         :type details: BookDetails
-        :returns: The new book, open for its owner, which has no pages, sources or scans yet.
-        :rtype: Book
+        :returns: The new book with its identifier, open for its owner, which has no pages, sources or scans yet.
+        :rtype: NewBook
         """
         entry = self._new_entry(owner)
         book = self.book(entry)
         await book.create(details)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
-        return book
+        return NewBook(book_id=entry.book_id, book=book)
 
-    async def import_archive(self, owner: Actor, archive: BinaryIO) -> Book:
+    async def import_archive(self, owner: Actor, archive: BinaryIO) -> NewBook:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
         The book unpacks the archive into its new directory and brings its database to this release, and the entry of
@@ -152,8 +153,8 @@ class BooksService:
         :type owner: Actor
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
-        :returns: The new book, open for its owner.
-        :rtype: Book
+        :returns: The new book with its identifier, open for its owner.
+        :rtype: NewBook
         :raises InvalidArchiveError: If the file is not the archive of a book.
         :raises BookTooNewError: If the book was exported by a newer release.
         """
@@ -161,7 +162,7 @@ class BooksService:
         book = self.book(entry)
         await book.unpack(archive)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
-        return book
+        return NewBook(book_id=entry.book_id, book=book)
 
     def _new_entry(self, owner: Actor) -> LibraryEntry:
         """Build the library entry of a new book of an account, whose directory is named by its new identifier.
@@ -179,26 +180,28 @@ class BooksService:
             added_at=datetime.now(UTC),
         )
 
-    async def delete(self, book: Book) -> None:
+    async def delete(self, book_id: BookId) -> None:
         """Delete the book's entry in the library, then the book with its directory.
 
         The entry goes first, so a request that comes later finds no book. A failure after the entry leaves a directory
-        nobody lists, and ``Book.delete`` of the same book removes it.
+        nobody lists, and ``Book.delete`` of the same directory removes it.
 
-        :param book: The open book.
-        :type book: Book
+        :param book_id: Identifier of the book, whose library entry names its directory.
+        :type book_id: BookId
+        :raises NotFoundError: If the library has no such book.
         """
-        await self._catalogue.change(lambda repos: repos.library.delete(book.id))
-        await book.delete()
+        entry = await self._catalogue.read(lambda repos: repos.library.get(book_id))
+        await self._catalogue.change(lambda repos: repos.library.delete(book_id))
+        await Book(entry.directory).delete()
 
-    async def delete_all(self, books: Iterable[Book]) -> None:
+    async def delete_all(self, book_ids: Iterable[BookId]) -> None:
         """Delete the books with all their files, as the deletion of the account that owns them needs.
 
         Each book is deleted in transactions of its own, entry first, so a failure keeps the books not yet deleted,
-        and calling this again with the books that are left deletes them.
+        and calling this again with the identifiers that are left deletes them.
 
-        :param books: The books to delete.
-        :type books: Iterable[Book]
+        :param book_ids: Identifiers of the books to delete.
+        :type book_ids: Iterable[BookId]
         """
-        for book in books:
-            await self.delete(book)
+        for book_id in book_ids:
+            await self.delete(book_id)

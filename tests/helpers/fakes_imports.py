@@ -31,7 +31,7 @@ from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
-from bookreviver.services.books import BooksService
+from bookreviver.services.book import Book
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.steps import StepRunner
@@ -484,9 +484,11 @@ class ImportRig:
         # job runs
         built: list[ImportRig] = []
 
-        async def run(job: Job, control: JobControl) -> JobEnd:
+        async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
             """Run an import job through a service of the rig, as the application runs it.
 
+            :param dir_name: Name of the directory of the book whose queue the job was taken from.
+            :type dir_name: BookDirectoryName
             :param job: The job the board took from its queue.
             :type job: Job
             :param control: What the job reports through.
@@ -494,7 +496,7 @@ class ImportRig:
             :returns: How the job ended.
             :rtype: JobEnd
             """
-            return await built[0].service().run_import(job, control)
+            return await built[0].service().run_import(Book(dir_name), job, control)
 
         rig = cls(
             database=database,
@@ -565,7 +567,6 @@ class ImportRig:
             ),
         )
         return ImportService(
-            books=BooksService(catalogue=catalogue),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),

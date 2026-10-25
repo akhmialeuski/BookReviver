@@ -232,13 +232,9 @@ class ProcessingProvider(Provider):
         )
 
     @provide(scope=Scope.REQUEST)
-    def processing_jobs(
-        self, books: BooksService, runtime: StageRuntime, parts: ProcessingParts, pages: PageService
-    ) -> ProcessingJobs:
-        """Build the work of the processing jobs over the books service of a job.
+    def processing_jobs(self, runtime: StageRuntime, parts: ProcessingParts, pages: PageService) -> ProcessingJobs:
+        """Build the work of the processing jobs.
 
-        :param books: Books service of the current job, which opens the book the job runs on.
-        :type books: BooksService
         :param runtime: What a run of a stage works with.
         :type runtime: StageRuntime
         :param parts: The parts the processing use cases share.
@@ -248,7 +244,7 @@ class ProcessingProvider(Provider):
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        return ProcessingJobs(books=books, runtime=runtime, parts=parts, pages=pages)
+        return ProcessingJobs(runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
     def edit_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> EditService:

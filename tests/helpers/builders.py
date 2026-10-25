@@ -215,19 +215,20 @@ class BookOpener:
         return open_for(actor, book_id)
 
 
-def open_for(actor: Actor, book_id: BookId) -> Book:
-    """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
+def open_for(_actor: Actor, book_id: BookId) -> Book:
+    """Open a book as the access dependency ``open_book`` does, without reading the library.
 
-    The book opens its directory and its database by its directory name, so the test has registered them.
+    The book opens its directory and its database by its directory name, so the test has registered them. A book holds
+    no owner, so the account only says who the test acts as.
 
-    :param actor: Account the book is opened for, which the test made its owner.
-    :type actor: Actor
+    :param _actor: Account the book is opened for, which the test made its owner.
+    :type _actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :returns: The open book.
     :rtype: Book
     """
-    return Book(book_id, actor.account_id, directory_of(book_id))
+    return Book(directory_of(book_id))
 
 
 def make_book_change(*, version: int = 1) -> BookChanged:
@@ -367,7 +368,6 @@ def make_page_version(*, page_id: PageId, minutes: int = 0) -> PageVersion:
 
 def make_job(
     *,
-    book_id: BookId,
     state: JobState = JobState.QUEUED,
     minutes: int = 0,
     kind: JobKind = JobKind.IMPORT_SOURCE,
@@ -375,8 +375,6 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
-    :param book_id: Book the job imports into.
-    :type book_id: BookId
     :param state: State of the job.
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.
@@ -390,7 +388,6 @@ def make_job(
     """
     return Job(
         id=JobId(uuid4()),
-        book_id=book_id,
         kind=kind,
         state=state,
         params={} if params is None else params,

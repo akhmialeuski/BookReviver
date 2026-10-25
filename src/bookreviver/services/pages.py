@@ -153,8 +153,8 @@ class PageService:
     def __init__(self, *, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
 
-        :param books: Books service of the request or job, which opens the book a job runs on and the books of the
-                      library the passes of the start go over.
+        :param books: Books service of the request or job, which opens the books of the library the passes of the
+                      start go over.
         :type books: BooksService
         :param order_keys: Builder of the order keys of moved and new pages.
         :type order_keys: OrderKeys
@@ -752,7 +752,7 @@ class PageService:
         self._enqueue(book, JobKind.PREPARE_PAGES)
         return overview
 
-    async def prepare_images(self, job: Job, control: JobControl) -> JobEnd:
+    async def prepare_images(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``prepare-pages`` job: write the files of every pending or failed version, a task for each.
 
         The versions of the page split and the page order stages are read when the job starts, and each is written and
@@ -765,6 +765,8 @@ class PageService:
         the pages that have none, and when a version was committed while it ran, a job of its own for that version. It
         is the entry point of a job.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each version.
@@ -773,7 +775,6 @@ class PageService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled, which stops it between two versions.
         """
-        book = await self._books.open(job.book_id)
         versions = await book.read(lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS))
         control.plan(len(versions))
         failed = 0
@@ -1097,7 +1098,7 @@ class PageService:
         """
         if any(active_job.kind is kind and active_job.id != after for active_job in book.jobs.active()):
             return None
-        job = Job(id=JobId(uuid4()), book_id=book.id, kind=kind, params=params or {}, created_at=datetime.now(UTC))
+        job = Job(id=JobId(uuid4()), kind=kind, params=params or {}, created_at=datetime.now(UTC))
         return book.jobs.put(job)
 
     async def _follow_up(self, book: Book, job: Job) -> None:

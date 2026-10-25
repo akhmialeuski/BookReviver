@@ -10,17 +10,19 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.api.access import AccountBooks, books_of
+from bookreviver.api.access import AccountBooks, entries_of
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.values import PageStepKey, Slice, SliceRequest
 from bookreviver.ports.storage import BookDirectory
+from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import (
     DESKEW_STEP_ID,
+    directory_of,
     make_page,
     make_page_edit,
     make_page_step_state,
@@ -364,7 +366,7 @@ class TestDelete:
         for book_id, page in ((doomed_id, doomed_page), (kept_id, kept_page)):
             await fx_files.store(book_id, page)
 
-        await fx_service().delete(fx_open_book(fx_actor, doomed_id))
+        await fx_service().delete(doomed_id)
 
         remaining = await fx_catalogue().read(
             lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest())
@@ -401,7 +403,7 @@ class TestDelete:
         book = open_for(fx_actor, book_id)
 
         with pytest.raises(StoreFailedError):
-            await fx_service().delete(book)
+            await fx_service().delete(book_id)
 
         expect(await fx_open_book.catalogue().read(lambda repos: repos.library.list_all()) == [])
         expect(fx_files.kept(page))
@@ -484,22 +486,22 @@ async def _listed(service: BooksService, catalogue: CatalogueDatabase, actor: Ac
     :returns: The overviews of the actor's books, the latest added first, and their number.
     :rtype: Slice[BookOverview]
     """
-    books = await books_of(catalogue, service, actor.account_id)
+    entries = await entries_of(catalogue, actor.account_id)
     stages = _stages()
-    return Slice(items=[await stages.overview(book) for book in books], total=len(books))
+    return Slice(
+        items=[await stages.overview(service.book(entry), entry.book_id) for entry in entries], total=len(entries)
+    )
 
 
-async def _archive(service: BooksService, book_id: BookId) -> io.BytesIO:
-    """Read the whole archive of a book, opened by the service with its archive, as the browser downloads it.
+async def _archive(book_id: BookId) -> io.BytesIO:
+    """Read the whole archive of a book, as the browser downloads it.
 
-    :param service: The book service of the request.
-    :type service: BooksService
     :param book_id: The book.
     :type book_id: BookId
     :returns: The archive, ready to be read from its start.
     :rtype: io.BytesIO
     """
-    archived = await (await service.open(book_id)).export()
+    archived = await Book(directory_of(book_id)).export()
     return io.BytesIO(b''.join([piece async for piece in archived.pieces]))
 
 
@@ -532,9 +534,10 @@ class TestExportAndImport:
             fx_catalogue(), book_record, page, owner=fx_actor.account_id, databases=fx_databases()
         )
         await fx_files.store(book_id, page)
-        archive = await _archive(fx_service(), book_id)
+        archive = await _archive(book_id)
 
-        imported = await _stages().overview(await fx_service().import_archive(fx_actor, archive))
+        copy = await fx_service().import_archive(fx_actor, archive)
+        imported = await _stages().overview(copy.book, copy.book_id)
 
         copy_id = imported.book_id
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)
@@ -588,15 +591,15 @@ class TestExportAndImport:
         async with fx_directories.assets(book_id).writable(StorageKey(f'{directory}/{Rendition.MASK}')) as path:
             path.write_bytes(MASK_CONTENT)
 
-        imported = await fx_service().import_archive(fx_actor, await _archive(fx_service(), book_id))
+        imported = await fx_service().import_archive(fx_actor, await _archive(book_id))
 
-        state = await imported.read(
+        state = await imported.book.read(
             lambda repos: repos.page_step_states.find(PageStepKey(page.id, edit.stage, edit.step_id))
         )
         assert state is not None
         assert state.edit is not None
         assert state.edit.mask_key is not None
-        async with imported.assets.readable(state.edit.mask_key) as path:
+        async with imported.book.assets.readable(state.edit.mask_key) as path:
             assert path.read_bytes() == MASK_CONTENT
 
     async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
@@ -681,7 +684,7 @@ class TestDeleteWaitsForTheTransactionInProgress:
         async with anyio.create_task_group() as group:
             group.start_soon(change)
             await entered.wait()
-            group.start_soon(fx_service().delete, fx_open_book(fx_actor, book_id))
+            group.start_soon(fx_service().delete, book_id)
             await anyio.wait_all_tasks_blocked()
             expect(not fx_files.gone(book_id), 'the directory stayed while the change ran')
             release.set()

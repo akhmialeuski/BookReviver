@@ -8,6 +8,7 @@ invalidate the queries it affects: the whole job for ``job-changed``, the versio
 
 import enum
 from datetime import datetime
+from typing import TYPE_CHECKING, Self
 
 from fastapi import Query
 from fastapi_pagination import Params
@@ -15,6 +16,9 @@ from fastapi_pagination import Params
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
 from bookreviver.domain.ids import BookId, JobId, PageId, PageVersionId
+
+if TYPE_CHECKING:
+    from bookreviver.domain.entities import Job
 
 
 class EventName(enum.StrEnum):
@@ -68,6 +72,30 @@ class JobSchema(ResponseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+    @classmethod
+    def of(cls, job: Job, book_id: BookId) -> Self:
+        """Build the schema of a job of a book, whose identifier the job does not hold.
+
+        :param job: The job.
+        :type job: Job
+        :param book_id: Identifier of the book the job works on, from the path.
+        :type book_id: BookId
+        :returns: The job resource.
+        :rtype: Self
+        """
+        return cls(
+            id=job.id,
+            book_id=book_id,
+            kind=job.kind,
+            stage=job.stage,
+            state=job.state,
+            progress=ProgressSchema.model_validate(job.progress),
+            error=job.error,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+        )
 
 
 class JobQuery(Params):

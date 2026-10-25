@@ -17,13 +17,14 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
-from fastapi import APIRouter, Depends, Request, UploadFile, status
+from fastapi import APIRouter, Depends, Path, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.schemas.imports import UploadForm
 from bookreviver.api.schemas.jobs import JobSchema
+from bookreviver.domain.ids import BookId
 from bookreviver.services.book import Book
 from bookreviver.services.imports import ImportService
 
@@ -80,6 +81,7 @@ router = APIRouter(prefix='/books', tags=['imports'], route_class=DishkaRoute)
 )
 async def upload_sources(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     files: Annotated[list[UploadFile], Depends(read_upload)],
     imports: FromDishka[ImportService],
 ) -> JobSchema:
@@ -92,6 +94,8 @@ async def upload_sources(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param files: The uploaded files, read once the caller was checked.
     :type files: list[UploadFile]
     :param imports: Import service of the request.
@@ -99,4 +103,4 @@ async def upload_sources(
     :returns: The queued import job.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await imports.start_import(book, files))
+    return JobSchema.of(await imports.start_import(book, files), book_id)

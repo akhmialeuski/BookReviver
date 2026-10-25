@@ -15,7 +15,7 @@ from bookreviver.domain.values import JobEnd
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Job
-    from bookreviver.domain.ids import BookId, JobId
+    from bookreviver.domain.ids import BookDirectoryName, JobId
     from bookreviver.ports.runtime import JobControl
 
 # How many tasks a job of the scripted runner has
@@ -33,14 +33,14 @@ class ScriptedRunner:
     """Runs jobs as a test scripts them: three tasks each, logged, and held inside the first one when a test asks.
 
     :ivar log: The phases of every job, in the order they happened.
-    :ivar peak: The most jobs of one book that were inside the runner at the same moment.
+    :ivar peak: The most jobs of one book, by the name of its directory, that were inside the runner at the same moment.
     """
 
     def __init__(self) -> None:
         """Start with nothing run and nothing held."""
         self.log: list[tuple[Phase, JobId]] = []
-        self.peak: dict[BookId, int] = {}
-        self._inside: dict[BookId, int] = {}
+        self.peak: dict[BookDirectoryName, int] = {}
+        self._inside: dict[BookDirectoryName, int] = {}
         self._held: dict[JobId, anyio.Event] = {}
         self._failing: set[JobId] = set()
 
@@ -72,9 +72,11 @@ class ScriptedRunner:
         """
         return [job_id for phase, job_id in self.log if phase is Phase.BEGUN]
 
-    async def __call__(self, job: Job, control: JobControl) -> JobEnd:
+    async def __call__(self, dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
         """Run the job: plan its tasks, and finish each after the hold of the test, if there is one.
 
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
         :param job: The job the board took from its queue.
         :type job: Job
         :param control: What the job reports through.
@@ -84,9 +86,9 @@ class ScriptedRunner:
         :raises RuntimeError: If the test made the job fail.
         """
         self.log.append((Phase.BEGUN, job.id))
-        inside = self._inside.get(job.book_id, 0) + 1
-        self._inside[job.book_id] = inside
-        self.peak[job.book_id] = max(self.peak.get(job.book_id, 0), inside)
+        inside = self._inside.get(dir_name, 0) + 1
+        self._inside[dir_name] = inside
+        self.peak[dir_name] = max(self.peak.get(dir_name, 0), inside)
         try:
             control.plan(TASKS_PER_JOB)
             for _ in range(TASKS_PER_JOB):
@@ -97,6 +99,6 @@ class ScriptedRunner:
                     raise RuntimeError(message)
                 await control.task_done()
         finally:
-            self._inside[job.book_id] -= 1
+            self._inside[dir_name] -= 1
             self.log.append((Phase.RETURNED, job.id))
         return JobEnd(state=JobState.SUCCEEDED)

@@ -12,14 +12,14 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Form, Path, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, StepId
+from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.book import Book
 from bookreviver.services.edits import EditService
@@ -35,10 +35,12 @@ MULTIPART_FORM: str = 'multipart/form-data'
 class EditPath:
     """The identifiers in the address of the edits of one stage of one page.
 
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
     stage: Annotated[Stage, Path(description='Stage of the step that reads the edit')]
 
@@ -91,7 +93,7 @@ async def list_edits(
         :returns: The schema.
         :rtype: PageEditSchema
         """
-        return PageEditSchema.of(edit, book.id, request)
+        return PageEditSchema.of(edit, address.book_id, request)
 
     pager = Pager[PageEdit, PageEditSchema](params, to_schema)
     found = await edits.list(book, address.page_id, address.stage)
@@ -127,7 +129,7 @@ async def put_edit(
     :rtype: PageEditSchema
     """
     stored = await edits.save(book, address.key, form.to_edit(), form.mask)
-    return PageEditSchema.of(stored, book.id, request)
+    return PageEditSchema.of(stored, address.book_id, request)
 
 
 @router.delete('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)

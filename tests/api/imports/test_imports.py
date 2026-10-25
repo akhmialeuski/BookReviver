@@ -449,7 +449,7 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        fx_fakes.board.put(make_job(book_id=fx_book))
+        fx_fakes.board.put(fx_book, make_job())
 
         response = await fx_client.post(
             SOURCES_PATH.format(book_id=fx_book), files=_multipart([image_upload(tmp_path, 'a.jpg')])

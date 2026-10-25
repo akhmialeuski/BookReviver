@@ -42,9 +42,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName, JobId
 
-# What the application supplies to run a job: it does the tasks of the job, reports through the control after each,
-# and returns how the job ended, or lets ``JobCancelledError`` pass when the control raised it
-type JobRunner = Callable[[Job, JobControl], Awaitable[JobEnd]]
+# What the application supplies to run a job: it takes the name of the directory of the book whose queue the job was
+# taken from, does the tasks of the job, reports through the control after each, and returns how the job ended, or lets
+# ``JobCancelledError`` pass when the control raised it
+type JobRunner = Callable[[BookDirectoryName, Job, JobControl], Awaitable[JobEnd]]
 
 logger = logging.getLogger(__name__)
 
@@ -595,7 +596,7 @@ class InMemoryJobBoard:
             )
             end: JobEnd | None
             try:
-                end = await self._runner(job, control)
+                end = await self._runner(dir_name, job, control)
             except JobCancelledError:
                 end = None
             except Exception:

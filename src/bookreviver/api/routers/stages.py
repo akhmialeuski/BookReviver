@@ -9,15 +9,15 @@ from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, ManifestParams, Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
-from bookreviver.domain.ids import StepId
+from bookreviver.domain.ids import BookId, StepId
 from bookreviver.domain.stage_summaries import StageRow, StageSummary
 from bookreviver.services.book import Book
 from bookreviver.services.stage_summaries import StageSummaries
@@ -39,6 +39,7 @@ router = APIRouter(prefix='/books', tags=['stages'], route_class=DishkaRoute, de
 @router.get('/{book_id}/stages')
 async def list_stages(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     params: Annotated[Params, Depends()],
     stages: FromDishka[StageSummaries],
 ) -> Page[StageSummarySchema]:
@@ -50,6 +51,8 @@ async def list_stages(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param params: Page number and size from the query; the ten stages fit one page of the default size.
     :type params: Params
     :param stages: Stage summaries of the request.
@@ -58,7 +61,7 @@ async def list_stages(
     :rtype: Page[StageSummarySchema]
     """
     pager = Pager[StageSummary, StageSummarySchema](params, StageSummarySchema.model_validate)
-    return pager.page(await stages.stages(book, pager.request))
+    return pager.page(await stages.stages(book, book_id, pager.request))
 
 
 @router.get('/{book_id}/stages/{stage}/pages')
@@ -92,6 +95,6 @@ async def list_stage_pages(
     :returns: One page of the rows of the stage.
     :rtype: ManifestPage[StagePageSchema]
     """
-    to_schema = partial(StagePageSchema.of, book_id=book.id, request=address.request)
+    to_schema = partial(StagePageSchema.of, book_id=address.book_id, request=address.request)
     pager = Pager[StageRow, StagePageSchema](params, to_schema)
     return pager.page(await stages.rows(book, address.stage, pager.request, step))
