@@ -3,6 +3,7 @@
 import threading
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -22,6 +23,7 @@ from tests.helpers.fakes_accounts import (
     PASSWORD_FIELD,
     RESET_PATH,
     TOKEN_PARAMETER,
+    USERS_PATH,
     VERIFY_PATH,
     HashStep,
     RecordingPasswordHelper,
@@ -360,6 +362,41 @@ class TestUpdateMe:
         await fx_visitor.sign_up(EMAIL)
         response = await fx_visitor.client.patch(ME_PATH, json={EMAIL_FIELD: OTHER_EMAIL})
         assert response.status_code == HTTPStatus.UNPROCESSABLE_CONTENT
+
+
+class TestUserRoutes:
+    """Tests for the routes under /users, of which only those of the signed-in account are mounted."""
+
+    async def test_current_account_is_returned(self, fx_visitor: Visitor) -> None:
+        """Verify ``GET /users/me`` answers with the account of the session.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        """
+        await fx_visitor.sign_up(EMAIL)
+        response = await fx_visitor.client.get(ME_PATH)
+        account = AccountRead.model_validate(response.json())
+        expect(response.status_code == HTTPStatus.OK)
+        expect(account.email == EMAIL)
+        expect(account.is_verified is True)
+        assert_expectations()
+
+    @pytest.mark.parametrize('method', ['GET', 'PATCH', 'DELETE'])
+    async def test_account_by_identifier_is_not_offered(self, fx_visitor: Visitor, method: str) -> None:
+        """Verify an account cannot be read, changed or deleted by its identifier, even by a signed-in one.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param method: HTTP method of the request.
+        :type method: str
+        """
+        account = AccountRead.model_validate((await fx_visitor.register(EMAIL)).json())
+        await fx_visitor.verify()
+        await fx_visitor.login(EMAIL)
+        for identifier in (account.id, uuid4()):
+            response = await fx_visitor.client.request(method, f'{USERS_PATH}/{identifier}', json={})
+            expect(response.status_code == HTTPStatus.NOT_FOUND)
+        assert_expectations()
 
 
 class TestHashingOffTheLoop:

@@ -26,14 +26,10 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
     AccountTable,
 )
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
-from bookreviver.api.access import AccountBooks
 from bookreviver.api.routers.accounts import AccountRoutes
 from bookreviver.app.settings import Settings
-from bookreviver.domain.ids import AccountId
 from bookreviver.domain.values import MailMessage
-from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.runtime import Mailer
-from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -181,8 +177,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     """fastapi-users' account rules, with mail sent through the ``Mailer`` port.
 
     No answer reveals whether an address is registered: registering a taken address answers like a new
-    registration and mails the owner instead. An account is deleted only after its books, whose owner key refuses
-    to leave them without an owner.
+    registration and mails the owner instead.
 
     Hashing a password with argon2id takes tens of milliseconds, and the ``PasswordHelper`` protocol of fastapi-users is
     synchronous, so ``BaseUserManager`` runs it inside the event loop, where it stalls every other request and event.
@@ -202,7 +197,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         *,
         hasher: PasswordHasher,
         mailer: Mailer,
-        books: AccountBooks,
         settings: Settings,
     ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
@@ -213,8 +207,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :type hasher: PasswordHasher
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
-        :param books: The books of the accounts, which deletes an account's books with their files.
-        :type books: AccountBooks
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
         """
@@ -224,7 +216,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         self.reset_password_token_secret = secret
         self._hasher = hasher
         self._mailer = mailer
-        self._books = books
         self._public_url = settings.public_url
 
     @override
@@ -541,20 +532,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         unknown_password = await self._hasher.hash(self.password_helper.generate())
         await self.user_db.update(user, {IS_VERIFIED_FIELD: True, HASHED_PASSWORD_FIELD: unknown_password})
 
-    @override
-    async def on_before_delete(self, user: AccountTable, request: Request | None = None) -> None:
-        """Delete every book of the account with its files, so the account can be deleted after them.
-
-        A database cascade from the account would remove the rows of its books and leave their files behind, so
-        the owner key restricts, and the books of the account are deleted here through ``AccountBooks``.
-
-        :param user: Account about to be deleted.
-        :type user: AccountTable
-        :param request: Request that triggered the deletion, if any.
-        :type request: Request | None
-        """
-        await self._books.delete_all(AccountId(user.id))
-
 
 class AccountsProvider(Provider):
     """Builds the mailer and the password hasher, and per request the user manager and the session strategy."""
@@ -614,25 +591,11 @@ class AccountsProvider(Provider):
         return AccountDatabase(catalogue)
 
     @provide(scope=Scope.REQUEST)
-    def account_books(self, catalogue: CatalogueDatabase, books: BooksService) -> AccountBooks:
-        """Build the books of the accounts over the request's catalogue database.
-
-        :param catalogue: Catalogue database of the request, whose catalogue lists the books of an account.
-        :type catalogue: CatalogueDatabase
-        :param books: Books service of the request, which deletes the books with their files.
-        :type books: BooksService
-        :returns: The books of the accounts.
-        :rtype: AccountBooks
-        """
-        return AccountBooks(catalogue=catalogue, books=books)
-
-    @provide(scope=Scope.REQUEST)
     def user_manager(
         self,
         user_db: AccountDatabase,
         hasher: PasswordHasher,
         mailer: Mailer,
-        books: AccountBooks,
         settings: Settings,
     ) -> UserManager:
         """Build the user manager over the users of the request.
@@ -643,14 +606,12 @@ class AccountsProvider(Provider):
         :type hasher: PasswordHasher
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
-        :param books: The books of the accounts, which deletes the books of a deleted account.
-        :type books: AccountBooks
         :param settings: Application settings holding the secret and the public URL.
         :type settings: Settings
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(user_db, hasher=hasher, mailer=mailer, books=books, settings=settings)
+        return UserManager(user_db, hasher=hasher, mailer=mailer, settings=settings)
 
     @provide(scope=Scope.REQUEST)
     def session_strategy(self, catalogue: SqlAlchemyCatalogueDatabase, settings: Settings) -> SessionStrategy:

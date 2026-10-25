@@ -12,8 +12,7 @@ deletion of a book takes that entry itself. FastAPI resolves a dependency once p
 route get the same ``Book``, and the entry is read and its owner checked once.
 """
 
-from functools import partial
-from typing import TYPE_CHECKING, Annotated, Final
+from typing import Annotated, Final
 
 from dishka.integrations.fastapi import FromDishka, inject
 from fastapi import Depends, Path
@@ -24,83 +23,11 @@ from bookreviver.api.pagination import slice_request
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.values import Slice
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.services.book import Book
 
-if TYPE_CHECKING:
-    from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import CatalogueRepositories
-    from bookreviver.services.books import BooksService
-
 BOOK_ID_DESCRIPTION: Final = 'Identifier of the book'
-# Entries of the library read at a time when every book of an account is wanted
-ENTRY_WINDOW: Final = 1_000
-
-
-def _owner_window(repos: CatalogueRepositories, *, account_id: AccountId, request: SliceRequest) -> Slice[LibraryEntry]:
-    """Read one window of the entries of an account's books, which the work of a read of the catalogue calls.
-
-    :param repos: Repositories of the read.
-    :type repos: CatalogueRepositories
-    :param account_id: The account.
-    :type account_id: AccountId
-    :param request: Offset and limit of the window.
-    :type request: SliceRequest
-    :returns: The entries of the window, and the number of all the account's entries.
-    :rtype: Slice[LibraryEntry]
-    """
-    return repos.library.list_for_owner(account_id, request)
-
-
-async def entries_of(catalogue: CatalogueDatabase, account_id: AccountId) -> list[LibraryEntry]:
-    """Read the library entry of every book of an account, window by window, the latest added first.
-
-    :param catalogue: Catalogue database of the request, whose ``read`` of the catalogue lists the library.
-    :type catalogue: CatalogueDatabase
-    :param account_id: The account.
-    :type account_id: AccountId
-    :returns: The entries of the books of the account.
-    :rtype: list[LibraryEntry]
-    """
-    entries: list[LibraryEntry] = []
-    while True:
-        request = SliceRequest(offset=len(entries), limit=ENTRY_WINDOW)
-        window = await catalogue.read(partial(_owner_window, account_id=account_id, request=request))
-        entries.extend(window.items)
-        if len(entries) >= window.total or not window.items:
-            return entries
-
-
-class AccountBooks:
-    """The books of one account at a time, which the deletion of the account removes with their files first.
-
-    :ivar _catalogue: Catalogue database of the request, whose catalogue lists the books of an account.
-    :ivar _books: Books service of the request, which deletes the books.
-    """
-
-    def __init__(self, *, catalogue: CatalogueDatabase, books: BooksService) -> None:
-        """Work over the ports of one request.
-
-        :param catalogue: Catalogue database of the request.
-        :type catalogue: CatalogueDatabase
-        :param books: Books service of the request.
-        :type books: BooksService
-        """
-        self._catalogue = catalogue
-        self._books = books
-
-    async def delete_all(self, account_id: AccountId) -> None:
-        """Delete every book of an account with all its files, which must happen before the account is deleted.
-
-        Each book is deleted entry first, so a failure keeps the books not deleted yet, and calling this again deletes
-        them.
-
-        :param account_id: The account.
-        :type account_id: AccountId
-        """
-        for entry in await entries_of(self._catalogue, account_id):
-            await self._books.delete(entry)
 
 
 @inject
