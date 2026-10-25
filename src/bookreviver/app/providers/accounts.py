@@ -25,13 +25,13 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
     AccountDatabase,
     AccountTable,
 )
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.api.access import AccountBooks
 from bookreviver.api.routers.accounts import AccountRoutes
 from bookreviver.app.settings import Settings
 from bookreviver.domain.ids import AccountId
 from bookreviver.domain.values import MailMessage
-from bookreviver.ports.persistence import UnitOfWork
+from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.ports.runtime import Mailer
 from bookreviver.services.books import BooksService
 
@@ -603,28 +603,28 @@ class AccountsProvider(Provider):
         return PasswordHasher(helper, limiter=CapacityLimiter(settings.auth.password_hash_concurrency))
 
     @provide(scope=Scope.REQUEST)
-    def account_database(self, uow: SqlAlchemyUnitOfWork) -> AccountDatabase:
-        """Build the users of the request, read and written through its unit of work.
+    def account_database(self, catalogue: SqlAlchemyCatalogueDatabase) -> AccountDatabase:
+        """Build the users of the request, read and written through its catalogue database.
 
-        :param uow: Unit of work of the request, whose transactions the account reads and writes run in.
-        :type uow: SqlAlchemyUnitOfWork
+        :param catalogue: Catalogue database of the request, whose transactions the account reads and writes run in.
+        :type catalogue: SqlAlchemyCatalogueDatabase
         :returns: The users of the request.
         :rtype: AccountDatabase
         """
-        return AccountDatabase(uow)
+        return AccountDatabase(catalogue)
 
     @provide(scope=Scope.REQUEST)
-    def account_books(self, uow: UnitOfWork, books: BooksService) -> AccountBooks:
-        """Build the books of the accounts over the request's unit of work.
+    def account_books(self, catalogue: CatalogueDatabase, books: BooksService) -> AccountBooks:
+        """Build the books of the accounts over the request's catalogue database.
 
-        :param uow: Unit of work of the request, whose catalogue lists the books of an account.
-        :type uow: UnitOfWork
+        :param catalogue: Catalogue database of the request, whose catalogue lists the books of an account.
+        :type catalogue: CatalogueDatabase
         :param books: Books service of the request, which deletes the books with their files.
         :type books: BooksService
         :returns: The books of the accounts.
         :rtype: AccountBooks
         """
-        return AccountBooks(uow=uow, books=books)
+        return AccountBooks(catalogue=catalogue, books=books)
 
     @provide(scope=Scope.REQUEST)
     def user_manager(
@@ -653,17 +653,17 @@ class AccountsProvider(Provider):
         return UserManager(user_db, hasher=hasher, mailer=mailer, books=books, settings=settings)
 
     @provide(scope=Scope.REQUEST)
-    def session_strategy(self, uow: SqlAlchemyUnitOfWork, settings: Settings) -> SessionStrategy:
+    def session_strategy(self, catalogue: SqlAlchemyCatalogueDatabase, settings: Settings) -> SessionStrategy:
         """Build the strategy that keeps session tokens in the database, so signing out revokes them.
 
-        :param uow: Unit of work of the request, whose transactions the token reads and writes run in.
-        :type uow: SqlAlchemyUnitOfWork
+        :param catalogue: Catalogue database of the request, whose transactions the token reads and writes run in.
+        :type catalogue: SqlAlchemyCatalogueDatabase
         :param settings: Application settings holding the session lifetime.
         :type settings: Settings
         :returns: The session strategy of the request.
         :rtype: SessionStrategy
         """
-        return DatabaseStrategy(AccessTokenDatabase(uow), lifetime_seconds=settings.auth.session_lifetime_seconds)
+        return DatabaseStrategy(AccessTokenDatabase(catalogue), lifetime_seconds=settings.auth.session_lifetime_seconds)
 
 
 @inject

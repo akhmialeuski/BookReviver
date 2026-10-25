@@ -28,7 +28,7 @@ STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__STEP_PROCESSES'
 PREVIEW_STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__PREVIEW_STEP_PROCESSES'
 REQUEST_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__REQUEST_SECONDS'
 JOB_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__JOB_SECONDS'
-# The limits the settings document: 3 seconds for a request and 30 for every other unit of work
+# The limits the settings document: 3 seconds for a request and 30 for every other catalogue database
 DEFAULT_REQUEST_SECONDS: float = 3.0
 DEFAULT_JOB_SECONDS: float = 30.0
 # The names of the two limits
@@ -160,12 +160,12 @@ class TestProcessingSettings:
 
 
 class TestChangeWaitSettings:
-    """Tests for the limits a block of a unit of work waits for the write lock with."""
+    """Tests for the limits a block of a catalogue database waits for the write lock with."""
 
     def test_defaults_are_three_seconds_for_a_request_and_thirty_for_a_job(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify a request gives up after 3 seconds and every other unit of work after 30.
+        """Verify a request gives up after 3 seconds and every other catalogue database after 30.
 
         :param monkeypatch: Fixture that restores the environment after the test.
         :type monkeypatch: pytest.MonkeyPatch

@@ -1,4 +1,4 @@
-"""Fixtures of the import API tests: the application runs on the job fakes' event bus and clock.
+"""Fixtures of the import API tests: the application runs on the job fakes' event bus.
 
 The stores, the imaging adapters and the job board are the application's own, so a test uploads real files and the
 import runs to the end in the background, as it does for a user.
@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.api.imports.watch import ImportWatch, JobEndBus
-from tests.helpers.builders import EPOCH, make_record
-from tests.helpers.fakes_imports import TickingClock
+from tests.helpers.builders import make_record
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
 from tests.helpers.seeding import store_book
 
@@ -20,8 +19,10 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, BookRecord
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.ids import BookId
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 
 @pytest.fixture
@@ -35,20 +36,24 @@ def fx_events() -> JobEndBus:
 
 
 @pytest.fixture
-def fx_fakes(fx_events: JobEndBus) -> JobFakes:
-    """Build the adapters the application runs on, with a clock that gives every source its own import time.
+def fx_fakes(fx_events: JobEndBus, fx_book_parts: RecordingEventBus) -> JobFakes:
+    """Build the adapters the application runs on.
 
     :param fx_events: Event bus of the application.
     :type fx_events: JobEndBus
+    :param fx_book_parts: The bus and the job board registered as the parts of the books, which the board of the fakes
+                          is registered over.
+    :type fx_book_parts: RecordingEventBus
     :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
-    return JobFakes(clock=TickingClock(EPOCH), events=fx_events)
+    del fx_book_parts
+    return JobFakes(events=fx_events)
 
 
 @pytest.fixture
 def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
-    """Replace the application's event bus and clock with ``fx_fakes``, and keep its job board.
+    """Replace the application's event bus with ``fx_fakes``, and keep its job board.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
@@ -59,19 +64,22 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
+async def fx_book(
+    fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> BookId:
     """Store a book of the signed-in account with no sources.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
-    :rtype: BookRecord
+    :rtype: BookId
     """
-    book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
-    return book_record
+    book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+    return book_id
 
 
 @pytest.fixture

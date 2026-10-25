@@ -11,18 +11,18 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import event
 
-from bookreviver.adapters.persistence.sqlalchemy.repositories import RowRepository
-from tests.helpers.builders import make_page, make_page_stage, make_page_version, make_record
+from bookreviver.adapters.persistence.sqlalchemy.rows import RowRepository
+from tests.helpers.builders import directory_of, make_page, make_page_stage, make_page_version, make_record
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page, PageVersion
-    from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -75,20 +75,23 @@ class Statements:
             self.bound.append(len(arguments['parameters']))
 
 
-async def _seed_book(uow: UnitOfWork, owner_id: AccountId) -> tuple[BookRecord, list[Page], list[PageVersion]]:
+async def _seed_book(
+    catalogue: CatalogueDatabase, owner_id: AccountId, *, databases: LocatedBookDatabases
+) -> tuple[BookId, list[Page], list[PageVersion]]:
     """Commit a book of seven pages in book order, each with one version created a minute after the one before.
 
-    :param uow: Unit of work to commit through.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database to commit through.
+    :type catalogue: CatalogueDatabase
     :param owner_id: Account owning the book.
     :type owner_id: AccountId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     :returns: The book, the pages in book order and the versions in the order they were created.
     :rtype: tuple[BookRecord, list[Page], list[PageVersion]]
     """
-    book_record = make_record()
     pages = [make_page(order_key=f'a{number}') for number in range(COUNT)]
     versions = [make_page_version(page_id=page.id, minutes=number) for number, page in enumerate(pages)]
-    await store_book(uow, book_record, *pages, owner=owner_id, versions=versions)
+    book_id = await store_book(catalogue, make_record(), *pages, owner=owner_id, versions=versions, databases=databases)
 
     def save_stages(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save a record of a stage for every page of the book.
@@ -101,8 +104,8 @@ async def _seed_book(uow: UnitOfWork, owner_id: AccountId) -> tuple[BookRecord, 
         for page in pages:
             repos.page_stages.save(make_page_stage(page_id=page.id))
 
-    await uow.change_book(book_record.id, save_stages)
-    return book_record, pages, versions
+    await databases.open(book_id).change(save_stages)
+    return book_id, pages, versions
 
 
 @pytest.fixture
@@ -120,26 +123,31 @@ class TestListsLongerThanAChunk:
     """Tests for the reads that take more identifiers than one chunk holds."""
 
     async def test_every_row_comes_back_in_the_order_one_statement_would_give_it(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the pages come in book order and the versions earliest first, whichever chunk each is read in.
 
         The identifiers are given in reverse, so no chunk holds a run of the order.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Account that may own books.
         :type fx_owner_id: AccountId
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
-        book_record, pages, versions = await _seed_book(uow, fx_owner_id)
-        listed_pages, listed_versions, listed_stages = await uow.read_book(
-            book_record.id,
-            lambda repos: (
-                repos.pages.list_by_ids([page.id for page in reversed(pages)]),
-                repos.page_versions.list_by_ids([version.id for version in reversed(versions)]),
-                repos.page_stages.list_for_pages([page.id for page in reversed(pages)]),
-            ),
+        catalogue = fx_catalogue()
+        book_id, pages, versions = await _seed_book(catalogue, fx_owner_id, databases=fx_databases())
+        listed_pages, listed_versions, listed_stages = (
+            await fx_databases()
+            .open(book_id)
+            .read(
+                lambda repos: (
+                    repos.pages.list_by_ids([page.id for page in reversed(pages)]),
+                    repos.page_versions.list_by_ids([version.id for version in reversed(versions)]),
+                    repos.page_stages.list_for_pages([page.id for page in reversed(pages)]),
+                ),
+            )
         )
         expect([page.id for page in listed_pages] == [page.id for page in pages])
         expect([version.id for version in listed_versions] == [version.id for version in versions])
@@ -147,19 +155,25 @@ class TestListsLongerThanAChunk:
         assert_expectations()
 
     async def test_no_statement_binds_more_values_than_a_chunk(
-        self, fx_uow: UnitOfWorkFactory, fx_books: BookDatabases, fx_owner_id: AccountId
+        self,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_books: BookRegistry,
+        fx_owner_id: AccountId,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a read of seven identifiers is three statements of at most three values, and so is a deletion.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_books: Registry of the books of the test, whose engines of the book are listened to.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_owner_id: Account that may own books.
         :type fx_owner_id: AccountId
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        uow = fx_uow()
-        book_record, pages, versions = await _seed_book(uow, fx_owner_id)
+        catalogue = fx_catalogue()
+        book_id, pages, versions = await _seed_book(catalogue, fx_owner_id, databases=fx_databases())
         version_ids = [version.id for version in versions]
 
         def list_versions(repos: BookRepositories) -> Statements:
@@ -192,10 +206,12 @@ class TestListsLongerThanAChunk:
                 repos.page_versions.delete_many(version_ids)
             return counted
 
-        async with fx_books.use(book_record.id) as book:
-            reading = await uow.read_book(book_record.id, list_versions)
-            deleting = await uow.change_book(book_record.id, delete_versions)
-        remaining = await uow.read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(pages[0].id))
+        async with fx_books.use(directory_of(book_id)) as book:
+            reading = await fx_databases().open(book_id).read(list_versions)
+            deleting = await fx_databases().open(book_id).change(delete_versions)
+        remaining = (
+            await fx_databases().open(book_id).read(lambda repos: repos.page_versions.list_for_page(pages[0].id))
+        )
         expect(reading.bound == [CHUNK] * (COUNT // CHUNK) + [COUNT % CHUNK], f'read bound {reading.bound}')
         expect(
             len(deleting.bound) == ceil(COUNT / CHUNK) and max(deleting.bound) <= CHUNK,

@@ -3,11 +3,11 @@
 The catalogue, the executor and the runner of processors keep no per-request state, so one of each serves the whole
 application. The catalogue loads the plugins of the pools the settings name when it is built, from the same source
 that each process of the executor builds its own catalogue from. The executor starts its processes when the container
-first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that works
-through a unit of work is built per request or job: the parts the use cases share, the service of the requests, the
-jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a
-run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only
-``api`` knows, as it does for the import.
+first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that serves a
+request or a job is built for it, and works on the book it is given: the parts the use cases share, the service of the
+requests, the jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them
+over, of what a run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes,
+which only ``api`` knows, as it does for the import.
 """
 
 from collections.abc import AsyncIterator
@@ -18,14 +18,13 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
 from bookreviver.app.plugins import EntryPointCatalogSource
+from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
-from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-from bookreviver.ports.storage import AssetStore
 from bookreviver.ports.tracing import Tracer
+from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
@@ -34,7 +33,7 @@ from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.pages import PageService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes
@@ -99,24 +98,26 @@ class ProcessingProvider(Provider):
             await stack.aclose()
 
     @provide(scope=Scope.APP)
-    def recipe_order(self, catalogue: ProcessorCatalog) -> RecipeOrder:
+    def recipe_order(self, processors: ProcessorCatalog) -> RecipeOrder:
         """Read the order the processors ask for from their specs.
 
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :returns: The finder of steps that stand off their place.
         :rtype: RecipeOrder
         """
-        return RecipeOrder(catalogue)
+        return RecipeOrder(processors)
 
     @provide(scope=Scope.APP)
-    def default_recipes(self) -> DefaultRecipes:
-        """Give the recipes a stage starts with.
+    def default_recipes(self, settings: Settings) -> DefaultRecipes:
+        """Read the recipes a stage starts with from the file the settings name, once.
 
+        :param settings: Application settings, of which ``processing.recipes_file`` is read.
+        :type settings: Settings
         :returns: The default recipes.
         :rtype: DefaultRecipes
         """
-        return DefaultRecipes()
+        return load_default_recipes(settings.processing.recipes_file)
 
     @provide(scope=Scope.APP)
     def processing_config(self, settings: Settings) -> ProcessingConfig:
@@ -133,32 +134,9 @@ class ProcessingProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def processing_runtime(
-        self, publisher: EventPublisher, clock: Clock, board: JobBoard, tracer: Tracer
-    ) -> ProcessingRuntime:
-        """Gather what a processing use case reports through.
+    def step_runner(self, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler) -> StepRunner:
+        """Build the runner of processors over the imaging ports.
 
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
-        :param clock: Clock of the application.
-        :type clock: Clock
-        :param board: Board holding the jobs of every book.
-        :type board: JobBoard
-        :param tracer: Tracer of the application.
-        :type tracer: Tracer
-        :returns: The runtime.
-        :rtype: ProcessingRuntime
-        """
-        return ProcessingRuntime(publisher=publisher, clock=clock, board=board, tracer=tracer)
-
-    @provide(scope=Scope.APP)
-    def step_runner(
-        self, assets: AssetStore, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler
-    ) -> StepRunner:
-        """Build the runner of processors over the asset store and the imaging ports.
-
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param executor: Executor that runs the steps of the processors.
         :type executor: StepExecutor
         :param renditions: Writer of the files of a page version.
@@ -168,89 +146,71 @@ class ProcessingProvider(Provider):
         :returns: The runner.
         :rtype: StepRunner
         """
-        return StepRunner(assets=assets, executor=executor, renditions=renditions, tiler=tiler)
+        return StepRunner(executor=executor, renditions=renditions, tiler=tiler)
 
     @provide(scope=Scope.REQUEST)
     def processing_parts(
         self,
-        uow: UnitOfWork,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         defaults: DefaultRecipes,
-        runtime: ProcessingRuntime,
         config: ProcessingConfig,
     ) -> ProcessingParts:
-        """Build the parts the processing use cases share over the unit of work of the request or job.
+        """Build the parts the processing use cases share in the request or job.
 
-        :param uow: Unit of work of the current request or job.
-        :type uow: UnitOfWork
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param runtime: The publisher, the clock and the board.
-        :type runtime: ProcessingRuntime
         :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        return ProcessingParts.build(uow, catalogue, defaults, runtime, config)
+        return ProcessingParts.build(processors, defaults, config)
 
     @provide(scope=Scope.REQUEST)
-    def processing_service(
-        self, uow: UnitOfWork, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
-    ) -> ProcessingService:
+    def processing_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:
         """Build the processing service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param parts: The parts the processing use cases share.
         :type parts: ProcessingParts
         :returns: The processing service.
         :rtype: ProcessingService
         """
-        return ProcessingService(uow=uow, assets=assets, catalogue=catalogue, parts=parts)
+        return ProcessingService(processors=processors, parts=parts)
 
     @provide(scope=Scope.REQUEST)
-    def recipe_profiles(
-        self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService, clock: Clock
-    ) -> RecipeProfiles:
+    def recipe_profiles(self, parts: ProcessingParts, processing: ProcessingService) -> RecipeProfiles:
         """Build the service of the recipe profiles of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
         :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
         :type processing: ProcessingService
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The profiles service.
         :rtype: RecipeProfiles
         """
-        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=clock)
+        return RecipeProfiles(recipes=parts.recipes, processing=processing)
 
     @provide(scope=Scope.APP)
     def stage_runtime(
         self,
         runner: StepRunner,
-        catalogue: ProcessorCatalog,
-        runtime: ProcessingRuntime,
+        processors: ProcessorCatalog,
+        tracer: Tracer,
         order_keys: OrderKeys,
         config: ProcessingConfig,
     ) -> StageRuntime:
-        """Gather what a run of a stage works with, apart from the book and the unit of work.
+        """Gather what a run of a stage works with, apart from the book.
 
         :param runner: Runner of processors.
         :type runner: StepRunner
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
-        :param runtime: The publisher, the clock, the board and the tracer.
-        :type runtime: ProcessingRuntime
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
+        :param tracer: Tracer of the application.
+        :type tracer: Tracer
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
         :param config: The retention period and the size of a preview.
@@ -260,24 +220,16 @@ class ProcessingProvider(Provider):
         """
         return StageRuntime(
             runner=runner,
-            catalogue=catalogue,
-            publisher=runtime.publisher,
-            clock=runtime.clock,
+            processors=processors,
             order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
-            tracer=runtime.tracer,
+            tracer=tracer,
         )
 
     @provide(scope=Scope.REQUEST)
-    def processing_jobs(
-        self, uow: UnitOfWork, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts, pages: PageService
-    ) -> ProcessingJobs:
-        """Build the work of the processing jobs over the unit of work of a job.
+    def processing_jobs(self, runtime: StageRuntime, parts: ProcessingParts, pages: PageService) -> ProcessingJobs:
+        """Build the work of the processing jobs.
 
-        :param uow: Unit of work of the current job.
-        :type uow: UnitOfWork
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param runtime: What a run of a stage works with.
         :type runtime: StageRuntime
         :param parts: The parts the processing use cases share.
@@ -287,117 +239,85 @@ class ProcessingProvider(Provider):
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        return ProcessingJobs(uow=uow, assets=assets, runtime=runtime, parts=parts, pages=pages)
+        return ProcessingJobs(runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
-    def edit_service(
-        self, uow: UnitOfWork, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
-    ) -> EditService:
+    def edit_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> EditService:
         """Build the edit service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The edit service.
         :rtype: EditService
         """
-        return EditService(uow=uow, assets=assets, catalogue=catalogue, records=parts.records, clock=clock)
+        return EditService(processors=processors, records=parts.records)
 
     @provide(scope=Scope.REQUEST)
-    def page_settings_service(
-        self, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
-    ) -> PageSettingsService:
+    def page_settings_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> PageSettingsService:
         """Build the page settings service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The page settings service.
         :rtype: PageSettingsService
         """
-        return PageSettingsService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
+        return PageSettingsService(processors=processors, records=parts.records)
 
     @provide(scope=Scope.REQUEST)
-    def run_impact_service(self, uow: UnitOfWork, parts: ProcessingParts) -> RunImpactService:
+    def run_impact_service(self, parts: ProcessingParts) -> RunImpactService:
         """Build the run impact service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param parts: The parts the processing use cases share, of which the recipes and the clock are used.
+        :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
         :returns: The run impact service.
         :rtype: RunImpactService
         """
-        return RunImpactService(uow=uow, recipes=parts.recipes, clock=parts.clock)
+        return RunImpactService(recipes=parts.recipes)
 
     @provide(scope=Scope.REQUEST)
-    def carry_over_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> CarryOverService:
+    def carry_over_service(self, parts: ProcessingParts) -> CarryOverService:
         """Build the carry-over service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The carry-over service.
         :rtype: CarryOverService
         """
-        return CarryOverService(uow=uow, records=parts.records, clock=clock)
+        return CarryOverService(records=parts.records)
 
     @provide(scope=Scope.REQUEST)
-    def page_history_service(
-        self, uow: UnitOfWork, assets: AssetStore, parts: ProcessingParts, clock: Clock
-    ) -> PageHistoryService:
+    def page_history_service(self, parts: ProcessingParts) -> PageHistoryService:
         """Build the page history service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param assets: Asset store of the application, from which a clear removes the files of the versions it deletes.
-        :type assets: AssetStore
         :param parts: The parts the processing use cases share, of which the stage records and the job starter are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The page history service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(uow=uow, records=parts.records, starter=parts.starter, assets=assets, clock=clock)
+        return PageHistoryService(records=parts.records, starter=parts.starter)
 
     @provide(scope=Scope.REQUEST)
-    def result_marks_service(self, uow: UnitOfWork) -> ResultMarksService:
+    def result_marks_service(self) -> ResultMarksService:
         """Build the result marks service of a request.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :returns: The result marks service.
         :rtype: ResultMarksService
         """
-        return ResultMarksService(uow=uow)
+        return ResultMarksService()
 
     @provide(scope=Scope.REQUEST)
-    def outdated_results(self, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> OutdatedResults:
-        """Build the finder of results that a replaced version of a processor made over the unit of work of the start.
+    def outdated_results(self, books: BooksService, processors: ProcessorCatalog) -> OutdatedResults:
+        """Build the finder of results that a replaced version of a processor made, over the database of the start.
 
-        :param uow: Unit of work of the current request or of the start of the application.
-        :type uow: UnitOfWork
-        :param catalogue: The processors the application can run, with the versions that are installed.
-        :type catalogue: ProcessorCatalog
-        :param clock: Clock of the application.
-        :type clock: Clock
+        :param books: Books service of the start of the application, which opens each stored book.
+        :type books: BooksService
+        :param processors: The processors the application can run, with the versions that are installed.
+        :type processors: ProcessorCatalog
         :returns: The outdated results service.
         :rtype: OutdatedResults
         """
-        return OutdatedResults(uow=uow, catalogue=catalogue, clock=clock)
+        return OutdatedResults(books=books, processors=processors)

@@ -9,27 +9,29 @@ from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, ManifestParams, Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
-from bookreviver.domain.ids import StepId
+from bookreviver.domain.ids import BookId, StepId
 from bookreviver.domain.stage_summaries import StageRow, StageSummary
 from bookreviver.services.book import Book
-from bookreviver.services.books import BooksService
+from bookreviver.services.stage_summaries import StageSummaries
 
 
 @dataclass(frozen=True)
 class StageRowsPath(StagePath):
     """The address of the rows of a stage, with the request, whose application knows the route that serves the images.
 
+    :ivar book_id: Identifier of the book, which names its images in their addresses.
     :ivar request: The request.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     request: Request
 
 
@@ -40,7 +42,7 @@ router = APIRouter(prefix='/books', tags=['stages'], route_class=DishkaRoute, de
 async def list_stages(
     book: Annotated[Book, Depends(open_book)],
     params: Annotated[Params, Depends()],
-    books: FromDishka[BooksService],
+    stages: FromDishka[StageSummaries],
 ) -> Page[StageSummarySchema]:
     """List the stages of a book in the order of the pipeline, each summed over the pages of the book.
 
@@ -52,13 +54,13 @@ async def list_stages(
     :type book: Book
     :param params: Page number and size from the query; the ten stages fit one page of the default size.
     :type params: Params
-    :param books: Books service of the request.
-    :type books: BooksService
+    :param stages: Stage summaries of the request.
+    :type stages: StageSummaries
     :returns: One page of the stages.
     :rtype: Page[StageSummarySchema]
     """
     pager = Pager[StageSummary, StageSummarySchema](params, StageSummarySchema.model_validate)
-    return pager.page(await books.stages(book, pager.request))
+    return pager.page(await stages.stages(book, pager.request))
 
 
 @router.get('/{book_id}/stages/{stage}/pages')
@@ -66,7 +68,7 @@ async def list_stage_pages(
     book: Annotated[Book, Depends(open_book)],
     address: Annotated[StageRowsPath, Depends()],
     params: Annotated[ManifestParams, Depends()],
-    books: FromDishka[BooksService],
+    stages: FromDishka[StageSummaries],
     step: Annotated[StepId | None, Query(description='A step of a recipe of the stage to place every page at')] = None,
 ) -> ManifestPage[StagePageSchema]:
     """List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
@@ -85,13 +87,13 @@ async def list_stage_pages(
     :type address: StageRowsPath
     :param params: Page number and size from the query, the size up to a thousand.
     :type params: ManifestParams
-    :param books: Books service of the request.
-    :type books: BooksService
+    :param stages: Stage summaries of the request.
+    :type stages: StageSummaries
     :param step: The step to place every page at, or None for the rows of the stage alone.
     :type step: StepId | None
     :returns: One page of the rows of the stage.
     :rtype: ManifestPage[StagePageSchema]
     """
-    to_schema = partial(StagePageSchema.of, book_id=book.id, request=address.request)
+    to_schema = partial(StagePageSchema.of, book_id=address.book_id, request=address.request)
     pager = Pager[StageRow, StagePageSchema](params, to_schema)
-    return pager.page(await books.stage_pages(book, address.stage, pager.request, step))
+    return pager.page(await stages.rows(book, address.stage, pager.request, step))

@@ -12,7 +12,8 @@ from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.ids import BookId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -22,7 +23,7 @@ ORDER_KEYS: tuple[str, ...] = ('a0', 'a1')
 UNKNOWN_PARAMETER: str = 'unknown'
 
 
-async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
+async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page]]:
     """Seed a book with two scan pages whose base versions are stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
@@ -30,13 +31,13 @@ async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page
     :returns: The actor, the book and its pages in order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
-    actor, book_record = await kit.seed_record()
+    actor, book_id = await kit.seed_book()
     pages: list[Page] = []
     for order_key in ORDER_KEYS:
-        page, _ = await kit.seed_scan_page(book_record, order_key=order_key)
-        await kit.seed_base_version(book_record.id, page)
+        page, _ = await kit.seed_scan_page(book_id, order_key=order_key)
+        await kit.seed_base_version(book_id, page)
         pages.append(page)
-    return actor, book_record, pages
+    return actor, book_id, pages
 
 
 class TestRunSpans:
@@ -48,8 +49,8 @@ class TestRunSpans:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, pages = await seeded_pages(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        actor, book_id, pages = await seeded_pages(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         page_spans = fx_kit.tracer.named(SpanName.RUN_PAGE)
         step_spans = fx_kit.tracer.named(SpanName.STEP)
         expect(sorted(span.attributes[SpanAttribute.PAGE] for span in page_spans) == sorted(str(p.id) for p in pages))
@@ -69,12 +70,12 @@ class TestRunSpans:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, pages = await seeded_pages(fx_kit)
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        actor, book_id, pages = await seeded_pages(fx_kit)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         first = [span.attributes[SpanAttribute.STEP_OUTCOME] for span in fx_kit.tracer.named(SpanName.STEP)]
         fx_kit.tracer.finished.clear()
         named = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
-        await run_stage(fx_kit, actor, book_record, named)
+        await run_stage(fx_kit, actor, book_id, named)
         second = [span.attributes[SpanAttribute.STEP_OUTCOME] for span in fx_kit.tracer.named(SpanName.STEP)]
         expect(first == [StepOutcome.RAN] * len(ORDER_KEYS))
         expect(second == [StepOutcome.CACHED] * len(ORDER_KEYS))
@@ -90,13 +91,13 @@ class TestRunSpans:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record, _ = await seeded_pages(fx_kit)
-        recipe = await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY, RecipeKind.TEXT)
+        actor, book_id, _ = await seeded_pages(fx_kit)
+        recipe = await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY, RecipeKind.TEXT)
         refused = evolve(recipe.steps[0], params=fx_kit.params(**{UNKNOWN_PARAMETER: 1}))
-        await fx_kit.uow().change_book(
-            book_record.id, lambda repos, _book_record: repos.recipes.update(evolve(recipe, steps=(refused,)))
+        await fx_kit.databases.open(book_id).change(
+            lambda repos, _book_record: repos.recipes.update(evolve(recipe, steps=(refused,)))
         )
-        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
         outcomes = [span.attributes.get(SpanAttribute.STEP_OUTCOME) for span in fx_kit.tracer.named(SpanName.STEP)]
         expect(outcomes == [StepOutcome.FAILED] * len(ORDER_KEYS))
         expect(fx_kit.fake.runs == 0)

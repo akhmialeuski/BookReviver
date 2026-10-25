@@ -391,9 +391,11 @@ class BookSchema(ResponseModel):
     updated_at: datetime
 
     @classmethod
-    def from_overview(cls, overview: BookOverview) -> Self:
+    def from_overview(cls, *, book_id: BookId, overview: BookOverview) -> Self:
         """Build the schema of a book and its counts.
 
+        :param book_id: Identifier of the book in the library, which the overview does not hold.
+        :type book_id: BookId
         :param overview: The record of the book with its counts.
         :type overview: BookOverview
         :returns: The book resource.
@@ -402,7 +404,7 @@ class BookSchema(ResponseModel):
         book_record = overview.book_record
         progress = overview.progress
         return cls(
-            id=book_record.id,
+            id=book_id,
             details=BookDetailsSchema.model_validate(book_record.details),
             image_policy=book_record.image_policy,
             cover_page_id=overview.cover_page_id,

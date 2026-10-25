@@ -1,8 +1,10 @@
-"""Provider of the catalogue, of the databases of the books and of the unit of work over them.
+"""Provider of the catalogue, of the registry of the databases of the books and of the catalogue database over it.
 
-The catalogue and the registry of the books are one per application, and the unit of work over them is built per
-request or job. The same unit of work is the ``UnitOfWork`` of the port and the one the accounts run on, so the
-accounts add no second connection pool and no second unit of work.
+The catalogue and the registry of the books are one per application, and the catalogue database over the catalogue is
+built per request or job. The same catalogue database is the ``CatalogueDatabase`` of the port and the one the accounts
+run on, so the accounts add no second connection pool and no second catalogue database. A book opens its database over
+the registry, so the provider builds that opener, which ``prepare_start`` registers with ``BookDatabase.register``. A
+book waits for its writer as long as a job does, since the opener knows no scope.
 
 The application never changes the schema of the catalogue. Its migrations are applied by hand, after a copy of the data
 directory if it matters, and the provider only compares the revision of the catalogue with the head of the migrations
@@ -13,17 +15,18 @@ does not know that revision, so the message names the downgrade to run with the 
 restore. A book is brought to the head revision of its schema by the registry when it is opened.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 from dishka import Provider, Scope, alias, provide
 from sqlalchemy.orm import configure_mappers
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
-from bookreviver.ports.persistence import ChangeWaitSeconds, UnitOfWork
-from bookreviver.ports.runtime import EventPublisher
+from bookreviver.domain.ids import BookDirectoryName
+from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase, ChangeWaitSeconds
 from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -41,9 +44,11 @@ RUN: str = ': run `'
 
 
 class DatabaseProvider(Provider):
-    """One catalogue at the head revision and one registry of books per application, and one unit of work per request.
+    """One catalogue and one registry of books per application, and one catalogue database per request.
 
-    :ivar unit_of_work_port: The unit of work of the request as the ``UnitOfWork`` port.
+    The catalogue is at its head revision.
+
+    :ivar catalogue_database_port: The catalogue database of the request as the ``CatalogueDatabase`` port.
     """
 
     @provide(scope=Scope.APP)
@@ -95,8 +100,10 @@ class DatabaseProvider(Provider):
             await database.dispose()
 
     @provide(scope=Scope.APP)
-    async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookDatabases]:
-        """Open the registry of the databases of the books, and close every open book with the application.
+    async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookRegistry]:
+        """Open the registry of the databases of the books, over which the database of each book runs.
+
+        Every open book is closed when the application closes the container.
 
         :param settings: Application settings, of which the storage root, the wait limit of a job and the idle limit of
                          a book are read.
@@ -104,10 +111,10 @@ class DatabaseProvider(Provider):
         :param tracer: Tracer the write blocks of the books are timed with.
         :type tracer: Tracer
         :returns: Iterator yielding the registry and closing its books afterwards.
-        :rtype: AsyncIterator[BookDatabases]
+        :rtype: AsyncIterator[BookRegistry]
         """
-        books = BookDatabases(
-            settings.storage_root,
+        books = BookRegistry(
+            root=settings.storage_root,
             tracer=tracer,
             wait_seconds=settings.change_wait.job_seconds,
             idle_seconds=settings.book_idle_seconds,
@@ -117,30 +124,35 @@ class DatabaseProvider(Provider):
         finally:
             await books.dispose()
 
+    @provide(scope=Scope.APP)
+    def book_database(self, books: BookRegistry) -> Callable[[BookDirectoryName], BookDatabase]:
+        """Build the function that opens the database of a book over the registry of the books.
+
+        :param books: The registry of the databases of the books.
+        :type books: BookRegistry
+        :returns: The opener, from the directory name of a book to its database.
+        :rtype: Callable[[BookDirectoryName], BookDatabase]
+        """
+        return lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=books)
+
     @provide(scope=Scope.REQUEST)
-    def unit_of_work(
+    def catalogue_database(
         self,
         database: SqlDatabase,
-        books: BookDatabases,
-        publisher: EventPublisher,
         wait_seconds: ChangeWaitSeconds,
-    ) -> SqlAlchemyUnitOfWork:
-        """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
+    ) -> SqlAlchemyCatalogueDatabase:
+        """Build the catalogue database of a request or job, which keeps no state but the wait limit of its scope.
 
         The services and the account database both take this one. It holds no session or connection, so it needs no
         closing.
 
         :param database: The catalogue, whose threads and connections the transactions of the catalogue use.
         :type database: SqlDatabase
-        :param books: The registry of the databases of the books.
-        :type books: BookDatabases
-        :param publisher: Where a committed change of a book is announced.
-        :type publisher: EventPublisher
-        :param wait_seconds: How long a change of the unit of work waits for a writer, by the scope it lives in.
+        :param wait_seconds: How long a change of the catalogue database waits for a writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
-        :returns: Unit of work over the catalogue and the books.
-        :rtype: SqlAlchemyUnitOfWork
+        :returns: Catalogue database over the catalogue.
+        :rtype: SqlAlchemyCatalogueDatabase
         """
-        return SqlAlchemyUnitOfWork(database, books, publisher=publisher, wait_seconds=wait_seconds)
+        return SqlAlchemyCatalogueDatabase(database, wait_seconds=wait_seconds)
 
-    unit_of_work_port = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)
+    catalogue_database_port = alias(source=SqlAlchemyCatalogueDatabase, provides=CatalogueDatabase)

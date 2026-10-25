@@ -12,26 +12,22 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
-from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_record
-from tests.helpers.clock import FixedClock
+from tests.helpers.builders import make_job, make_page, make_page_stage, make_record
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import store_book
 from tests.helpers.statements import STATEMENT_EVENT, StatementCounter
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId, PageId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import JobBoard
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
+    from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 
@@ -41,24 +37,32 @@ WINDOWS: tuple[int, int, int] = (1, 2, 5)
 BOOKS: int = WINDOWS[-1]
 
 
-async def _store_books(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, count: int) -> None:
+async def _store_books(
+    catalogue: CatalogueDatabase,
+    board: FakeJobBoard,
+    owner_id: AccountId,
+    count: int,
+    *,
+    databases: LocatedBookDatabases,
+) -> None:
     """Store books that each have a page in a stage and a job on the board, so every progress query returns rows.
 
-    :param uow: Unit of work over the catalogue and the books of the test.
-    :type uow: UnitOfWork
+    :param catalogue: Catalogue database over the catalogue and the books of the test.
+    :type catalogue: CatalogueDatabase
     :param board: Board of the jobs, which holds them in memory and so sends no statement.
-    :type board: JobBoard
+    :type board: FakeJobBoard
     :param owner_id: Committed account owning the books.
     :type owner_id: AccountId
     :param count: Number of books to store.
     :type count: int
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     """
     for minutes in range(count):
-        book_record = make_record(minutes=minutes)
         page = make_page()
-        await store_book(uow, book_record, page, owner=owner_id)
-        await uow.change_book(book_record.id, partial(_add_stage_record, page_id=page.id))
-        board.put(make_job(book_id=book_record.id, minutes=minutes))
+        book_id = await store_book(catalogue, make_record(minutes=minutes), page, owner=owner_id, databases=databases)
+        await databases.open(book_id).change(partial(_add_stage_record, page_id=page.id))
+        board.put(book_id, make_job(minutes=minutes))
 
 
 def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page_id: PageId) -> None:
@@ -74,52 +78,42 @@ def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page
     repos.page_stages.add(make_page_stage(page_id=page_id))
 
 
-async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, window: int, root: Path) -> int:
+async def _statements_of_list(stores: BookOpener, owner_id: AccountId, window: int) -> int:
     """List the owner's books as the list route does and count the statements every engine sends for their overviews.
 
     The window of the owner's books is read from the catalogue first, as the access dependency reads it, and the
     counter then listens on the ``Engine`` class, so the statements of the file of every book count.
 
-    :param uow: Unit of work over the catalogue and the books of the test.
-    :type uow: UnitOfWork
-    :param board: Board of the jobs of the books.
-    :type board: JobBoard
+    :param stores: Opens the catalogue databases and the databases of the books of the test.
+    :type stores: BookOpener
     :param owner_id: Account whose books are listed.
     :type owner_id: AccountId
     :param window: How many books the window holds.
     :type window: int
-    :param root: Storage root of the stores the service needs and the list does not touch.
-    :type root: Path
     :returns: Number of statements sent while listing.
     :rtype: int
     """
-    service = BooksService(
-        uow=uow,
-        clock=FixedClock(EPOCH),
-        files=BookStores(
-            sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root), archive=LocalBookArchive(root=root)
-        ),
-        stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
-    )
+    catalogue = stores.catalogue()
+    stages = StageSummaries(processors=FakeCatalogue([]))
     request = SliceRequest(limit=window)
-    entries = await uow.read(lambda repos: repos.library.list_for_owner(owner_id, request))
-    opened = Slice(items=[Book(entry.book_id, entry.owner_id) for entry in entries.items], total=entries.total)
+    entries = await catalogue.read(lambda repos: repos.library.list_for_owner(owner_id, request))
+    opened = [Book(entry.directory) for entry in entries.items]
     counter = StatementCounter()
     event.listen(Engine, STATEMENT_EVENT, counter)
     try:
-        books = await service.overviews(opened)
+        books = [await stages.overview(book) for book in opened]
     finally:
         event.remove(Engine, STATEMENT_EVENT, counter)
-    assert len(books.items) == window
-    assert all(book.progress is not None for book in books.items)
+    assert len(books) == window
+    assert all(book.progress is not None for book in books)
     return counter.count
 
 
 class TestBookList:
-    """Tests for the statements ``BooksService.overviews`` sends to SQLite for a window of books."""
+    """Tests for the statements ``StageSummaries.overview`` sends to SQLite for a window of books."""
 
     async def test_every_book_of_a_window_adds_the_same_number_of_statements(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, tmp_path: Path
+        self, fx_open_book: BookOpener, fx_owner_id: AccountId
     ) -> None:
         """Verify the statements grow by the same amount for each book, from one book to two and from one to five.
 
@@ -127,20 +121,16 @@ class TestBookList:
         file does not add statements of its own. The growth from one book to two, four times over, is then the growth
         from one book to five.
 
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
+        :type fx_open_book: BookOpener
         :param fx_owner_id: Committed account owning the books.
         :type fx_owner_id: AccountId
-        :param tmp_path: Directory of the stores the list does not touch.
-        :type tmp_path: Path
         """
         board = JobFakes().board
-        await _store_books(fx_uow(), board, fx_owner_id, BOOKS)
-        await _statements_of_list(fx_uow(), board, fx_owner_id, BOOKS, tmp_path)
+        await _store_books(fx_open_book.catalogue(), board, fx_owner_id, BOOKS, databases=fx_open_book.databases)
+        await _statements_of_list(fx_open_book, fx_owner_id, BOOKS)
 
-        counts = {
-            window: await _statements_of_list(fx_uow(), board, fx_owner_id, window, tmp_path) for window in WINDOWS
-        }
+        counts = {window: await _statements_of_list(fx_open_book, fx_owner_id, window) for window in WINDOWS}
 
         one, two, five = (counts[window] for window in WINDOWS)
         assert (two - one) * (BOOKS - 1) == five - one

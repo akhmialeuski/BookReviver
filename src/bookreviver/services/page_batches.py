@@ -3,7 +3,7 @@
 A run that takes the work of the pages away, a value set for several pages, a value set for the odd pages, the even
 pages or a group, and a carry-over of a shape write the same thing: a layer of a step on many pages, each change in the
 history with the same batch and the source that made it. A state with neither a setting nor an edit left is deleted.
-The batch opens no transaction and marks no stage stale. It is built inside the work of ``UnitOfWork.change_book`` from
+The batch opens no transaction and marks no stage stale. It is built inside the work of ``Book.change`` from
 the repositories of that work, and every method is synchronous and writes through them. The use case that owns the work
 marks the stages stale once the batch is flushed.
 """

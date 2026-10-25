@@ -1,12 +1,12 @@
 """The work of the processing jobs the board runs: a run of a stage, a preview, tiles, a collection and a measure.
 
-Each entry point takes its job and the control the job reports through, does the tasks of the job one after the other,
-and returns how the job ended. A task is the processing of one page by one plugin, which is one step of a recipe on one
-page; a tile cutting counts a version, a collection a batch of deletions, a measure of the book the one reading of
-every page's box, and the detection of content a page. The control tells the board after each task, which is where the
-job learns that it was cancelled, so a cancelled job stops between two tasks and never inside one. The parameters of a
-job are read into the value of its kind, and a job whose parameters are not valid ends as failed with the reason. An
-error nobody expected passes to the board, which logs it and fails the job.
+Each entry point takes the book of the queue the job came from, the job and the control the job reports through, does
+the tasks of the job one after the other, and returns how the job ended. A task is the processing of one page by one
+plugin, which is one step of a recipe on one page; a tile cutting counts a version, a collection a batch of deletions, a
+measure of the book the one reading of every page's box, and the detection of content a page. The control tells the
+board after each task, which is where the job learns that it was cancelled, so a cancelled job stops between two tasks
+and never inside one. The parameters of a job are read into the value of its kind, and a job whose parameters are not
+valid ends as failed with the reason. An error nobody expected passes to the board, which logs it and fails the job.
 
 A run goes by the pages of the stage and the steps of the recipe, which is the recipe of the kind of each page. A run of
 the whole book leaves out the pages whose result of the stage is fresh already (``RunPlan``), so a run after an
@@ -53,10 +53,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe
-    from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.book import Book
     from bookreviver.services.book_measure import BlockMeasure
     from bookreviver.services.pages import PageService
     from bookreviver.services.processing_parts import ProcessingParts
@@ -82,40 +82,33 @@ class ProcessingJobs:
     def __init__(
         self,
         *,
-        uow: UnitOfWork,
-        assets: AssetStore,
         runtime: StageRuntime,
         parts: ProcessingParts,
         pages: PageService,
     ) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work of the job, whose blocks hold the work as it goes.
-        :type uow: UnitOfWork
-        :param assets: Store of the derived files, from which a collection removes directories.
-        :type assets: AssetStore
-        :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
+        :param runtime: The runner, the processors and the size of a preview.
         :type runtime: StageRuntime
-        :param parts: The recipes, the stage records and the job starter over the unit of work.
+        :param parts: The recipes, the stage records and the job starter, which work on the book of each job.
         :type parts: ProcessingParts
         :param pages: The page service, which queues the detection of the content of the pages a split made.
         :type pages: PageService
         """
-        self._uow = uow
-        self._assets = assets
         self._runtime = runtime
         self._parts = parts
         self._recipes = parts.recipes
         self._records = parts.records
-        self._clock = parts.clock
-        self._measure = BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records)
-        self._detector = ContentDetector(uow=uow, runtime=runtime, records=parts.records)
+        self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
+        self._detector = ContentDetector(runtime=runtime, records=parts.records)
         self._starter = parts.starter
         self._pages = pages
 
-    async def run_stage(self, job: Job, control: JobControl) -> JobEnd:
+    async def run_stage(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``run-stage`` job: the recipe over the pages, one page after the other.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each task.
@@ -125,21 +118,23 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            outcomes = await self._run_pages(job, control)
+            outcomes = await self._run_pages(book, job, control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         done, failed = outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED)
         if failed and not done:
             return JobEnd(state=JobState.FAILED, error=NO_PAGE_PROCESSED)
         # The collection is put behind this job, so the book is never free between the two
-        self._starter.queue_collection(job.book_id)
+        self._starter.queue_collection(book)
         if done and job.stage is Stage.PAGE_SPLIT:
-            self._pages.detect_new_pages(job.book_id)
+            self._pages.detect_new_pages(book)
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def preview_step(self, job: Job, control: JobControl) -> JobEnd:
+    async def preview_step(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``preview-step`` job: the steps of a form on the previews of a page, up to one of them.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each task.
@@ -149,14 +144,16 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            await self._preview(job, control)
+            await self._preview(book, job, control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def cut_tiles(self, job: Job, control: JobControl) -> JobEnd:
+    async def cut_tiles(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``cut-tiles`` job: the tile pyramids of some versions, each announced when it is cut.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each task.
@@ -171,13 +168,15 @@ class ProcessingJobs:
             return JobEnd(state=JobState.FAILED, error=str(error))
         control.plan(len(cut.version_ids))
         for version_id in cut.version_ids:
-            await self._cut_version(job.book_id, version_id)
+            await self._cut_version(book, version_id)
             await control.task_done()
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def collect_versions(self, job: Job, control: JobControl) -> JobEnd:
+    async def collect_versions(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``collect-versions`` job: delete the old versions that nothing needs, with their files.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each task.
@@ -188,20 +187,20 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            left = await self._collect(job, control)
+            left = await self._collect(book, job, control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         if left:
             return JobEnd(state=JobState.FAILED, error=VERSIONS_LEFT.format(count=left))
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def measure_book(self, job: Job, control: JobControl) -> JobEnd:
+    async def measure_book(self, book: Book, control: JobControl) -> JobEnd:
         """Run a ``measure-book`` job: the median line height and page size of the book, written into its recipe.
 
         The measure reads the boxes the pages were placed by and writes one result, so it is one task of its own.
 
-        :param job: The running job.
-        :type job: Job
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param control: What the job reports through, and learns of its cancellation from, after each task.
         :type control: JobControl
         :returns: How the job ended: failed with the reason when the book cannot be measured, else succeeded.
@@ -210,15 +209,17 @@ class ProcessingJobs:
         """
         control.plan(1)
         try:
-            await self._measure.run(job.book_id)
+            await self._measure.run(book)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         await control.task_done()
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def detect_content(self, job: Job, control: JobControl) -> JobEnd:
+    async def detect_content(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``detect-content`` job: what each page shows, written into the pages as a proposal.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each task.
@@ -228,16 +229,18 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            read, failed = await self._detector.run(job, control)
+            read, failed = await self._detector.run(book, job, control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         if failed and not read:
             return JobEnd(state=JobState.FAILED, error=NO_CONTENT_DETECTED)
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def _run_pages(self, job: Job, control: JobControl) -> list[RunOutcome]:
+    async def _run_pages(self, book: Book, job: Job, control: JobControl) -> list[RunOutcome]:
         """Run the recipe of a ``run-stage`` job over its pages, a task for each step of each page.
 
+        :param book: The open book the job runs on.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through.
@@ -248,11 +251,11 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         run = StageRun.from_map(job.params)
-        book_record = await self._uow.read_book(job.book_id, lambda repos: repos.book_record.get(job.book_id))
-        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book_record.id, run=run)
+        book_record = await book.read(lambda repos: repos.book_record.get())
+        plan = RunPlan(recipes=self._recipes, book=book, run=run)
         pages = await plan.pages()
         executor = RecipeRun(
-            book_record=book_record, uow=self._uow, runtime=self._runtime, control=control, parts=self._parts
+            book=book, book_record=book_record, runtime=self._runtime, control=control, parts=self._parts
         )
         recipes = await plan.recipes()
         # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
@@ -266,7 +269,7 @@ class ProcessingJobs:
         measured = [page for page in pages if leaves_to_the_book(recipes[page.id], through_step=run.through_step)]
         if measured:
             await self._measure_book(executor, measured, recipes, run)
-        return [await self._run_page(job.book_id, executor, page, recipes[page.id], run) for page in pages]
+        return [await self._run_page(book, executor, page, recipes[page.id], run) for page in pages]
 
     async def _measure_book(
         self, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
@@ -298,16 +301,14 @@ class ProcessingJobs:
         for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
             await executor.settle_book(recipe, boxes.get(recipe.id, {}), through_step=run.through_step)
 
-    async def _run_page(
-        self, book_id: BookId, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun
-    ) -> RunOutcome:
+    async def _run_page(self, book: Book, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
 
         A cancellation is no fault of the page: ``JobCancelledError`` is no ``Exception``, so it passes this handler and
         the page keeps the state it had.
 
-        :param book_id: Identifier of the book of the job.
-        :type book_id: BookId
+        :param book: The open book of the job.
+        :type book: Book
         :param executor: Runner of recipes of the book.
         :type executor: RecipeRun
         :param page: Page to process.
@@ -342,14 +343,16 @@ class ProcessingJobs:
                         return
                     self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
-                await self._uow.change_book(book_id, fail)
+                await book.change(fail)
                 outcome = RunOutcome.FAILED
             span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
             return outcome
 
-    async def _preview(self, job: Job, control: JobControl) -> None:
+    async def _preview(self, book: Book, job: Job, control: JobControl) -> None:
         """Run the steps of a ``preview-step`` job.
 
+        :param book: The open book the job runs on.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through.
@@ -358,25 +361,23 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         preview = StepPreview.from_map(job.params)
-        book_record, page = await self._uow.read_book(
-            job.book_id, lambda repos: (repos.book_record.get(job.book_id), repos.pages.get(preview.page_id))
-        )
-        executor = PreviewRun(book_record=book_record, uow=self._uow, runtime=self._runtime, control=control)
+        book_record, page = await book.read(lambda repos: (repos.book_record.get(), repos.pages.get(preview.page_id)))
+        executor = PreviewRun(book=book, book_record=book_record, runtime=self._runtime, control=control)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
 
-    async def _cut_version(self, book_id: BookId, version_id: PageVersionId) -> None:
+    async def _cut_version(self, book: Book, version_id: PageVersionId) -> None:
         """Cut the pyramid of one version, and mark the version as cut when it is still as it was read.
 
-        A pyramid is cut with no change open, and the version is marked in a short ``change_book`` that reads it again.
+        A pyramid is cut with no change open, and the version is marked in a short ``Book.change`` that reads it again.
         A version that is gone or has changed since it was read keeps no mark, and a pyramid left for a version that is
         gone is removed.
 
-        :param book_id: Book owning the version.
-        :type book_id: BookId
+        :param book: The open book owning the version.
+        :type book: Book
         :param version_id: The version, which is passed by when it is gone, not ready, cut already or without an image.
         :type version_id: PageVersionId
         """
-        version = await self._uow.read_book(book_id, lambda repos: repos.page_versions.find(version_id))
+        version = await book.read(lambda repos: repos.page_versions.find(version_id))
         if (
             version is None
             or version.state is not VersionState.READY
@@ -384,8 +385,7 @@ class ProcessingJobs:
             or version.renditions is None
         ):
             return
-        keys = BookKeys(book_id)
-        cut_version = await self._runtime.runner.cut_tiles(keys, version)
+        cut_version = await self._runtime.runner.cut_tiles(book, version)
 
         def mark(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, PageVersion | None]:
             """Store the version with its pyramid cut, when it is still as it was read.
@@ -403,19 +403,21 @@ class ProcessingJobs:
                 repos.page_versions.update(cut_version)
             return stored, found
 
-        stored, current = await self._uow.change_book(book_id, mark)
+        stored, current = await book.change(mark)
         if stored:
-            await self._runtime.publisher.publish(PageVersionReady(book_id=book_id, version=cut_version))
+            await book.events.publish(PageVersionReady(version=cut_version))
         elif current is None:
-            await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
+            await book.assets.delete_prefix(BookKeys.version_rendition(version, Rendition.TILES))
 
-    async def _collect(self, job: Job, control: JobControl) -> int:
+    async def _collect(self, book: Book, job: Job, control: JobControl) -> int:
         """Delete the versions that nothing needs, batch by batch, with their files and their rows.
 
         The versions go readers first and a batch never holds a version and one that reads it, so no version is left
         without the input it reads. Every batch is committed by ``VersionClearing``, so a version whose files cannot be
         removed leaves the deletions of the others standing, and a batch is a task of the job.
 
+        :param book: The open book the job runs on.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through.
@@ -427,13 +429,10 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         collection = VersionCollection.from_map(job.params)
-        old = await self._uow.read_book(
-            job.book_id,
-            lambda repos: repos.page_versions.collectable(collection.previews_older_than),
-        )
+        old = await book.read(lambda repos: repos.page_versions.collectable(collection.previews_older_than))
         groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
         control.plan(sum(len(batches) for batches in groups))
-        clearing = VersionClearing(uow=self._uow, assets=self._assets, book_id=job.book_id)
+        clearing = VersionClearing(book=book)
         deleted = 0
         for batches in groups:
             for batch in batches:

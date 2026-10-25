@@ -32,8 +32,8 @@ recipe of the SQLAlchemy documentation for SQLite transactions. The ``begin`` li
 ``BEGIN`` of its kind, and the driver still ends a transaction with ``COMMIT`` or ``ROLLBACK`` when the session asks.
 On connect each connection turns on foreign keys, so the ``ON DELETE CASCADE`` of the rows of a book works, puts the
 database in the write-ahead log mode with ``synchronous=NORMAL``, and gets a busy timeout, the longest wait limit of a
-unit of work, through the ``timeout`` argument of the driver. The busy timeout matters only to a lock held by another
-process, such as a migration run by hand, because within the process the write queue is the only contention. The
+catalogue database, through the ``timeout`` argument of the driver. The busy timeout matters only to a lock held by
+another process, such as a migration run by hand, because within the process the write queue is the only contention. The
 write-ahead log appends a commit to the log without the ``fsync`` of the database file, which SQLite documents as the
 setting for it. A power loss may lose the last commits but never corrupts the file. The mode is stored in the file, so
 the first connection switches it and the others find it set. It needs every process that opens the file to share its
@@ -45,7 +45,7 @@ for each file, so a write of one book never waits for a write of another book or
 anyio wakes the waiters of a semaphore in the order they asked, which :func:`hold_in_turn` explains, so a write that
 came early is never overtaken by one that came later, and the busy timeout of SQLite, whose waiting connection sleeps
 and tries again, is never the queue. The wait
-limit of the unit of work bounds only the wait for the queue and never the work, and a running work is never
+limit of a change bounds only the wait for the queue and never the work, and a running work is never
 cancelled, since ``to_thread.run_sync`` shields it, so a transaction is not abandoned half way. The readers share a
 capacity limiter of their own that is as large as the reader pool, which a read waits for without a limit.
 
@@ -61,16 +61,16 @@ for the queue, so its parent is the span current where the caller asked, and end
 - ``block.outcome``: committed, rolled back, or not begun when the write was refused the queue or the lock.
 
 The configuration differs from advanced-alchemy's defaults in two places: sessions keep their objects usable after
-commit, because a route maps them to a response after the unit of work committed, and the listener that touches
-``updated_at`` on every flush is off, because the domain sets ``updated_at`` through its ``Clock`` and the listener
-would overwrite it with the wall clock. The options of autogenerate, such as comparing column types, are set in
+commit, because a route maps them to a response after the transaction committed, and the listener that touches
+``updated_at`` on every flush is off, because the domain sets ``updated_at`` itself and the listener
+would overwrite it with the current time. The options of autogenerate, such as comparing column types, are set in
 ``migrations/env.py``, because advanced-alchemy 1.11.0 does not hand those of ``AlembicSyncConfig`` to Alembic.
 
 The schema of each kind of file is created and changed only by the revisions in its directory under ``migrations/``.
 Those of the catalogue are applied by hand, and the application reads :meth:`SqlDatabase.schema_revisions` at start
 and refuses to run against a catalogue it was not written for, which costs one read of the version table. A book is
 brought to the head revision of its schema when it is opened, by
-:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookDatabases`.
+:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookRegistry`.
 """
 
 import enum
@@ -108,7 +108,7 @@ if TYPE_CHECKING:
     from sqlalchemy.pool import ConnectionPoolEntry
 
     from bookreviver.domain.enums import BlockKind
-    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.ids import BookDirectoryName
     from bookreviver.ports.tracing import StartedSpan, Tracer
 
 SQLITE_DIALECT: str = 'sqlite'
@@ -288,7 +288,7 @@ async def hold_in_turn(lock: anyio.Semaphore, *, wait_seconds: float) -> AsyncIt
 
     ``anyio.Semaphore`` wakes its waiters first in, first out, because it keeps them in a deque, which anyio 4.15 shows
     in ``anyio/_backends/_asyncio.py``. An ``anyio.Lock`` is no choice here: a lock belongs to the task that took it and
-    refuses that task a second time at once, while the holder of the semaphore is the unit of work, as a database holds
+    refuses that task a second time at once, while the holder of the semaphore is the change itself, as a database holds
     its lock for a connection. Only the wait is limited, never the holding.
 
     :param lock: Semaphore of one token, which the block takes.
@@ -338,8 +338,8 @@ class SqlDatabase:
         :type schema: Schema
         :param tracer: Tracer the write blocks are timed with.
         :type tracer: Tracer
-        :param wait_seconds: The busy timeout every connection gets when it opens, which is the longest limit a unit of
-                             work may have; the module docstring says what it is for.
+        :param wait_seconds: The busy timeout every connection gets when it opens, which is the longest limit a change
+                             may have; the module docstring says what it is for.
         :type wait_seconds: float
         :param readers: How many reads run at once.
         :type readers: int
@@ -406,7 +406,7 @@ class SqlDatabase:
             return work(session)
 
     async def write[T](
-        self, work: Callable[[Session], T], *, kind: BlockKind, book: BookId | None, wait_seconds: float
+        self, work: Callable[[Session], T], *, kind: BlockKind, book: BookDirectoryName | None, wait_seconds: float
     ) -> T:
         """Run ``work`` in a worker thread on a session of a transaction that writes, and commit it when it returns.
 
@@ -419,8 +419,8 @@ class SqlDatabase:
         :type work: Callable[[Session], T]
         :param kind: Kind of the block, which its span carries.
         :type kind: BlockKind
-        :param book: Book the block holds, or None for a block outside the content of a book.
-        :type book: BookId | None
+        :param book: Directory name of the book the block holds, or None for a block outside the content of a book.
+        :type book: BookDirectoryName | None
         :param wait_seconds: How long the write waits for the queue before it gives up.
         :type wait_seconds: float
         :returns: What the work returns.

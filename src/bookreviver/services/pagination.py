@@ -1,7 +1,7 @@
 """The pagination sections of a book, and the numbering of a range of pages that makes one.
 
 A section numbers the pages from the page it starts at, and the labels of the pages are computed from the sections when
-they are read, so a use case that changes a section writes no label, and the unit of work tells the browser that the
+they are read, so a use case that changes a section writes no label, and the browser is told that the
 pages changed once the transaction committed.
 
 ``number`` keeps the older way of numbering a range of pages, which is now a way of making sections. It makes a section
@@ -11,6 +11,7 @@ numbered by it. The sections that started inside the range are replaced, and the
 manual labels, which the older numbering overwrote too.
 """
 
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -23,7 +24,6 @@ from bookreviver.domain.errors import ConflictError, NotFoundError, ReversedRang
 from bookreviver.domain.ids import PaginationSectionId
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import NumberedPage, Slice
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_labels import PageLabels
 
 if TYPE_CHECKING:
@@ -32,8 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import PageNumbering, PaginationSectionDraft, SliceRequest
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 
 NUMBERED_PAGES: str = 'Numbered pages'
@@ -76,17 +75,9 @@ class NumberingPlan:
 class PaginationService:
     """Lists, makes, changes and removes the pagination sections of the acting account's books."""
 
-    def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
-        """Work over the ports of one request.
-
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
-        :param clock: Clock stamping the sections and pages it writes.
-        :type clock: Clock
-        """
-        self._uow = uow
-        self._clock = clock
-        self._labels = PageLabels(clock=clock)
+    def __init__(self) -> None:
+        """Work over the ports of one request."""
+        self._labels = PageLabels()
 
     async def sections(self, book: Book, request: SliceRequest) -> Slice[PaginationSection]:
         """List the sections of a book in book order, the order of the pages they start at.
@@ -114,7 +105,7 @@ class PaginationService:
             ordered = sorted(sections, key=lambda section: (position[section.first_page_id], section.is_series))
             return Slice(items=ordered[request.offset : request.offset + request.limit], total=len(ordered))
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def add(self, book: Book, draft: PaginationSectionDraft) -> PaginationSection:
         """Make a section, and renumber the pages it takes.
@@ -129,7 +120,7 @@ class PaginationService:
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
         """
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         section = PaginationSection(
             id=PaginationSectionId(uuid4()),
             **asdict(draft, recurse=False),
@@ -156,7 +147,7 @@ class PaginationService:
             self._labels.settle(repos)
             return stored
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def update(
         self, book: Book, section_id: PaginationSectionId, draft: PaginationSectionDraft
@@ -192,7 +183,7 @@ class PaginationService:
             section = evolve(
                 repos.pagination_sections.get(section_id),
                 **asdict(draft, recurse=False),
-                updated_at=self._clock.now(),
+                updated_at=datetime.now(UTC),
             )
             repos.pages.get(section.first_page_id)
             self._require_no_clash(repos, section)
@@ -200,7 +191,7 @@ class PaginationService:
             self._labels.settle(repos)
             return stored
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def remove(self, book: Book, section_id: PaginationSectionId) -> None:
         """Remove a section, and renumber the pages it numbered, which fall to the section before it.
@@ -227,7 +218,7 @@ class PaginationService:
             repos.pagination_sections.delete(section.id)
             self._labels.settle(repos)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     async def number(self, book: Book, numbering: PageNumbering) -> None:
         """Make the sections that number a range of pages, and drop the manual labels of the pages they number.
@@ -260,7 +251,7 @@ class PaginationService:
             repos.pagination_sections.add_many(plan.added)
             self._labels.settle(repos, unpin=plan.counted)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     async def preview_numbers(self, book: Book, numbering: PageNumbering) -> list[NumberedPage]:
         """Give the labels a numbering would write, without writing any.
@@ -290,7 +281,7 @@ class PaginationService:
             """
             return self._plan(repos, numbering)
 
-        plan = await self._uow.read_book(book.id, work)
+        plan = await book.read(work)
         labels = plan.labels()
         return [NumberedPage(page_id=page.id, label=labels[page.id]) for page in plan.pages if page.id in plan.counted]
 
@@ -306,7 +297,7 @@ class PaginationService:
         :raises NotFoundError: If the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         """
-        pages = book_pages(repos.pages)
+        pages = repos.pages.list_all()
         position = {page.id: index for index, page in enumerate(pages)}
         if numbering.first_page_id not in position:
             raise NotFoundError(numbering.first_page_id)
@@ -319,7 +310,7 @@ class PaginationService:
             page.id for page in pages[first : last + 1] if page.included and page.kind not in numbering.skip_kinds
         )
 
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         make = partial(PaginationSection, created_at=moment, updated_at=moment)
         added = [
             make(

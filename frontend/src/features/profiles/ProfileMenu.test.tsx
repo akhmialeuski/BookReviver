@@ -26,9 +26,9 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  createProfileApiV1RecipeProfilesPost: sdk.create,
-  listProfilesApiV1RecipeProfilesGet: sdk.list,
-  putProfileApiV1RecipeProfilesProfileIdPut: sdk.replace,
+  createProfileApiV1BooksBookIdRecipeProfilesPost: sdk.create,
+  listProfilesApiV1BooksBookIdRecipeProfilesGet: sdk.list,
+  putProfileApiV1BooksBookIdRecipeProfilesProfileIdPut: sdk.replace,
   putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePut: sdk.link,
   listRecipesApiV1BooksBookIdStagesStageRecipesGet: sdk.recipes,
   putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.saveRecipe,
@@ -265,7 +265,7 @@ describe('ProfileMenu', () => {
 
     expect(sdk.replace).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: { profile_id: 'p1' },
+        path: { book_id: 'book', profile_id: 'p1' },
         body: { name: 'Photographed book', steps: bodyOf(off), order: 'usual' },
       }),
     );
@@ -352,7 +352,7 @@ describe('ProfileMenu', () => {
     expect(byId('profile-save-new')).toHaveProperty('disabled', true);
   });
   describe('the other profiles of the stage and the library', () => {
-    const OTHER = profile('p2', { name: 'Clean flatbed scan', is_default: true });
+    const OTHER = profile('p2', { name: 'Clean flatbed scan' });
 
     it('lists the profiles of the stage other than the one of the recipe', async () => {
       sdk.list.mockResolvedValue(profilePage([PROFILE, OTHER]));

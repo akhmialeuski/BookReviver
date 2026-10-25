@@ -91,11 +91,11 @@ def threads_per_process(*, processes: int) -> int:
 class _Worker:
     """What a pool process keeps between its calls, set by the initializer.
 
-    :cvar catalogue: The processors of this process, or None before the initializer ran.
+    :cvar processors: The processors of this process, or None before the initializer ran.
     :cvar barrier: Where the calls of the warm-up wait for each other, or None before the initializer ran.
     """
 
-    catalogue: ClassVar[ProcessorCatalog | None] = None
+    processors: ClassVar[ProcessorCatalog | None] = None
     barrier: ClassVar[Barrier | None] = None
 
 
@@ -111,7 +111,7 @@ def _initialize(source: Callable[[], ProcessorCatalog], threads: int, barrier: B
     """
     for variable in ThreadVariable:
         os.environ[variable] = str(threads)
-    _Worker.catalogue = source()
+    _Worker.processors = source()
     _Worker.barrier = barrier
 
 
@@ -142,9 +142,9 @@ def _run_step(processor_key: str, scale: VersionScale, step_input: StepInput) ->
     :raises NotFoundError: If the catalogue has no processor with this key.
     :raises DomainError: If the processor cannot run on this input.
     """
-    if _Worker.catalogue is None:
+    if _Worker.processors is None:
         raise RuntimeError(NOT_INITIALIZED_MESSAGE)
-    processor = _Worker.catalogue.get(processor_key)
+    processor = _Worker.processors.get(processor_key)
     work = processor.run if scale is VersionScale.FULL else processor.preview
     try:
         return work(step_input)

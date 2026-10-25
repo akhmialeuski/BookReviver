@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Actor
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.recording_tracer import RecordingTracer
 
 pytestmark = pytest.mark.anyio
@@ -106,22 +106,28 @@ class TestRequestSpan:
     """Tests for the span of a request, read from the tracer the application was given."""
 
     async def test_request_is_timed_under_the_template_of_its_route_not_its_path(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_tracer: RecordingTracer
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_tracer: RecordingTracer,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the span names the route with its parameter in braces, though the path holds the book's identifier.
 
         :param fx_client: Client talking to the application with tracing on.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_tracer: Tracer the application was given.
         :type fx_tracer: RecordingTracer
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
-        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}')
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_id}')
         (span,) = fx_tracer.named(SpanName.HTTP_REQUEST)
         expect(response.status_code == status.HTTP_200_OK)
         expect(span.attributes[SpanAttribute.ROUTE] == BOOK_TEMPLATE)

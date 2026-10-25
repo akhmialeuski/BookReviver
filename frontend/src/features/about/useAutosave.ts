@@ -1,10 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type BookSchema, updateBookApiV1BooksBookIdPatch } from '@/api';
-import {
-  bookApiV1BooksBookIdGetQueryKey,
-  updateBookApiV1BooksBookIdPatchMutation,
-} from '@/api/@tanstack/react-query.gen';
+import { updateBookApiV1BooksBookIdPatchMutation } from '@/api/@tanstack/react-query.gen';
 import { type SaveState, saveState } from '@/features/about/autosave';
 import {
   type EditableFields,
@@ -71,14 +68,10 @@ export function useAutosave(book: BookSchema): Autosave {
 
   const { mutate, isPending, error } = useMutation({
     ...updateBookApiV1BooksBookIdPatchMutation(),
-    onSuccess: (updated, variables) => {
+    onSuccess: (_data, variables) => {
       setSettledKey(JSON.stringify(variables.body));
       setFailedKey('');
       setSavedAt(new Date());
-      queryClient.setQueryData(
-        bookApiV1BooksBookIdGetQueryKey({ path: { book_id: updated.id } }),
-        updated,
-      );
     },
     onError: (_error, variables) => setFailedKey(JSON.stringify(variables.body)),
   });

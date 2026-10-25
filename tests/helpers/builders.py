@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from attrs import frozen
+
 from bookreviver.domain.entities import (
     BookPlace,
     BookRecord,
@@ -52,6 +54,7 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
+    BookDirectoryName,
     BookId,
     JobId,
     PageHistoryEntryId,
@@ -70,6 +73,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.helpers.storage import SharedBookDirectories
 from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
     BookDetails,
@@ -83,6 +88,8 @@ from bookreviver.domain.values import (
 )
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+# Largest number of undelivered events each subscriber of a test's event bus keeps
+EVENT_QUEUE_SIZE: int = 16
 # A description with every field filled in, in the shape of a pre-reform Belarusian edition
 FULL_DETAILS: BookDetails = BookDetails(
     title='Беларускія народныя казкі',
@@ -145,49 +152,94 @@ def new_account_id() -> AccountId:
     return AccountId(uuid4())
 
 
+def new_book_id() -> BookId:
+    """Return a fresh book identifier.
+
+    :returns: Random identifier of a book that exists nowhere else.
+    :rtype: BookId
+    """
+    return BookId(uuid4())
+
+
+def directory_of(book_id: BookId) -> BookDirectoryName:
+    """Name the directory of a book of a test as the books service names a new one, by the text of its identifier.
+
+    :param book_id: The book.
+    :type book_id: BookId
+    :returns: The name of the directory of the book.
+    :rtype: BookDirectoryName
+    """
+    return BookDirectoryName(str(book_id))
+
+
 def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
-    """Build a book updated ``minutes`` after the epoch.
+    """Build the record of a book updated ``minutes`` after the epoch.
 
     :param title: Title of the book.
     :type title: str
     :param minutes: Minutes after ``EPOCH`` the book was created and last updated.
     :type minutes: int
-    :returns: A book with a fresh identifier and no source.
+    :returns: The record of a book with no source.
     :rtype: BookRecord
     """
     moment = EPOCH + timedelta(minutes=minutes)
-    return BookRecord(
-        id=BookId(uuid4()),
-        details=BookDetails(title=title),
-        created_at=moment,
-        updated_at=moment,
-    )
+    return BookRecord(details=BookDetails(title=title), created_at=moment, updated_at=moment)
 
 
-def open_for(actor: Actor, book_id: BookId) -> Book:
-    """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
+@frozen
+class BookOpener:
+    """Opens the books of a test with their databases, as the access dependencies open them for a request.
 
-    :param actor: Account the book is opened for, which the test made its owner.
-    :type actor: Actor
+    A test that opens a book also seeds the catalogue and reads and writes the databases and the files of the books, so
+    the opener hands out the catalogue databases, the databases and the file stores of the test too.
+
+    :ivar catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+    :ivar databases: Opens the databases of the books of the test.
+    :ivar files: The directories of the books of the test, with their source stores and asset stores.
+    """
+
+    catalogue: CatalogueDatabaseFactory
+    databases: LocatedBookDatabases
+    files: SharedBookDirectories
+
+    def __call__(self, actor: Actor, book_id: BookId) -> Book:
+        """Open a book for the actor, without reading the library.
+
+        :param actor: Account the book is opened for, which the test made its owner.
+        :type actor: Actor
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
+        :returns: The open book.
+        :rtype: Book
+        """
+        return open_for(actor, book_id)
+
+
+def open_for(_actor: Actor, book_id: BookId) -> Book:
+    """Open a book as the access dependency ``open_book`` does, without reading the library.
+
+    The book opens its directory and its database by its directory name, so the test has registered them. A book holds
+    no owner, so the account only says who the test acts as.
+
+    :param _actor: Account the book is opened for, which the test made its owner.
+    :type _actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :returns: The open book.
     :rtype: Book
     """
-    return Book(book_id, actor.account_id)
+    return Book(directory_of(book_id))
 
 
-def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:
+def make_book_change(*, version: int = 1) -> BookChanged:
     """Build a committed change of the description of a book, which a test publishes as any event of the book.
 
-    :param book_id: The book.
-    :type book_id: BookId
     :param version: The version of the book after the change.
     :type version: int
     :returns: The change.
     :rtype: BookChanged
     """
-    return BookChanged(book_id=book_id, version=version, resources=frozenset({BookResource.RECORD}))
+    return BookChanged(version=version, resources=frozenset({BookResource.RECORD}))
 
 
 def make_page(
@@ -316,7 +368,6 @@ def make_page_version(*, page_id: PageId, minutes: int = 0) -> PageVersion:
 
 def make_job(
     *,
-    book_id: BookId,
     state: JobState = JobState.QUEUED,
     minutes: int = 0,
     kind: JobKind = JobKind.IMPORT_SOURCE,
@@ -324,8 +375,6 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
-    :param book_id: Book the job imports into.
-    :type book_id: BookId
     :param state: State of the job.
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.
@@ -339,7 +388,6 @@ def make_job(
     """
     return Job(
         id=JobId(uuid4()),
-        book_id=book_id,
         kind=kind,
         state=state,
         params={} if params is None else params,
@@ -377,22 +425,16 @@ def make_recipe(
 
 def make_recipe_profile(
     *,
-    account_id: AccountId,
     stage: Stage = Stage.GEOMETRY,
     steps: tuple[Step, ...] | None = None,
-    is_default: bool = False,
     minutes: int = 0,
 ) -> RecipeProfile:
-    """Build a profile of an account named ``Photographed book``, saved ``minutes`` after the epoch.
+    """Build a profile of a book named ``Photographed book``, saved ``minutes`` after the epoch.
 
-    :param account_id: Account owning the profile.
-    :type account_id: AccountId
     :param stage: Stage whose recipes the profile fits.
     :type stage: Stage
     :param steps: Steps of the profile, or None for one deskew step.
     :type steps: tuple[Step, ...] | None
-    :param is_default: Whether the profile is the default of its stage.
-    :type is_default: bool
     :param minutes: Minutes after ``EPOCH`` the profile was saved.
     :type minutes: int
     :returns: A profile with a fresh identifier.
@@ -401,11 +443,9 @@ def make_recipe_profile(
     moment = EPOCH + timedelta(minutes=minutes)
     return RecipeProfile(
         id=RecipeProfileId(uuid4()),
-        account_id=account_id,
         stage=stage,
         name='Photographed book',
         steps=steps or (Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
-        is_default=is_default,
         created_at=moment,
         updated_at=moment,
     )

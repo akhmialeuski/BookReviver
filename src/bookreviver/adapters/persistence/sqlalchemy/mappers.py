@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any, override
 
 from attrs import asdict
 
-from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
+    BOOK_RECORD_ID,
     BookPlaceRow,
     BookRecordRow,
     GroupValuesRow,
@@ -40,7 +40,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 from bookreviver.domain.entities import (
     BookPlace,
     BookRecord,
-    LibraryEntry,
     Page,
     PageEdit,
     PageHistoryEntry,
@@ -49,15 +48,12 @@ from bookreviver.domain.entities import (
     PageVersion,
     PaginationSection,
     Recipe,
-    RecipeProfile,
     Scan,
     Source,
 )
 from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, TransformKind, ValueScope
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
-    AccountId,
-    BookId,
     ChangeBatchId,
     PageHistoryEntryId,
     PageId,
@@ -162,32 +158,6 @@ class RowMapper[EntityT, RowT](ABC):
         """
 
 
-class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
-    """Translation of an entry of the library, whose columns are its fields."""
-
-    @override
-    def to_entity(self, row: LibraryRow) -> LibraryEntry:
-        """Build the entry stored in ``row``.
-
-        :param row: Library row loaded from the catalogue.
-        :type row: LibraryRow
-        :returns: The entry.
-        :rtype: LibraryEntry
-        """
-        return LibraryEntry(book_id=BookId(row.book_id), owner_id=AccountId(row.owner_id), added_at=row.added_at)
-
-    @override
-    def to_row(self, entity: LibraryEntry) -> LibraryRow:
-        """Build the row of ``entity``.
-
-        :param entity: Entry to store.
-        :type entity: LibraryEntry
-        :returns: Transient library row.
-        :rtype: LibraryRow
-        """
-        return LibraryRow(book_id=entity.book_id, owner_id=entity.owner_id, added_at=entity.added_at)
-
-
 class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
     """Translation of the record of a book, whose description is flattened into columns."""
 
@@ -230,7 +200,6 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
             notes=row.notes,
         )
         return BookRecord(
-            id=BookId(row.id),
             details=details,
             image_policy=row.image_policy,
             created_at=row.created_at,
@@ -248,7 +217,7 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
         """
         details = entity.details
         return BookRecordRow(
-            id=entity.id,
+            id=BOOK_RECORD_ID,
             title=details.title,
             subtitle=details.subtitle,
             parallel_titles=list(details.parallel_titles),
@@ -981,52 +950,6 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             kind=entity.kind,
             steps=[step.to_map() for step in entity.steps],
             profile_id=entity.profile_id,
-            created_at=entity.created_at,
-            updated_at=entity.updated_at,
-        )
-
-
-class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
-    """Translation of a recipe profile, whose steps are a JSON list."""
-
-    @override
-    def to_entity(self, row: RecipeProfileRow) -> RecipeProfile:
-        """Build the profile stored in ``row``.
-
-        :param row: Profile row loaded from the database.
-        :type row: RecipeProfileRow
-        :returns: The profile with its steps.
-        :rtype: RecipeProfile
-        """
-        return RecipeProfile(
-            id=RecipeProfileId(row.id),
-            account_id=AccountId(row.account_id),
-            stage=row.stage,
-            name=row.name,
-            steps=tuple(Step.from_map(step) for step in row.steps),
-            order=row.order,
-            is_default=row.is_default,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        )
-
-    @override
-    def to_row(self, entity: RecipeProfile) -> RecipeProfileRow:
-        """Build the row of ``entity``.
-
-        :param entity: Profile to store.
-        :type entity: RecipeProfile
-        :returns: Transient profile row.
-        :rtype: RecipeProfileRow
-        """
-        return RecipeProfileRow(
-            id=entity.id,
-            account_id=entity.account_id,
-            stage=entity.stage,
-            name=entity.name,
-            steps=[step.to_map() for step in entity.steps],
-            order=entity.order,
-            is_default=entity.is_default,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
         )

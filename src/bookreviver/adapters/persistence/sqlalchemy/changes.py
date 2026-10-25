@@ -42,6 +42,7 @@ PART_OF_TABLE: Final[Mapping[str, BookResource]] = {
     'step_changes': BookResource.HISTORY,
     'page_history': BookResource.HISTORY,
     'recipes': BookResource.RECIPES,
+    'recipe_profiles': BookResource.RECIPES,
 }
 # The events of the session the parts are found from
 AFTER_FLUSH: Final = 'after_flush'

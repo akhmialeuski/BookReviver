@@ -11,30 +11,32 @@ from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import make_page_version
+from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.ports.storage import AssetStore
+    from tests.helpers.storage import DirectoryOpener
 
 pytestmark = pytest.mark.anyio
 
-KEYS: BookKeys = BookKeys(BookId(uuid4()))
+# The book whose asset store most of the contract writes to
+BOOK_ID: BookId = BookId(uuid4())
 PAGE_ID: PageId = PageId(uuid4())
-PAGE_PREFIX: StorageKey = KEYS.page(PAGE_ID)
-FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.FULL_JPEG)
-DIRECTORY_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES)
+PAGE_PREFIX: StorageKey = BookKeys.page(PAGE_ID)
+FILE_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.FULL_JPEG)
+DIRECTORY_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES)
 # Shares the prefix as a string but not as a path segment, so it must survive deleting the prefix
 SIBLING_KEY: StorageKey = StorageKey(f'{PAGE_PREFIX}0/{Rendition.FULL_JPEG}')
 # A key beside the file and the directory, in a directory of its own so deleting their prefix leaves it
-COPY_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
+COPY_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
 TILE_NAME: str = 'info.json'
 CASE_ARG: str = 'case'
 KEY_ARG: str = 'key'
-OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of a book'
-SOURCE_FILE_KEY: StorageKey = StorageKey(f'{KEYS.source(SourceId(uuid4()))}/book.pdf')
+OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of book'
+SOURCE_FILE_KEY: StorageKey = StorageKey(f'{BookKeys.source(SourceId(uuid4()))}/book.pdf')
 # Keys that are not under the assets of a book, by the name of their case; the names are fixed so that every worker
 # of a parallel run collects the same tests, while some keys hold a new identifier on each import
 OUTSIDE_ASSETS_KEYS: dict[str, str] = {
@@ -42,22 +44,35 @@ OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'absolute': '/etc/passwd',
     'climbing': '../outside',
     'root': 'projects',
-    'project': str(KEYS.prefix),
-    'incoming-area': KEYS.incoming_area,
-    'upload': KEYS.incoming(JobId(uuid4())),
-    'sources-area': KEYS.sources_area,
+    'book-directory': f'projects/{BOOK_ID}',
+    'incoming-area': BookKeys.INCOMING_AREA,
+    'upload': BookKeys.incoming(JobId(uuid4())),
+    'sources-area': BookKeys.SOURCES_AREA,
     'source-file': SOURCE_FILE_KEY,
-    # The whole area is removed by delete_book alone
-    'assets-area': KEYS.assets_area,
-    'climbing-out-of-assets': f'{KEYS.assets_area}/../sources',
+    # The whole area goes only with the directory of its book
+    'assets-area': BookKeys.ASSETS_AREA,
+    'climbing-out-of-assets': f'{BookKeys.ASSETS_AREA}/../sources',
     'empty-segment': f'{PAGE_PREFIX}//full.jpg',
     'not-a-project': f'projects/book/assets/{Rendition.FULL_JPEG}',
-    'project-in-other-spelling': f'projects/{str(KEYS.book_id).upper()}/assets/book/typesetting',
+    # A key that names the directory of its book, as the keys of a book did before they named it from there
+    'with-the-book-directory': f'projects/{BOOK_ID}/assets/book/typesetting',
 }
 OLD_CONTENT: bytes = b'old image'
 NEW_CONTENT: bytes = b'new image'
 # Longer than the other two, so a size that adds the wrong files up does not come out right by chance
 TILE_CONTENT: bytes = b'a tile of the pyramid of the image'
+
+
+@pytest.fixture
+def fx_asset_store(fx_stores: DirectoryOpener) -> AssetStore:
+    """Return the asset store of the book ``BOOK_ID`` in the storage backend under test.
+
+    :param fx_stores: Opens the stores of a book of the storage backend under test.
+    :type fx_stores: DirectoryOpener
+    :returns: The asset store of the book.
+    :rtype: AssetStore
+    """
+    return fx_stores(directory_of(BOOK_ID)).assets
 
 
 def _fill_file(path: Path, content: bytes) -> None:
@@ -491,45 +506,3 @@ class TestSizeOf:
         """
         with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
             await fx_asset_store.size_of(StorageKey(key))
-
-
-class TestDeleteBook:
-    """Contract of AssetStore.delete_book()."""
-
-    async def test_removes_every_derived_file_of_the_book_only(self, fx_asset_store: AssetStore) -> None:
-        """Verify the book's page image and pyramid are gone and another book's page image stays.
-
-        :param fx_asset_store: Asset store of the storage backend under test.
-        :type fx_asset_store: AssetStore
-        """
-        keys, other_keys = BookKeys(BookId(uuid4())), BookKeys(BookId(uuid4()))
-        version = make_page_version(page_id=PageId(uuid4()))
-        full, tiles = (
-            keys.version_rendition(version, Rendition.FULL_JPEG),
-            keys.version_rendition(version, Rendition.TILES),
-        )
-        other_full = other_keys.version_rendition(version, Rendition.FULL_JPEG)
-        await _store_file(fx_asset_store, key=full, content=NEW_CONTENT)
-        await _store_directory(fx_asset_store, key=tiles, content=NEW_CONTENT)
-        await _store_file(fx_asset_store, key=other_full, content=NEW_CONTENT)
-
-        await fx_asset_store.delete_book(keys.book_id)
-
-        expect(not await _is_stored(fx_asset_store, full))
-        expect(not await _is_stored(fx_asset_store, tiles))
-        expect(await _is_stored(fx_asset_store, other_full))
-        assert_expectations()
-
-    async def test_book_without_files_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
-        """Verify deleting a book that never had a derived file succeeds, as for a book never imported.
-
-        :param fx_asset_store: Asset store of the storage backend under test.
-        :type fx_asset_store: AssetStore
-        """
-        keys = BookKeys(BookId(uuid4()))
-
-        await fx_asset_store.delete_book(keys.book_id)
-
-        assert not await _is_stored(
-            fx_asset_store, keys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
-        )

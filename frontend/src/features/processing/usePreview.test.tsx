@@ -58,7 +58,6 @@ function made(id: string, angle: number): PageVersionSchema {
 function jobOf(id: string, state: JobSchema['state'] = 'running'): JobSchema {
   return {
     id,
-    book_id: BOOK,
     kind: 'preview-step',
     stage: null,
     state,
@@ -106,7 +105,7 @@ describe('usePreview', () => {
         BOOK,
         {
           event: EventName.PageVersionReady,
-          data: { book_id: BOOK, page_id: PAGE, version_id: id },
+          data: { page_id: PAGE, version_id: id },
         },
         { version: null },
       ),

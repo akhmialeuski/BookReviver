@@ -1,4 +1,4 @@
-"""Every JobBoard adapter set up with a scripted runner a test can read back, for the port contract.
+"""Every BookJobs adapter set up with a scripted runner a test can read back, for the port contract.
 
 ``InMemoryJobBoard`` runs the queue of a book by itself, and ``FakeJobBoard`` runs it when it is told to, so the rig
 lets a test start the queues in one way for both. The runner is scripted: it logs when each job begins and returns, it
@@ -14,8 +14,8 @@ import anyio
 from attrs import frozen
 
 from bookreviver.adapters.jobs.board import InMemoryJobBoard
-from tests.helpers.builders import EPOCH
-from tests.helpers.clock import FixedClock
+from bookreviver.ports.runtime import BookJobs
+from tests.helpers.builders import directory_of
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -23,11 +23,11 @@ from tests.helpers.scripted_runner import ScriptedRunner
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
 
-    from bookreviver.ports.runtime import JobBoard
+    from bookreviver.domain.ids import BookId
 
 
 class BoardAdapter(enum.StrEnum):
-    """An adapter of the JobBoard port under test."""
+    """An adapter of the job board under test."""
 
     IN_MEMORY = 'in-memory'
     FAKE = 'fake'
@@ -37,16 +37,26 @@ class BoardAdapter(enum.StrEnum):
 class BoardUnderTest:
     """A job board with its scripted runner, and the way to let its queues run.
 
-    :ivar board: The adapter under test.
+    :ivar board: The adapter under test, which is registered as the way a book opens its job queue.
     :ivar runner: The runner the board runs its jobs with.
     :ivar events: The events the board announced.
     :ivar start: Lets the queues of the jobs put so far run, which the real board has done already.
     """
 
-    board: JobBoard
+    board: InMemoryJobBoard
     runner: ScriptedRunner
     events: RecordingEventBus
     start: Callable[[], None]
+
+    def jobs(self, book_id: BookId) -> BookJobs:
+        """Open the job queue of a book on the board under test.
+
+        :param book_id: The book.
+        :type book_id: BookId
+        :returns: The queue of the book.
+        :rtype: BookJobs
+        """
+        return BookJobs.open(directory_of(book_id))
 
 
 @asynccontextmanager
@@ -62,20 +72,22 @@ async def open_board_under_test(adapter: BoardAdapter, *, kept_ended: int = 20) 
     """
     runner = ScriptedRunner()
     events = RecordingEventBus()
-    clock = FixedClock(EPOCH)
-    match adapter:
-        case BoardAdapter.IN_MEMORY:
-            async with InMemoryJobBoard(runner=runner, publisher=events, clock=clock, kept_ended=kept_ended) as board:
-                yield BoardUnderTest(board=board, runner=runner, events=events, start=lambda: None)
-        case BoardAdapter.FAKE:
-            fake = FakeJobBoard(runner=runner, publisher=events, clock=clock, kept_ended=kept_ended)
-            async with anyio.create_task_group() as group:
+    with events.installed():
+        match adapter:
+            case BoardAdapter.IN_MEMORY:
+                async with InMemoryJobBoard(runner=runner, kept_ended=kept_ended) as board:
+                    BookJobs.register(board.open)
+                    yield BoardUnderTest(board=board, runner=runner, events=events, start=lambda: None)
+            case BoardAdapter.FAKE:
+                fake = FakeJobBoard(runner=runner, kept_ended=kept_ended)
+                BookJobs.register(fake.open)
+                async with anyio.create_task_group() as group:
 
-                def start() -> None:
-                    """Let the queues of the jobs put so far run, in a task of the rig."""
-                    group.start_soon(fake.run_queued)
+                    def start() -> None:
+                        """Let the queues of the jobs put so far run, in a task of the rig."""
+                        group.start_soon(fake.run_queued)
 
-                try:
-                    yield BoardUnderTest(board=fake, runner=runner, events=events, start=start)
-                finally:
-                    group.cancel_scope.cancel()
+                    try:
+                        yield BoardUnderTest(board=fake, runner=runner, events=events, start=start)
+                    finally:
+                        group.cancel_scope.cancel()

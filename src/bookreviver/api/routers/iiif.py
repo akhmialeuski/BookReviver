@@ -6,8 +6,8 @@ tile from. The stored document never names its book, so a book imported under a 
 domain, port or device address, keeps every pyramid it has.
 
 The key of a file carries the version of its renditions, so the content behind a key never changes and browsers cache
-it for good. No account and no owner is checked: anyone who has the key of a file reads it, and the key holds the
-identifier of its book, which only the owner is told. On a server a reverse proxy can take over ``/iiif``, since all
+it for good. No account and no owner is checked: anyone who has the address of a file reads it, and the address holds
+the identifier of its book, which only the owner is told. On a server a reverse proxy can take over ``/iiif``, since all
 files are served alike.
 """
 
@@ -22,12 +22,13 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import FileResponse, Response
 
+from bookreviver.api.access import BOOK_ID_DESCRIPTION
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
 from bookreviver.api.schemas.types import AssetKey
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import StorageKey
-from bookreviver.services.pages import PageService
+from bookreviver.domain.ids import BookId, StorageKey
+from bookreviver.services.books import BooksService
 
 # Where the router is mounted below the API prefix, which a pyramid's ``info.json`` names as its address
 IIIF_PREFIX: str = '/iiif'
@@ -42,14 +43,18 @@ router = APIRouter(prefix=IIIF_PREFIX, tags=['iiif'], route_class=DishkaRoute)
 
 @inject
 async def opened_asset(
-    key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)], pages: FromDishka[PageService]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)],
+    books: FromDishka[BooksService],
 ) -> AsyncIterator[pathlib.Path]:
-    """Keep the stored file at ``key`` open until the response carrying it has been sent.
+    """Keep the stored file at ``key`` of a book open until the response carrying it has been sent.
 
-    :param key: Storage key of the file.
+    :param book_id: The book of the file, from the path.
+    :type book_id: BookId
+    :param key: Storage key of the file, relative to the directory of the book.
     :type key: AssetKey
-    :param pages: Page service of the request.
-    :type pages: PageService
+    :param books: Books service of the request.
+    :type books: BooksService
     :returns: Iterator yielding once the path of the file, and closing the file afterwards.
     :rtype: AsyncIterator[pathlib.Path]
     :raises NotFoundError: If the key is not under the ``assets/`` of a book, no file is stored there, or the key
@@ -58,7 +63,7 @@ async def opened_asset(
     # try/finally rather than a context manager around the yield, because FastAPI drives this generator
     opened = AsyncExitStack()
     try:
-        path = await opened.enter_async_context(pages.open_asset(StorageKey(key)))
+        path = await opened.enter_async_context(books.open_asset(book_id, StorageKey(key)))
         if not await anyio.Path(path).is_file():
             raise NotFoundError(key)
         yield path
@@ -66,7 +71,7 @@ async def opened_asset(
         await opened.aclose()
 
 
-@router.get('/{key:path}', name=RouteName.IIIF_FILE, response_class=FileResponse)
+@router.get('/{book_id}/{key:path}', name=RouteName.IIIF_FILE, response_class=FileResponse)
 async def iiif_file(
     key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)],
     path: Annotated[pathlib.Path, Depends(opened_asset)],
@@ -75,7 +80,7 @@ async def iiif_file(
     """Stream a stored file, and an image information document with its IIIF media type and the address of its pyramid.
 
     \N{FORM FEED}
-    :param key: Storage key of the file.
+    :param key: Storage key of the file, relative to the directory of the book.
     :type key: AssetKey
     :param path: Local path of the file, kept open until the response has been sent.
     :type path: pathlib.Path

@@ -27,7 +27,7 @@ import { Progress } from '@/shared/ui/progress';
  * which cancels it through the jobs route.
  */
 
-function JobRow({ job }: { job: JobSchema }): React.JSX.Element {
+function JobRow({ bookId, job }: { bookId: string; job: JobSchema }): React.JSX.Element {
   const stop = useMutation(cancelJobApiV1BooksBookIdJobsJobIdDeleteMutation());
   const labels = MESSAGES.activity;
   const time = formatTime(jobMoment(job));
@@ -64,7 +64,7 @@ function JobRow({ job }: { job: JobSchema }): React.JSX.Element {
             variant="ghost"
             size="sm"
             disabled={stop.isPending}
-            onClick={() => stop.mutate({ path: { book_id: job.book_id, job_id: job.id } })}
+            onClick={() => stop.mutate({ path: { book_id: bookId, job_id: job.id } })}
           >
             <XIcon />
             {labels.stop}
@@ -120,7 +120,7 @@ export function ActivityChip({ bookId }: { bookId: string }): React.JSX.Element 
         ) : (
           <ul className="max-h-96 divide-y overflow-y-auto">
             {recent.data.map((job) => (
-              <JobRow key={job.id} job={job} />
+              <JobRow key={job.id} bookId={bookId} job={job} />
             ))}
           </ul>
         )}

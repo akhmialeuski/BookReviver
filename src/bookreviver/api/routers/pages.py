@@ -7,12 +7,12 @@ so a client can offer to bring them back.
 
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Body, Depends, Path, Request, Response, status
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName
@@ -32,13 +32,10 @@ from bookreviver.api.schemas.pages import (
     ScanAttach,
 )
 from bookreviver.domain.entities import PageOverview
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.ids import BookId, PageId
 from bookreviver.services.book import Book
 from bookreviver.services.pages import PageService
 from bookreviver.services.pagination import PaginationService
-
-if TYPE_CHECKING:
-    from bookreviver.domain.ids import BookId
 
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
 LOCATION_HEADER: str = 'Location'
@@ -50,9 +47,11 @@ router = APIRouter(prefix='/books', tags=['pages'], route_class=DishkaRoute, dep
 class PagePath:
     """The two identifiers in the address of one page, read together so a route keeps to a few parameters.
 
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
 
 
@@ -88,6 +87,7 @@ class PageLinks:
 @router.get('/{book_id}/pages')
 async def list_pages(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     request: Request,
     params: Annotated[PageQuery, Depends()],
     pages: FromDishka[PageService],
@@ -97,6 +97,8 @@ async def list_pages(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param request: The request, whose application knows the route that serves the images.
     :type request: Request
     :param params: Page number and size from the query, the size up to a thousand, and the filter of included pages.
@@ -106,7 +108,7 @@ async def list_pages(
     :returns: One page of the manifest, whose items carry their position in the whole book.
     :rtype: ManifestPage[PageSchema]
     """
-    schema_of = partial(PageSchema.from_overview, request=request, book_id=book.id)
+    schema_of = partial(PageSchema.from_overview, request=request, book_id=book_id)
     pager = Pager[PageOverview, PageSchema](params, schema_of)
     return pager.page(await pages.manifest(book, pager.request, included_only=params.included))
 
@@ -115,6 +117,7 @@ async def list_pages(
 async def get_page(
     book: Annotated[Book, Depends(open_book)],
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     request: Request,
     pages: FromDishka[PageService],
 ) -> PageSchema:
@@ -125,6 +128,8 @@ async def get_page(
     :type book: Book
     :param page_id: Identifier of the page.
     :type page_id: PageId
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param request: The request, whose application knows the route that serves the images.
     :type request: Request
     :param pages: Page service of the request.
@@ -132,7 +137,7 @@ async def get_page(
     :returns: The page with its position in the book.
     :rtype: PageSchema
     """
-    return PageSchema.from_overview(await pages.get(book, page_id), request, book_id=book.id)
+    return PageSchema.from_overview(await pages.get(book, page_id), request, book_id=book_id)
 
 
 @router.post('/{book_id}/pages/{page_id}/move')
@@ -162,7 +167,7 @@ async def move_page(
     :rtype: PageSchema
     """
     moved = await pages.move(book, address.page_id, body.anchor)
-    return PageSchema.from_overview(moved, request, book_id=book.id)
+    return PageSchema.from_overview(moved, request, book_id=address.book_id)
 
 
 @router.post('/{book_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
@@ -272,7 +277,7 @@ async def update_page(
     :rtype: PageSchema
     """
     changed = await pages.update(book, address.page_id, body.to_changes())
-    return PageSchema.from_overview(changed, request, book_id=book.id)
+    return PageSchema.from_overview(changed, request, book_id=address.book_id)
 
 
 @router.post('/{book_id}/pages/labels', status_code=status.HTTP_204_NO_CONTENT)
@@ -328,6 +333,7 @@ async def preview_page_numbers(
 @router.post('/{book_id}/pages', status_code=status.HTTP_201_CREATED)
 async def create_page(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[PageCreate, Body()],
     links: Annotated[PageLinks, Depends()],
     pages: FromDishka[PageService],
@@ -341,6 +347,8 @@ async def create_page(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The kind and origin of the page, its place, and the size of a blank leaf.
     :type body: PageCreate
     :param links: The request and response, which build the page and its ``Location``.
@@ -350,12 +358,13 @@ async def create_page(
     :returns: The new page.
     :rtype: PageSchema
     """
-    return links.created(book.id, await pages.add(book, body.to_new_page()))
+    return links.created(book_id, await pages.add(book, body.to_new_page()))
 
 
 @router.post('/{book_id}/pages/batch', status_code=status.HTTP_201_CREATED)
 async def create_pages(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[PageCreateList, Body()],
     request: Request,
     pages: FromDishka[PageService],
@@ -371,6 +380,8 @@ async def create_pages(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param body: The pages to add, in the order they stand in where they share a place.
     :type body: PageCreateList
     :param request: The request, whose application knows the route that serves the images.
@@ -381,7 +392,7 @@ async def create_pages(
     :rtype: list[PageSchema]
     """
     added = await pages.add_many(book, [page.to_new_page() for page in body])
-    return [PageSchema.from_overview(overview, request, book_id=book.id) for overview in added]
+    return [PageSchema.from_overview(overview, request, book_id=book_id) for overview in added]
 
 
 @router.delete('/{book_id}/pages/{page_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -429,4 +440,4 @@ async def attach_scan(
     :rtype: PageSchema
     """
     bound = await pages.attach_scan(book, address.page_id, body.scan_id, take_over=body.take_over)
-    return PageSchema.from_overview(bound, request, book_id=book.id)
+    return PageSchema.from_overview(bound, request, book_id=address.book_id)

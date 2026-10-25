@@ -1,0 +1,170 @@
+{
+  "page-split": {
+    "text": {
+      "processor_keys": [
+        "split.auto"
+      ],
+      "params": {},
+      "off": []
+    },
+    "color-picture": {
+      "processor_keys": [
+        "split.auto"
+      ],
+      "params": {},
+      "off": []
+    },
+    "bw-picture": {
+      "processor_keys": [
+        "split.auto"
+      ],
+      "params": {},
+      "off": []
+    },
+    "blank": {
+      "processor_keys": [
+        "split.auto"
+      ],
+      "params": {},
+      "off": []
+    }
+  },
+  "geometry": {
+    "text": {
+      "processor_keys": [
+        "geometry.perspective",
+        "geometry.deskew",
+        "geometry.dewarp",
+        "geometry.crop",
+        "geometry.normalize"
+      ],
+      "params": {
+        "geometry.deskew": {
+          "method": "projection"
+        },
+        "geometry.dewarp": {
+          "method": "text-lines"
+        }
+      },
+      "off": []
+    },
+    "color-picture": {
+      "processor_keys": [
+        "geometry.perspective",
+        "geometry.deskew",
+        "geometry.dewarp",
+        "geometry.crop",
+        "geometry.normalize"
+      ],
+      "params": {
+        "geometry.deskew": {
+          "method": "hough"
+        },
+        "geometry.dewarp": {
+          "method": "page-edges"
+        }
+      },
+      "off": []
+    },
+    "bw-picture": {
+      "processor_keys": [
+        "geometry.perspective",
+        "geometry.deskew",
+        "geometry.dewarp",
+        "geometry.crop",
+        "geometry.normalize"
+      ],
+      "params": {
+        "geometry.deskew": {
+          "method": "hough"
+        },
+        "geometry.dewarp": {
+          "method": "page-edges"
+        }
+      },
+      "off": []
+    },
+    "blank": {
+      "processor_keys": [
+        "geometry.perspective",
+        "geometry.deskew",
+        "geometry.dewarp",
+        "geometry.crop",
+        "geometry.normalize"
+      ],
+      "params": {
+        "geometry.deskew": {
+          "method": "projection"
+        },
+        "geometry.dewarp": {
+          "method": "text-lines"
+        }
+      },
+      "off": []
+    }
+  },
+  "cleanup": {
+    "text": {
+      "processor_keys": [
+        "cleanup.binarize",
+        "cleanup.despeckle",
+        "cleanup.thickness",
+        "cleanup.eraser"
+      ],
+      "params": {
+        "cleanup.binarize": {
+          "mode": "bw",
+          "method": "sauvola"
+        },
+        "cleanup.despeckle": {
+          "strength": 2
+        }
+      },
+      "off": []
+    },
+    "color-picture": {
+      "processor_keys": [
+        "cleanup.binarize",
+        "cleanup.eraser"
+      ],
+      "params": {
+        "cleanup.binarize": {
+          "mode": "gray",
+          "method": "sauvola"
+        }
+      },
+      "off": []
+    },
+    "bw-picture": {
+      "processor_keys": [
+        "cleanup.binarize",
+        "cleanup.eraser"
+      ],
+      "params": {
+        "cleanup.binarize": {
+          "mode": "gray",
+          "method": "sauvola"
+        }
+      },
+      "off": []
+    },
+    "blank": {
+      "processor_keys": [
+        "cleanup.binarize",
+        "cleanup.despeckle",
+        "cleanup.thickness",
+        "cleanup.eraser"
+      ],
+      "params": {
+        "cleanup.binarize": {
+          "mode": "bw",
+          "method": "sauvola"
+        },
+        "cleanup.despeckle": {
+          "strength": 2
+        }
+      },
+      "off": []
+    }
+  }
+}

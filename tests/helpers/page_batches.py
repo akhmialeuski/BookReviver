@@ -19,27 +19,25 @@ if TYPE_CHECKING:
 
 
 def carry_over(kit: ProcessingKit) -> CarryOverService:
-    """Build the carry-over service over a new unit of work.
+    """Build the carry-over service over a new catalogue database.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :returns: The service.
     :rtype: CarryOverService
     """
-    uow = kit.uow()
-    return CarryOverService(uow=uow, records=kit.parts(uow).records, clock=kit.clock)
+    return CarryOverService(records=kit.parts().records)
 
 
 def run_impact(kit: ProcessingKit) -> RunImpactService:
-    """Build the service that counts what a run would take away, over a new unit of work.
+    """Build the service that counts what a run would take away, over a new catalogue database.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :returns: The service.
     :rtype: RunImpactService
     """
-    uow = kit.uow()
-    return RunImpactService(uow=uow, recipes=kit.parts(uow).recipes, clock=kit.clock)
+    return RunImpactService(recipes=kit.parts().recipes)
 
 
 def _page_field(key: PageStepKey, name: str) -> ValueField:
@@ -62,7 +60,7 @@ def _page_field(key: PageStepKey, name: str) -> ValueField:
 
 @frozen
 class PageValues:
-    """Sets and takes back the value one page uses for a field of a step, each through a new unit of work.
+    """Sets and takes back the value one page uses for a field of a step, each through a new catalogue database.
 
     :ivar kit: What the processing services of the test share.
     :ivar actor: Account acting.
@@ -85,7 +83,11 @@ class PageValues:
         :returns: The batch and the changes written.
         :rtype: ValueChanges
         """
-        return await self.kit.page_settings().change(open_for(self.actor, self.book_id), _page_field(key, name), value)
+        return await self.kit.page_settings().change(
+            open_for(self.actor, self.book_id),
+            _page_field(key, name),
+            value,
+        )
 
     async def take_back(self, key: PageStepKey, name: str) -> ValueChanges:
         """Take the value the page uses for a field of a step back.
@@ -97,4 +99,7 @@ class PageValues:
         :returns: The batch and the changes written.
         :rtype: ValueChanges
         """
-        return await self.kit.page_settings().reset(open_for(self.actor, self.book_id), _page_field(key, name))
+        return await self.kit.page_settings().reset(
+            open_for(self.actor, self.book_id),
+            _page_field(key, name),
+        )

@@ -16,6 +16,7 @@ pages and the steps that did not read the cleared one are untouched.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -29,19 +30,15 @@ from bookreviver.domain.ids import ChangeBatchId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.version_chains import StepVersions, step_places
-from bookreviver.services.books import book_pages
 from bookreviver.services.processing_parts import BOOK_BUSY
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
 
     from bookreviver.domain.entities import BookRecord, Recipe
     from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
     from bookreviver.domain.values import PageStepKey
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock
-    from bookreviver.ports.storage import AssetStore
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from bookreviver.services.stage_records import StageRecords
@@ -54,27 +51,16 @@ CHANGED_SINCE: str = 'The layer {layer} of a step changed after this change, so 
 class PageHistoryService:
     """Lists the history of the steps of the acting account's pages, takes its changes back, and clears a step."""
 
-    def __init__(
-        self, *, uow: UnitOfWork, records: StageRecords, starter: JobStarter, assets: AssetStore, clock: Clock
-    ) -> None:
+    def __init__(self, *, records: StageRecords, starter: JobStarter) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
         :param starter: Queuer of the jobs, which cuts the pyramid of the version a clear makes current.
         :type starter: JobStarter
-        :param assets: Store of the derived files, which the versions a clear deletes leave.
-        :type assets: AssetStore
-        :param clock: Clock stamping the states and the undos.
-        :type clock: Clock
         """
-        self._uow = uow
         self._records = records
         self._starter = starter
-        self._assets = assets
-        self._clock = clock
 
     async def list(self, book: Book, key: PageStepKey) -> StepHistory:
         """Return the history of one step on one page.
@@ -87,7 +73,7 @@ class PageHistoryService:
         :rtype: StepHistory
         :raises NotFoundError: If the book has no such page.
         """
-        return await self._uow.read_book(book.id, lambda repos: self._history(repos, key))
+        return await book.read(lambda repos: self._history(repos, key))
 
     async def undo(
         self, book: Book, key: PageStepKey, change_id: PageHistoryEntryId | None
@@ -128,7 +114,7 @@ class PageHistoryService:
             targets = self._with_batches(repos, chosen)
             if not targets:
                 return ()
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             batch = ChangeBatchId(uuid4()) if len(targets) > 1 else None
             written = [
                 *self._take_pages_back(repos, targets, moment, batch),
@@ -139,7 +125,7 @@ class PageHistoryService:
                 self._records.mark_stale(repos, page_id, stage)
             return added
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def clear(self, book: Book, key: PageStepKey) -> ClearedStep:
         """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
@@ -162,7 +148,7 @@ class PageHistoryService:
         only, and its last write finds the job cancelled and changes nothing, as for a run.
 
         The cancelling and the queuing of the tile cutting are transactions of their own, so this use case opens one
-        ``change_book`` for the rows. The files of the deleted versions are removed after it ended, so a store that
+        ``Book.change`` for the rows. The files of the deleted versions are removed after it ended, so a store that
         fails to remove them leaves them without a row for the next collection and does not fail the clear.
 
         :param book: The open book.
@@ -177,8 +163,8 @@ class PageHistoryService:
                                or running, which may be reading or deleting the versions the clear deletes.
         """
         # The step is checked before the previews are cancelled, so a request the change would refuse cancels nothing
-        await self._uow.read_book(book.id, lambda repos: self._recipes_with_step(repos, key))
-        if await self._starter.free_of_previews(book.id):
+        await book.read(lambda repos: self._recipes_with_step(repos, key))
+        if await self._starter.free_of_previews(book):
             raise ConflictError(BOOK_BUSY)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[ClearedStep, Sequence[PageVersionId]]:
@@ -208,11 +194,11 @@ class PageHistoryService:
             repos.page_versions.delete_many([version.id for version in deleted])
             return ClearedStep(changes=changes, versions=deleted), untiled
 
-        cleared, untiled = await self._uow.change_book(book.id, work)
-        await self._starter.enqueue_tiles(book.id, untiled)
+        cleared, untiled = await book.change(work)
+        await self._starter.enqueue_tiles(book, untiled)
         for version in cleared.versions:
             try:
-                await self._assets.delete_prefix(BookKeys(book.id).version_directory(version))
+                await book.assets.delete_prefix(BookKeys.version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return cleared
@@ -335,7 +321,7 @@ class PageHistoryService:
         """Read the recipes of the stage of a page of a book, which must include the step.
 
         It only reads, so it is called in a ``read``, to refuse a request before anything is cancelled, and in the work
-        of the ``change_book``, to decide on what the transaction holds.
+        of the ``Book.change``, to decide on what the transaction holds.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -387,7 +373,7 @@ class PageHistoryService:
             if target.scope is not ValueScope.PAGES:
                 parts.setdefault(StepValuesKey(target.step_id, target.scope, target.group_label), []).append(target)
         undone: list[PageHistoryEntry] = []
-        book = book_pages(repos.pages) if parts else []
+        book = repos.pages.list_all() if parts else []
         for key, changes in parts.items():
             stored = repos.step_values.find(key)
             current = {} if stored is None else dict(stored.params)

@@ -21,8 +21,9 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.ids import BookId
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -46,19 +47,19 @@ PARAMS: str = 'params'
 class Book(NamedTuple):
     """A book of the signed-in account with three pages and the step of its geometry recipe.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: Identifier of the book.
     :ivar pages: The pages in book order.
     :ivar step_id: Identifier of the only step of the geometry recipe of text pages.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     pages: Sequence[Page]
     step_id: str
 
     @property
     def values(self) -> str:
         """The path of the values of the strength of the step."""
-        return f'{BOOKS_PATH}/{self.book_record.id}/stages/geometry/steps/{self.step_id}/values/{STRENGTH}'
+        return f'{BOOKS_PATH}/{self.book_id}/stages/geometry/steps/{self.step_id}/values/{STRENGTH}'
 
     def settings(self, index: int) -> str:
         """Give the path of the settings of a page of the book in the geometry stage.
@@ -68,7 +69,7 @@ class Book(NamedTuple):
         :returns: The path.
         :rtype: str
         """
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}/settings/geometry'
+        return f'{BOOKS_PATH}/{self.book_id}/pages/{self.pages[index].id}/settings/geometry'
 
     def undo(self, index: int) -> str:
         """Give the path that takes back the newest change of the step on a page of the book.
@@ -78,7 +79,7 @@ class Book(NamedTuple):
         :returns: The path.
         :rtype: str
         """
-        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}/history/geometry/{self.step_id}/undo'
+        return f'{BOOKS_PATH}/{self.book_id}/pages/{self.pages[index].id}/history/geometry/{self.step_id}/undo'
 
 
 @pytest.fixture
@@ -92,30 +93,44 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
+async def fx_book(
+    fx_client: httpx.AsyncClient,
+    fx_catalogue: CatalogueDatabaseFactory,
+    fx_actor: Actor,
+    fx_databases: BookDatabasesFactory,
+) -> Book:
     """Commit a book of three pages and read the step of its geometry recipe.
 
     :param fx_client: Client of the running application.
     :type fx_client: httpx.AsyncClient
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
-    book_record = make_record()
     sources = [make_source(name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
     scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
     pages = [make_page(order_key=order_key, scan=scan) for order_key, scan in zip(ORDER_KEYS, scans, strict=True)]
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=sources, scans=scans)
-    listed = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/stages/geometry/recipes')
+    book_id = await store_book(
+        fx_catalogue(),
+        make_record(),
+        *pages,
+        owner=fx_actor.account_id,
+        sources=sources,
+        scans=scans,
+        databases=fx_databases(),
+    )
+    listed = await fx_client.get(f'{BOOKS_PATH}/{book_id}/stages/geometry/recipes')
     recipe = next(
         recipe
         for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS])
         if recipe.kind is RecipeKind.TEXT
     )
-    return Book(book_record=book_record, pages=pages, step_id=str(recipe.steps[0].step_id))
+    return Book(book_id=book_id, pages=pages, step_id=str(recipe.steps[0].step_id))
 
 
 async def strengths(client: httpx.AsyncClient, book: Book) -> list[int]:

@@ -31,11 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import Scan, Source
-    from bookreviver.domain.ids import BookId, SourceId
+    from bookreviver.domain.ids import SourceId
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import JobBoard
-    from bookreviver.ports.storage import AssetStore, SourceStore
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 
 SOURCE_IMPORTING: str = 'This book is importing files. Delete the source when the import has finished.'
@@ -56,23 +54,6 @@ def _window[ItemT](items: Sequence[ItemT], request: SliceRequest) -> Slice[ItemT
 
 class SourceService:
     """Sources and scans of the acting account's books, and the deletion of a source with its files."""
-
-    def __init__(self, *, uow: UnitOfWork, board: JobBoard, sources: SourceStore, assets: AssetStore) -> None:
-        """Work over the ports of one request.
-
-        :param uow: Unit of work of the request, whose ``change_book`` ends the deletion of a source.
-        :type uow: UnitOfWork
-        :param board: Board holding the jobs of every book, which tells whether the book imports.
-        :type board: JobBoard
-        :param sources: Store of the uploaded sources, emptied of a source when it is deleted.
-        :type sources: SourceStore
-        :param assets: Store of the derived files, emptied of the renditions of a source's scans when it is deleted.
-        :type assets: AssetStore
-        """
-        self._uow = uow
-        self._board = board
-        self._sources = sources
-        self._assets = assets
 
     async def list(
         self,
@@ -107,7 +88,7 @@ class SourceService:
             found.sort(key=attrgetter('imported_at', 'id'))
             return _window(found, request)
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def delete_unimported(self, book: Book) -> None:
         """Delete the rejected and skipped files of the book, which is closing the report of an import.
@@ -118,17 +99,17 @@ class SourceService:
         :type book: Book
         :raises ConflictError: If the book has an import queued or running, which is writing the report.
         """
-        self._refuse_active_import(book.id)
-        await self._uow.change_book(book.id, lambda repos, _book_record: repos.sources.delete_unimported())
+        self._refuse_active_import(book)
+        await book.change(lambda repos, _book_record: repos.sources.delete_unimported())
 
-    def _refuse_active_import(self, book_id: BookId) -> None:
+    def _refuse_active_import(self, book: Book) -> None:
         """Refuse a book that has an import queued or running, which writes sources and their scans.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :raises ConflictError: If the book has an import queued or running.
         """
-        if any(job.kind in IMPORT_JOBS for job in self._board.jobs(book_id, active=True)):
+        if any(job.kind in IMPORT_JOBS for job in book.jobs.active()):
             raise ConflictError(SOURCE_IMPORTING)
 
     async def get(self, book: Book, source_id: SourceId) -> Source:
@@ -142,7 +123,7 @@ class SourceService:
         :rtype: Source
         :raises NotFoundError: If the book has no such source.
         """
-        return await self._uow.read_book(book.id, lambda repos: repos.sources.get(source_id))
+        return await book.read(lambda repos: repos.sources.get(source_id))
 
     async def scans(self, book: Book, request: SliceRequest, *, source_id: SourceId | None = None) -> Slice[Scan]:
         """Return a window of the scans of the book, or of one of its sources, in the order of the book.
@@ -174,14 +155,14 @@ class SourceService:
             repos.sources.get(source_id)
             return _window(repos.scans.list_for_source(source_id), request)
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def delete(self, book: Book, source_id: SourceId) -> None:
         """Delete a source's files and the renditions of its scans, then the source with its scans.
 
         The pages of the book made from the scans keep their images, versions, numbers and order, and lose only the
         reference to their scan. The owner and the source are checked before any file goes, and the files go outside
-        any transaction, so a slow store holds no lock of the book. Only the rows go in a ``change_book``, which this
+        any transaction, so a slow store holds no lock of the book. Only the rows go in a ``Book.change``, which this
         use case opens. A failure at any step leaves the source in place, and calling this again finishes the
         deletion.
 
@@ -192,9 +173,9 @@ class SourceService:
         :raises NotFoundError: If the book has no such source.
         :raises ConflictError: If the book has an import queued or running.
         """
-        await self._uow.read_book(book.id, lambda repos: repos.sources.get(source_id))
-        self._refuse_active_import(book.id)
+        await book.read(lambda repos: repos.sources.get(source_id))
+        self._refuse_active_import(book)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
-        await self._sources.delete_source(book.id, source_id)
-        await self._assets.delete_prefix(BookKeys(book.id).source_scans(source_id))
-        await self._uow.change_book(book.id, lambda repos, _book_record: repos.sources.delete(source_id))
+        await book.sources.delete_source(source_id)
+        await book.assets.delete_prefix(BookKeys.source_scans(source_id))
+        await book.change(lambda repos, _book_record: repos.sources.delete(source_id))

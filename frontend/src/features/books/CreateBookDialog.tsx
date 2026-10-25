@@ -36,12 +36,12 @@ export function CreateBookDialog(): React.JSX.Element {
 
   const create = useMutation({
     ...createBookApiV1BooksPostMutation(),
-    onSuccess: async (book) => {
+    onSuccess: async (bookId) => {
       await invalidateBookList(queryClient);
       setOpen(false);
       setTitle('');
       setSubtitle('');
-      await navigate({ to: '/books/$bookId', params: { bookId: book.id } });
+      await navigate({ to: '/books/$bookId', params: { bookId } });
     },
   });
 

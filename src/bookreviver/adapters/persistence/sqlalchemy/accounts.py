@@ -4,9 +4,10 @@ The tables ``user``, ``oauth_account`` and ``accesstoken`` are the ones fastapi-
 it expects, and their identifiers and times have the types of every other table of the adapter. They are tables of
 the catalogue, where the library and the recipe profiles refer to ``user.id``.
 
-The databases of fastapi-users run over the unit of work and nothing else: every read is a ``read_session`` and every
-write a ``change_session`` of :class:`~bookreviver.adapters.persistence.sqlalchemy.unit_of_work.SqlAlchemyUnitOfWork`,
-so an account write takes the same writer as every other write, and commits and rolls back for the caller. The session
+The databases of fastapi-users run over the catalogue database and nothing else: every read is a ``read_session`` and
+every write a ``change_session`` of
+:class:`~bookreviver.adapters.persistence.sqlalchemy.catalogue_database.SqlAlchemyCatalogueDatabase`, so an account
+write takes the same writer as every other write, and commits and rolls back for the caller. The session
 of such a transaction is closed when it ends, and fastapi-users reads the rows after that, so every row is handed over
 fully loaded, with its linked provider accounts, and detached. A row handed back to a database for an update is attached
 to the session of that transaction again, and the sessions do not expire rows on commit, so the same object stays
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Select
     from sqlalchemy.orm import Session
 
-    from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+    from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 
 # The column the keys of the other account tables refer to
 USER_TABLE: str = 'user'
@@ -143,18 +144,19 @@ def _store_row[RowT](session: Session, row: RowT, values: dict[str, Any]) -> Row
 
 
 class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
-    """Users and their linked provider accounts, read and written through the unit of work.
+    """Users and their linked provider accounts, read and written through the catalogue database.
 
-    :ivar uow: Unit of work whose sessions every read and every write of the users runs on.
+    :ivar catalogue: Catalogue database whose sessions every read and every write of the users runs on.
     """
 
-    def __init__(self, uow: SqlAlchemyUnitOfWork) -> None:
-        """Read and write through ``uow``.
+    def __init__(self, catalogue: SqlAlchemyCatalogueDatabase) -> None:
+        """Read and write through ``catalogue``.
 
-        :param uow: Unit of work whose ``read_session`` and ``change_session`` run the transactions of the users.
-        :type uow: SqlAlchemyUnitOfWork
+        :param catalogue: Catalogue database whose ``read_session`` and ``change_session`` run the transactions of the
+            users.
+        :type catalogue: SqlAlchemyCatalogueDatabase
         """
-        self.uow = uow
+        self.catalogue = catalogue
 
     async def _one(self, statement: Select[AccountTable]) -> AccountTable | None:
         """Run ``statement`` and return its only user, loaded with the linked provider accounts.
@@ -165,7 +167,9 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :rtype: AccountTable | None
         """
         # The joined load of the provider accounts repeats the user once per account, which unique() folds
-        return await self.uow.read_session(lambda session: session.execute(statement).unique().scalar_one_or_none())
+        return await self.catalogue.read_session(
+            lambda session: session.execute(statement).unique().scalar_one_or_none()
+        )
 
     @override
     async def get(self, id: UUID) -> AccountTable | None:
@@ -216,7 +220,7 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :returns: The stored user, with its defaults and its empty list of provider accounts loaded.
         :rtype: AccountTable
         """
-        return await self.uow.change_session(partial(_store_row, row=AccountTable(**create_dict), values={}))
+        return await self.catalogue.change_session(partial(_store_row, row=AccountTable(**create_dict), values={}))
 
     @override
     async def update(self, user: AccountTable, update_dict: dict[str, Any]) -> AccountTable:
@@ -229,7 +233,7 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :returns: The user as stored.
         :rtype: AccountTable
         """
-        return await self.uow.change_session(partial(_store_row, row=user, values=update_dict))
+        return await self.catalogue.change_session(partial(_store_row, row=user, values=update_dict))
 
     @override
     async def delete(self, user: AccountTable) -> None:
@@ -238,7 +242,7 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :param user: User to remove, as an earlier read returned it.
         :type user: AccountTable
         """
-        await self.uow.change_session(lambda session: session.delete(user))
+        await self.catalogue.change_session(lambda session: session.delete(user))
 
     # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases
     # (fastapi_users/models.py:33), so by PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its
@@ -256,7 +260,7 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :rtype: AccountTable
         """
         link = OAuthAccountTable(user_id=user.id, **create_dict)
-        return await self.uow.change_session(partial(self._link, user=user, link=link))
+        return await self.catalogue.change_session(partial(self._link, user=user, link=link))
 
     @staticmethod
     def _link(session: Session, *, user: AccountTable, link: OAuthAccountTable) -> AccountTable:
@@ -290,23 +294,24 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :returns: The user.
         :rtype: AccountTable
         """
-        await self.uow.change_session(partial(_store_row, row=oauth_account, values=update_dict))
+        await self.catalogue.change_session(partial(_store_row, row=oauth_account, values=update_dict))
         return user
 
 
 class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
-    """Session tokens, read and written through the unit of work.
+    """Session tokens, read and written through the catalogue database.
 
-    :ivar uow: Unit of work whose sessions every read and every write of the tokens runs on.
+    :ivar catalogue: Catalogue database whose sessions every read and every write of the tokens runs on.
     """
 
-    def __init__(self, uow: SqlAlchemyUnitOfWork) -> None:
-        """Read and write through ``uow``.
+    def __init__(self, catalogue: SqlAlchemyCatalogueDatabase) -> None:
+        """Read and write through ``catalogue``.
 
-        :param uow: Unit of work whose ``read_session`` and ``change_session`` run the transactions of the tokens.
-        :type uow: SqlAlchemyUnitOfWork
+        :param catalogue: Catalogue database whose ``read_session`` and ``change_session`` run the transactions of the
+            tokens.
+        :type catalogue: SqlAlchemyCatalogueDatabase
         """
-        self.uow = uow
+        self.catalogue = catalogue
 
     @override
     async def get_by_token(self, token: str, max_age: datetime | None = None) -> AccessTokenTable | None:
@@ -322,7 +327,7 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         statement = select(AccessTokenTable).where(ACCESS_TOKENS.token == token)
         if max_age is not None:
             statement = statement.where(ACCESS_TOKENS.created_at >= max_age)
-        return await self.uow.read_session(lambda session: session.scalar(statement))
+        return await self.catalogue.read_session(lambda session: session.scalar(statement))
 
     @override
     async def create(self, create_dict: dict[str, Any]) -> AccessTokenTable:
@@ -333,7 +338,7 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         :returns: The stored token.
         :rtype: AccessTokenTable
         """
-        return await self.uow.change_session(partial(_store_row, row=AccessTokenTable(**create_dict), values={}))
+        return await self.catalogue.change_session(partial(_store_row, row=AccessTokenTable(**create_dict), values={}))
 
     @override
     async def update(self, access_token: AccessTokenTable, update_dict: dict[str, Any]) -> AccessTokenTable:
@@ -346,7 +351,7 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         :returns: The token as stored.
         :rtype: AccessTokenTable
         """
-        return await self.uow.change_session(partial(_store_row, row=access_token, values=update_dict))
+        return await self.catalogue.change_session(partial(_store_row, row=access_token, values=update_dict))
 
     @override
     async def delete(self, access_token: AccessTokenTable) -> None:
@@ -355,4 +360,4 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         :param access_token: Token to remove, as an earlier read returned it.
         :type access_token: AccessTokenTable
         """
-        await self.uow.change_session(lambda session: session.delete(access_token))
+        await self.catalogue.change_session(lambda session: session.delete(access_token))

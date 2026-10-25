@@ -9,9 +9,9 @@ import {
 } from './support/account';
 
 /**
- * The library of profiles in the side panel of a book: it lists the profiles of the account with the number of books that
- * use each, applies one to the book and to the selected pages, copies one, saves one to a file and reads a file back, and
- * turns away a file that is not a profile. The profile menu lists the other profiles and opens the library.
+ * The library of profiles in the side panel of a book: it lists the profiles of the book, applies one to the book,
+ * copies one, saves one to a file and reads a file back, and turns away a file that is not a profile. The profile menu
+ * opens the library.
  */
 
 const PAGES = 2;
@@ -53,13 +53,13 @@ async function closeLibrary(page: Page): Promise<void> {
   await expect(page.getByTestId('profile-library-panel')).toHaveCount(0);
 }
 
-test('the library applies, copies, exports and imports profiles and counts the books that use them', async ({
+test('the library applies, copies, exports and imports the profiles of a book', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
 
-  await test.step('the steps of a first book are kept as a profile', async () => {
+  await test.step('the steps of the book are kept as a profile', async () => {
     await registerAndSignIn(page);
     await openNewGeometry(page, 'A photographed book', folder);
     await page.getByTestId('profile-button').click();
@@ -69,15 +69,8 @@ test('the library applies, copies, exports and imports profiles and counts the b
     await expect(page.getByTestId('profile-saved')).toContainText(PROFILE_NAME);
   });
 
-  await test.step('a second book finds the profile in the menu, and the library from it', async () => {
-    await openNewGeometry(page, 'A flatbed book', folder);
-    await expect(page.getByTestId('profile-name')).toHaveText('No profile');
-    await page.getByTestId('profile-button').click();
-    await expect(
-      page.locator(`[data-testid="profile-switch"][data-name="${PROFILE_NAME}"]`),
-    ).toBeVisible();
-    await page.getByTestId('profile-manage').click();
-    await expect(page.getByTestId('profile-library-panel')).toBeVisible();
+  await test.step('the library opens from the profile menu and lists the profile', async () => {
+    await openLibrary(page);
     // The library opens on the stage of the book
     await expect(page.locator('[data-testid="profile-tab"][aria-selected="true"]')).toHaveAttribute(
       'data-tab',
@@ -85,16 +78,13 @@ test('the library applies, copies, exports and imports profiles and counts the b
     );
     const card = cardsOf(page, PROFILE_NAME);
     await expect(card).toHaveCount(1);
-    await expect(card.getByTestId('profile-books')).toHaveText('Used in 1 book');
     await expect(card.getByTestId('profile-steps')).toContainText('Perspective · Deskew');
     await snap(page, 'profile-library');
   });
 
-  await test.step('a profile is duplicated, and the copy is used by no book', async () => {
+  await test.step('a profile is duplicated', async () => {
     await cardsOf(page, PROFILE_NAME).getByTestId('profile-duplicate').click();
-    const copy = cardsOf(page, COPY_NAME);
-    await expect(copy).toHaveCount(1);
-    await expect(copy.getByTestId('profile-books')).toHaveText('Used in no book');
+    await expect(cardsOf(page, COPY_NAME)).toHaveCount(1);
   });
 
   let exported = '';
@@ -138,13 +128,5 @@ test('the library applies, copies, exports and imports profiles and counts the b
     await snap(page, 'profile-applied');
     await closeLibrary(page);
     await expect(page.getByTestId('profile-name')).toHaveText(PROFILE_NAME);
-  });
-
-  await test.step('two books use the profile now', async () => {
-    await openLibrary(page);
-    await expect(cardsOf(page, PROFILE_NAME).first().getByTestId('profile-books')).toHaveText(
-      'Used in 2 books',
-    );
-    await closeLibrary(page);
   });
 });

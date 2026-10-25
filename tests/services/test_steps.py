@@ -1,6 +1,7 @@
 """Tests for the runner of processors: running a step and storing its output as the files of a version."""
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from attrs import evolve
@@ -20,21 +21,33 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from bookreviver.plugins.split_none import SplitNone
+from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepOutput
+from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.book import Book
 from bookreviver.services.steps import StepRun, StepRunner
 from tests.helpers.books import IMAGE
-from tests.helpers.builders import EPOCH, make_page, make_record, make_scan, make_source
+from tests.helpers.builders import (
+    EPOCH,
+    directory_of,
+    make_page,
+    make_scan,
+    make_source,
+    new_book_id,
+)
 from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import INFO_NAME, FakeTiler
 from tests.helpers.processors import FakeProcessor
+from tests.helpers.storage import book_directory
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import PageVersion, Scan
+    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 
@@ -56,40 +69,43 @@ def _scan() -> Scan:
 class Rig:
     """A runner of processors over a local asset store, with the fake writer and tiler that record what they cut.
 
-    :ivar assets: The local asset store the runner stores files in.
+    :ivar book_id: Identifier of the book of the scan.
+    :ivar book: The book of the scan, whose asset store the runner stores files in.
+    :ivar assets: The asset store of the book.
     :ivar runner: The runner under test.
     :ivar tiler: The fake tiler.
     :ivar writer: The fake writer of renditions.
     :ivar fake: The fake processor the catalogue offers beside ``split.none``.
-    :ivar keys: Keys of the book of the scan.
     :ivar scan: A scan whose ``full`` image is not stored yet.
     :ivar version: The pending base version of a page shown from the scan.
     """
 
-    def __init__(self, assets: LocalAssetStore) -> None:
-        """Build the runner over the store.
+    def __init__(self, files: SharedBookDirectories) -> None:
+        """Build the runner over the stores of a new book of the test.
 
-        :param assets: Local asset store of the test.
-        :type assets: LocalAssetStore
+        :param files: Opens the source store and the asset store of a book of the test.
+        :type files: SharedBookDirectories
         """
-        self.assets = assets
+        self.book_id = new_book_id()
+        BookDirectory.register(files.open)
+        BookDatabase.register(lambda _dir_name: Mock(spec=BookDatabase))
+        self.book = Book(directory_of(self.book_id))
+        self.assets = self.book.assets
         self.tiler = FakeTiler()
         self.writer = FakeRenditionWriter()
         self.fake = FakeProcessor()
         self.runner = StepRunner(
-            assets=assets,
             executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), self.fake])),
             renditions=self.writer,
             tiler=self.tiler,
         )
         self.scan = _scan()
-        self.keys = BookKeys(make_record().id)
         page = make_page(scan=self.scan)
         self.version = BaseVersions.split_none(page=page, scan=self.scan, state=VersionState.PENDING, moment=EPOCH)
 
     async def store_scan(self) -> None:
         """Store the ``full`` image of the scan."""
-        async with self.assets.writable(self.keys.scan_rendition(self.scan, Rendition.FULL_JPEG)) as path:
+        async with self.assets.writable(BookKeys.scan_rendition(self.scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(IMAGE)
 
     def split_none(self) -> StepRun:
@@ -102,7 +118,7 @@ class Rig:
             processor_key='split.none',
             params={},
             input_data=self.scan.facts.as_data(),
-            image=self.keys.scan_rendition(self.scan, Rendition.FULL_JPEG),
+            image=BookKeys.scan_rendition(self.scan, Rendition.FULL_JPEG),
         )
 
     async def make(self, version: PageVersion | None = None, *, tiles: bool = True) -> PageVersion:
@@ -115,9 +131,9 @@ class Rig:
         :returns: The version as ready.
         :rtype: PageVersion
         """
-        async with self.runner.execute(self.split_none()) as result:
+        async with self.runner.execute(self.book, self.split_none()) as result:
             return await self.runner.store(
-                self.keys,
+                self.book,
                 version or self.version,
                 result.outputs[0],
                 policy=ImagePolicy.COMPACT,
@@ -126,15 +142,18 @@ class Rig:
 
 
 @pytest.fixture
-def fx_rig(fx_asset_store: LocalAssetStore) -> Rig:
-    """Build the rig over the test's asset store.
+def fx_rig(fx_directories: SharedBookDirectories, fx_book_parts: RecordingEventBus) -> Rig:
+    """Build the rig over the test's stores of the books.
 
-    :param fx_asset_store: Local asset store of the test.
-    :type fx_asset_store: LocalAssetStore
+    :param fx_directories: Opens the source store and the asset store of a book of the test.
+    :type fx_directories: SharedBookDirectories
+    :param fx_book_parts: The bus and the job board registered as the parts of the books, which the book of the rig opens.
+    :type fx_book_parts: RecordingEventBus
     :returns: The rig.
     :rtype: Rig
     """
-    return Rig(fx_asset_store)
+    del fx_book_parts
+    return Rig(fx_directories)
 
 
 class TestStore:
@@ -152,7 +171,7 @@ class TestStore:
         """
         await fx_rig.store_scan()
         ready = await fx_rig.make()
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(ready)
         expect((directory / Rendition.FULL_JPEG).read_bytes() == IMAGE)
         expect((directory / Rendition.PREVIEW).read_bytes() == PREVIEW_TOKEN)
         expect((directory / Rendition.TILES / INFO_NAME).is_file())
@@ -182,10 +201,10 @@ class TestStore:
         :type review: ReviewReason | None
         """
         await fx_rig.store_scan()
-        async with fx_rig.runner.execute(fx_rig.split_none()) as result:
+        async with fx_rig.runner.execute(fx_rig.book, fx_rig.split_none()) as result:
             marked = evolve(result.outputs[0], review=review)
             ready = await fx_rig.runner.store(
-                fx_rig.keys, fx_rig.version, marked, policy=ImagePolicy.COMPACT, tiles=False
+                fx_rig.book, fx_rig.version, marked, policy=ImagePolicy.COMPACT, tiles=False
             )
         assert ready.review is review
 
@@ -202,7 +221,9 @@ class TestStore:
         await fx_rig.store_scan()
         await fx_rig.make()
         ready = await fx_rig.make()
-        assert (fx_storage_root / fx_rig.keys.version_directory(ready) / Rendition.FULL_JPEG).read_bytes() == IMAGE
+        assert (
+            book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(ready) / Rendition.FULL_JPEG
+        ).read_bytes() == IMAGE
 
     async def test_pyramid_is_left_out_when_not_asked_for(self, fx_rig: Rig, fx_storage_root: Path) -> None:
         """Verify a version that is not current gets no pyramid, and cutting it later marks it.
@@ -214,8 +235,8 @@ class TestStore:
         """
         await fx_rig.store_scan()
         ready = await fx_rig.make(tiles=False)
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
-        cut = await fx_rig.runner.cut_tiles(fx_rig.keys, ready)
+        directory = book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(ready)
+        cut = await fx_rig.runner.cut_tiles(fx_rig.book, ready)
         expect((ready.tiles_ready, cut.tiles_ready) == (False, True))
         expect((directory / Rendition.TILES / INFO_NAME).is_file())
         assert_expectations()
@@ -231,7 +252,7 @@ class TestStore:
         await fx_rig.store_scan()
         version = evolve(fx_rig.version, scale=VersionScale.PREVIEW, id=type(fx_rig.version.id)('0123456789abcdef'))
         ready = await fx_rig.make(version)
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(ready)
         expect(sorted(entry.name for entry in directory.iterdir()) == [Rendition.PREVIEW])
         expect(
             (ready.state, ready.tiles_ready, ready.renditions) == (VersionState.READY, False, Renditions(ready=True))
@@ -253,10 +274,10 @@ class TestStore:
             """Raised in the middle of the store."""
 
         with pytest.raises(StoreFailedError):
-            async with fx_rig.assets.writable(fx_rig.keys.version_directory(fx_rig.version)):
+            async with fx_rig.assets.writable(BookKeys.version_directory(fx_rig.version)):
                 raise StoreFailedError
-        await fx_rig.runner.store(fx_rig.keys, fx_rig.version, output, policy=ImagePolicy.COMPACT, tiles=False)
-        directory = fx_storage_root / fx_rig.keys.version_directory(fx_rig.version)
+        await fx_rig.runner.store(fx_rig.book, fx_rig.version, output, policy=ImagePolicy.COMPACT, tiles=False)
+        directory = book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(fx_rig.version)
         assert directory.is_dir()
 
     async def test_mesh_of_a_step_is_stored_and_named_by_the_transform_of_the_version(
@@ -276,18 +297,18 @@ class TestStore:
         await fx_rig.store_scan()
         mesh = tmp_path / 'mesh.json'
         mesh.write_bytes(MESH_BYTES)
-        async with fx_rig.runner.execute(fx_rig.split_none()) as result:
+        async with fx_rig.runner.execute(fx_rig.book, fx_rig.split_none()) as result:
             ready = await fx_rig.runner.store(
-                fx_rig.keys,
+                fx_rig.book,
                 fx_rig.version,
                 evolve(result.outputs[0], mesh=mesh),
                 policy=ImagePolicy.COMPACT,
                 tiles=False,
             )
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(ready)
         expect((directory / Rendition.MESH).read_bytes() == MESH_BYTES)
         expect(ready.transform.kind is TransformKind.MESH)
-        expect(ready.transform.mesh_key == fx_rig.keys.version_rendition(ready, Rendition.MESH))
+        expect(ready.transform.mesh_key == BookKeys.version_rendition(ready, Rendition.MESH))
         assert_expectations()
 
     async def test_a_version_without_a_mesh_keeps_the_transform_of_its_step(
@@ -302,7 +323,11 @@ class TestStore:
         """
         await fx_rig.store_scan()
         ready = await fx_rig.make()
-        expect(not (fx_storage_root / fx_rig.keys.version_directory(ready) / Rendition.MESH).exists())
+        expect(
+            not (
+                book_directory(fx_storage_root, fx_rig.book_id) / BookKeys.version_directory(ready) / Rendition.MESH
+            ).exists()
+        )
         expect(ready.transform.kind is TransformKind.IDENTITY)
         assert_expectations()
 
@@ -313,7 +338,9 @@ class TestStore:
         :type fx_rig: Rig
         """
         with pytest.raises(NotFoundError):
-            async with fx_rig.runner.execute(StepRun(processor_key='geometry.missing', params={}, input_data={})):
+            async with fx_rig.runner.execute(
+                fx_rig.book, StepRun(processor_key='geometry.missing', params={}, input_data={})
+            ):
                 pass
 
     async def test_pyramid_of_a_version_without_an_image_is_a_conflict(self, fx_rig: Rig) -> None:
@@ -323,4 +350,4 @@ class TestStore:
         :type fx_rig: Rig
         """
         with pytest.raises(ConflictError, match='no image'):
-            await fx_rig.runner.cut_tiles(fx_rig.keys, evolve(fx_rig.version, renditions=None, stage=Stage.PAGE_SPLIT))
+            await fx_rig.runner.cut_tiles(fx_rig.book, evolve(fx_rig.version, renditions=None, stage=Stage.PAGE_SPLIT))

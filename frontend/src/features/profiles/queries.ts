@@ -2,43 +2,41 @@ import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tansta
 import type { Stage } from '@/api';
 import {
   applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostMutation,
-  createProfileApiV1RecipeProfilesPostMutation,
-  deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteMutation,
-  deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation,
-  duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostMutation,
-  exportProfileApiV1RecipeProfilesProfileIdExportGetOptions,
-  importProfileApiV1RecipeProfilesImportPostMutation,
-  listProfilesApiV1RecipeProfilesGetOptions,
-  listProfilesApiV1RecipeProfilesGetQueryKey,
-  putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
-  putProfileApiV1RecipeProfilesProfileIdPutMutation,
+  createProfileApiV1BooksBookIdRecipeProfilesPostMutation,
+  deleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteMutation,
+  duplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostMutation,
+  exportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetOptions,
+  importProfileApiV1BooksBookIdRecipeProfilesImportPostMutation,
+  listProfilesApiV1BooksBookIdRecipeProfilesGetOptions,
+  putProfileApiV1BooksBookIdRecipeProfilesProfileIdPutMutation,
   putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutMutation,
-  renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
+  renameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { invalidateAllRecipes } from '@/features/books/queries';
+import { invalidateAllRecipes, invalidateProfiles } from '@/features/books/queries';
 
 /**
- * The queries and changes behind the recipe profiles of the account: the list of them, by stage or all, and the saving,
- * replacing, renaming, choosing as the default, copying, exporting, importing, deleting, applying to a book and linking a
- * recipe to one.
+ * The queries and changes behind the recipe profiles of a book: the list of them, by stage or all, and the saving,
+ * replacing, renaming, copying, exporting, importing, deleting, applying to a recipe of the book and linking a recipe to
+ * one.
  *
- * Every change of a profile reads the lists again, since a new default takes the mark off the one before it. Applying a
- * profile changes the recipes of one stage of one book and the number of books the profile has, so it reads the stage
- * and the list again, and the jobs too, since applying it to pages queues a run.
+ * Every change of a profile reads the lists of the book again. Applying a profile changes the recipes of one stage of
+ * the book, so it reads the stage and the list again, and the jobs too, since applying it to pages queues a run.
  */
 
 /** Profiles asked for per request; the route accepts at most this many. */
 const LIST_SIZE = 100;
 
 /**
- * Read the profiles of the account in the order of the stages, then oldest first.
+ * Read the profiles of a book in the order of the stages, then oldest first.
  *
+ * @param bookId The book whose profiles are wanted.
  * @param stage The stage whose profiles are wanted, or undefined for every stage.
  * @param enabled Whether to read them at all.
  */
-export function useProfiles(stage: Stage | undefined, enabled = true) {
+export function useProfiles(bookId: string, stage: Stage | undefined, enabled = true) {
   return useQuery({
-    ...listProfilesApiV1RecipeProfilesGetOptions({
+    ...listProfilesApiV1BooksBookIdRecipeProfilesGetOptions({
+      path: { book_id: bookId },
       query: stage === undefined ? { size: LIST_SIZE } : { size: LIST_SIZE, stage },
     }),
     select: (page) => page.items,
@@ -46,26 +44,26 @@ export function useProfiles(stage: Stage | undefined, enabled = true) {
   });
 }
 
-/** Read every list of profiles again. */
-function refreshProfiles(queryClient: QueryClient): Promise<void> {
-  return queryClient.invalidateQueries({ queryKey: listProfilesApiV1RecipeProfilesGetQueryKey() });
+/** Read every list of the profiles of a book again. */
+function refreshProfiles(queryClient: QueryClient, bookId: string): Promise<void> {
+  return invalidateProfiles(queryClient, bookId);
 }
 
-/** Save the steps of a recipe as a profile of the account. */
-export function useSaveProfile() {
+/** Save the steps of a recipe as a profile of the book. */
+export function useSaveProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...createProfileApiV1RecipeProfilesPostMutation(),
-    onSettled: () => refreshProfiles(queryClient),
+    ...createProfileApiV1BooksBookIdRecipeProfilesPostMutation(),
+    onSettled: () => refreshProfiles(queryClient, bookId),
   });
 }
 
 /** Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile. */
-export function useReplaceProfile() {
+export function useReplaceProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putProfileApiV1RecipeProfilesProfileIdPutMutation(),
-    onSettled: () => refreshProfiles(queryClient),
+    ...putProfileApiV1BooksBookIdRecipeProfilesProfileIdPutMutation(),
+    onSettled: () => refreshProfiles(queryClient, bookId),
   });
 }
 
@@ -82,80 +80,69 @@ export function useLinkProfile(bookId: string) {
 }
 
 /** Give a profile another name. */
-export function useRenameProfile() {
+export function useRenameProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...renameProfileApiV1RecipeProfilesProfileIdPatchMutation(),
-    onSettled: () => refreshProfiles(queryClient),
+    ...renameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchMutation(),
+    onSettled: () => refreshProfiles(queryClient, bookId),
   });
 }
 
-/** Delete a profile, which changes no recipe of any book. */
-export function useDeleteProfile() {
+/** Delete a profile, which changes no step of any recipe and only clears the links to it. */
+export function useDeleteProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation(),
-    onSettled: () => refreshProfiles(queryClient),
-  });
-}
-
-/** Make a profile the default of its stage, which takes the mark off the one that was. */
-export function useSetDefaultProfile() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation(),
-    onSettled: () => refreshProfiles(queryClient),
-  });
-}
-
-/** Stop a profile being the default of its stage. */
-export function useUnsetDefaultProfile() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteMutation(),
-    onSettled: () => refreshProfiles(queryClient),
+    ...deleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteMutation(),
+    onSettled: () =>
+      Promise.all([
+        invalidateAllRecipes(queryClient, bookId),
+        refreshProfiles(queryClient, bookId),
+      ]),
   });
 }
 
 /**
- * Put the steps of a profile into the recipe of one kind of page of a book. The pages that recipe made go out of date, and
- * the profile is linked to the recipe.
+ * Put the steps of a profile into the recipe of one kind of page of the book. The pages that recipe made go out of date,
+ * and the profile is linked to the recipe.
  */
 export function useApplyProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostMutation(),
     onSettled: () =>
-      Promise.all([invalidateAllRecipes(queryClient, bookId), refreshProfiles(queryClient)]),
+      Promise.all([
+        invalidateAllRecipes(queryClient, bookId),
+        refreshProfiles(queryClient, bookId),
+      ]),
   });
 }
 
 /** Save a copy of a profile, under its name with "(copy)" after it. */
-export function useDuplicateProfile() {
+export function useDuplicateProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostMutation(),
-    onSettled: () => refreshProfiles(queryClient),
+    ...duplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostMutation(),
+    onSettled: () => refreshProfiles(queryClient, bookId),
   });
 }
 
 /** Save the profile a file holds. The server checks it as it checks a saved profile, and names what is wrong with it. */
-export function useImportProfile() {
+export function useImportProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...importProfileApiV1RecipeProfilesImportPostMutation(),
-    onSettled: () => refreshProfiles(queryClient),
+    ...importProfileApiV1BooksBookIdRecipeProfilesImportPostMutation(),
+    onSettled: () => refreshProfiles(queryClient, bookId),
   });
 }
 
 /** Read a profile as the file it is exchanged by. The file is read again every time, so it is never an old one. */
-export function useExportProfile() {
+export function useExportProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (profileId: string) =>
       queryClient.fetchQuery({
-        ...exportProfileApiV1RecipeProfilesProfileIdExportGetOptions({
-          path: { profile_id: profileId },
+        ...exportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetOptions({
+          path: { book_id: bookId, profile_id: profileId },
         }),
         staleTime: 0,
       }),

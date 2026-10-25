@@ -18,9 +18,9 @@ if TYPE_CHECKING:
 
 
 class PageGroups:
-    """The groups of one book on the session of a unit of work, translated between their labels and their keys.
+    """The groups of one book on the session of a transaction, translated between their labels and their keys.
 
-    :ivar _session: Session of the unit of work.
+    :ivar _session: Session of the transaction.
     :ivar _keys: Key of each group by its label, read on first use.
     :ivar _labels: Label of each group by its key, read with ``_keys``.
     """
@@ -28,7 +28,7 @@ class PageGroups:
     def __init__(self, session: Session) -> None:
         """Create the groups of the book on ``session``, which are read when they are first needed.
 
-        :param session: Session of the unit of work.
+        :param session: Session of the transaction.
         :type session: Session
         """
         self._session = session

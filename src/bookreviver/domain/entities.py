@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
+        BookDirectoryName,
         BookId,
         ChangeBatchId,
         JobId,
@@ -112,11 +113,10 @@ class Actor:
 class BookRecord:
     """One book being digitised: its description and the settings of the work on it.
 
-    The record knows nothing of accounts, so a book moves between instances of the application as it is. The account
-    that owns it is a :class:`LibraryEntry` of the library. The files the book was assembled from are its sources,
-    which the record does not name.
+    The record knows nothing of accounts or of the identifier of its book, so a book moves between instances of the
+    application as it is. The identifier and the account that owns the book are a :class:`LibraryEntry` of the
+    library. The files the book was assembled from are its sources, which the record does not name.
 
-    :ivar id: Identifier of the book.
     :ivar details: Bibliographic description of the book.
     :ivar image_policy: How the ``full`` images of the book's scans and page versions are stored.
     :ivar created_at: When the book was created.
@@ -125,7 +125,6 @@ class BookRecord:
 
     DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
 
-    id: BookId
     details: BookDetails
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     created_at: datetime
@@ -138,27 +137,19 @@ class LibraryEntry:
 
     :ivar book_id: The book.
     :ivar owner_id: Account owning the book.
+    :ivar directory: Name of the directory of the book in the storage, which holds its database and its files.
     :ivar added_at: When the book joined the library, which orders the owner's list of books, the newest first.
     """
 
     book_id: BookId
     owner_id: AccountId
+    directory: BookDirectoryName
     added_at: datetime
 
     @property
     def id(self) -> BookId:
         """The identifier the entry is stored under, which is its book's: a book is in one library."""
         return self.book_id
-
-    def is_owned_by(self, actor: Actor) -> bool:
-        """Return whether the actor owns the book.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :returns: True when the actor's account is the book's owner.
-        :rtype: bool
-        """
-        return self.owner_id == actor.account_id
 
 
 @frozen(kw_only=True)
@@ -572,7 +563,6 @@ class Job:
     import the whole import, which reports its files and scans inside the task.
 
     :ivar id: Identifier of the job.
-    :ivar book_id: Book the job works on.
     :ivar kind: What the job does.
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its tasks are done.
@@ -586,7 +576,6 @@ class Job:
     """
 
     id: JobId
-    book_id: BookId
     kind: JobKind
     state: JobState = JobState.QUEUED
     progress: Progress = field(factory=Progress)
@@ -623,9 +612,9 @@ class Recipe:
     :ivar stage: Stage the recipe processes.
     :ivar kind: Kind of the pages the recipe processes, which is unique among the recipes of the stage.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
-    :ivar profile_id: The profile of the account the recipe was made from, or None for a recipe that was not. The
-                      steps may have changed since, and the link survives that, so the book can tell how it differs
-                      from the profile. Deleting the profile clears it.
+    :ivar profile_id: The profile of the book the recipe was made from, or None for a recipe that was not. The steps
+                      may have changed since, and the link survives that, so the book can tell how it differs from
+                      the profile. Deleting the profile clears it.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
     """
@@ -687,31 +676,27 @@ class Recipe:
 
 @frozen(kw_only=True)
 class RecipeProfile:
-    """The steps of a recipe of one stage that an account saved, to apply to its books.
+    """The steps of a recipe of one stage that are saved in a book, to apply to its recipes.
 
-    A recipe belongs to one book, and a profile to the account, so a book that is set up once can be set up again in
-    another by applying the profile. The steps keep their order, their parameters and their ``enabled`` switch. An
-    account has at most one default profile for each stage, which a new book takes as the recipe of text pages.
+    A profile belongs to one book, like the recipes made from it, so a book that is set up once can be set up again by
+    applying the profile to another recipe of it. A profile reaches another book only as a file. The steps keep their
+    order, their parameters and their ``enabled`` switch.
 
     :ivar id: Identifier of the profile.
-    :ivar account_id: Account owning the profile, the only one that may read or change it.
     :ivar stage: Stage whose recipes the profile can be applied to.
     :ivar name: Name the user sees, such as ``Photographed book``.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
     :ivar order: Whether the steps were saved in the usual order, which refuses a step where it cannot work, or in the
-                 free order, which lets it stand with a warning. A book opened from the profile starts in this mode.
-    :ivar is_default: Whether a new book of the account starts the stage with this profile.
+                 free order, which lets it stand with a warning. A recipe made from the profile starts in this mode.
     :ivar created_at: When the profile was saved.
     :ivar updated_at: When the profile was last changed.
     """
 
     id: RecipeProfileId
-    account_id: AccountId
     stage: Stage
     name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...]
     order: OrderMode = OrderMode.USUAL
-    is_default: bool = False
     created_at: datetime
     updated_at: datetime
 

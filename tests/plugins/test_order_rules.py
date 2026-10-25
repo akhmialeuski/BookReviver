@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bookreviver.app.plugins import EntryPointCatalog
-from bookreviver.domain.enums import WorkerPool
+from bookreviver.app.recipe_defaults import load_default_recipes
+from bookreviver.app.settings import ProcessingSettings
+from bookreviver.domain.enums import Stage, WorkerPool
 from bookreviver.domain.values import Step
 from bookreviver.services.recipe_order import RecipeOrder
-from bookreviver.services.recipes import DefaultRecipes
 from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ THICKNESS_KEY: str = 'cleanup.thickness'
 
 
 @pytest.fixture
-def fx_catalogue() -> EntryPointCatalog:
+def fx_processors() -> EntryPointCatalog:
     """Load the built-in processors, which need OpenCV for the most part.
 
     :returns: The catalogue of the processors the project registers.
@@ -37,57 +38,57 @@ def fx_catalogue() -> EntryPointCatalog:
     return EntryPointCatalog(pools=set(WorkerPool))
 
 
-def spec_of(catalogue: EntryPointCatalog, key: str) -> ProcessorSpec:
+def spec_of(processors: EntryPointCatalog, key: str) -> ProcessorSpec:
     """Find the spec of a processor.
 
-    :param catalogue: The catalogue of the processors.
-    :type catalogue: EntryPointCatalog
+    :param processors: The catalogue of the processors.
+    :type processors: EntryPointCatalog
     :param key: Key of the processor.
     :type key: str
     :returns: Its spec.
     :rtype: ProcessorSpec
     """
-    return catalogue.get(key).spec
+    return processors.get(key).spec
 
 
 class TestOrderRules:
     """Tests for the rules in the specs of the built-in processors."""
 
-    def test_every_rule_names_another_processor_of_the_same_stage(self, fx_catalogue: EntryPointCatalog) -> None:
+    def test_every_rule_names_another_processor_of_the_same_stage(self, fx_processors: EntryPointCatalog) -> None:
         """Verify a rule never names a processor that is not offered, itself, or one of another stage.
 
-        :param fx_catalogue: The catalogue of the built-in processors.
-        :type fx_catalogue: EntryPointCatalog
+        :param fx_processors: The catalogue of the built-in processors.
+        :type fx_processors: EntryPointCatalog
         """
-        stages = {spec.key: spec.stage for spec in fx_catalogue.specs()}
+        stages = {spec.key: spec.stage for spec in fx_processors.specs()}
         wrong = [
             f'{spec.key} names {rule.processor_key}'
-            for spec in fx_catalogue.specs()
+            for spec in fx_processors.specs()
             for rule in (*spec.after, *spec.before, *spec.requires_after)
             if rule.processor_key == spec.key or stages.get(rule.processor_key) is not spec.stage
         ]
         assert wrong == []
 
-    def test_every_rule_has_a_reason_the_reader_can_use(self, fx_catalogue: EntryPointCatalog) -> None:
+    def test_every_rule_has_a_reason_the_reader_can_use(self, fx_processors: EntryPointCatalog) -> None:
         """Verify the reason is a sentence, which the interface shows as it is.
 
-        :param fx_catalogue: The catalogue of the built-in processors.
-        :type fx_catalogue: EntryPointCatalog
+        :param fx_processors: The catalogue of the built-in processors.
+        :type fx_processors: EntryPointCatalog
         """
         reasons = [
-            rule.reason for spec in fx_catalogue.specs() for rule in (*spec.after, *spec.before, *spec.requires_after)
+            rule.reason for spec in fx_processors.specs() for rule in (*spec.after, *spec.before, *spec.requires_after)
         ]
         assert reasons
         assert all(reason.endswith('.') and ' ' in reason and '_' not in reason for reason in reasons)
 
-    def test_the_rules_can_all_be_met_at_once(self, fx_catalogue: EntryPointCatalog) -> None:
+    def test_the_rules_can_all_be_met_at_once(self, fx_processors: EntryPointCatalog) -> None:
         """Verify no processor has to come before another that has to come before it, which no order could satisfy.
 
-        :param fx_catalogue: The catalogue of the built-in processors.
-        :type fx_catalogue: EntryPointCatalog
+        :param fx_processors: The catalogue of the built-in processors.
+        :type fx_processors: EntryPointCatalog
         """
-        later: dict[str, set[str]] = {spec.key: set() for spec in fx_catalogue.specs()}
-        for spec in fx_catalogue.specs():
+        later: dict[str, set[str]] = {spec.key: set() for spec in fx_processors.specs()}
+        for spec in fx_processors.specs():
             for rule in (*spec.after, *spec.requires_after):
                 later[spec.key].add(rule.processor_key)
             for rule in spec.before:
@@ -95,31 +96,32 @@ class TestOrderRules:
         # A cycle raises graphlib.CycleError
         assert set(TopologicalSorter(later).static_order()) == set(later)
 
-    def test_every_recipe_a_stage_starts_with_is_in_its_usual_order(self, fx_catalogue: EntryPointCatalog) -> None:
+    def test_every_recipe_a_stage_starts_with_is_in_its_usual_order(self, fx_processors: EntryPointCatalog) -> None:
         """Verify the templates a new book gets carry no mark of a step out of its place.
 
-        :param fx_catalogue: The catalogue of the built-in processors.
-        :type fx_catalogue: EntryPointCatalog
+        :param fx_processors: The catalogue of the built-in processors.
+        :type fx_processors: EntryPointCatalog
         """
-        order = RecipeOrder(fx_catalogue)
+        order = RecipeOrder(fx_processors)
+        defaults = load_default_recipes(ProcessingSettings().recipes_file)
         marked = [
             f'{stage}: {kind}'
-            for stage, templates in DefaultRecipes.TEMPLATES.items()
-            for kind, template in templates.items()
+            for stage in Stage
+            for kind, template in defaults.for_stage(stage).items()
             if order.issues([Step(processor_key=key) for key in template.processor_keys])
         ]
         assert marked == []
 
     def test_margins_must_follow_select_content_and_despeckle_and_thickness_must_follow_binarization(
-        self, fx_catalogue: EntryPointCatalog
+        self, fx_processors: EntryPointCatalog
     ) -> None:
         """Verify the steps that lose their meaning without the one before them require their place.
 
-        :param fx_catalogue: The catalogue of the built-in processors.
-        :type fx_catalogue: EntryPointCatalog
+        :param fx_processors: The catalogue of the built-in processors.
+        :type fx_processors: EntryPointCatalog
         """
         required = {
-            key: [rule.processor_key for rule in spec_of(fx_catalogue, key).requires_after]
+            key: [rule.processor_key for rule in spec_of(fx_processors, key).requires_after]
             for key in (MARGINS_KEY, DESPECKLE_KEY, THICKNESS_KEY)
         }
         assert required == {MARGINS_KEY: [CROP_KEY], DESPECKLE_KEY: [BINARIZE_KEY], THICKNESS_KEY: [BINARIZE_KEY]}

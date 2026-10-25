@@ -4,7 +4,7 @@ A page stores its position as an order key, a string that sorts byte by byte bet
 key between two keys always exists, so inserting or moving a page writes one row and renumbers nothing. The domain may
 import only the standard library and attrs, so the keys come from a port whose adapter wraps a library.
 
-The methods are synchronous, like ``Clock.now``: they compute a string in memory and never wait on I/O.
+The methods are synchronous: they compute a string in memory and never wait on I/O.
 """
 
 from abc import ABC, abstractmethod

@@ -15,9 +15,8 @@ from fastapi import Query
 from fastapi_pagination import Params
 from pydantic import Field, model_validator
 
-from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.api.schemas.images import ImagePathsSchema
+from bookreviver.api.schemas.images import ImagePathsSchema, iiif_path
 from bookreviver.api.schemas.types import (
     RECIPE_STEPS_MAX_LENGTH,
     PageIdList,
@@ -145,7 +144,7 @@ class RecipeSchema(ResponseModel):
     :ivar stage: Stage the recipe processes.
     :ivar kind: Kind of the pages the recipe processes, which is also its name.
     :ivar steps: The steps in the order they run.
-    :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
+    :ivar profile_id: The profile of the book the recipe was made from, or null for a recipe that was not.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
     :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual
@@ -509,18 +508,18 @@ class PageVersionSchema(ResponseModel):
         :returns: The schema.
         :rtype: Self
         """
-        keys = BookKeys(book_id)
         ready = version.renditions is not None and version.renditions.ready
         images = None
         preview = None
         if version.renditions is not None and ready and version.scale is VersionScale.FULL:
             images = ImagePathsSchema.of(
-                request, lambda rendition: keys.version_rendition(version, rendition), full=version.renditions.full
+                request,
+                book_id,
+                lambda rendition: BookKeys.version_rendition(version, rendition),
+                full=version.renditions.full,
             )
         elif ready:
-            preview = str(
-                request.app.url_path_for(RouteName.IIIF_FILE, key=keys.version_rendition(version, Rendition.PREVIEW))
-            )
+            preview = iiif_path(request, book_id, BookKeys.version_rendition(version, Rendition.PREVIEW))
         return cls(
             id=version.id,
             page_id=version.page_id,

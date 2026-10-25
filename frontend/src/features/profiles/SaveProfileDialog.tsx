@@ -18,7 +18,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { TextField } from '@/shared/ui/text-field';
 
 /**
- * The dialog that saves the steps of the book as a new profile of the account. It asks for a name, which starts as the
+ * The dialog that saves the steps of the book as a new profile of the book. It asks for a name, which starts as the
  * name of the recipe, and links the recipe to the profile it made, so the book is compared with that profile from then
  * on. The profile menu opens it.
  *
@@ -44,7 +44,7 @@ export function SaveProfileDialog({
 }): React.JSX.Element | null {
   const { bookId, stage, recipe, steps } = processing;
   const [name, setName] = useState('');
-  const save = useSaveProfile();
+  const save = useSaveProfile(bookId);
   const link = useLinkProfile(bookId);
   const saveRecipe = useSaveRecipe(bookId);
   const recipeName =
@@ -80,6 +80,7 @@ export function SaveProfileDialog({
           })
         : { steps: bodyOf(steps) };
       const profile = await save.mutateAsync({
+        path: { book_id: bookId },
         body: { stage, name: name.trim(), steps: kept.steps, order: processing.orderMode },
       });
       await link.mutateAsync({

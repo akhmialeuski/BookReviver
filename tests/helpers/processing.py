@@ -1,7 +1,7 @@
 """Building the processing services of a test over the test's database, the local asset store and fake processors.
 
 ``ProcessingKit`` holds what the services of one test share, and builds a service, the jobs of the workers, the edit
-service or the page settings service over a new unit of work, as a new request or job would get one. The processors
+service or the page settings service over a new catalogue database, as a new request or job would get one. The processors
 are fakes that copy their input, and the writer of renditions copies the image it is given and writes token files, so
 no image library is needed to tell which files a version has and in which format its ``full`` was asked for.
 """
@@ -13,7 +13,8 @@ from attrs import evolve
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.api.access import books_of
+from bookreviver.app.recipe_defaults import load_default_recipes
+from bookreviver.app.settings import ProcessingSettings
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
     ImagePolicy,
@@ -26,15 +27,17 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, Slice, SliceRequest
+from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
+from bookreviver.ports.runtime import BookJobs
+from bookreviver.services.book import Book
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
@@ -50,7 +53,6 @@ from tests.helpers.builders import (
     make_source,
     open_for,
 )
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import (
     IMAGE_SIZE_PX,
@@ -68,16 +70,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, RecipeProfile, Scan
-    from bookreviver.domain.ids import BookId, JobId, PageVersionId
-    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft
-    from bookreviver.ports.persistence import BookRepositories, PageVersionRepository, UnitOfWork
+    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, Scan
+    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageVersionId
+    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, PageVersionRepository
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import AssetStore
-    from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
 
 IMAGE_CONTENT: bytes = b'image'
 PREVIEW_RETENTION_HOURS: int = 24
@@ -93,29 +94,29 @@ DEFAULTS: DefaultRecipes = DefaultRecipes(
 )
 
 # The recipes of a kit with the OpenCV plugins, which are the ones the application starts with
-CV_DEFAULTS: DefaultRecipes = DefaultRecipes()
-# The method of ``ProcessingJobs`` that runs each kind of job it does
+CV_DEFAULTS: DefaultRecipes = load_default_recipes(ProcessingSettings().recipes_file)
+# The method of ``ProcessingJobs`` that runs each kind of job it does that takes the book, the job and the control
 JOB_METHODS: dict[JobKind, str] = {
     JobKind.RUN_STAGE: 'run_stage',
     JobKind.PREVIEW_STEP: 'preview_step',
     JobKind.CUT_TILES: 'cut_tiles',
     JobKind.COLLECT_VERSIONS: 'collect_versions',
-    JobKind.MEASURE_BOOK: 'measure_book',
     JobKind.DETECT_CONTENT: 'detect_content',
 }
 
 
 class ProcessingKit:
-    """What the processing services of one test share, and a builder of the services over a new unit of work.
+    """What the processing services of one test share, and a builder of the services over a new catalogue database.
 
-    :ivar database: Catalogue of the test, which stores the account of the actor and every unit of work opens over.
-    :ivar assets: Asset store over a temporary directory.
+    :ivar database: Catalogue of the test, which stores the account of the actor and every catalogue database opens over.
+    :ivar stores: Opens the catalogue databases, the databases and the file stores of the books of the test.
+    :ivar databases: Opens the databases of the books of the test.
+    :ivar files: Opens the source store and the asset store of a book of the test.
     :ivar events: Event bus recording what is published.
-    :ivar clock: Clock stopped at the epoch, which a test moves.
     :ivar board: Board the jobs are put on, which records them and runs them when a test calls ``work_queue``.
     :ivar fake: The fake geometry processor, which counts its runs and previews.
     :ivar cleanup: The fake cleanup processor.
-    :ivar catalogue: The catalogue of the processors the services can run.
+    :ivar processors: The catalogue of the processors the services can run.
     :ivar writer: The fake writer of renditions.
     :ivar tiler: The fake tiler.
     :ivar tracer: Tracer of the runs of the kit, which keeps the spans of the pages and steps they run.
@@ -124,24 +125,21 @@ class ProcessingKit:
     def __init__(
         self,
         database: SqlDatabase,
-        new_uow: UnitOfWorkFactory,
-        assets: AssetStore,
+        stores: BookOpener,
         *,
         processors: Sequence[Processor] | None = None,
         defaults: DefaultRecipes = DEFAULTS,
     ) -> None:
-        """Build the kit over the catalogue and the books of the test and an asset store.
+        """Build the kit over the catalogue, the books and the files of the test.
 
-        A second kit over the databases and the assets of a first stands for the same process after a restart: its
-        board is new and empty, and its databases and files are the ones the first left.
+        A second kit over the opener of a first stands for the same process after a restart: its board is new and
+        empty, and its databases and files are the ones the first left.
 
         :param database: Catalogue of the test, such as ``fx_database``.
         :type database: SqlDatabase
-        :param new_uow: Function opening a unit of work over the catalogue and the books of the test, such as
-                        ``fx_uow``.
-        :type new_uow: UnitOfWorkFactory
-        :param assets: Asset store of the test.
-        :type assets: AssetStore
+        :param stores: Opens the catalogue databases, the databases and the file stores of the books of the test, such as
+                       ``fx_open_book``.
+        :type stores: BookOpener
         :param processors: The processors of the catalogue, or None for the real ``split.none`` and the two fakes.
         :type processors: Sequence[Processor] | None
         :param defaults: The recipes the stages start with.
@@ -149,71 +147,64 @@ class ProcessingKit:
         """
         self._defaults = defaults
         self.database = database
-        self._new_uow = new_uow
-        self.assets = assets
-        self.events = RecordingEventBus()
-        self.clock = FixedClock(EPOCH)
-        self.board = FakeJobBoard(runner=self._run_job, publisher=self.events, clock=self.clock)
+        self.stores = stores
+        self._new_catalogue = stores.catalogue
+        self.databases = stores.databases
+        self.files = stores.files
+        self.events = RecordingEventBus.current()
+        self.board = FakeJobBoard(runner=self._run_job)
+        BookJobs.register(self.board.open)
         self.fake = FakeProcessor()
         self.cleanup = CleanupProcessor()
         self.writer = FakeRenditionWriter()
         self.tiler = FakeTiler()
         self.tracer = RecordingTracer()
-        self.catalogue = FakeCatalogue(processors or [SplitNone(), self.fake, self.cleanup])
+        self.processors = FakeCatalogue(processors or [SplitNone(), self.fake, self.cleanup])
         self._runner = StepRunner(
-            assets=assets,
-            executor=InProcessStepExecutor(self.catalogue),
+            executor=InProcessStepExecutor(self.processors),
             renditions=self.writer,
             tiler=self.tiler,
         )
 
-    def parts(self, uow: UnitOfWork) -> ProcessingParts:
-        """Build the shared parts over a unit of work.
+    def parts(self) -> ProcessingParts:
+        """Build the shared parts of one request or job.
 
-        :param uow: Unit of work of the request or job.
-        :type uow: UnitOfWork
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, board=self.board, tracer=self.tracer)
         config = ProcessingConfig(
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
-        return ProcessingParts.build(uow, self.catalogue, self._defaults, runtime, config)
+        return ProcessingParts.build(self.processors, self._defaults, config)
 
-    def service(self, uow: UnitOfWork | None = None) -> ProcessingService:
-        """Build the processing service over a unit of work.
+    def service(self) -> ProcessingService:
+        """Build the processing service over a new catalogue database.
 
-        :param uow: The unit of work to run on, such as one that counts its reads, or None for a new one.
-        :type uow: UnitOfWork | None
         :returns: The service.
         :rtype: ProcessingService
         """
-        if uow is None:
-            uow = self.uow()
-        return ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow))
+        return ProcessingService(processors=self.processors, parts=self.parts())
 
     def profiles(self) -> RecipeProfiles:
-        """Build the service of the recipe profiles over a new unit of work.
+        """Build the service of the recipe profiles.
 
-        :returns: The service, which applies a profile through a processing service of the same unit of work.
+        :returns: The service, which applies a profile through a processing service.
         :rtype: RecipeProfiles
         """
-        uow = self.uow()
-        parts = self.parts(uow)
-        processing = ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=parts)
-        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
+        parts = self.parts()
+        processing = ProcessingService(processors=self.processors, parts=parts)
+        return RecipeProfiles(recipes=parts.recipes, processing=processing)
 
     async def recipe_of(
-        self, actor: Actor, book_record: BookRecord, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
+        self, actor: Actor, book_id: BookId, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
     ) -> Recipe:
         """Read the recipe of one kind of a stage of a book, which the first read creates with the others.
 
         :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Record of the book whose recipe is read.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book whose recipe is read.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page, text unless given.
@@ -222,14 +213,16 @@ class ProcessingKit:
         :rtype: Recipe
         """
         listed = await self.service().recipes(
-            open_for(actor, book_record.id), stage, SliceRequest(limit=len(RecipeKind))
+            open_for(actor, book_id),
+            stage,
+            SliceRequest(limit=len(RecipeKind)),
         )
         return next(recipe for recipe in listed.items if recipe.kind is kind)
 
     async def edit_recipe(
         self,
         actor: Actor,
-        book_record: BookRecord,
+        book_id: BookId,
         stage: Stage,
         draft: RecipeDraft,
         kind: RecipeKind = RecipeKind.TEXT,
@@ -238,8 +231,8 @@ class ProcessingKit:
 
         :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Record of the book whose recipe is changed.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book whose recipe is changed.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param draft: The new steps.
@@ -249,8 +242,12 @@ class ProcessingKit:
         :returns: The recipe as stored.
         :rtype: Recipe
         """
-        recipe = await self.recipe_of(actor, book_record, stage, kind)
-        return await self.service().save_recipe(open_for(actor, book_record.id), RecipeKey(stage, recipe.id), draft)
+        recipe = await self.recipe_of(actor, book_id, stage, kind)
+        return await self.service().save_recipe(
+            open_for(actor, book_id),
+            RecipeKey(stage, recipe.id),
+            draft,
+        )
 
     def stages(self) -> StageSummaries:
         """Build the sums of the stages of books, which read through the repositories their caller hands them.
@@ -258,25 +255,26 @@ class ProcessingKit:
         :returns: The stage summaries, which offer the processors of the kit.
         :rtype: StageSummaries
         """
-        return StageSummaries(catalogue=self.catalogue, board=self.board)
+        return StageSummaries(processors=self.processors)
 
     def jobs(self) -> ProcessingJobs:
-        """Build the work of the processing jobs over a new unit of work.
+        """Build the work of the processing jobs over a new catalogue database.
 
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        uow = self.uow()
         runtime = StageRuntime(
             runner=self._runner,
-            catalogue=self.catalogue,
-            publisher=self.events,
-            clock=self.clock,
+            processors=self.processors,
             order_keys=FractionalOrderKeys(),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             tracer=self.tracer,
         )
-        return ProcessingJobs(uow=uow, assets=self.assets, runtime=runtime, parts=self.parts(uow), pages=self._pages())
+        return ProcessingJobs(
+            runtime=runtime,
+            parts=self.parts(),
+            pages=self._pages(),
+        )
 
     async def work_queue(self) -> None:
         """Let the board run every job put on it that has not run, in the order they were put.
@@ -286,9 +284,11 @@ class ProcessingKit:
         """
         await self.board.run_queued()
 
-    async def _run_job(self, job: Job, control: JobControl) -> JobEnd:
-        """Run a job through the entry of its kind, over services built on a new unit of work, as the application does.
+    async def _run_job(self, dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
+        """Run a job through the entry of its kind, over services built on a new catalogue database, as the application does.
 
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
         :param job: The job the board took from its queue.
         :type job: Job
         :param control: What the job reports through.
@@ -296,54 +296,45 @@ class ProcessingKit:
         :returns: How the job ended.
         :rtype: JobEnd
         """
+        book = Book(dir_name)
         if job.kind is JobKind.PREPARE_PAGES:
-            return await self._pages().prepare_images(job, control)
-        return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(job, control))
+            return await self._pages().prepare_images(book, job, control)
+        if job.kind is JobKind.MEASURE_BOOK:
+            return await self.jobs().measure_book(book, control)
+        return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(book, job, control))
 
     def _pages(self) -> PageService:
-        """Build the page service over a new unit of work, which prepares the images and queues the detection.
+        """Build the page service over a new catalogue database, which prepares the images and queues the detection.
 
         :returns: The service.
         :rtype: PageService
         """
-        return make_page_service(self.uow(), self.assets, (self.events, self.clock, self.board))
+        return make_page_service(self.stores, (self.events, self.board))
 
     def edits(self) -> EditService:
-        """Build the edit service over a new unit of work.
+        """Build the edit service over a new catalogue database.
 
         :returns: The service.
         :rtype: EditService
         """
-        uow = self.uow()
-        return EditService(
-            uow=uow, assets=self.assets, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock
-        )
+        return EditService(processors=self.processors, records=self.parts().records)
 
     def page_settings(self) -> PageSettingsService:
-        """Build the page settings service over a new unit of work.
+        """Build the page settings service over a new catalogue database.
 
         :returns: The service.
         :rtype: PageSettingsService
         """
-        uow = self.uow()
-        return PageSettingsService(
-            uow=uow,
-            catalogue=self.catalogue,
-            records=self.parts(uow).records,
-            clock=self.clock,
-        )
+        return PageSettingsService(processors=self.processors, records=self.parts().records)
 
     def page_history(self) -> PageHistoryService:
-        """Build the page history service over a new unit of work.
+        """Build the page history service over a new catalogue database.
 
         :returns: The service.
         :rtype: PageHistoryService
         """
-        uow = self.uow()
-        parts = self.parts(uow)
-        return PageHistoryService(
-            uow=uow, records=parts.records, starter=parts.starter, assets=self.assets, clock=self.clock
-        )
+        parts = self.parts()
+        return PageHistoryService(records=parts.records, starter=parts.starter)
 
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
@@ -361,34 +352,35 @@ class ProcessingKit:
         :returns: The key of the edit of that step.
         :rtype: PageStepKey
         """
-        recipe = await self.parts(self.uow()).recipes.of_kind(book_id, stage, page.recipe_kind)
+        recipe = await self.parts().recipes.of_kind(await open_book(self, book_id), stage, page.recipe_kind)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 
-    def uow(self) -> UnitOfWork:
-        """Open a unit of work over the kit's catalogue and books, as a new request or job would get.
+    def catalogue(self) -> CatalogueDatabase:
+        """Open a catalogue database over the kit's catalogue and books, as a new request or job would get.
 
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
+        :returns: A new catalogue database.
+        :rtype: CatalogueDatabase
         """
-        return self._new_uow()
+        return self._new_catalogue()
 
-    async def seed_record(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookRecord]:
+    async def seed_book(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookId]:
         """Commit a new account and a book owned by it.
 
         :param image_policy: Image policy of the book.
         :type image_policy: ImagePolicy
-        :returns: The actor owning the book, and the record of the book.
-        :rtype: tuple[Actor, BookRecord]
+        :returns: The actor owning the book, and the identifier of the book.
+        :rtype: tuple[Actor, BookId]
         """
         owner = await commit_account(self.database)
-        book_record = evolve(make_record(), image_policy=image_policy)
-        await store_book(self.uow(), book_record, owner=owner)
-        return Actor(account_id=owner), book_record
+        book_id = await store_book(
+            self.catalogue(), evolve(make_record(), image_policy=image_policy), owner=owner, databases=self.databases
+        )
+        return Actor(account_id=owner), book_id
 
     async def seed_scan_page(
         self,
-        book_record: BookRecord,
+        book_id: BookId,
         *,
         order_key: str = 'a0',
         image: bytes = IMAGE_CONTENT,
@@ -396,8 +388,8 @@ class ProcessingKit:
     ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
-        :param book_record: Record of the book owning the page.
-        :type book_record: BookRecord
+        :param book_id: Identifier of the book owning the page.
+        :type book_id: BookId
         :param order_key: Order key of the page.
         :type order_key: str
         :param image: Content of the ``full`` and the preview image of the scan.
@@ -423,10 +415,9 @@ class ProcessingKit:
             repos.scans.add(scan)
             repos.pages.add(page)
 
-        await self.uow().change_book(book_record.id, add_scan_page)
-        keys = BookKeys(book_record.id)
+        await self.databases.open(book_id).change(add_scan_page)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-            async with self.assets.writable(keys.scan_rendition(scan, rendition)) as target:
+            async with self.files.assets(book_id).writable(BookKeys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
         return page, scan
 
@@ -452,9 +443,8 @@ class ProcessingKit:
             tiles_ready=True,
             data={'width_px': IMAGE_SIZE_PX, 'height_px': IMAGE_SIZE_PX},
         )
-        keys = BookKeys(book_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
+            async with self.files.assets(book_id).writable(BookKeys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
 
         def add_base_version(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -476,7 +466,7 @@ class ProcessingKit:
                 )
             )
 
-        await self.uow().change_book(book_id, add_base_version)
+        await self.databases.open(book_id).change(add_base_version)
         return version
 
     async def store_files(self, version: PageVersion, book_id: BookId) -> None:
@@ -487,9 +477,8 @@ class ProcessingKit:
         :param book_id: Book owning the page.
         :type book_id: BookId
         """
-        keys = BookKeys(book_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
+            async with self.files.assets(book_id).writable(BookKeys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)
 
     async def stored_version(self, book_id: BookId, version_id: PageVersionId) -> PageVersion:
@@ -503,7 +492,7 @@ class ProcessingKit:
         :rtype: PageVersion
         :raises NotFoundError: If the book holds no such version.
         """
-        return await self.uow().read_book(book_id, lambda repos: repos.page_versions.get(version_id))
+        return await self.databases.open(book_id).read(lambda repos: repos.page_versions.get(version_id))
 
     @staticmethod
     def params(**values: object) -> MetadataMap:
@@ -530,67 +519,89 @@ def stored_job(kit: ProcessingKit, job_id: JobId) -> Job:
     return kit.board.get(job_id)
 
 
-async def change_versions(kit: ProcessingKit, book_id: BookId, work: Callable[[PageVersionRepository], object]) -> None:
-    """Change the versions of a book in a change of its own, as another request would.
+async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
+    """Open a book of the library with its database, as a job opens the book it runs on.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :returns: The open book.
+    :rtype: Book
+    :raises NotFoundError: If the library has no such book.
+    """
+    catalogue = kit.catalogue()
+    return Book((await catalogue.read(lambda repos: repos.library.get(book_id))).directory)
+
+
+async def change_versions(
+    book_id: BookId, work: Callable[[PageVersionRepository], object], *, databases: LocatedBookDatabases
+) -> None:
+    """Change the versions of a book in a change of its own, as another request would.
+
     :param book_id: Book that is changed.
     :type book_id: BookId
     :param work: What is done to the version repository of the change.
     :type work: Callable[[PageVersionRepository], object]
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     """
-    await kit.uow().change_book(book_id, lambda repos, _book_record: work(repos.page_versions))
+    await databases.open(book_id).change(lambda repos, _book_record: work(repos.page_versions))
 
 
-async def found_version(kit: ProcessingKit, book_id: BookId, version_id: PageVersionId) -> PageVersion | None:
+async def found_version(
+    book_id: BookId, version_id: PageVersionId, *, databases: LocatedBookDatabases
+) -> PageVersion | None:
     """Read a version as committed, which is None for a version that the book does not hold.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Book that is read.
     :type book_id: BookId
     :param version_id: Identifier of the version.
     :type version_id: PageVersionId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     :returns: The version, or None.
     :rtype: PageVersion | None
     """
-    return await kit.uow().read_book(book_id, lambda repos: repos.page_versions.find(version_id))
+    return await databases.open(book_id).read(lambda repos: repos.page_versions.find(version_id))
 
 
-async def found_stage(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage) -> PageStage | None:
+async def found_stage(
+    book_id: BookId, page: Page, stage: Stage, *, databases: LocatedBookDatabases
+) -> PageStage | None:
     """Read the record of a stage of a page as committed, which is None for a stage that has not run on the page.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
     :type stage: Stage
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     :returns: The record, or None.
     :rtype: PageStage | None
     """
-    return await kit.uow().read_book(book_id, lambda repos: repos.page_stages.find(PageStageKey(page.id, stage)))
+    return await databases.open(book_id).read(lambda repos: repos.page_stages.find(PageStageKey(page.id, stage)))
 
 
-async def stage_versions(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage | None) -> Slice[PageVersion]:
+async def stage_versions(
+    book_id: BookId, page: Page, stage: Stage | None, *, databases: LocatedBookDatabases
+) -> Slice[PageVersion]:
     """Read the versions a page has made in a stage or in all, as committed, the earliest first.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage, or None for every stage.
     :type stage: Stage | None
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     :returns: The versions of every scale and mark, and their number.
     :rtype: Slice[PageVersion]
     """
-    return await kit.uow().read_book(
-        book_id,
+    return await databases.open(book_id).read(
         lambda repos: repos.page_versions.list_for_stage(page.id, stage, None, SliceRequest(limit=VERSIONS_WINDOW)),
     )
 
@@ -633,41 +644,12 @@ class InProcessExecutorProvider(Provider):
     scope = Scope.APP
 
     @provide(override=True)
-    def step_executor(self, catalogue: ProcessorCatalog) -> StepExecutor:
+    def step_executor(self, processors: ProcessorCatalog) -> StepExecutor:
         """Run the steps in a thread over the catalogue of the application.
 
-        :param catalogue: The catalogue of the application.
-        :type catalogue: ProcessorCatalog
+        :param processors: The catalogue of the application.
+        :type processors: ProcessorCatalog
         :returns: The executor that calls the processors in this process.
         :rtype: StepExecutor
         """
-        return InProcessStepExecutor(catalogue)
-
-
-async def account_profiles(kit: ProcessingKit, actor: Actor, stage: Stage | None = None) -> Slice[RecipeProfile]:
-    """Read every profile of an account, as the access dependency ``own_profiles`` reads one window of them.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the profiles.
-    :type actor: Actor
-    :param stage: The stage whose profiles are wanted, or None for every stage.
-    :type stage: Stage | None
-    :returns: The profiles in the order of the stages, then by creation, and their number.
-    :rtype: Slice[RecipeProfile]
-    """
-    profiles = await kit.uow().read(lambda repos: repos.recipe_profiles.list_for_account(actor.account_id, stage))
-    return Slice(items=list(profiles), total=len(profiles))
-
-
-async def account_books(kit: ProcessingKit, actor: Actor) -> list[Book]:
-    """Read every book of an account, as the access dependencies hand them to a service.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the books.
-    :type actor: Actor
-    :returns: The open books of the account.
-    :rtype: list[Book]
-    """
-    return await books_of(kit.uow(), actor.account_id)
+        return InProcessStepExecutor(processors)

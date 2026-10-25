@@ -24,28 +24,26 @@ from bookreviver.adapters.imaging import (
     VipsTiler,
 )
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
-from bookreviver.adapters.tracing.null import NullTracer
+from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
-from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService, ImportStorage
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.ports.storage import BookDirectory
+from bookreviver.services.book import Book
+from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
-from tests.helpers.builders import EPOCH
-from tests.helpers.clock import FixedClock
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
-from tests.helpers.storage import upload
+from tests.helpers.storage import SharedBookDirectories, upload
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
-    from datetime import datetime
     from pathlib import Path
 
     from fastapi import UploadFile
@@ -53,16 +51,15 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.ids import BookId, JobId, SourceId
+    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import SourceStore
     from bookreviver.services.recipes import DefaultRecipes
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
 
-TICK: timedelta = timedelta(seconds=1)
 PAGE_WIDTH_PX: int = 200
 PAGE_HEIGHT_PX: int = 300
 GRAY_MODE: str = 'L'
@@ -99,13 +96,13 @@ class StoredBook(NamedTuple):
         return [labels[page.id] for page in self.pages]
 
 
-async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
+async def stored_book(book_id: BookId, *, databases: LocatedBookDatabases) -> StoredBook:
     """Read the sources, scans, pages and pagination sections of a book as committed.
 
-    :param uow: Unit of work to read through.
-    :type uow: UnitOfWork
     :param book_id: Book owning the rows.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
     :returns: The rows, read in one transaction.
     :rtype: StoredBook
     """
@@ -125,7 +122,7 @@ async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
             sections=list(repos.pagination_sections.list_all()),
         )
 
-    return await uow.read_book(book_id, work)
+    return await databases.open(book_id).read(work)
 
 
 def pdf_upload(
@@ -187,27 +184,6 @@ def djvu_uploads(files: Sequence[Path]) -> list[UploadFile]:
 
 class WorkerCrashError(BaseException):
     """A worker that dies in the middle of a job, which the service must not catch since it cannot."""
-
-
-class TickingClock(FixedClock):
-    """A clock that moves a second forward every time it is read, so what an import creates has distinct times.
-
-    Sources are listed in the order of their import times, and a stopped clock would leave the order to their random
-    identifiers.
-
-    :ivar moment: The time the clock shows on its next reading.
-    """
-
-    @override
-    def now(self) -> datetime:
-        """Return the current time of the clock, then move it a second forward.
-
-        :returns: The moment the clock showed before it moved.
-        :rtype: datetime
-        """
-        moment = self.moment
-        self.moment += TICK
-        return moment
 
 
 class WatchedInspector(SourceInspector):
@@ -371,22 +347,55 @@ class WatchedTiler(Tiler):
         await self._inner.thumbnail(image, target)
 
 
-class CrashingSourceStore(LocalSourceStore):
-    """The local source store, whose next promotion can crash the worker or fail with an error.
+class CrashingBookDirectories(SharedBookDirectories):
+    """The local directories of the books, whose next promotion of a source in any book can crash the worker or fail.
 
     :ivar crash_on_promote: Whether the next ``promote`` raises ``WorkerCrashError``, once.
     :ivar fail_on_promote: Error the next ``promote`` raises, once, leaving the files staged as a refused one does.
     """
 
-    crash_on_promote: bool = False
-    fail_on_promote: Exception | None = None
+    def __init__(self, *, root: Path) -> None:
+        """Keep the directories of the books under ``root``, with no fault asked for.
+
+        :param root: Storage root of the directories.
+        :type root: Path
+        """
+        super().__init__(root=root)
+        self.crash_on_promote = False
+        self.fail_on_promote: Exception | None = None
 
     @override
-    async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+    def _new_sources(self, name: BookDirectoryName) -> CrashingSourceStore:
+        """Build the source store of a book, which reads the faults of these directories.
+
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :returns: The source store of the book.
+        :rtype: CrashingSourceStore
+        """
+        return CrashingSourceStore(root=self._files_root, name=name, faults=self)
+
+
+class CrashingSourceStore(LocalSourceStore):
+    """The local source store of one book, whose next promotion can crash the worker or fail with an error."""
+
+    def __init__(self, *, root: Path, name: BookDirectoryName, faults: CrashingBookDirectories) -> None:
+        """Keep the uploads and sources of one book under ``root``, failing as ``faults`` asks.
+
+        :param root: Storage root of the stores.
+        :type root: Path
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
+        :param faults: The directories that hold the faults a test asks for.
+        :type faults: CrashingBookDirectories
+        """
+        super().__init__(root=root, name=name)
+        self._faults = faults
+
+    @override
+    async def promote(self, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Promote the files, unless the test made this promotion crash.
 
-        :param book_id: Book owning the upload and the source.
-        :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId
         :param source_id: Source the files become.
@@ -396,13 +405,13 @@ class CrashingSourceStore(LocalSourceStore):
         :raises WorkerCrashError: If a crash was asked for, which is then forgotten.
         :raises Exception: The error asked for, which is then forgotten.
         """
-        if self.crash_on_promote:
-            self.crash_on_promote = False
+        if self._faults.crash_on_promote:
+            self._faults.crash_on_promote = False
             raise WorkerCrashError
-        if (failure := self.fail_on_promote) is not None:
-            self.fail_on_promote = None
+        if (failure := self._faults.fail_on_promote) is not None:
+            self._faults.fail_on_promote = None
             raise failure
-        await super().promote(book_id, job_id, source_id, names=names)
+        await super().promote(job_id, source_id, names=names)
 
 
 @frozen(kw_only=True)
@@ -410,12 +419,12 @@ class ImportRig:
     """Everything an import test runs on, built over one temporary storage root.
 
     :ivar database: The SQL database of the test, which stores the account of the actor.
-    :ivar new_uow: Function opening a unit of work over ``database``, as a new request or job would get.
-    :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
+    :ivar new_catalogue: Function opening a catalogue database over ``database``, as a new request or job would get.
+    :ivar databases: Opens the databases of the books of the test.
+    :ivar fakes: The recording event bus and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``.
-    :ivar sources: Local source store, whose promotion can crash.
-    :ivar assets: Local asset store.
+    :ivar files: The local directories of the books, whose promotion of a source can crash.
     :ivar inspector: Real inspector, watched.
     :ivar rasterizer: Real rasterizer, watched.
     :ivar tiler: Real tiler, watched.
@@ -424,11 +433,11 @@ class ImportRig:
     """
 
     database: SqlDatabase
-    new_uow: UnitOfWorkFactory
+    new_catalogue: CatalogueDatabaseFactory
+    databases: LocatedBookDatabases
     fakes: JobFakes
     events: RecordingEventBus
-    sources: CrashingSourceStore
-    assets: LocalAssetStore
+    files: CrashingBookDirectories
     inspector: WatchedInspector
     rasterizer: WatchedRasterizer
     tiler: WatchedTiler
@@ -436,16 +445,18 @@ class ImportRig:
     processors: Sequence[Processor] = field(factory=lambda: [SplitNone()])
 
     @classmethod
-    def build(cls, root: Path, database: SqlDatabase, new_uow: UnitOfWorkFactory) -> ImportRig:
+    def build(cls, root: Path, database: SqlDatabase, stores: BookOpener) -> ImportRig:
         """Build the rig over the adapters of the application, with the settings' defaults.
 
         :param root: Storage root of both stores.
         :type root: Path
         :param database: SQL database of the test, such as ``fx_database``.
         :type database: SqlDatabase
-        :param new_uow: Function opening a unit of work over ``database``, such as ``fx_uow``.
-        :type new_uow: UnitOfWorkFactory
-        :returns: The rig with nothing stored.
+        :param stores: Opens the catalogue databases over ``database`` and the databases of the books, such as
+                       ``fx_open_book``.
+        :type stores: BookOpener
+        :returns: The rig with nothing stored, whose directories are registered as the ones the books of the test open,
+                  until the test registers others or ends.
         :rtype: ImportRig
         """
         imaging = ImagingSettings()
@@ -466,14 +477,18 @@ class ImportRig:
             thumbnail_long_side_px=imaging.thumbnail_long_side_px,
             jpeg_quality=imaging.jpeg_quality,
         )
-        events = RecordingEventBus()
+        events = RecordingEventBus.current()
+        files = CrashingBookDirectories(root=root)
+        BookDirectory.register(files.open)
         # The board needs the service of the rig to run a job, and the rig needs the board, so the rig is found when a
         # job runs
         built: list[ImportRig] = []
 
-        async def run(job: Job, control: JobControl) -> JobEnd:
+        async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
             """Run an import job through a service of the rig, as the application runs it.
 
+            :param dir_name: Name of the directory of the book whose queue the job was taken from.
+            :type dir_name: BookDirectoryName
             :param job: The job the board took from its queue.
             :type job: Job
             :param control: What the job reports through.
@@ -481,15 +496,15 @@ class ImportRig:
             :returns: How the job ended.
             :rtype: JobEnd
             """
-            return await built[0].service().run_import(job, control)
+            return await built[0].service().run_import(Book(dir_name), job, control)
 
         rig = cls(
             database=database,
-            new_uow=new_uow,
-            fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
+            new_catalogue=stores.catalogue,
+            databases=stores.databases,
+            fakes=JobFakes(events=events, runner=run),
             events=events,
-            sources=CrashingSourceStore(root=root),
-            assets=LocalAssetStore(root=root),
+            files=files,
             inspector=WatchedInspector(reader),
             rasterizer=WatchedRasterizer(reader),
             tiler=WatchedTiler(tiler),
@@ -504,7 +519,6 @@ class ImportRig:
         :rtype: StepRunner
         """
         return StepRunner(
-            assets=self.assets,
             executor=InProcessStepExecutor(FakeCatalogue([SplitNone()])),
             renditions=VipsRenditionWriter(
                 preview_long_side_px=ImagingSettings().preview_long_side_px,
@@ -514,29 +528,26 @@ class ImportRig:
             tiler=self.tiler,
         )
 
-    def open_uow(self) -> UnitOfWork:
-        """Open a unit of work over the rig's database, as a new request or job would get.
+    def open_catalogue(self) -> CatalogueDatabase:
+        """Open a catalogue database over the rig's database, as a new request or job would get.
 
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
+        :returns: A new catalogue database.
+        :rtype: CatalogueDatabase
         """
-        return self.new_uow()
+        return self.new_catalogue()
 
     def service(
         self,
         *,
-        uow: UnitOfWork | None = None,
-        sources: SourceStore | None = None,
+        catalogue: CatalogueDatabase | None = None,
         parallel_scans: int = DEFAULT_PARALLEL_SCANS,
         max_files: int = MAX_FILES,
         max_bytes: int = MAX_BYTES,
     ) -> ImportService:
-        """Build an import service over a new unit of work, as a new request or job would get.
+        """Build an import service over a new catalogue database, as a new request or job would get.
 
-        :param uow: Unit of work the service works in, or None for a new one over the rig's database.
-        :type uow: UnitOfWork | None
-        :param sources: Source store the service works with, or None for the rig's own.
-        :type sources: SourceStore | None
+        :param catalogue: Catalogue database the service works in, or None for a new one over the rig's database.
+        :type catalogue: CatalogueDatabase | None
         :param parallel_scans: Largest number of scans cut at once.
         :type parallel_scans: int
         :param max_files: Largest number of files in an upload.
@@ -546,30 +557,22 @@ class ImportRig:
         :returns: The service, sharing the database, the stores and the event bus of the rig.
         :rtype: ImportService
         """
-        uow = uow or self.open_uow()
+        catalogue = catalogue or self.open_catalogue()
         parts = ProcessingParts.build(
-            uow,
             FakeCatalogue(self.processors),
             self.defaults,
-            ProcessingRuntime(
-                publisher=self.fakes.events, clock=self.fakes.clock, board=self.fakes.board, tracer=NullTracer()
-            ),
             ProcessingConfig(
                 preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
                 preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             ),
         )
         return ImportService(
-            uow=uow,
-            storage=ImportStorage(sources=sources or self.sources, assets=self.assets),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),
             runtime=ImportRuntime(
-                clock=self.fakes.clock,
                 order_keys=FractionalOrderKeys(),
                 limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
-                board=self.fakes.board,
             ),
             parts=parts,
         )

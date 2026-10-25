@@ -6,14 +6,15 @@ stale and their versions stay, which lets the interface show the old result with
 again. A record that already failed stays failed, since a stale mark would hide the failure.
 
 Every method that writes or reads records takes the ``BookRepositories`` of the transaction it runs in, so it is called
-from the work of ``UnitOfWork.change_book`` or ``UnitOfWork.read_book`` and opens no transaction of its own. It is
-synchronous, like the work that calls it, and announces nothing: the unit of work tells the browser that the stages
+from the work of ``Book.change`` or ``Book.read`` and opens no transaction of its own. It is
+synchronous, like the work that calls it, and announces nothing: the browser is told that the stages
 changed once the transaction committed.
 
 A value for the odd pages or the even pages is taken by place, so a page that a change of the places of the pages turns
 over to the other side runs with other parameters, and its stages are marked stale by ``watching_sides``.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self
 
 from attrs import evolve
@@ -22,7 +23,6 @@ from bookreviver.domain.entities import PageStage
 from bookreviver.domain.enums import Stage, StageState, ValueScope
 from bookreviver.domain.step_values import SIDE_SCOPES, pages_changing_side
 from bookreviver.domain.values import PageStageKey
-from bookreviver.services.books import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable
@@ -30,19 +30,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock
 
 
 class StageRecords:
     """Writes the stage records of pages inside the transaction of the caller."""
-
-    def __init__(self, *, clock: Clock) -> None:
-        """Stamp the records with a clock.
-
-        :param clock: Clock stamping the records.
-        :type clock: Clock
-        """
-        self._clock = clock
 
     def set_head(
         self,
@@ -77,7 +68,7 @@ class StageRecords:
             head_version_id=head_version_id,
             state=StageState.FRESH,
             through_step=through_step,
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
         repos.page_stages.save(record)
         if previous is None or previous.head_version_id != head_version_id:
@@ -235,7 +226,7 @@ class StageRecords:
             head_version_id=None if previous is None else previous.head_version_id,
             state=StageState.FAILED,
             through_step=None if previous is None else previous.through_step,
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
         repos.page_stages.save(record)
 
@@ -263,7 +254,7 @@ class StageRecords:
         :type records: Iterable[PageStage]
         """
         stale = [
-            evolve(record, state=StageState.STALE, updated_at=self._clock.now())
+            evolve(record, state=StageState.STALE, updated_at=datetime.now(UTC))
             for record in records
             if record.state is StageState.FRESH
         ]
@@ -275,7 +266,7 @@ class SideWatch:
 
     The order of the book is read before the block and after it, so inserting, deleting and moving pages are all
     covered by the one comparison, and nothing is read when no side has values for a step. The watch is a synchronous
-    context manager entered inside the work of ``change_book`` and marks the records there. A block that raises marks
+    context manager entered inside the work of ``Book.change`` and marks the records there. A block that raises marks
     nothing.
     """
 
@@ -322,4 +313,4 @@ class SideWatch:
         :returns: The identifiers of the pages, by place.
         :rtype: list[PageId]
         """
-        return [page.id for page in book_pages(self._repos.pages)]
+        return [page.id for page in self._repos.pages.list_all()]

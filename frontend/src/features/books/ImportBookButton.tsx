@@ -25,9 +25,9 @@ export function ImportBookButton(): React.JSX.Element {
 
   const importing = useMutation({
     ...importBookApiV1BooksArchivePostMutation(),
-    onSuccess: async (book) => {
+    onSuccess: async (bookId) => {
       await invalidateBookList(queryClient);
-      await navigate({ to: '/books/$bookId', params: { bookId: book.id } });
+      await navigate({ to: '/books/$bookId', params: { bookId } });
     },
   });
 

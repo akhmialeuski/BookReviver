@@ -58,8 +58,8 @@ export function ProfileMenu({
   const [open, setOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const profiles = useProfiles(stage);
-  const replace = useReplaceProfile();
+  const profiles = useProfiles(processing.bookId, stage);
+  const replace = useReplaceProfile(processing.bookId);
   const saveRecipe = useSaveRecipe(processing.bookId);
   const apply = useApplyProfile(processing.bookId);
   if (recipe === undefined) {
@@ -160,7 +160,7 @@ export function ProfileMenu({
                         })
                       : { steps: bodyOf(steps) };
                     const saved = await replace.mutateAsync({
-                      path: { profile_id: linked.id },
+                      path: { book_id: processing.bookId, profile_id: linked.id },
                       body: { name: linked.name, steps: kept.steps, order: processing.orderMode },
                     });
                     setNotice(labels.saved(saved.name));
@@ -252,11 +252,6 @@ export function ProfileMenu({
                         }
                       >
                         <span className="truncate">{profile.name}</span>
-                        {profile.is_default ? (
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            {MESSAGES.profiles.library.defaultMark}
-                          </span>
-                        ) : null}
                       </Button>
                     </li>
                   ))}

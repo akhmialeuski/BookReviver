@@ -27,7 +27,7 @@ export function useUpload(bookId: string, onSent?: () => void) {
       // An event of the job can arrive before this answer, and it is newer, so it is not overwritten
       queryClient.setQueryData(
         readJobApiV1BooksBookIdJobsJobIdGetQueryKey({
-          path: { book_id: job.book_id, job_id: job.id },
+          path: { book_id: bookId, job_id: job.id },
         }),
         (existing: JobSchema | undefined) => existing ?? job,
       );

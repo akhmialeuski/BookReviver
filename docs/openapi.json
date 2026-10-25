@@ -116,7 +116,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
+                  "type": "string",
+                  "format": "uuid",
+                  "title": "Response Create Book Api V1 Books Post"
                 }
               }
             }
@@ -204,7 +206,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
+                  "type": "string",
+                  "format": "uuid",
+                  "title": "Response Import Book Api V1 Books Archive Post"
                 }
               }
             }
@@ -326,7 +330,7 @@
           "books"
         ],
         "summary": "Update Book",
-        "description": "Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the\ntitle cannot be cleared, and the cover must be a page of the book.",
+        "description": "Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the\ntitle cannot be cleared, and the cover must be a page of the book. The answer has no body: the changed book\nis announced on the event stream of the book and read from there.",
         "operationId": "update_book_api_v1_books__book_id__patch",
         "parameters": [
           {
@@ -353,15 +357,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
-                }
-              }
-            }
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -3407,7 +3404,7 @@
           "processing"
         ],
         "summary": "Reset Recipe",
-        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the account's default profile for the stage when the recipe is the one of text pages and the\naccount has a usable profile, and otherwise those of the built-in template of the kind. The recipe keeps its\nidentifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.",
+        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the built-in template of the kind. The recipe keeps its identifier and its kind, and every\nstep in it is new. The answer is 404 for a stage that has no steps by default.",
         "operationId": "reset_recipe_api_v1_books__book_id__stages__stage__recipes__recipe_id__reset_post",
         "parameters": [
           {
@@ -4634,15 +4631,27 @@
         }
       }
     },
-    "/api/v1/recipe-profiles": {
+    "/api/v1/books/{book_id}/recipe-profiles": {
       "get": {
         "tags": [
           "profiles"
         ],
         "summary": "List Profiles",
-        "description": "List the profiles of the signed-in account in the order of the stages, then oldest first, with their books.\n\nThe books of a profile are the books that have a recipe made from it.",
-        "operationId": "list_profiles_api_v1_recipe_profiles_get",
+        "description": "List the profiles of a book in the order of the stages, then oldest first.",
+        "operationId": "list_profiles_api_v1_books__book_id__recipe_profiles_get",
         "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
+          },
           {
             "name": "page",
             "in": "query",
@@ -4689,7 +4698,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_LibraryProfileSchema_"
+                  "$ref": "#/components/schemas/Page_RecipeProfileSchema_"
                 }
               }
             }
@@ -4743,8 +4752,22 @@
           "profiles"
         ],
         "summary": "Create Profile",
-        "description": "Save the steps of a recipe as a profile, which is not the default until it is made one.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a\nstep that stands where it cannot work, unless the body asks for the free order.",
-        "operationId": "create_profile_api_v1_recipe_profiles_post",
+        "description": "Save the steps of a recipe as a profile of the book.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a\nstep that stands where it cannot work, unless the body asks for the free order.",
+        "operationId": "create_profile_api_v1_books__book_id__recipe_profiles_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4811,15 +4834,30 @@
         }
       }
     },
-    "/api/v1/recipe-profiles/import": {
+    "/api/v1/books/{book_id}/recipe-profiles/import": {
       "post": {
         "tags": [
           "profiles"
         ],
         "summary": "Import Profile",
-        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of the first version is read as well, and the condition its\nsteps name is dropped. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
-        "operationId": "import_profile_api_v1_recipe_profiles_import_post",
+        "description": "Save the profile a file holds as a profile of the book.\n\nThe file is checked as a saved profile is. A file of the first version is read as well, and the condition its\nsteps name is dropped. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
+        "operationId": "import_profile_api_v1_books__book_id__recipe_profiles_import_post",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -4831,18 +4869,17 @@
                     "$ref": "#/components/schemas/ProfileFileSchema"
                   }
                 ],
-                "title": "Body",
                 "discriminator": {
                   "propertyName": "version",
                   "mapping": {
                     "1": "#/components/schemas/ProfileFileV1",
                     "2": "#/components/schemas/ProfileFileSchema"
                   }
-                }
+                },
+                "title": "Body"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -4900,14 +4937,14 @@
         }
       }
     },
-    "/api/v1/recipe-profiles/{profile_id}/export": {
+    "/api/v1/books/{book_id}/recipe-profiles/{profile_id}/export": {
       "get": {
         "tags": [
           "profiles"
         ],
         "summary": "Export Profile",
-        "description": "Write a profile as a file, which another account can import.",
-        "operationId": "export_profile_api_v1_recipe_profiles__profile_id__export_get",
+        "description": "Write a profile as a file, which another book can import.",
+        "operationId": "export_profile_api_v1_books__book_id__recipe_profiles__profile_id__export_get",
         "parameters": [
           {
             "name": "profile_id",
@@ -4920,6 +4957,18 @@
               "title": "Profile Id"
             },
             "description": "Identifier of the recipe profile"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -4978,14 +5027,14 @@
         }
       }
     },
-    "/api/v1/recipe-profiles/{profile_id}/duplicate": {
+    "/api/v1/books/{book_id}/recipe-profiles/{profile_id}/duplicate": {
       "post": {
         "tags": [
           "profiles"
         ],
         "summary": "Duplicate Profile",
-        "description": "Save a copy of a profile under its name with \"(copy)\" after it, which is not the default.",
-        "operationId": "duplicate_profile_api_v1_recipe_profiles__profile_id__duplicate_post",
+        "description": "Save a copy of a profile under its name with \"(copy)\" after it.",
+        "operationId": "duplicate_profile_api_v1_books__book_id__recipe_profiles__profile_id__duplicate_post",
         "parameters": [
           {
             "name": "profile_id",
@@ -4998,6 +5047,18 @@
               "title": "Profile Id"
             },
             "description": "Identifier of the recipe profile"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -5056,14 +5117,14 @@
         }
       }
     },
-    "/api/v1/recipe-profiles/{profile_id}": {
+    "/api/v1/books/{book_id}/recipe-profiles/{profile_id}": {
       "put": {
         "tags": [
           "profiles"
         ],
         "summary": "Put Profile",
-        "description": "Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.\n\nThe stage and the default mark stay. The recipes made from the profile are not changed. A step whose processor is\nunknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it\ncannot work, unless the body asks for the free order.",
-        "operationId": "put_profile_api_v1_recipe_profiles__profile_id__put",
+        "description": "Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.\n\nThe stage stays. The recipes made from the profile are not changed. A step whose processor is\nunknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it\ncannot work, unless the body asks for the free order.",
+        "operationId": "put_profile_api_v1_books__book_id__recipe_profiles__profile_id__put",
         "parameters": [
           {
             "name": "profile_id",
@@ -5076,6 +5137,18 @@
               "title": "Profile Id"
             },
             "description": "Identifier of the recipe profile"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "requestBody": {
@@ -5149,7 +5222,7 @@
         ],
         "summary": "Rename Profile",
         "description": "Give a profile another name.",
-        "operationId": "rename_profile_api_v1_recipe_profiles__profile_id__patch",
+        "operationId": "rename_profile_api_v1_books__book_id__recipe_profiles__profile_id__patch",
         "parameters": [
           {
             "name": "profile_id",
@@ -5162,6 +5235,18 @@
               "title": "Profile Id"
             },
             "description": "Identifier of the recipe profile"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "requestBody": {
@@ -5235,7 +5320,7 @@
         ],
         "summary": "Delete Profile",
         "description": "Delete a profile, which changes no step of any recipe and only clears the links to it.",
-        "operationId": "delete_profile_api_v1_recipe_profiles__profile_id__delete",
+        "operationId": "delete_profile_api_v1_books__book_id__recipe_profiles__profile_id__delete",
         "parameters": [
           {
             "name": "profile_id",
@@ -5248,165 +5333,23 @@
               "title": "Profile Id"
             },
             "description": "Identifier of the recipe profile"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
           "204": {
             "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/recipe-profiles/{profile_id}/default": {
-      "put": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Put Default Profile",
-        "description": "Make a profile the default of its stage, so a new book starts the stage with it instead of the built-in recipe.\n\nThe profile that was the default of the stage stops being one.",
-        "operationId": "put_default_profile_api_v1_recipe_profiles__profile_id__default_put",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeProfileSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Delete Default Profile",
-        "description": "Stop a profile being the default of its stage, so a new book starts the stage with the built-in recipe again.",
-        "operationId": "delete_default_profile_api_v1_recipe_profiles__profile_id__default_delete",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe profile",
-              "title": "Profile Id"
-            },
-            "description": "Identifier of the recipe profile"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeProfileSchema"
-                }
-              }
-            }
           },
           "422": {
             "description": "Validation Error",
@@ -5459,21 +5402,9 @@
           "profiles"
         ],
         "summary": "Apply Profile",
-        "description": "Put the steps of a profile into the recipe of one kind of page of the profile's stage in a book.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile of another account answers 404. The recipe is linked to the\nprofile, and the pages it processed become stale.",
+        "description": "Put the steps of a profile into the recipe of one kind of page of the profile's stage in the book.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile the book does not have answers 404. The recipe is linked to\nthe profile, and the pages it processed become stale.",
         "operationId": "apply_profile_api_v1_books__book_id__recipe_profiles__profile_id__apply_post",
         "parameters": [
-          {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the book",
-              "title": "Book Id"
-            },
-            "description": "Identifier of the book"
-          },
           {
             "name": "profile_id",
             "in": "path",
@@ -5485,6 +5416,18 @@
               "title": "Profile Id"
             },
             "description": "Identifier of the recipe profile"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "requestBody": {
@@ -5559,7 +5502,7 @@
           "profiles"
         ],
         "summary": "Put Recipe Profile",
-        "description": "Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.\n\nThe steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the\nbook does not have, and a profile of another stage answers 422.",
+        "description": "Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.\n\nThe steps do not change and no page goes stale. A profile the book does not have answers 404, and so does a recipe\nthe book does not have, and a profile of another stage answers 422.",
         "operationId": "put_recipe_profile_api_v1_books__book_id__stages__stage__recipes__recipe_id__profile_put",
         "parameters": [
           {
@@ -7495,14 +7438,14 @@
         }
       }
     },
-    "/api/v1/iiif/{key}": {
+    "/api/v1/iiif/{book_id}/{key}": {
       "get": {
         "tags": [
           "iiif"
         ],
         "summary": "Iiif-File",
         "description": "Stream a stored file, and an image information document with its IIIF media type and the address of its pyramid.",
-        "operationId": "iiif_file_api_v1_iiif__key__get",
+        "operationId": "iiif_file_api_v1_iiif__book_id___key__get",
         "parameters": [
           {
             "name": "key",
@@ -7516,6 +7459,18 @@
               "title": "Key"
             },
             "description": "Storage key of the file, as found in the image addresses of a page or a scan"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -8872,7 +8827,7 @@
           "kind"
         ],
         "title": "ApplyProfileBody",
-        "description": "How to apply a profile to a book.\n\n:ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile."
+        "description": "How to apply a profile to a recipe of its book.\n\n:ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile."
       },
       "BlankFill": {
         "type": "string",
@@ -10539,11 +10494,6 @@
             "format": "uuid",
             "title": "Id"
           },
-          "book_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Book Id"
-          },
           "kind": {
             "$ref": "#/components/schemas/JobKind"
           },
@@ -10600,7 +10550,6 @@
         "type": "object",
         "required": [
           "id",
-          "book_id",
           "kind",
           "stage",
           "state",
@@ -10611,7 +10560,7 @@
           "finished_at"
         ],
         "title": "JobSchema",
-        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar book_id: Book the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
+        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
       },
       "JobState": {
         "type": "string",
@@ -10705,64 +10654,6 @@
         ],
         "title": "LabelStyle",
         "description": "How the number of a page is written, which the numbering of a range of pages applies to its numbers.\n\nThe domain imports only the standard library, so the Roman numerals are written here and not taken from the\n``roman`` package, whose one function would be about a dozen lines of ours."
-      },
-      "LibraryProfileSchema": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "stage": {
-            "$ref": "#/components/schemas/Stage"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/StepSchema"
-            },
-            "type": "array",
-            "title": "Steps"
-          },
-          "order": {
-            "$ref": "#/components/schemas/OrderMode"
-          },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          },
-          "books": {
-            "type": "integer",
-            "title": "Books"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "stage",
-          "name",
-          "steps",
-          "order",
-          "is_default",
-          "created_at",
-          "updated_at",
-          "books"
-        ],
-        "title": "LibraryProfileSchema",
-        "description": "A recipe profile of the signed-in account with the number of books that use it.\n\n:ivar books: Number of books that have a recipe made from the profile."
       },
       "ManifestPage_PageSchema_": {
         "properties": {
@@ -11934,46 +11825,6 @@
         ],
         "title": "Page[JobSchema]"
       },
-      "Page_LibraryProfileSchema_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/LibraryProfileSchema"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Total"
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Page"
-          },
-          "size": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Size"
-          },
-          "pages": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "page",
-          "size",
-          "pages"
-        ],
-        "title": "Page[LibraryProfileSchema]"
-      },
       "Page_PageEditSchema_": {
         "properties": {
           "items": {
@@ -12253,6 +12104,46 @@
           "pages"
         ],
         "title": "Page[ProcessorSchema]"
+      },
+      "Page_RecipeProfileSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeProfileSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[RecipeProfileSchema]"
       },
       "Page_RecipeSchema_": {
         "properties": {
@@ -12781,7 +12672,7 @@
           "version"
         ],
         "title": "ProfileFileSchema",
-        "description": "A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.\n\n:ivar version: Version of the format of the file, the second, whose steps have no condition.\n:ivar steps: The steps in the order they run."
+        "description": "A profile as a file that is exchanged between books: the answer of an export, and a body of an import.\n\n:ivar version: Version of the format of the file, the second, whose steps have no condition.\n:ivar steps: The steps in the order they run."
       },
       "ProfileFileStep": {
         "properties": {
@@ -13070,10 +12961,6 @@
           "order": {
             "$ref": "#/components/schemas/OrderMode"
           },
-          "is_default": {
-            "type": "boolean",
-            "title": "Is Default"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -13092,12 +12979,11 @@
           "name",
           "steps",
           "order",
-          "is_default",
           "created_at",
           "updated_at"
         ],
         "title": "RecipeProfileSchema",
-        "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.\n:ivar is_default: Whether a new book starts the stage with this profile.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
+        "description": "A recipe profile of a book.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
       },
       "RecipeSchema": {
         "properties": {
@@ -13160,7 +13046,7 @@
           "updated_at"
         ],
         "title": "RecipeSchema",
-        "description": "A recipe: the ordered steps of one stage for one kind of page.\n\n:ivar id: Identifier of the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar kind: Kind of the pages the recipe processes, which is also its name.\n:ivar steps: The steps in the order they run.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
+        "description": "A recipe: the ordered steps of one stage for one kind of page.\n\n:ivar id: Identifier of the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar kind: Kind of the pages the recipe processes, which is also its name.\n:ivar steps: The steps in the order they run.\n:ivar profile_id: The profile of the book the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
       },
       "RejectionReason": {
         "type": "string",

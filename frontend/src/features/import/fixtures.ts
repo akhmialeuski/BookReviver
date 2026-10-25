@@ -81,7 +81,6 @@ export function unimported(
 export function job(id: string, overrides: Partial<JobSchema> = {}): JobSchema {
   return {
     id,
-    book_id: 'p-1',
     kind: 'import-source',
     stage: null,
     state: 'running',

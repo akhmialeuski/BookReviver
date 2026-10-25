@@ -22,8 +22,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * The button of the gear window that puts the steps a stage starts with back into the recipe, and the confirmation that
  * comes first.
  *
- * Which steps are the default ones is the server's choice: those of the default profile of the account when it has a
- * usable one, and otherwise the built-in template of the recipe. The confirmation says how many pages the reset makes out
+ * The steps are those of the built-in template of the recipe. The confirmation says how many pages the reset makes out
  * of date, and that the changes of the draft which are not saved are dropped with it, since the draft is made again from
  * the recipe the server answers with.
  */

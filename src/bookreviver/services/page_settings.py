@@ -19,6 +19,7 @@ parameters. A page that already takes the value from a stronger part is untouche
 stage picks the values up like the parameters of the recipe.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Self
 
 from attrs import evolve, frozen
@@ -34,21 +35,18 @@ from bookreviver.domain.step_values import (
     StepValues,
     StepValuesKey,
 )
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from datetime import datetime
 
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.enums import RecipeKind, Stage
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.step_values import ValueField
     from bookreviver.domain.values import MetadataMap, Step
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
@@ -115,7 +113,7 @@ class _Scene:
                 group_label=target.group_label,
                 updated_at=moment,
             )
-            named = book_pages(repos.pages)
+            named = repos.pages.list_all()
             positions = {page.id: index for index, page in enumerate(named, start=1)}
         pages = [
             page
@@ -201,22 +199,16 @@ class _Scene:
 class PageSettingsService:
     """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's books."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, processors: ProcessorCatalog, records: StageRecords) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
-        :param catalogue: The processors the application can run, which check the value of a field.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, which check the value of a field.
+        :type processors: ProcessorCatalog
         :param records: Writer of the stage records, which a changed value marks stale.
         :type records: StageRecords
-        :param clock: Clock stamping the states, the values and the changes.
-        :type clock: Clock
         """
-        self._uow = uow
-        self._catalogue = catalogue
+        self._processors = processors
         self._records = records
-        self._clock = clock
 
     async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageStepSettings]:
         """List the steps of one stage of a page that have values of the page or of a part of the pages.
@@ -271,7 +263,7 @@ class PageSettingsService:
                 )
             return listed
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def change(self, book: Book, field: ValueField, value: object) -> ValueChanges:
         """Set one field of the parameters of a step for the pages the target names, and mark their stages stale.
@@ -305,9 +297,9 @@ class PageSettingsService:
             :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a
                                             page it reaches.
             """
-            scene = _Scene.load(repos, field, self._clock.now())
+            scene = _Scene.load(repos, field, datetime.now(UTC))
             name = field.name
-            processor = self._catalogue.get(next(iter(scene.steps.values())).processor_key)
+            processor = self._processors.get(next(iter(scene.steps.values())).processor_key)
             if scene.holder is None:
                 own = {
                     page.id: {
@@ -331,7 +323,7 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def reset(self, book: Book, field: ValueField) -> ValueChanges:
         """Take a field back from the pages the target names, so they take it from the next part, and mark them stale.
@@ -359,7 +351,7 @@ class PageSettingsService:
                                    stage has the step, or none of the pages the target names has a value for the
                                    field.
             """
-            scene = _Scene.load(repos, field, self._clock.now())
+            scene = _Scene.load(repos, field, datetime.now(UTC))
             name = field.name
             if scene.holder is None:
                 own = {
@@ -377,7 +369,7 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     def _store(
         self, repos: BookRepositories, scene: _Scene, *, own: Mapping[PageId, MetadataMap], params: MetadataMap | None

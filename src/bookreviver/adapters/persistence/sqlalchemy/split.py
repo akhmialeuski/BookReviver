@@ -2,11 +2,11 @@
 
 Before the catalogue and the files of the books, every account and every book lived in one SQLite file,
 ``bookreviver.db`` in the data directory, at revision ``15e015051f5c`` of its chain. :class:`SharedDatabaseSplit`
-reads that file and never writes to it. It fills an empty catalogue at its head revision with the accounts, the recipe
-profiles and one library entry for each book, whose time of joining the library is the time the book was created, and
-makes the file of each book in the directory the book already has under the storage root, filled with the rows of the
-book. A row moves with the columns the new table still has, so the owner of a book and the account of a place, which
-no table of a book keeps any more, stay behind.
+reads that file and never writes to it. It fills an empty catalogue at its head revision with the accounts and one
+library entry for each book, whose time of joining the library is the time the book was created, and makes the file of
+each book in the directory the book already has under the storage root, filled with the rows of the book. A row moves
+with the columns the new table still has, so the owner of a book and the account of a place, which no table of a book
+keeps any more, stay behind.
 
 The file of a book is filled at the baseline revision of its schema, ``99e96bc47c3c``, whose tables are those of the
 shared database without the accounts, and then brought to the head, so the rows go through every later revision as the
@@ -37,13 +37,13 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import USER_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema
 from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
-from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.ids import BookId
+from bookreviver.domain.ids import BookDirectoryName, BookId
+from bookreviver.ports.storage import BookDirectory
 
 if TYPE_CHECKING:
     from sqlalchemy import Table
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 
 # The last revision of the shared database, the only one the split reads
@@ -65,6 +65,11 @@ READ_WRITE: Final = '?mode=rw'
 BEGIN_COPY: Final = 'BEGIN IMMEDIATE'
 # What stands between two names in a list of a statement or a message
 LIST_SEPARATOR: Final = ', '
+# The identifier of a book, which SQLite keeps as sixteen bytes, written as the text of a UUID
+DIRECTORY_OF_THE_BOOK: Final = (
+    "lower(substr(hex(id), 1, 8) || '-' || substr(hex(id), 9, 4) || '-' || substr(hex(id), 13, 4) || '-' "
+    "|| substr(hex(id), 17, 4) || '-' || substr(hex(id), 21))"
+)
 
 
 class SplitRefusedError(RuntimeError):
@@ -86,18 +91,19 @@ class SplitReport:
 class SharedDatabaseSplit:
     """Moves the rows of the shared database into the catalogue and the files of the books."""
 
-    def __init__(self, shared: Path, *, catalogue: SqlDatabase, books: BookDatabases) -> None:
+    def __init__(self, shared: Path, *, catalogue_db: SqlDatabase, books: BookRegistry) -> None:
         """Split ``shared`` into the given catalogue and books.
 
         :param shared: The shared database file of the earlier releases.
         :type shared: Path
-        :param catalogue: The database of the catalogue, which must hold no account yet.
-        :type catalogue: SqlDatabase
-        :param books: The registry of the databases of the books, which makes their files.
-        :type books: BookDatabases
+        :param catalogue_db: The database of the catalogue, which must hold no account yet.
+        :type catalogue_db: SqlDatabase
+        :param books: The registry of the databases of the books, which makes and opens their files. The directory of a
+                      book is made through ``BookDirectory``, which the caller registers an implementation of.
+        :type books: BookRegistry
         """
         self._shared = shared
-        self._catalogue = catalogue
+        self._catalogue_db = catalogue_db
         self._books = books
 
     async def run(self) -> SplitReport:
@@ -109,21 +115,24 @@ class SharedDatabaseSplit:
             account or a book already, or a book has a file already.
         """
         await to_thread.run_sync(self._require_shared)
-        await to_thread.run_sync(self._catalogue.migrations.upgrade)
-        catalogue = self._catalogue_path()
+        await to_thread.run_sync(self._catalogue_db.migrations.upgrade)
+        catalogue = self._file_of(self._catalogue_db)
         accounts = await to_thread.run_sync(self._fill_catalogue, catalogue)
         book_ids = await to_thread.run_sync(self._book_ids)
         for book_id in book_ids:
+            name = BookDirectoryName(str(book_id))
+            await BookDirectory.open(name).create()
             try:
-                await self._books.create(book_id)
-            except ConflictError as error:
+                await self._books.copy_blank(name)
+            except FileExistsError as error:
                 err_msg = f'The book {book_id} has a database already, so the split would overwrite it.'
                 raise SplitRefusedError(err_msg) from error
-            async with self._books.use(book_id) as database:
+            async with self._books.use(name) as database:
+                path = self._file_of(database)
                 await to_thread.run_sync(database.migrations.downgrade, BOOK_BASELINE)
                 await database.dispose()
                 versions = database.config.alembic_config.version_table_name
-                await to_thread.run_sync(self._fill_book, self._books.path(book_id), book_id, versions)
+                await to_thread.run_sync(self._fill_book, path, book_id, versions)
                 await to_thread.run_sync(database.migrations.upgrade)
         return SplitReport(accounts=accounts, books=len(book_ids))
 
@@ -144,18 +153,21 @@ class SharedDatabaseSplit:
             )
             raise SplitRefusedError(err_msg)
 
-    def _catalogue_path(self) -> Path:
-        """Return the file of the catalogue.
+    @staticmethod
+    def _file_of(database: SqlDatabase) -> Path:
+        """Return the file of a database.
 
-        :returns: The file the URL of the catalogue names.
+        :param database: The catalogue, or the database of a book.
+        :type database: SqlDatabase
+        :returns: The file the URL of the database names.
         :rtype: Path
-        :raises SplitRefusedError: If the URL of the catalogue names no file.
+        :raises SplitRefusedError: If the URL of the database names no file.
         """
-        database = make_url(self._catalogue.config.connection_string or '').database
-        if not database:
-            err_msg = 'The catalogue has no file to fill.'
+        file = make_url(database.config.connection_string or '').database
+        if not file:
+            err_msg = 'The database has no file to fill.'
             raise SplitRefusedError(err_msg)
-        return Path(database).resolve()
+        return Path(file).resolve()
 
     def _book_ids(self) -> list[BookId]:
         """Read the identifiers of the books of the shared database.
@@ -168,7 +180,7 @@ class SharedDatabaseSplit:
         return [BookId(UUID(bytes=row[0])) for row in rows]
 
     def _fill_catalogue(self, catalogue: Path) -> int:
-        """Copy the accounts and the recipe profiles into the catalogue, and give every book its library entry.
+        """Copy the accounts into the catalogue, and give every book its library entry.
 
         :param catalogue: The file of the catalogue, at its head revision.
         :type catalogue: Path
@@ -186,12 +198,13 @@ class SharedDatabaseSplit:
             for table in metadata.sorted_tables:
                 if table.name != LIBRARY_TABLE:
                     _copy(connection, table, condition=None)
-            # The entry of a book is its owner, and the book joined the library when it was created
+            # The entry of a book is its owner, the book joined the library when it was created, and its directory is
+            # named by the text of its identifier, as the earlier releases named it
             _insert(
                 connection,
                 LIBRARY_TABLE,
-                'project_id, owner_id, added_at',
-                _select('id, owner_id, created_at', BOOK_RECORDS_TABLE, condition=None),
+                'project_id, owner_id, directory, added_at',
+                _select(f'id, owner_id, {DIRECTORY_OF_THE_BOOK}, created_at', BOOK_RECORDS_TABLE, condition=None),
             )
             _commit_checked(connection)
             return _count(connection, USER_TABLE)

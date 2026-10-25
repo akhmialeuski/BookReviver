@@ -8,14 +8,14 @@ inside the persistence adapter's ordering, so no client ever sees it.
 Moving a page writes a new order key to the moved pages alone: the key lies between the key of the page next to the
 place and the key of the page after it, which the repository finds while leaving the moved pages out, so the pages that
 stay never change. A group of pages, or every page of one source, is placed as one run that keeps its order in the
-book. Every change of a book is the work of one ``change_book``, which waits for any other change of that book, and
-the unit of work announces it once it committed. The labels the pagination sections give the pages are computed when
+book. Every change of a book is the work of one ``Book.change``, which waits for any other change of that book, and
+it is announced once it committed. The labels the pagination sections give the pages are computed when
 the pages are read, so a change that adds, deletes or moves pages, or changes the kind or the inclusion of one, writes
 no label: it settles the sections in the same work, which hands on the sections of the pages it deletes and refuses a
 number a section cannot write, and the browser reads the pages and their labels again for the change. The work is
 synchronous and holds the repositories of its transaction, so the events, the files and the queue stay outside it. A
 job, such as the one that writes the images of the pages, reads and computes outside any transaction, and stores its
-result in a short ``change_book`` that reads again what the result depends on. A job queued after a change is queued in
+result in a short ``Book.change`` that reads again what the result depends on. A job queued after a change is queued in
 a ``change`` of its own, after the transaction of the change.
 
 A blank page cut from a scan may show a leaf in place of its scan: a white leaf, or one of the colour of the paper of
@@ -42,7 +42,7 @@ record of the page, so the page split and the page order stage read like any oth
 
 import logging
 import statistics
-from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
@@ -87,19 +87,17 @@ from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
-    from datetime import datetime
-    from pathlib import Path
+    from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import BookRecord, PageVersion
-    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.ids import PageVersionId, ScanId, SourceId
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard, JobControl
-    from bookreviver.ports.storage import AssetStore
+    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book
+    from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
 
 # The processors whose pending and failed versions the ``prepare-pages`` job writes the files of, which are the ones a
@@ -124,22 +122,6 @@ UNEXPECTED_FAILURE: str = (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@frozen(kw_only=True)
-class PageRuntime:
-    """What a page use case reports through and orders by.
-
-    :ivar publisher: Publisher of the events the browser follows.
-    :ivar clock: Clock stamping the pages a use case changes.
-    :ivar order_keys: Builder of the order keys of moved and new pages.
-    :ivar board: Board the ``prepare-pages`` and ``detect-content`` jobs are put on.
-    """
-
-    publisher: EventPublisher
-    clock: Clock
-    order_keys: OrderKeys
-    board: JobBoard
 
 
 @frozen(kw_only=True)
@@ -168,29 +150,23 @@ class PageService:
     PAPER_RADIUS: ClassVar[int] = 10
     PAPER_PAGES: ClassVar[int] = 6
 
-    def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> None:
+    def __init__(self, *, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
 
-        :param uow: Unit of work of the request, whose ``read_book`` serves the pages and versions and whose
-                    ``change_book`` ends every use case that changes pages.
-        :type uow: UnitOfWork
-        :param assets: Store of the derived files, whose files a viewer reads by key.
-        :type assets: AssetStore
-        :param runtime: The publisher, the clock, the order keys and the job board.
-        :type runtime: PageRuntime
+        :param books: Books service of the request or job, which opens the books of the library the passes of the
+                      start go over.
+        :type books: BooksService
+        :param order_keys: Builder of the order keys of moved and new pages.
+        :type order_keys: OrderKeys
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         """
-        self._uow = uow
-        self._assets = assets
-        self._order_keys = runtime.order_keys
-        self._publisher = runtime.publisher
-        self._clock = runtime.clock
-        self._board = runtime.board
+        self._books = books
+        self._order_keys = order_keys
         self._base_versions = imaging.base_versions
         self._runner = imaging.runner
-        self._records = StageRecords(clock=runtime.clock)
-        self._labels = PageLabels(clock=runtime.clock)
+        self._records = StageRecords()
+        self._labels = PageLabels()
 
     async def manifest(self, book: Book, request: SliceRequest, *, included_only: bool = False) -> Slice[PageOverview]:
         """Return a window of the book's pages in book order, every page with its position and base version.
@@ -220,7 +196,7 @@ class PageService:
             window = repos.pages.list_window(request, included_only=included_only)
             return Slice(items=self._overviews(repos, window.items, request.offset), total=window.total)
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def get(self, book: Book, page_id: PageId) -> PageOverview:
         """Return one page of the book with its position and base version.
@@ -245,7 +221,7 @@ class PageService:
             """
             return self._overview(repos, repos.pages.get(page_id))
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def update(self, book: Book, page_id: PageId, changes: PageChanges) -> PageOverview:
         """Change the printed number, the kind, the inclusion or the notes of a page, which writes its one row.
@@ -277,7 +253,7 @@ class PageService:
             """
             before = repos.pages.get(page_id)
             page = changes.apply_to(before)
-            changed = repos.pages.update(evolve(page, updated_at=self._clock.now()))
+            changed = repos.pages.update(evolve(page, updated_at=datetime.now(UTC)))
             # A page that stops being blank gets its scan back in place of the leaf, so the leaf is no longer current
             if before.blank_fill is not BlankFill.SCAN and page.blank_fill is BlankFill.SCAN:
                 self._records.clear(repos, PageStageKey(page_id, Stage.PAGE_ORDER))
@@ -292,7 +268,7 @@ class PageService:
                 self._labels.settle(repos)
             return self._overview(repos, changed)
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def start_detection(self, book: Book, page_ids: Sequence[PageId] | None) -> Job:
         """Record a job that detects what some pages show, and queue it.
@@ -320,21 +296,21 @@ class PageService:
             if page_ids is not None:
                 repos.pages.list_by_ids(page_ids)
 
-        await self._uow.read_book(book.id, check)
+        await book.read(check)
         detection = ContentDetection(page_ids=None if page_ids is None else tuple(page_ids))
-        if (job := self._enqueue(book.id, JobKind.DETECT_CONTENT, detection.to_map())) is None:
+        if (job := self._enqueue(book, JobKind.DETECT_CONTENT, detection.to_map())) is None:
             raise ConflictError(DETECTION_RUNNING)
         return job
 
-    def detect_new_pages(self, book_id: BookId) -> None:
+    def detect_new_pages(self, book: Book) -> None:
         """Queue the detection of the content of the pages that have none, which a job asks for when images are made.
 
         Nothing is queued while a detection of the book is queued or running, which goes over the pages it finds.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         """
-        self._enqueue(book_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
+        self._enqueue(book, JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
     async def add(self, book: Book, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
@@ -371,7 +347,7 @@ class PageService:
             """
             size = (new_page.size or self._leaf_size(repos)) if blank else None
             [key] = self._keys_at(repos, new_page.anchor, count=1)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             page = self._new_page(new_page, key, moment)
             with self._records.watching_sides(repos):
                 repos.pages.add(page)
@@ -381,9 +357,9 @@ class PageService:
             self._labels.settle(repos)
             return self._overview(repos, page)
 
-        overview = await self._uow.change_book(book.id, work)
+        overview = await book.change(work)
         if blank:
-            self._enqueue(book.id, JobKind.PREPARE_PAGES)
+            self._enqueue(book, JobKind.PREPARE_PAGES)
         return overview
 
     async def add_many(self, book: Book, new_pages: Sequence[NewPage]) -> list[PageOverview]:
@@ -424,7 +400,7 @@ class PageService:
                 return []
             median = self._batch_leaf_size(repos, new_pages)
             places = self._batch_places(new_pages)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             pages = self._placed_pages(repos, new_pages, places, moment)
             added = [pages[index] for index in range(len(new_pages))]
             with self._records.watching_sides(repos):
@@ -445,9 +421,9 @@ class PageService:
                 overviews.update((o.page.id, o) for o in self._overviews(repos, run, repos.pages.count_before(run[0])))
             return [overviews[page.id] for page in added]
 
-        overviews = await self._uow.change_book(book.id, work)
+        overviews = await book.change(work)
         if any(new_page.origin is NewPageOrigin.BLANK for new_page in new_pages):
-            self._enqueue(book.id, JobKind.PREPARE_PAGES)
+            self._enqueue(book, JobKind.PREPARE_PAGES)
         return overviews
 
     def _batch_leaf_size(self, repos: BookRepositories, new_pages: Sequence[NewPage]) -> PageSize | None:
@@ -566,27 +542,27 @@ class PageService:
             if not changing:
                 return False
 
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             changed = [evolve(page, blank_fill=fill, updated_at=moment) for page in changing]
             repos.pages.update_many(changed)
             return self._stand_leaves(repos, book_record, changed)
 
         # The job is queued in a ``change`` of its own, so after the transaction that wrote the leaves
-        if await self._uow.change_book(book.id, work):
-            self._enqueue(book.id, JobKind.PREPARE_PAGES)
+        if await book.change(work):
+            self._enqueue(book, JobKind.PREPARE_PAGES)
 
     async def remake_outdated_leaves(self) -> None:
         """Make again the leaves whose version of ``pages.blank`` was replaced, by the path that made them.
 
         A leaf is identified by the version of the processor too, so a leaf made by an older version is another version
-        than the one the current processor makes. Every page order record of every book whose current version is such a
-        leaf is read, whatever its state, and its page gets the leaf of the current version as a pending version, which
-        the ``prepare-pages`` job writes and makes the current version of the stage, which is fresh then. A page that
-        has the pending leaf already keeps it. The start queues no job, since the board is empty and no job begins
-        before the user asks for one, so the pending leaf waits for the next ``prepare-pages`` job, which a change of a
-        page or a run queues, and that job takes every pending version of the book.
+        than the one the current processor makes. Every page order record of every book of the library whose current
+        version is such a leaf is read, whatever its state, and its page gets the leaf of the current version as a
+        pending version, which the ``prepare-pages`` job writes and makes the current version of the stage, which is
+        fresh then. A page that has the pending leaf already keeps it. The start queues no job, since the board is empty
+        and no job begins before the user asks for one, so the pending leaf waits for the next ``prepare-pages`` job,
+        which a change of a page or a run queues, and that job takes every pending version of the book.
 
-        The records of each book are read in a transaction of their own, and the book is written in a ``change_book``
+        The records of each book are read in a transaction of their own, and the book is written in a ``Book.change``
         of its own, which reads its pages again. It is a pass of the start, before any request is served.
         """
 
@@ -614,11 +590,11 @@ class PageService:
             pages = [page for page in repos.pages.list_by_ids(page_ids) if page.blank_fill is not BlankFill.SCAN]
             self._stand_leaves(repos, book_record, pages)
 
-        for book_id in await self._uow.stored_books():
-            page_ids = await self._uow.read_book(book_id, read_pages)
+        for book in await self._books.listed():
+            page_ids = await book.read(read_pages)
             if not page_ids:
                 continue
-            await self._uow.change_book(book_id, partial(work, page_ids))
+            await book.change(partial(work, page_ids))
 
     def _stand_leaves(self, repos: BookRepositories, book_record: BookRecord, pages: Sequence[Page]) -> bool:
         """Give pages the image their choice says, and tell whether a job must write leaves that are not made yet.
@@ -638,7 +614,7 @@ class PageService:
         :rtype: bool
         :raises ConflictError: If a leaf is chosen and no page of the book has a recorded size to give it.
         """
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         leaves = any(page.blank_fill is not BlankFill.SCAN for page in pages)
         size = self._leaf_size(repos) if leaves else None
         full = book_record.image_policy.full_format(ColorMode.BILEVEL)
@@ -690,8 +666,8 @@ class PageService:
                 repos.pages.delete(page.id)
             return page
 
-        page = await self._uow.change_book(book.id, work)
-        await self._discard_files(book.id, [page])
+        page = await book.change(work)
+        await self._discard_files(book, [page])
 
     async def attach_scan(
         self, book: Book, page_id: PageId, scan_id: ScanId, *, take_over: bool = False
@@ -754,7 +730,7 @@ class PageService:
             with self._records.watching_sides(repos):
                 for page in taken:
                     repos.pages.delete(page.id)
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             # The label the source printed on the scan becomes a manual label of a page its sections leave unnumbered
             shown = self._labels.numbering(repos, [placeholder]).labels[placeholder.id]
             page = evolve(
@@ -771,12 +747,12 @@ class PageService:
             )
             return self._overview(repos, page), taken
 
-        overview, taken = await self._uow.change_book(book.id, work)
-        await self._discard_files(book.id, taken)
-        self._enqueue(book.id, JobKind.PREPARE_PAGES)
+        overview, taken = await book.change(work)
+        await self._discard_files(book, taken)
+        self._enqueue(book, JobKind.PREPARE_PAGES)
         return overview
 
-    async def prepare_images(self, job: Job, control: JobControl) -> JobEnd:
+    async def prepare_images(self, book: Book, job: Job, control: JobControl) -> JobEnd:
         """Run a ``prepare-pages`` job: write the files of every pending or failed version, a task for each.
 
         The versions of the page split and the page order stages are read when the job starts, and each is written and
@@ -784,11 +760,13 @@ class PageService:
         version that fails is stored as failed with its reason, the job goes on, and it ends failed if any version did,
         which the next job of the book takes up again. A job that was cancelled stops before its next version.
 
-        The job holds no transaction while it writes files, only a short ``change_book`` for each version, which reads
+        The job holds no transaction while it writes files, only a short ``Book.change`` for each version, which reads
         the page again before it stores anything. When it has made images it queues the detection of the content of
         the pages that have none, and when a version was committed while it ran, a job of its own for that version. It
         is the entry point of a job.
 
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
         :param job: The running job.
         :type job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each version.
@@ -797,17 +775,15 @@ class PageService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled, which stops it between two versions.
         """
-        versions = await self._uow.read_book(
-            job.book_id, lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS)
-        )
+        versions = await book.read(lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS))
         control.plan(len(versions))
         failed = 0
         for version in versions:
-            failed += not await self._prepare(job.book_id, version)
+            failed += not await self._prepare(book, version)
             await control.task_done()
-        await self._follow_up(job)
+        await self._follow_up(book, job)
         if versions:
-            self.detect_new_pages(job.book_id)
+            self.detect_new_pages(book)
         if failed:
             return JobEnd(state=JobState.FAILED, error=PAGES_FAILED.format(count=failed))
         return JobEnd(state=JobState.SUCCEEDED)
@@ -847,7 +823,7 @@ class PageService:
             self._labels.settle(repos)
             return self._overview(repos, moved)
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def move_group(self, book: Book, page_ids: Collection[PageId], anchor: PageAnchor) -> None:
         """Put several pages in a run before or after another page, keeping the order they have in the book.
@@ -876,7 +852,7 @@ class PageService:
             """
             self._move_run(repos, repos.pages.list_by_ids(page_ids), anchor)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     async def move_source(self, book: Book, source_id: SourceId, anchor: PageAnchor) -> None:
         """Put every page whose scan belongs to a source in a run before or after another page.
@@ -906,26 +882,7 @@ class PageService:
             repos.sources.get(source_id)
             self._move_run(repos, repos.pages.list_for_source(source_id), anchor)
 
-        await self._uow.change_book(book.id, work)
-
-    @asynccontextmanager
-    async def open_asset(self, key: StorageKey) -> AsyncIterator[Path]:
-        """Give a local path of the derived file at ``key`` for as long as the context is open.
-
-        The derived files are read by anyone who has their key, with no owner checked. A key under the book's
-        ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found without a look at the
-        store.
-
-        :param key: Storage key of a derived file, such as one taken from the address of an image.
-        :type key: StorageKey
-        :returns: Context manager yielding the path of the file, valid while the context is open.
-        :rtype: AsyncIterator[Path]
-        :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
-        """
-        if BookKeys.owning(key) is None:
-            raise NotFoundError(key)
-        async with self._assets.readable(key) as path:
-            yield path
+        await book.change(work)
 
     def _overviews(
         self, repos: BookRepositories, pages: Sequence[Page], first_position: int, *, numbered: bool = True
@@ -1043,7 +1000,7 @@ class PageService:
         :raises ConflictError: If the anchor is one of the pages, since the place is then not defined.
         """
         keys = self._keys_at(repos, anchor, count=len(pages), moving={page.id for page in pages})
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         return [evolve(page, order_key=key, updated_at=moment) for page, key in zip(pages, keys, strict=True)]
 
     def _keys_at(
@@ -1085,7 +1042,7 @@ class PageService:
         return self._order_keys.spread(lower=lower, upper=upper, count=count)
 
     def _move_run(self, repos: BookRepositories, pages: Sequence[Page], anchor: PageAnchor) -> None:
-        """Put pages in a run next to the anchor page, in the work of the ``change_book`` of the caller.
+        """Put pages in a run next to the anchor page, in the work of the ``Book.change`` of the caller.
 
         It opens no transaction of its own.
 
@@ -1105,20 +1062,19 @@ class PageService:
             repos.pages.update_many(moved)
         self._labels.settle(repos)
 
-    async def _discard_files(self, book_id: BookId, pages: Sequence[Page]) -> None:
+    async def _discard_files(self, book: Book, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them has ended.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book the pages were deleted from.
+        :type book: Book
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
         """
-        keys = BookKeys(book_id)
         for page in pages:
-            await self._assets.delete_prefix(keys.page(page.id))
+            await book.assets.delete_prefix(BookKeys.page(page.id))
 
     def _enqueue(
-        self, book_id: BookId, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
+        self, book: Book, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
     ) -> Job | None:
         """Put a ``prepare-pages`` or ``detect-content`` job on the board, unless one of its kind is active.
 
@@ -1128,8 +1084,8 @@ class PageService:
         running when a version is stored may have read its versions before it, which is why the job looks again when it
         ends, in ``_follow_up``.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
         :type kind: JobKind
         :param params: What the job was asked to do, in the form its value class writes, or None for a job without.
@@ -1139,13 +1095,12 @@ class PageService:
         :returns: The job as the board holds it, queued, or None when a job of the kind is queued or running already.
         :rtype: Job | None
         """
-        active = self._board.jobs(book_id, active=True)
-        if any(active_job.kind is kind and active_job.id != after for active_job in active):
+        if any(active_job.kind is kind and active_job.id != after for active_job in book.jobs.active()):
             return None
-        job = Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params or {}, created_at=self._clock.now())
-        return self._board.put(job)
+        job = Job(id=JobId(uuid4()), kind=kind, params=params or {}, created_at=datetime.now(UTC))
+        return book.jobs.put(job)
 
-    async def _follow_up(self, job: Job) -> None:
+    async def _follow_up(self, book: Book, job: Job) -> None:
         """Queue another job when a version was committed while the job that is ending was running.
 
         A request that commits a version while a job runs finds the job active and queues none, and the job may have
@@ -1153,14 +1108,14 @@ class PageService:
         committed after the job read its versions, and it gets a job of its own, behind this one. A version that failed
         is not pending, so a version that cannot be made does not keep a job running again.
 
+        :param book: The open book of the job.
+        :type book: Book
         :param job: The prepare-pages job that is ending.
         :type job: Job
         """
-        waiting = await self._uow.read_book(
-            job.book_id, lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS)
-        )
+        waiting = await book.read(lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS))
         if any(version.state is VersionState.PENDING for version in waiting):
-            self._enqueue(job.book_id, JobKind.PREPARE_PAGES, after=job.id)
+            self._enqueue(book, JobKind.PREPARE_PAGES, after=job.id)
 
     def _median_size(self, repos: BookRepositories) -> PageSize:
         """Return the size of a blank leaf that stands level with the pages of the book.
@@ -1245,24 +1200,24 @@ class PageService:
         )
         return [overview.image_version.id for overview in near[: self.PAPER_PAGES] if overview.image_version]
 
-    async def _prepare(self, book_id: BookId, version: PageVersion) -> bool:
+    async def _prepare(self, book: Book, version: PageVersion) -> bool:
         """Write the files of one pending or failed version, and store its new state.
 
         A version that cannot be made is stored as failed with the reason in its data, and the job goes on with the
         others. A page deleted while the job runs takes its versions with it, so a version whose page is gone, before
         or after its files were written, is nothing to make and nothing that failed: the files written for it are
         removed and the job goes on. The files are written outside any transaction, and the result is stored by
-        ``_store`` in a ``change_book`` of its own.
+        ``_store`` in a ``Book.change`` of its own.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param version: A pending or failed base version.
         :type version: PageVersion
         :returns: False when the version failed, and True when it is ready, nothing was left to make, or its page is
                   gone.
         :rtype: bool
         """
-        if (page := await self._uow.read_book(book_id, lambda repos: self._found(repos, version.page_id))) is None:
+        if (page := await book.read(lambda repos: self._found(repos, version.page_id))) is None:
             return True
         # A leaf that is not the choice of its page any longer is nothing to make, and left pending it would be taken
         # by every job. The page is read again in the work, since a request may have chosen the leaf again meanwhile
@@ -1279,22 +1234,22 @@ class PageService:
                 if (current := self._found(repos, page.id)) is not None and self._outdated_leaf(version, current):
                     repos.page_versions.delete_many([version.id])
 
-            await self._uow.change_book(book_id, drop)
+            await book.change(drop)
             return True
         try:
-            made = await self._write_files(book_id, version, page)
+            made = await self._write_files(book, version, page)
         except DomainError as error:
             reason = str(error)
         except Exception:
             logger.exception('The files of page version %s could not be made', version.id)
             reason = UNEXPECTED_FAILURE
         else:
-            await self._store(book_id, page, made, current=True)
+            await self._store(book, page, made, current=True)
             return True
         failed = evolve(version, data={**version.data, VersionData.ERROR: reason}, state=VersionState.FAILED)
-        return not await self._store(book_id, page, failed, current=False)
+        return not await self._store(book, page, failed, current=False)
 
-    async def _store(self, book_id: BookId, page: Page, version: PageVersion, *, current: bool) -> bool:
+    async def _store(self, book: Book, page: Page, version: PageVersion, *, current: bool) -> bool:
         """Store the new state of a version of a page in one change, and make it the current version when it is ready.
 
         The work reads the page again. A page deleted while its files were written took its versions with it, so
@@ -1303,8 +1258,8 @@ class PageService:
         as ``_prepare`` deletes such a leaf, since a leaf left pending would be taken by every job, and its files are
         removed after the transaction.
 
-        :param book_id: Identifier of the book of the page.
-        :type book_id: BookId
+        :param book: The open book of the page.
+        :type book: Book
         :param page: The page the version belongs to, as read before its files were written.
         :type page: Page
         :param version: The version with its new state.
@@ -1337,13 +1292,13 @@ class PageService:
                 )
             return False, False
 
-        gone, outdated = await self._uow.change_book(book_id, work)
+        gone, outdated = await book.change(work)
         if gone:
-            await self._discard_files(book_id, [page])
+            await self._discard_files(book, [page])
         elif outdated:
-            await self._assets.delete_prefix(BookKeys(book_id).version_directory(version))
+            await book.assets.delete_prefix(BookKeys.version_directory(version))
         elif current:
-            await self._publisher.publish(PageVersionReady(book_id=book_id, version=version))
+            await book.events.publish(PageVersionReady(version=version))
         return not (gone or outdated)
 
     @staticmethod
@@ -1381,11 +1336,11 @@ class PageService:
             and page.blank_fill.value != version.params.get(BlankParam.FILL, PaperFill.WHITE.value)
         )
 
-    async def _write_files(self, book_id: BookId, version: PageVersion, page: Page) -> PageVersion:
+    async def _write_files(self, book: Book, version: PageVersion, page: Page) -> PageVersion:
         """Run the processor of a base version and write its files: a copy of its scan, or a generated white leaf.
 
-        :param book_id: Identifier of the book of the page.
-        :type book_id: BookId
+        :param book: The open book of the page.
+        :type book: Book
         :param version: A pending or failed base version.
         :type version: PageVersion
         :param page: The page the version belongs to.
@@ -1396,18 +1351,17 @@ class PageService:
         :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
         """
 
-        def read(repos: BookRepositories) -> tuple[BookRecord, BookKeys, StepRun]:
+        def read(repos: BookRepositories) -> tuple[BookRecord, StepRun]:
             """Read the record of the book and what the processor of the version reads, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :returns: The record of the book, its keys, and the run of the processor.
-            :rtype: tuple[BookRecord, BookKeys, StepRun]
+            :returns: The record of the book and the run of the processor.
+            :rtype: tuple[BookRecord, StepRun]
             :raises ConflictError: If the scan to copy is deleted or not cut yet.
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
-            book_record = repos.book_record.get(book_id)
-            keys = BookKeys(book_record.id)
+            book_record = repos.book_record.get()
             if version.processor == SPLIT_NONE:
                 if page.scan_id is None:
                     raise ConflictError(SCAN_DELETED)
@@ -1418,7 +1372,7 @@ class PageService:
                     processor_key=SPLIT_NONE.key,
                     params=version.params,
                     input_data=scan.facts.as_data(),
-                    image=keys.scan_rendition(scan, scan.renditions.full),
+                    image=BookKeys.scan_rendition(scan, scan.renditions.full),
                 )
             elif version.processor == PAGES_BLANK and PageSize.from_data(version.data) is not None:
                 sources = repos.page_versions.list_by_ids(version.params.get(BlankParam.PAPER_FROM, []))
@@ -1427,7 +1381,7 @@ class PageService:
                     params=version.params,
                     input_data={},
                     references=[
-                        keys.version_rendition(source, source.renditions.full)
+                        BookKeys.version_rendition(source, source.renditions.full)
                         for source in sources
                         if source.renditions is not None and source.renditions.ready
                     ],
@@ -1435,10 +1389,10 @@ class PageService:
             else:
                 err_msg = f'Page version {version.id} made by {version.processor.key} has no files to write.'
                 raise ValueError(err_msg)
-            return book_record, keys, run
+            return book_record, run
 
-        book_record, keys, run = await self._uow.read_book(book_id, read)
-        async with self._runner.execute(run) as result:
+        book_record, run = await book.read(read)
+        async with self._runner.execute(book, run) as result:
             return await self._runner.store(
-                keys, version, result.outputs[0], policy=book_record.image_policy, tiles=True
+                book, version, result.outputs[0], policy=book_record.image_policy, tiles=True
             )

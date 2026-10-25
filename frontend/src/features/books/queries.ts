@@ -7,6 +7,7 @@ import {
   listBooksApiV1BooksGetQueryKey,
   listPagesApiV1BooksBookIdPagesGetQueryKey,
   listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetQueryKey,
+  listProfilesApiV1BooksBookIdRecipeProfilesGetQueryKey,
   listRecipesApiV1BooksBookIdStagesStageRecipesGetQueryKey,
   listScansApiV1BooksBookIdScansGetQueryKey,
   listSourcesApiV1BooksBookIdSourcesGetQueryKey,
@@ -203,6 +204,16 @@ export function invalidateCollectable(queryClient: QueryClient, bookId: string):
 export function invalidateAllRecipes(queryClient: QueryClient, bookId: string): Promise<void> {
   const [{ _id, baseUrl }] = listRecipesApiV1BooksBookIdStagesStageRecipesGetQueryKey({
     path: { book_id: bookId, stage: ANY_STAGE },
+  });
+  return queryClient.invalidateQueries({
+    queryKey: [{ _id, baseUrl, path: { book_id: bookId } }],
+  });
+}
+
+/** Refresh the profiles of a book. The key names the book alone, so it matches every list of them, whatever its stage. */
+export function invalidateProfiles(queryClient: QueryClient, bookId: string): Promise<void> {
+  const [{ _id, baseUrl }] = listProfilesApiV1BooksBookIdRecipeProfilesGetQueryKey({
+    path: { book_id: bookId },
   });
   return queryClient.invalidateQueries({
     queryKey: [{ _id, baseUrl, path: { book_id: bookId } }],

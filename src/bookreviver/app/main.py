@@ -1,6 +1,7 @@
 """Application factory: wires the container, error handling, pagination, security and routers."""
 
 import logging
+from collections.abc import Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -10,7 +11,9 @@ from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.events.broadcast import EventChannels
+from bookreviver.adapters.jobs.board import InMemoryJobBoard
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.freshness import NotModifiedError, not_modified
@@ -22,12 +25,16 @@ from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
+from bookreviver.domain.ids import BookDirectoryName
+from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepExecutor
-from bookreviver.ports.storage import SourceStore
+from bookreviver.ports.runtime import BookEvents, BookJobs
+from bookreviver.ports.storage import BookDirectory
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
+from bookreviver.services.recipes import DefaultRecipes
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -45,26 +52,33 @@ async def prepare_start(container: AsyncContainer) -> None:
     The container opens the database on first use, and opening it checks the schema revision, so the database is
     opened here: a database the migrations were not applied to stops the start instead of failing a request. The pool of
     processes that run the steps is started too, so every process has built its catalogue before the first request and
-    the first preview does not wait for it.
+    the first preview does not wait for it. The file of default recipes is read here too, so a file that does not fit
+    stops the start. The storage, the registry of the databases of the books, the event channels and the job board are
+    built here as well, and their openers are registered with the four ports of the parts of a book, its directory, its
+    database, its event channel and its job queue, so every book opened afterwards finds them.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
-    left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
-    it any more, and its sources that were stored stay. A creation or a deletion of a book that was broken off half way
-    is finished, so the catalogue and the stores of the books list the same books before any other pass reads them. The
-    stages whose result a replaced version of a processor made are marked stale, so the workspace never shows them as up
-    to date, and the blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the
-    book writes. The three passes run in a request scope of their own, as a job does, and the last two write one book
-    at a time, in a ``change_book`` of that book.
+    left half done is left as it is. The upload an import was receiving or running on is removed from each book the
+    library lists, since no job can use it any more, and its sources that were stored stay. The stages whose result a
+    replaced version of a processor made are marked stale, so the workspace never shows them as up to date, and the
+    blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the book writes. The
+    passes run in a request scope of their own, as a job does, go over the books the library lists and write one book
+    at a time, in a ``Book.change`` of that book.
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer
     :raises RuntimeError: When the database is not at the head revision of the migrations.
     """
     await container.get(SqlDatabase)
+    BookDirectory.register(await container.get(Callable[[BookDirectoryName], BookDirectory]))
+    BookDatabase.register(await container.get(Callable[[BookDirectoryName], BookDatabase]))
+    BookEvents.register((await container.get(EventChannels)).open)
+    BookJobs.register((await container.get(InMemoryJobBoard)).open)
     await container.get(StepExecutor)
-    await (await container.get(SourceStore)).discard_all_staged()
+    await container.get(DefaultRecipes)
     async with container() as request:
-        await (await request.get(BooksService)).sweep()
+        for book in await (await request.get(BooksService)).listed():
+            await book.sources.discard_all_staged()
         await (await request.get(OutdatedResults)).mark_stale()
         await (await request.get(PageService)).remake_outdated_leaves()
 
@@ -111,7 +125,7 @@ def create_app(
                 group = await stack.enter_async_context(anyio.create_task_group())
                 # Registered after the group, so it runs first on exit and the group has nothing left to wait for
                 stack.callback(group.cancel_scope.cancel)
-                group.start_soon((await container.get(BookDatabases)).keep_closing_idle)
+                group.start_soon((await container.get(BookRegistry)).keep_closing_idle)
                 if resolved.tracing.enabled:
                     probe = LoopLagProbe(
                         tracer=await container.get(Tracer),

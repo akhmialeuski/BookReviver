@@ -15,14 +15,14 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pages import PageAnchorBody
 from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
 from bookreviver.domain.entities import Scan, Source
 from bookreviver.domain.enums import SourceStatus
-from bookreviver.domain.ids import SourceId
+from bookreviver.domain.ids import BookId, SourceId
 from bookreviver.services.book import Book
 from bookreviver.services.pages import PageService
 from bookreviver.services.sources import SourceService
@@ -129,6 +129,7 @@ async def delete_source(
 @router.get('/{book_id}/scans')
 async def list_scans(
     book: Annotated[Book, Depends(open_book)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     request: Request,
     query: Annotated[ScanQuery, Depends()],
     sources: FromDishka[SourceService],
@@ -138,6 +139,8 @@ async def list_scans(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
+    :param book_id: Identifier of the book, from the path.
+    :type book_id: BookId
     :param request: The request, whose application knows the route that serves the images.
     :type request: Request
     :param query: Page number and size, and the source to list the scans of, if any.
@@ -147,7 +150,7 @@ async def list_scans(
     :returns: One page of scans.
     :rtype: Page[ScanSchema]
     """
-    pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request, book_id=book.id))
+    pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request, book_id=book_id))
     return pager.page(await sources.scans(book, pager.request, source_id=query.source_id))
 
 

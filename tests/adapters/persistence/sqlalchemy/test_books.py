@@ -1,8 +1,9 @@
-"""Tests for the registry of the databases of the books: making, opening, migrating, closing and removing a book.
+"""Tests for the registry of the databases of the books: the blank file, opening, migrating and closing a book.
 
-The tests run on the files of a real storage root in the directory of the test, since a book is a file and its
-migration is Alembic's. A book in use is held by ``BookDatabases.use``, and the tests order the removal of a book in
-use by events, never by a sleep.
+The tests run on files under the storage root of the test, since a book is a file and its migration is Alembic's, and
+the storage, which owns the directories of the books, is not needed to make one. The registry names a book by the name
+of its directory and builds the path of its file from the storage root. A book in use is held by
+``BookRegistry.use``, and the tests order the closing of a book in use by events, never by a sleep.
 """
 
 import sqlite3
@@ -15,17 +16,16 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.tracing.null import NullTracer
-from bookreviver.domain.errors import BookTooNewError, ConflictError, NotFoundError
-from bookreviver.domain.ids import BookId
+from bookreviver.domain.errors import BookTooNewError, NotFoundError
+from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.domain.keys import KeySegment
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.app.settings import Settings
 
 pytestmark = pytest.mark.anyio
 
@@ -37,17 +37,35 @@ ALWAYS_IDLE_SECONDS: float = 0.0
 # A revision the code does not ship, standing for a book saved by a newer release
 NEWER_REVISION: str = 'ffffffffffff'
 VERSION_TABLE: str = 'alembic_versions'
-# A directory under the ``projects`` directory of the storage that no store makes, which is not a book
-NOT_A_BOOK: str = 'not-a-book'
 
 
-def _new_book() -> BookId:
-    """Give the identifier of a new book.
+def _book_file(root: Path, dir_name: BookDirectoryName) -> Path:
+    """Name the database file of a book under the storage root, which may not exist yet.
 
-    :returns: A fresh identifier.
-    :rtype: BookId
+    :param root: Storage root of the test.
+    :type root: Path
+    :param dir_name: Name of the directory of the book.
+    :type dir_name: BookDirectoryName
+    :returns: The path of ``book.db`` in the directory of the book.
+    :rtype: Path
     """
-    return BookId(uuid4())
+    return root / KeySegment.BOOKS / dir_name / KeySegment.DATABASE
+
+
+async def _new_book(books: BookRegistry, root: Path) -> BookDirectoryName:
+    """Make the directory of a new book and copy the blank file of the registry into it, as a new book does.
+
+    :param books: The registry, whose blank file is copied.
+    :type books: BookRegistry
+    :param root: Storage root of the registry, which gets a directory of the book.
+    :type root: Path
+    :returns: The name of the directory of the new book.
+    :rtype: BookDirectoryName
+    """
+    dir_name = BookDirectoryName(str(uuid4()))
+    _book_file(root, dir_name).parent.mkdir(parents=True)
+    await books.copy_blank(dir_name)
+    return dir_name
 
 
 def _revisions(path: Path) -> list[str]:
@@ -77,18 +95,18 @@ async def _heads(database: SqlDatabase) -> tuple[str, ...]:
 
 
 @pytest.fixture
-async def fx_idle_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterator[BookDatabases]:
+async def fx_idle_books(fx_book_template: Path, fx_storage_root: Path) -> AsyncIterator[BookRegistry]:
     """Open a registry whose books are idle as soon as nobody uses them.
 
-    :param fx_settings: Settings naming the storage root.
-    :type fx_settings: Settings
     :param fx_book_template: The blank file new books copy.
     :type fx_book_template: Path
+    :param fx_storage_root: Storage root of the test, which holds the files of its books.
+    :type fx_storage_root: Path
     :returns: Iterator yielding the registry and closing its books afterwards.
-    :rtype: AsyncIterator[BookDatabases]
+    :rtype: AsyncIterator[BookRegistry]
     """
-    books = BookDatabases(
-        fx_settings.storage_root,
+    books = BookRegistry(
+        root=fx_storage_root,
         tracer=NullTracer(),
         wait_seconds=WAIT_SECONDS,
         idle_seconds=ALWAYS_IDLE_SECONDS,
@@ -98,251 +116,226 @@ async def fx_idle_books(fx_settings: Settings, fx_book_template: Path) -> AsyncI
     await books.dispose()
 
 
-class TestCreate:
-    """Tests for the making of the database of a new book."""
+class TestBlank:
+    """Tests for the blank file new books start as a copy of."""
 
-    async def test_a_new_book_is_at_the_head_revision_in_the_directory_of_the_book(
-        self, fx_books: BookDatabases
+    async def test_a_registry_without_a_blank_file_makes_one_at_the_head_revision_with_no_record(
+        self, fx_storage_root: Path
     ) -> None:
-        """Verify a created book is a file ``book.db`` in ``projects/<id>`` at the head of the book schema.
-
-        :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
-        """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        path = fx_books.path(book_id)
-        async with fx_books.use(book_id) as database:
-            heads = await _heads(database)
-        expect(path.name == KeySegment.DATABASE)
-        expect(path.parent.name == str(book_id))
-        expect(tuple(_revisions(path)) == heads)
-        assert_expectations()
-
-    async def test_a_second_creation_of_one_book_is_refused(self, fx_books: BookDatabases) -> None:
-        """Verify a book is made once, so two creations that race cannot both succeed.
-
-        :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
-        """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        with pytest.raises(ConflictError, match=str(book_id)):
-            await fx_books.create(book_id)
-
-    async def test_a_registry_without_a_blank_file_makes_one_at_the_head_revision(self, fx_settings: Settings) -> None:
         """Verify the registry of the application, which is given no blank file, makes one by running the revisions.
 
-        :param fx_settings: Settings naming the storage root.
-        :type fx_settings: Settings
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        books = BookDatabases(
-            fx_settings.storage_root, tracer=NullTracer(), wait_seconds=WAIT_SECONDS, idle_seconds=NEVER_IDLE_SECONDS
+        books = BookRegistry(
+            root=fx_storage_root, tracer=NullTracer(), wait_seconds=WAIT_SECONDS, idle_seconds=NEVER_IDLE_SECONDS
         )
-        book_id = _new_book()
         try:
-            await books.create(book_id)
-            async with books.use(book_id) as database:
-                heads = await _heads(database)
+            path = _book_file(fx_storage_root, await _new_book(books, fx_storage_root))
+            with closing(sqlite3.connect(path)) as connection:
+                records = connection.execute('SELECT COUNT(*) FROM projects').fetchone()
+            revisions = _revisions(path)
+            again = _book_file(fx_storage_root, await _new_book(books, fx_storage_root))
         finally:
             await books.dispose()
-        assert tuple(_revisions(books.path(book_id))) == heads
+        expect(records == (0,))
+        expect(len(revisions) == 1)
+        expect(_revisions(again) == revisions)
+        expect(again.read_bytes() == path.read_bytes())
+        assert_expectations()
 
 
 class TestOpen:
-    """Tests for the opening of a book by a unit of work, which migrates it and refuses a newer one."""
+    """Tests for the opening of a book by a transaction, which migrates it and refuses a newer one."""
 
-    async def test_a_book_without_a_file_is_not_found(self, fx_books: BookDatabases) -> None:
-        """Verify a book that was never made, or was removed, answers like a missing one.
+    async def test_a_book_without_a_file_is_not_found(self, fx_books: BookRegistry) -> None:
+        """Verify a book whose file does not exist answers like a missing one.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         """
-        book_id = _new_book()
-        with pytest.raises(NotFoundError, match=str(book_id)):
-            async with fx_books.use(book_id):
+        dir_name = BookDirectoryName(str(uuid4()))
+        with pytest.raises(NotFoundError, match=str(dir_name)):
+            async with fx_books.use(dir_name):
                 pass
 
+    async def test_a_new_book_is_at_the_head_revision(self, fx_books: BookRegistry, fx_storage_root: Path) -> None:
+        """Verify a copy of the blank file opens at the head of the book schema.
+
+        :param fx_books: Registry of the books of the test.
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
+        """
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        path = _book_file(fx_storage_root, dir_name)
+        async with fx_books.use(dir_name) as database:
+            heads = await _heads(database)
+        assert tuple(_revisions(path)) == heads
+
     async def test_a_book_behind_the_code_is_brought_to_the_head_when_it_is_opened(
-        self, fx_books: BookDatabases
+        self, fx_books: BookRegistry, fx_storage_root: Path
     ) -> None:
         """Verify a file no revision has touched, as the oldest book would be, is migrated by its first use.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        path = fx_books.path(book_id)
+        dir_name = BookDirectoryName(str(uuid4()))
+        path = _book_file(fx_storage_root, dir_name)
         path.parent.mkdir(parents=True)
         with closing(sqlite3.connect(path)):
             pass
-        async with fx_books.use(book_id) as database:
+        async with fx_books.use(dir_name) as database:
             heads = await _heads(database)
         assert tuple(_revisions(path)) == heads
 
-    async def test_a_book_of_a_newer_release_is_refused_and_left_as_it_is(self, fx_books: BookDatabases) -> None:
+    async def test_a_book_of_a_newer_release_is_refused_and_left_as_it_is(
+        self, fx_books: BookRegistry, fx_storage_root: Path
+    ) -> None:
         """Verify a file at a revision the code does not ship is not opened and keeps its revision for the newer code.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        path = fx_books.path(book_id)
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        path = _book_file(fx_storage_root, dir_name)
         with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute(f'UPDATE {VERSION_TABLE} SET version_num = ?', (NEWER_REVISION,))
         with pytest.raises(BookTooNewError):
-            async with fx_books.use(book_id):
+            async with fx_books.use(dir_name):
                 pass
         assert _revisions(path) == [NEWER_REVISION]
 
-    async def test_two_uses_of_a_book_share_one_database(self, fx_books: BookDatabases) -> None:
-        """Verify a book is opened once, so every unit of work of the book meets the others in its one write queue.
+    async def test_two_uses_of_a_book_share_one_database(self, fx_books: BookRegistry, fx_storage_root: Path) -> None:
+        """Verify a book is opened once, so every transaction of the book meets the others in its one write queue.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        async with fx_books.use(book_id) as first, fx_books.use(book_id) as second:
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        async with fx_books.use(dir_name) as first, fx_books.use(dir_name) as second:
             assert first is second
 
 
-class TestRemove:
-    """Tests for the removal of a book, which waits for the units of work using it."""
+class TestClose:
+    """Tests for the closing of a book for good, which waits for the transactions using it."""
 
-    async def test_removal_waits_for_the_use_in_progress_and_then_deletes_the_files(
-        self, fx_books: BookDatabases
+    async def test_close_waits_for_the_use_in_progress_and_leaves_the_file(
+        self, fx_books: BookRegistry, fx_storage_root: Path
     ) -> None:
-        """Verify a removal asked while a unit of work uses the book deletes nothing until the use ends.
+        """Verify a close asked while a transaction uses the book returns once the use ends, and keeps the file.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        path = fx_books.path(book_id)
-        removed = anyio.Event()
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        path = _book_file(fx_storage_root, dir_name)
+        closed = anyio.Event()
 
-        async def remove() -> None:
-            """Remove the book and tell the test it is gone."""
-            await fx_books.remove(book_id)
-            removed.set()
+        async def close() -> None:
+            """Close the book and tell the test it is closed."""
+            await fx_books.close(dir_name)
+            closed.set()
 
-        async with anyio.create_task_group() as group, fx_books.use(book_id):
-            group.start_soon(remove)
+        async with anyio.create_task_group() as group, fx_books.use(dir_name):
+            group.start_soon(close)
             await anyio.wait_all_tasks_blocked()
-            expect(not removed.is_set(), 'the removal waited for the use')
-            expect(path.is_file(), 'the file stayed while the book was used')
-        expect(not path.exists(), 'the file went once the use ended')
-        expect(not path.parent.exists(), 'the empty directory of the book went too')
+            expect(not closed.is_set(), 'the close waited for the use')
+        expect(closed.is_set(), 'the close ended with the use')
+        expect(path.is_file(), 'the file is left to the storage')
         assert_expectations()
 
-    async def test_a_book_being_removed_is_not_opened_again(self, fx_books: BookDatabases) -> None:
-        """Verify a unit of work asking for a book while it is being removed answers like a missing book.
+    async def test_a_closed_book_is_not_opened_again(self, fx_books: BookRegistry, fx_storage_root: Path) -> None:
+        """Verify a transaction asking for a book while it is being closed, or after, answers like a missing book.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        async with anyio.create_task_group() as group, fx_books.use(book_id):
-            group.start_soon(fx_books.remove, book_id)
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        async with anyio.create_task_group() as group, fx_books.use(dir_name):
+            group.start_soon(fx_books.close, dir_name)
             await anyio.wait_all_tasks_blocked()
             with pytest.raises(NotFoundError):
-                async with fx_books.use(book_id):
+                async with fx_books.use(dir_name):
                     pass
+        with pytest.raises(NotFoundError, match=str(dir_name)):
+            async with fx_books.use(dir_name):
+                pass
 
-    async def test_removal_keeps_the_other_files_of_the_book_and_a_second_removal_does_nothing(
-        self, fx_books: BookDatabases
+    async def test_a_book_never_opened_is_closed_and_a_second_close_does_nothing(
+        self, fx_books: BookRegistry, fx_storage_root: Path
     ) -> None:
-        """Verify the removal deletes only the database, leaves the directory with files of the stores in it, and repeats.
+        """Verify closing a book nobody opened, twice, refuses its later use.
 
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        path = fx_books.path(book_id)
-        kept = path.parent / KeySegment.SOURCES
-        kept.mkdir()
-        await fx_books.remove(book_id)
-        await fx_books.remove(book_id)
-        expect(not path.exists())
-        expect(kept.is_dir())
-        assert_expectations()
-
-
-class TestStored:
-    """Tests for the listing of the books that have a database."""
-
-    async def test_lists_the_directories_of_books_with_a_database_and_nothing_else(
-        self, fx_books: BookDatabases, fx_settings: Settings
-    ) -> None:
-        """Verify a directory without a database, and one not named by a book, are not books.
-
-        :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
-        :param fx_settings: Settings naming the storage root.
-        :type fx_settings: Settings
-        """
-        made = sorted([_new_book(), _new_book()])
-        for book_id in made:
-            await fx_books.create(book_id)
-        books_root = fx_settings.storage_root / KeySegment.BOOKS
-        (books_root / str(_new_book())).mkdir()
-        (books_root / NOT_A_BOOK).mkdir()
-        assert await fx_books.stored() == made
-
-    async def test_a_storage_root_with_no_book_lists_none(self, fx_books: BookDatabases) -> None:
-        """Verify a storage root that no book has been made under yet lists no book.
-
-        :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
-        """
-        assert await fx_books.stored() == []
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        await fx_books.close(dir_name)
+        await fx_books.close(dir_name)
+        with pytest.raises(NotFoundError):
+            async with fx_books.use(dir_name):
+                pass
 
 
 class TestCloseIdle:
     """Tests for the closing of the books that nobody used for the idle limit."""
 
-    async def test_an_idle_book_is_closed_and_opened_again_by_its_next_use(self, fx_idle_books: BookDatabases) -> None:
+    async def test_an_idle_book_is_closed_and_opened_again_by_its_next_use(
+        self, fx_idle_books: BookRegistry, fx_storage_root: Path
+    ) -> None:
         """Verify a released book is closed, and the next use opens a new database over the same file.
 
         :param fx_idle_books: Registry whose books are idle as soon as they are released.
-        :type fx_idle_books: BookDatabases
+        :type fx_idle_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_idle_books.create(book_id)
-        async with fx_idle_books.use(book_id) as first:
+        dir_name = await _new_book(fx_idle_books, fx_storage_root)
+        async with fx_idle_books.use(dir_name) as first:
             pass
         await fx_idle_books.close_idle()
-        async with fx_idle_books.use(book_id) as second:
+        async with fx_idle_books.use(dir_name) as second:
             assert second is not first
 
-    async def test_a_book_in_use_is_never_closed(self, fx_idle_books: BookDatabases) -> None:
-        """Verify a book that a unit of work holds stays open however long it has been held.
+    async def test_a_book_in_use_is_never_closed(self, fx_idle_books: BookRegistry, fx_storage_root: Path) -> None:
+        """Verify a book that a transaction holds stays open however long it has been held.
 
         :param fx_idle_books: Registry whose books are idle as soon as they are released.
-        :type fx_idle_books: BookDatabases
+        :type fx_idle_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_idle_books.create(book_id)
-        async with fx_idle_books.use(book_id) as held:
+        dir_name = await _new_book(fx_idle_books, fx_storage_root)
+        async with fx_idle_books.use(dir_name) as held:
             await fx_idle_books.close_idle()
-            async with fx_idle_books.use(book_id) as again:
+            async with fx_idle_books.use(dir_name) as again:
                 assert again is held
 
-    async def test_a_book_used_within_the_limit_stays_open(self, fx_books: BookDatabases) -> None:
+    async def test_a_book_used_within_the_limit_stays_open(self, fx_books: BookRegistry, fx_storage_root: Path) -> None:
         """Verify a book released within the idle limit is kept, so the next use finds it open.
 
         :param fx_books: Registry of the books of the test, whose idle limit no test reaches.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
         """
-        book_id = _new_book()
-        await fx_books.create(book_id)
-        async with fx_books.use(book_id) as first:
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        async with fx_books.use(dir_name) as first:
             pass
         await fx_books.close_idle()
-        async with fx_books.use(book_id) as second:
+        async with fx_books.use(dir_name) as second:
             assert second is first

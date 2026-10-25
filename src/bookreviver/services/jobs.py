@@ -2,11 +2,11 @@
 
 A job belongs to a book, so every use case works on an open book, whose owner the opening has checked, and a job of
 another book is reported as missing rather than forbidden, so no account learns what another one has. The jobs
-live in the memory of the API process, on the job board, so a job the process does not hold, such as one that ended
-before the process started, is missing too.
+live in the memory of the API process, in the job queue of the book, so a job the process does not hold, such as one
+that ended before the process started, is missing too.
 
-Cancelling asks the board, which drops a queued job and stops a running one at the boundary of its current task, so no
-worker has to be interrupted. A job that has ended cannot be cancelled.
+Cancelling asks the queue of the book, which drops a queued job and stops a running one at the boundary of its current
+task, so no worker has to be interrupted. A job that has ended cannot be cancelled.
 
 The event stream is a subscription: it keeps every event published from the moment it is entered, even before the
 first read, and replays nothing from before. A client therefore reads the job after its stream has opened, and again
@@ -16,7 +16,6 @@ after every reconnect, and the stream carries every change from there on.
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import JobKind
-from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import Slice
 
 if TYPE_CHECKING:
@@ -27,27 +26,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.runtime import EventStream, JobBoard
-    from bookreviver.ports.storage import SourceStore
     from bookreviver.services.book import Book
 
 
 class JobService:
     """Reads and cancels jobs, and opens the event stream of a book, for the account that owns the book."""
-
-    def __init__(self, *, board: JobBoard, stream: EventStream, sources: SourceStore) -> None:
-        """Build the service over the ports of one request.
-
-        :param board: Board holding the jobs of every book.
-        :type board: JobBoard
-        :param stream: Source of the book's events.
-        :type stream: EventStream
-        :param sources: Store of the uploads, which holds the files of an import that is cancelled before it begins.
-        :type sources: SourceStore
-        """
-        self._board = board
-        self._stream = stream
-        self._sources = sources
 
     async def get(self, book: Book, job_id: JobId) -> Job:
         """Return a job of the book.
@@ -56,14 +39,11 @@ class JobService:
         :type book: Book
         :param job_id: Identifier of the job.
         :type job_id: JobId
-        :returns: The job as the board holds it.
+        :returns: The job as the queue of the book holds it.
         :rtype: Job
-        :raises NotFoundError: If the board does not hold the job, or the job belongs to another book.
+        :raises NotFoundError: If the queue of the book does not hold the job, or the job belongs to another book.
         """
-        job = self._board.get(job_id)
-        if job.book_id != book.id:
-            raise NotFoundError(job_id)
-        return job
+        return book.jobs.get(job_id)
 
     async def list_for_book(self, book: Book, request: SliceRequest, *, active: bool) -> Slice[Job]:
         """Return a window of the jobs of the book, the newest first.
@@ -77,7 +57,7 @@ class JobService:
         :returns: The jobs of the window, and the number of jobs the filter matches.
         :rtype: Slice[Job]
         """
-        jobs = self._board.jobs(book.id, active=active)
+        jobs = book.jobs.active() if active else book.jobs.jobs()
         return Slice(items=jobs[request.offset : request.offset + request.limit], total=len(jobs))
 
     async def cancel(self, book: Book, job_id: JobId) -> Job:
@@ -92,13 +72,12 @@ class JobService:
         :type job_id: JobId
         :returns: The job in the cancelled state, with the time it finished.
         :rtype: Job
-        :raises NotFoundError: If the board does not hold the job, or the job belongs to another book.
+        :raises NotFoundError: If the queue of the book does not hold the job, or the job belongs to another book.
         :raises JobFinishedError: If the job has already finished, or finished while it was being cancelled.
         """
-        await self.get(book, job_id)
-        cancelled = await self._board.cancel(job_id)
+        cancelled = await book.jobs.cancel(job_id)
         if cancelled.kind is JobKind.IMPORT_SOURCE and cancelled.started_at is None:
-            await self._sources.discard(cancelled.book_id, cancelled.id)
+            await book.sources.discard(cancelled.id)
         return cancelled
 
     async def events(self, book: Book) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
@@ -114,4 +93,4 @@ class JobService:
                   published since, and unsubscribes when left.
         :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]
         """
-        return self._stream.subscribe(book.id)
+        return book.events.subscribe()

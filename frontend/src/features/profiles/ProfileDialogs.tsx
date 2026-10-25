@@ -17,7 +17,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { TextField } from '@/shared/ui/text-field';
 
 /**
- * The two dialogs of a profile in the list of the account: the one that gives it another name, and the one that asks
+ * The two dialogs of a profile in the list of the book: the one that gives it another name, and the one that asks
  * before it is deleted. The button that opens each is the child, so the row decides how it is offered.
  */
 
@@ -25,16 +25,19 @@ const labels = MESSAGES.profiles.page;
 const NAME_MAX_LENGTH = 500;
 
 export function RenameProfileDialog({
+  bookId,
   profile,
   children,
 }: {
+  /** The book the profile belongs to. */
+  bookId: string;
   profile: RecipeProfileSchema;
   /** The button that opens the dialog. */
   children: React.ReactNode;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(profile.name);
-  const rename = useRenameProfile();
+  const rename = useRenameProfile(bookId);
 
   return (
     <Dialog
@@ -54,7 +57,7 @@ export function RenameProfileDialog({
           onSubmit={(event) => {
             event.preventDefault();
             rename.mutate(
-              { path: { profile_id: profile.id }, body: { name: name.trim() } },
+              { path: { book_id: bookId, profile_id: profile.id }, body: { name: name.trim() } },
               { onSuccess: () => setOpen(false) },
             );
           }}
@@ -87,15 +90,18 @@ export function RenameProfileDialog({
 }
 
 export function DeleteProfileDialog({
+  bookId,
   profile,
   children,
 }: {
+  /** The book the profile belongs to. */
+  bookId: string;
   profile: RecipeProfileSchema;
   /** The button that opens the dialog. */
   children: React.ReactNode;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const remove = useDeleteProfile();
+  const remove = useDeleteProfile(bookId);
 
   return (
     <ConfirmDialog
@@ -114,7 +120,10 @@ export function DeleteProfileDialog({
       submitDisabled={remove.isPending}
       submitTestId="profile-delete-submit"
       onConfirm={() =>
-        remove.mutate({ path: { profile_id: profile.id } }, { onSuccess: () => setOpen(false) })
+        remove.mutate(
+          { path: { book_id: bookId, profile_id: profile.id } },
+          { onSuccess: () => setOpen(false) },
+        )
       }
     />
   );

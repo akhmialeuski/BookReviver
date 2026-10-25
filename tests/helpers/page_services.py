@@ -1,4 +1,4 @@
-"""Building the page service of a test over a unit of work of the test's database and the local asset store."""
+"""Building the page service of a test over a catalogue database of the test's database and the local asset store."""
 
 from typing import TYPE_CHECKING, override
 
@@ -8,8 +8,10 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.plugins.blank import BlankPage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
+from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions
-from bookreviver.services.pages import PageImaging, PageRuntime, PageService
+from bookreviver.services.books import BooksService
+from bookreviver.services.pages import PageImaging, PageService
 from bookreviver.services.steps import StepRunner
 from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
@@ -19,9 +21,9 @@ if TYPE_CHECKING:
 
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.persistence import UnitOfWork
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-    from bookreviver.ports.storage import AssetStore
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.fake_board import FakeJobBoard
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 # What the fake tiler writes, so a test can tell that a rendition of a version was cut
 PREVIEW_CONTENT: bytes = b'preview'
@@ -81,21 +83,19 @@ class FakeTiler(Tiler):
 
 
 def make_page_service(
-    uow: UnitOfWork,
-    assets: AssetStore,
-    runtime: tuple[EventPublisher, Clock, JobBoard],
+    stores: BookOpener,
+    runtime: tuple[RecordingEventBus, FakeJobBoard],
     *,
     order_keys: OrderKeys | None = None,
     renditions: RenditionWriter | None = None,
 ) -> PageService:
-    """Build a page service over a unit of work, as a new request or job would get one.
+    """Build a page service over a catalogue database, as a new request or job would get one.
 
-    :param uow: Unit of work of the service, usually a new one over the database of the test.
-    :type uow: UnitOfWork
-    :param assets: Asset store the service writes and reads files through.
-    :type assets: AssetStore
-    :param runtime: The publisher, the clock and the job board the service reports through.
-    :type runtime: tuple[EventPublisher, Clock, JobBoard]
+    :param stores: Opens the catalogue database, the databases and the file stores of the service, over the test's own.
+    :type stores: BookOpener
+    :param runtime: The event bus and the job board the books of the service open their channel and their queues on,
+                    which are registered as the parts of a book.
+    :type runtime: tuple[RecordingEventBus, FakeJobBoard]
     :param order_keys: Order keys to build keys with, or None for the fractional-indexing adapter.
     :type order_keys: OrderKeys | None
     :param renditions: Writer of the files of a version, or None for one that copies the image and writes tokens.
@@ -104,18 +104,16 @@ def make_page_service(
               renditions write token files.
     :rtype: PageService
     """
-    publisher, clock, board = runtime
+    events, board = runtime
+    BookEvents.register(events.open)
+    BookJobs.register(board.open)
     tiler = FakeTiler()
     return PageService(
-        uow=uow,
-        assets=assets,
-        runtime=PageRuntime(
-            publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board
-        ),
+        books=BooksService(catalogue=stores.catalogue()),
+        order_keys=order_keys or FractionalOrderKeys(),
         imaging=PageImaging(
-            base_versions=BaseVersions(assets=assets, tiler=tiler),
+            base_versions=BaseVersions(tiler=tiler),
             runner=StepRunner(
-                assets=assets,
                 executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), BlankPage()])),
                 renditions=renditions or FakeRenditionWriter(),
                 tiler=tiler,

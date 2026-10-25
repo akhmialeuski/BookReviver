@@ -13,27 +13,26 @@ from typing import TYPE_CHECKING
 
 import anyio
 
+from bookreviver.ports.persistence import BookDatabase
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import CatalogueDatabase
 
 # The longest a blocked change holds its thread when a test fails before it lets the change go
 HOLD_LIMIT_SECONDS: float = 30.0
 
 
 @asynccontextmanager
-async def hold_book_in_thread(uow: UnitOfWork, book_id: BookId | None = None) -> AsyncIterator[None]:
-    """Hold a book by a change whose work blocks the thread it runs in until the block ends.
+async def hold_book_in_thread(holder: BookDatabase | CatalogueDatabase) -> AsyncIterator[None]:
+    """Hold a book or the catalogue by a change whose work blocks the thread it runs in until the block ends.
 
     Every other change of the same store waits behind the held one. A change of another book, or of the catalogue when a
     book is held, runs at once.
 
-    :param uow: Unit of work whose change holds the book.
-    :type uow: UnitOfWork
-    :param book_id: Book that is held, or None for the catalogue.
-    :type book_id: BookId | None
+    :param holder: The database of the book that is held, or the catalogue database whose change holds the catalogue.
+    :type holder: BookDatabase | CatalogueDatabase
     :returns: Iterator yielding once the work of the change has started, and letting it commit when the block ends.
     :rtype: AsyncIterator[None]
     """
@@ -45,17 +44,17 @@ async def hold_book_in_thread(uow: UnitOfWork, book_id: BookId | None = None) ->
         The work runs in a worker thread of ``anyio.to_thread``, so it reaches the event loop through
         ``anyio.from_thread``.
 
-        :param _arguments: What the unit of work hands its work, which this work does not need.
+        :param _arguments: What the catalogue database hands its work, which this work does not need.
         :type _arguments: object
         """
         anyio.from_thread.run_sync(inside.set)
         release.wait(timeout=HOLD_LIMIT_SECONDS)
 
     async with anyio.create_task_group() as tasks:
-        if book_id is None:
-            tasks.start_soon(uow.change, block)
+        if isinstance(holder, BookDatabase):
+            tasks.start_soon(holder.change, block)
         else:
-            tasks.start_soon(uow.change_book, book_id, block)
+            tasks.start_soon(holder.change, block)
         await inside.wait()
         try:
             yield

@@ -18,7 +18,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.entities import LibraryEntry
-from tests.helpers.builders import EPOCH, make_record
+from tests.helpers.builders import EPOCH, directory_of, make_record, new_book_id
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -29,14 +29,14 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
 # A wait limit of a job that is not the default of the settings, so a test cannot pass on the default by chance
 WAIT_SECONDS: float = 2.5
 BUSY_TIMEOUT_MS: int = 2_500
-# The limit of a unit of work of a request, which the settings give
+# The limit of a catalogue database of a request, which the settings give
 SHORT_WAIT_SECONDS: float = 0.5
 BUSY_TIMEOUT_PRAGMA: str = 'PRAGMA busy_timeout'
 FOREIGN_KEYS_PRAGMA: str = 'PRAGMA foreign_keys'
@@ -121,24 +121,26 @@ class TestSqlDatabase:
     """Tests for the engines SqlDatabase opens."""
 
     async def test_update_stores_the_updated_at_of_the_domain(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a book updated with a new title keeps the ``updated_at`` the domain gave it, and no other.
 
         advanced-alchemy's touch listener, on by default, replaces an ``updated_at`` the flush does not change with
-        the wall clock, which is not the ``Clock`` of the domain.
+        the current time, which is not the time the domain gave it.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
-        uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id)
-        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
-        stored = await uow.read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
         assert stored.updated_at == renamed.updated_at
 
     async def test_url_of_the_async_driver_gets_the_driver_of_the_standard_library(self, tmp_path: Path) -> None:
@@ -211,32 +213,32 @@ class TestSqlDatabase:
 
 
 class TestSqliteTransactions:
-    """Tests for the transactions the engines put around the work of a unit of work."""
+    """Tests for the transactions the engines put around the work of a catalogue database."""
 
     async def test_change_begins_immediate_and_ends_with_commit(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory
     ) -> None:
         """Verify a change takes the write lock of SQLite when it begins and commits when it ends, and no more.
 
         :param fx_database: Fresh catalogue with every table created, whose statements are traced.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         """
-        uow = fx_uow(wait_seconds=WAIT_SECONDS)
+        catalogue = fx_catalogue(wait_seconds=WAIT_SECONDS)
         with traced_sql(fx_database.engine) as statements:
-            await uow.change(lambda _repos: None)
+            await catalogue.change(lambda _repos: None)
         assert statements == [BEGIN_WRITE, COMMIT_STATEMENT]
 
     async def test_change_left_by_an_exception_ends_with_rollback(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory
     ) -> None:
         """Verify a change whose work raises rolls the transaction back, so it holds the lock no longer.
 
         :param fx_database: Fresh catalogue with every table created, whose statements are traced.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         """
 
         def leave_by_exception(_repos: object) -> None:
@@ -248,13 +250,13 @@ class TestSqliteTransactions:
             """
             raise ValueError
 
-        uow = fx_uow(wait_seconds=WAIT_SECONDS)
+        catalogue = fx_catalogue(wait_seconds=WAIT_SECONDS)
         with traced_sql(fx_database.engine) as statements, pytest.raises(ValueError, match=r'^$'):
-            await uow.change(leave_by_exception)
+            await catalogue.change(leave_by_exception)
         assert statements == [BEGIN_WRITE, ROLLBACK_STATEMENT]
 
     async def test_read_begins_deferred_and_ends_with_rollback_on_a_connection_of_the_readers(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory
     ) -> None:
         """Verify a read begins a deferred transaction on the engine of the readers and ends it with a rollback.
 
@@ -263,16 +265,16 @@ class TestSqliteTransactions:
 
         :param fx_database: Fresh catalogue with every table created, whose statements are traced.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         """
-        uow = fx_uow()
+        catalogue = fx_catalogue()
         with traced_sql(fx_database.read_engine) as reading, traced_sql(fx_database.engine) as writing:
-            await uow.read(lambda repos: repos.library.list_all())
+            await catalogue.read(lambda repos: repos.library.list_all())
         assert (transaction_statements(reading), writing) == ([BEGIN_READ, ROLLBACK_STATEMENT], [])
 
     async def test_change_commits_while_a_reader_sits_in_a_read_transaction(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+        self, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify a change commits at once while another connection holds a read transaction open.
 
@@ -281,35 +283,39 @@ class TestSqliteTransactions:
 
         :param fx_database: Fresh catalogue with every table created, which a plain connection holds a read on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account the entry of the change names.
         :type fx_owner_id: AccountId
         """
-        entry = LibraryEntry(book_id=make_record().id, owner_id=fx_owner_id, added_at=EPOCH)
-        uow = fx_uow()
+        entry = LibraryEntry(
+            book_id=new_book_id(), owner_id=fx_owner_id, directory=directory_of(new_book_id()), added_at=EPOCH
+        )
+        catalogue = fx_catalogue()
         path = fx_database.engine.url.database
         assert path is not None
         with closing(sqlite3.connect(path, autocommit=True)) as reader:
             reader.execute(BEGIN_READ)
             reader.execute(SELECT_SCHEMA).fetchall()
-            await uow.change(lambda repos: repos.library.add(entry))
-        assert await uow.read(lambda repos: repos.library.get(entry.book_id)) == entry
+            await catalogue.change(lambda repos: repos.library.add(entry))
+        assert await catalogue.read(lambda repos: repos.library.get(entry.book_id)) == entry
 
-    async def test_change_book_hands_the_work_the_book_as_the_last_change_committed_it(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+    async def test_book_change_hands_the_work_the_book_as_the_last_change_committed_it(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
-        """Verify a ``change_book`` reads the book's record at its start, so it sees the title another change stored.
+        """Verify a ``Book.change`` reads the book's record at its start, so it sees the title another change stored.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
-        uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id)
-        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
-        held = await uow.change_book(book_record.id, lambda _repos, current: current)
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        held = await fx_databases().open(book_id).change(lambda _repos, current: current)
         assert held.details.title == NEW_TITLE

@@ -1,4 +1,7 @@
-import type { ImportProfileApiV1RecipeProfilesImportPostData, ProfileFileSchema } from '@/api';
+import type {
+  ImportProfileApiV1BooksBookIdRecipeProfilesImportPostData,
+  ProfileFileSchema,
+} from '@/api';
 
 /**
  * The file a profile is exchanged by: writing one for the download, and reading one the reader chose before it is sent.
@@ -9,7 +12,7 @@ import type { ImportProfileApiV1RecipeProfilesImportPostData, ProfileFileSchema 
  */
 
 /** A profile file of any version the server still imports, as the body of the import names them. */
-export type ProfileFile = ImportProfileApiV1RecipeProfilesImportPostData['body'];
+export type ProfileFile = ImportProfileApiV1BooksBookIdRecipeProfilesImportPostData['body'];
 
 /**
  * The versions of the format the server imports, which the server's `ProfileFileVersion` names. Each is checked against

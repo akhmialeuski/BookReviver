@@ -17,8 +17,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.ids import BookId
+    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -46,15 +47,15 @@ def _canvas(zoom: float, centre_x: float = 0.0, centre_y: float = 0.0) -> dict[s
     return {ZOOM_FIELD: zoom, 'centre_x': centre_x, 'centre_y': centre_y}
 
 
-def _path(book_record: BookRecord) -> str:
+def _path(book_id: BookId) -> str:
     """Return the path of the place of a book.
 
-    :param book_record: The book.
-    :type book_record: BookRecord
+    :param book_id: The book.
+    :type book_id: BookId
     :returns: The path of its place.
     :rtype: str
     """
-    return f'{BOOKS_PATH}/{book_record.id}/place'
+    return f'{BOOKS_PATH}/{book_id}/place'
 
 
 def _body() -> dict[str, Any]:
@@ -76,46 +77,47 @@ def _body() -> dict[str, Any]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
+async def fx_book(
+    fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> BookId:
     """Commit a book of the signed-in account.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
-    :rtype: BookRecord
+    :rtype: BookId
     """
-    book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
-    return book_record
+    book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+    return book_id
 
 
 class TestGetPlace:
     """Tests for GET /books/{id}/place."""
 
-    async def test_a_book_not_worked_on_answers_no_content(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
-    ) -> None:
+    async def test_a_book_not_worked_on_answers_no_content(self, fx_client: httpx.AsyncClient, fx_book: BookId) -> None:
         """Verify a book the account has not worked on answers 204 with no body.
 
         :param fx_client: HTTP client of the application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         response = await fx_client.get(_path(fx_book))
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(response.content == b'')
         assert_expectations()
 
-    async def test_the_place_that_was_put_is_returned(self, fx_client: httpx.AsyncClient, fx_book: BookRecord) -> None:
+    async def test_the_place_that_was_put_is_returned(self, fx_client: httpx.AsyncClient, fx_book: BookId) -> None:
         """Verify a place written by PUT is read back as written.
 
         :param fx_client: HTTP client of the application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         body = _body()
         await fx_client.put(_path(fx_book), json=body)
@@ -129,7 +131,11 @@ class TestGetPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the place of a book of another account answers 404, as a missing book does.
 
@@ -137,25 +143,28 @@ class TestGetPlace:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        strangers = make_record()
-        await commit_record(fx_database, fx_uow(), strangers, owner=new_account_id())
-        response = await fx_client.get(_path(strangers))
+        strangers_id = await commit_record(
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
+        response = await fx_client.get(_path(strangers_id))
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestPutPlace:
     """Tests for PUT /books/{id}/place."""
 
-    async def test_put_replaces_the_place(self, fx_client: httpx.AsyncClient, fx_book: BookRecord) -> None:
+    async def test_put_replaces_the_place(self, fx_client: httpx.AsyncClient, fx_book: BookId) -> None:
         """Verify a second PUT replaces the first, and a field left out takes its default.
 
         :param fx_client: HTTP client of the application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         """
         await fx_client.put(_path(fx_book), json=_body())
         response = await fx_client.put(_path(fx_book), json={MODE_FIELD: PlaceMode.READING, STAGE_FIELD: Stage.LAYOUT})
@@ -167,7 +176,11 @@ class TestPutPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a place cannot be written into a book of another account.
 
@@ -175,12 +188,15 @@ class TestPutPlace:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        strangers = make_record()
-        await commit_record(fx_database, fx_uow(), strangers, owner=new_account_id())
-        response = await fx_client.put(_path(strangers), json=_body())
+        strangers_id = await commit_record(
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
+        response = await fx_client.put(_path(strangers_id), json=_body())
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.parametrize(
@@ -198,14 +214,14 @@ class TestPutPlace:
         ids=['stage', 'view', 'page', 'unknown-field', 'zoom-zero', 'zoom-huge', 'centre-far', 'centre-missing'],
     )
     async def test_an_invalid_body_is_refused(
-        self, fx_client: httpx.AsyncClient, fx_book: BookRecord, change: dict[str, Any]
+        self, fx_client: httpx.AsyncClient, fx_book: BookId, change: dict[str, Any]
     ) -> None:
         """Verify a body that breaks a constraint is a 422 and stores nothing.
 
         :param fx_client: HTTP client of the application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: A book of the signed-in account.
-        :type fx_book: BookRecord
+        :type fx_book: BookId
         :param change: Fields of a valid body to replace with an invalid value.
         :type change: dict[str, Any]
         """

@@ -1,11 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowDownUpIcon, FileImageIcon, FileTextIcon, ListOrderedIcon } from 'lucide-react';
 import type { BookSchema, PageSchema, ScanSchema } from '@/api';
-import {
-  bookApiV1BooksBookIdGetQueryKey,
-  updateBookApiV1BooksBookIdPatchMutation,
-} from '@/api/@tanstack/react-query.gen';
+import { updateBookApiV1BooksBookIdPatchMutation } from '@/api/@tanstack/react-query.gen';
 import { planSave, toFields } from '@/features/about/fields';
 import { SuggestionBox } from '@/features/about/SuggestionBanners';
 import { planSuggestion } from '@/features/about/suggestion';
@@ -46,16 +43,7 @@ export function FilePanel({
   /** Every page of the book. */
   pages: readonly PageSchema[];
 }): React.JSX.Element {
-  const queryClient = useQueryClient();
-  const use = useMutation({
-    ...updateBookApiV1BooksBookIdPatchMutation(),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(
-        bookApiV1BooksBookIdGetQueryKey({ path: { book_id: updated.id } }),
-        updated,
-      );
-    },
-  });
+  const use = useMutation(updateBookApiV1BooksBookIdPatchMutation());
 
   const labels = MESSAGES.import.panel;
   const Icon = source.kind === 'image' ? FileImageIcon : FileTextIcon;

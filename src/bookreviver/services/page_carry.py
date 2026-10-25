@@ -16,13 +16,13 @@ All the changes are one batch of the history, from a carry-over, so one undo tak
 carry-over marks the stage of each page that changed stale and processes nothing, like any change of an edit.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import CarryScope, ChangeSource, PageOrigin, StepLayer
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.history import CarryOver
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
 from bookreviver.services.recipes import find_step
 
@@ -32,8 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import CarryRequest, PageStepKey
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
@@ -44,19 +43,13 @@ MASK_NOT_CARRIED: str = 'The edit of this step is a mask painted on one page, wh
 class CarryOverService:
     """Carries the shape a page has set by hand over to the following, the selected or the same kind pages."""
 
-    def __init__(self, *, uow: UnitOfWork, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, records: StageRecords) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends the carry-over.
-        :type uow: UnitOfWork
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
-        :param clock: Clock stamping the states and the changes.
-        :type clock: Clock
         """
-        self._uow = uow
         self._records = records
-        self._clock = clock
 
     async def carry(self, book: Book, request: CarryRequest) -> CarryOver:
         """Write the shape a page has set by hand for a step to other pages, as one batch.
@@ -93,7 +86,7 @@ class CarryOverService:
                 state.page_id: state
                 for state in repos.page_step_states.list_for_step([page.id for page in targets], key.stage, key.step_id)
             }
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             carried: list[PageStepState] = []
             skipped: list[PageId] = []
             for page in targets:
@@ -114,7 +107,7 @@ class CarryOverService:
                 self._records.mark_stale(repos, change.page_id, change.stage)
             return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     @staticmethod
     def _hand_shape(repos: BookRepositories, key: PageStepKey) -> dict[str, Any] | None:
@@ -159,7 +152,7 @@ class CarryOverService:
                 raise InvalidParametersError(SELECTED_NEEDS_PAGES)
             candidates = repos.pages.list_by_ids(request.page_ids)
         else:
-            book = book_pages(repos.pages)
+            book = repos.pages.list_all()
             if request.scope is CarryScope.FOLLOWING:
                 book = book[next((index for index, page in enumerate(book) if page.id == key.page_id), -1) + 1 :]
             candidates = [page for page in book if not page.is_leaf and page.recipe_kind is source.recipe_kind]

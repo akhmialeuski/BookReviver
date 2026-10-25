@@ -13,7 +13,6 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import (
     VERSION_ID_PATTERN,
-    Actor,
     LibraryEntry,
     PageEdit,
     PageHistoryEntry,
@@ -45,6 +44,7 @@ from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Rendi
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
+    directory_of,
     make_job,
     make_page,
     make_page_edit,
@@ -52,10 +52,10 @@ from tests.helpers.builders import (
     make_page_step_state,
     make_page_version,
     make_recipe,
-    make_record,
     make_scan,
     make_source,
     new_account_id,
+    new_book_id,
 )
 
 if TYPE_CHECKING:
@@ -70,16 +70,10 @@ class TestLibraryEntry:
 
     def test_the_entry_is_stored_under_the_identifier_of_its_book(self) -> None:
         """Verify a book is in one library, so the identifier of the entry is the identifier of the book."""
-        entry = LibraryEntry(book_id=make_record().id, owner_id=new_account_id(), added_at=EPOCH)
+        entry = LibraryEntry(
+            book_id=new_book_id(), owner_id=new_account_id(), directory=directory_of(new_book_id()), added_at=EPOCH
+        )
         assert entry.id == entry.book_id
-
-    def test_only_the_owner_is_the_owner(self) -> None:
-        """Verify the actor of the owning account owns the book and the actor of any other account does not."""
-        owner = new_account_id()
-        entry = LibraryEntry(book_id=make_record().id, owner_id=owner, added_at=EPOCH)
-        expect(entry.is_owned_by(Actor(account_id=owner)))
-        expect(not entry.is_owned_by(Actor(account_id=new_account_id())))
-        assert_expectations()
 
 
 class TestJobStage:
@@ -87,21 +81,17 @@ class TestJobStage:
 
     def test_a_run_stage_job_names_the_stage_of_its_parameters(self) -> None:
         """Verify the stage comes out of the parameters the job stores."""
-        job = make_job(
-            book_id=make_record().id,
-            kind=JobKind.RUN_STAGE,
-            params=StageRun(stage=Stage.CLEANUP).to_map(),
-        )
+        job = make_job(kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.CLEANUP).to_map())
         assert job.stage is Stage.CLEANUP
 
     def test_a_job_of_another_kind_has_no_stage(self) -> None:
         """Verify an import job has no stage, whatever its parameters hold."""
-        job = make_job(book_id=make_record().id, params=StageRun(stage=Stage.CLEANUP).to_map())
+        job = make_job(params=StageRun(stage=Stage.CLEANUP).to_map())
         assert job.stage is None
 
     def test_a_run_stage_job_with_unreadable_parameters_has_no_stage(self) -> None:
         """Verify parameters that are not those of a stage run give no stage and no error."""
-        job = make_job(book_id=make_record().id, kind=JobKind.RUN_STAGE)
+        job = make_job(kind=JobKind.RUN_STAGE)
         assert job.stage is None
 
 

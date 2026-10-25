@@ -132,6 +132,8 @@ class ProcessingSettings(BaseModel):
     :ivar preview_step_processes: Processes of ``step_processes`` that run previews only, so a preview never waits
                                   behind the full runs of other books. The full runs get the rest, which is why it
                                   must be smaller than ``step_processes``.
+    :ivar recipes_file: JSON file of the recipes every stage of a new book starts with, the file packaged with the
+                        application by default. A file of your own replaces it as a whole.
     """
 
     worker_pools: frozenset[WorkerPool] = frozenset(WorkerPool)
@@ -139,6 +141,7 @@ class ProcessingSettings(BaseModel):
     models_dir: Path = Path('data/models')
     step_processes: PositiveInt = Field(default_factory=default_step_processes)
     preview_step_processes: PositiveInt = 1
+    recipes_file: Path = Path(__file__).with_name('recipes.json')
 
     # A literal mode: the pydantic plugin of mypy reads the mode only from a literal, even a Final constant fails it
     @model_validator(mode='after')
@@ -204,10 +207,10 @@ class ChangeWaitSettings(BaseModel):
     also opens every connection with the job limit as the busy timeout of SQLite, which matters only when a process
     other than the application, such as a migration run by hand, holds the write lock of the file.
 
-    :ivar request_seconds: Limit of a unit of work that serves an HTTP request, 3 seconds by default, so an interface
-                           never hangs for the long wait of a job and is told at once to try again.
-    :ivar job_seconds: Limit of every other unit of work, the background jobs and the work of the startup, 30 seconds by
-                       default, so a job does not lose its work to a short wait.
+    :ivar request_seconds: Limit of a catalogue database that serves an HTTP request, 3 seconds by default, so an
+                           interface never hangs for the long wait of a job and is told at once to try again.
+    :ivar job_seconds: Limit of every other catalogue database, the background jobs, the work of the startup and every
+                       change of a book, 30 seconds by default, so a job does not lose its work to a short wait.
     """
 
     request_seconds: PositiveFloat = 3.0
@@ -228,8 +231,8 @@ class Settings(BaseSettings):
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
-    :ivar change_wait: How long a change of a unit of work waits for the writer, one limit for the units of work of
-                       HTTP requests and one for those of jobs, before it is refused as busy.
+    :ivar change_wait: How long a change of a catalogue database waits for the writer, one limit for the catalogue
+                       databases of HTTP requests and one for those of jobs, before it is refused as busy.
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.

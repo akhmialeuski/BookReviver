@@ -13,7 +13,7 @@ from tests.helpers.stage_heads import seed_head
 from tests.helpers.stage_reads import stage_rows
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, Page, PageVersion
+    from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId, PageId, PageVersionId, StepId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
@@ -55,7 +55,7 @@ STEP_INDEXES: tuple[int, ...] = tuple(range(STEP_COUNT))
 class StagedBook:
     """A book whose four pages stand differently in a stage with a recipe of three steps.
 
-    :ivar book_record: The record of the book.
+    :ivar book_id: The identifier of the book.
     :ivar step_ids: The steps of the recipe of text pages of the stage, in order.
     :ivar full: Page run through every step.
     :ivar partial: Page run through the first step only.
@@ -65,7 +65,7 @@ class StagedBook:
     :ivar chains: The versions the stage made on each page, the first step first, none for a page it has not run on.
     """
 
-    book_record: BookRecord
+    book_id: BookId
     step_ids: list[StepId]
     full: Page
     partial: Page
@@ -113,7 +113,7 @@ async def chain_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage
             chain.insert(0, version)
         return chain
 
-    return await kit.uow().read_book(book_id, walk)
+    return await kit.databases.open(book_id).read(walk)
 
 
 async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
@@ -126,29 +126,29 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
     :returns: The book with what each page reads and the versions the stage made on it.
     :rtype: StagedBook
     """
-    actor, book_record = await kit.seed_record()
+    actor, book_id = await kit.seed_book()
     pages: list[Page] = []
     for key in PAGE_KEYS:
-        page, _ = await kit.seed_scan_page(book_record, order_key=key)
-        await kit.seed_base_version(book_record.id, page)
+        page, _ = await kit.seed_scan_page(book_id, order_key=key)
+        await kit.seed_base_version(book_id, page)
         pages.append(page)
     full, partial, idle, other = pages
     other = evolve(other, kind=PageKind.PLATE)
-    await kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.update(other))
+    await kit.databases.open(book_id).change(lambda repos, _book_record: repos.pages.update(other))
     if case.stage is Stage.CLEANUP:
-        await run_stage(kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        await run_stage(kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
     steps = [Step(processor_key=case.processor_key) for _ in range(STEP_COUNT)]
-    await kit.edit_recipe(actor, book_record, case.stage, RecipeDraft(steps=steps))
+    await kit.edit_recipe(actor, book_id, case.stage, RecipeDraft(steps=steps))
     one_step = RecipeDraft(steps=[Step(processor_key=case.processor_key, params={'strength': OTHER_STRENGTH})])
-    await kit.edit_recipe(actor, book_record, case.stage, one_step, RecipeKind.COLOR_PICTURE)
-    await run_stage(kit, actor, book_record, StageRun(stage=case.stage, page_ids=(full.id,)))
-    await run_stage(kit, actor, book_record, StageRun(stage=case.stage, page_ids=(partial.id,), through_step=0))
-    await run_stage(kit, actor, book_record, StageRun(stage=case.stage, page_ids=(other.id,)))
-    recipe = await kit.recipe_of(actor, book_record, case.stage)
-    reads = {page.id: await head_of(kit, book_record.id, page, case.earlier) for page in pages}
-    chains = {page.id: await chain_of(kit, book_record.id, page, case.stage) for page in (full, partial, other)}
+    await kit.edit_recipe(actor, book_id, case.stage, one_step, RecipeKind.COLOR_PICTURE)
+    await run_stage(kit, actor, book_id, StageRun(stage=case.stage, page_ids=(full.id,)))
+    await run_stage(kit, actor, book_id, StageRun(stage=case.stage, page_ids=(partial.id,), through_step=0))
+    await run_stage(kit, actor, book_id, StageRun(stage=case.stage, page_ids=(other.id,)))
+    recipe = await kit.recipe_of(actor, book_id, case.stage)
+    reads = {page.id: await head_of(kit, book_id, page, case.earlier) for page in pages}
+    chains = {page.id: await chain_of(kit, book_id, page, case.stage) for page in (full, partial, other)}
     return StagedBook(
-        book_record=book_record,
+        book_id=book_id,
         step_ids=[step.step_id for step in recipe.steps],
         full=full,
         partial=partial,
@@ -176,7 +176,7 @@ async def pictures_of(
     :rtype: dict[PageId, PageVersionId | None]
     """
     step_id = None if step_index is None else book.step_ids[step_index]
-    rows = await stage_rows(kit, book.book_record, case.stage, SliceRequest(), step_id)
+    rows = await stage_rows(kit, book.book_id, case.stage, SliceRequest(), step_id)
     return {row.page_id: None if row.picture is None else row.picture.id for row in rows.items}
 
 
@@ -306,11 +306,16 @@ class TestPicture:
         """
         book = await seed_staged_book(fx_kit, case)
         later = [
-            await seed_head(fx_kit, book.book_record.id, PageStageKey(page.id, case.later), after=book.reads[page.id])
+            await seed_head(
+                book.book_id,
+                PageStageKey(page.id, case.later),
+                after=book.reads[page.id],
+                databases=fx_kit.databases,
+            )
             for page in book.pages
         ]
         step_id = None if step_index is None else book.step_ids[step_index]
-        rows = await stage_rows(fx_kit, book.book_record, case.stage, SliceRequest(), step_id)
+        rows = await stage_rows(fx_kit, book.book_id, case.stage, SliceRequest(), step_id)
         later_ids = {version.id for version in later}
         assert all(
             row.picture is not None
@@ -325,11 +330,11 @@ class TestPicture:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, book_record = await fx_kit.seed_record()
-        await fx_kit.seed_scan_page(book_record, order_key=PAGE_KEYS[0])
+        actor, book_id = await fx_kit.seed_book()
+        await fx_kit.seed_scan_page(book_id, order_key=PAGE_KEYS[0])
         one_step = RecipeDraft(steps=[Step(processor_key=FakeProcessor.spec.key)])
-        recipe = await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, one_step)
+        recipe = await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, one_step)
         step_id = recipe.steps[0].step_id
-        alone = await stage_rows(fx_kit, book_record, Stage.GEOMETRY, SliceRequest())
-        at_step = await stage_rows(fx_kit, book_record, Stage.GEOMETRY, SliceRequest(), step_id)
+        alone = await stage_rows(fx_kit, book_id, Stage.GEOMETRY, SliceRequest())
+        at_step = await stage_rows(fx_kit, book_id, Stage.GEOMETRY, SliceRequest(), step_id)
         assert [row.picture for row in (*alone.items, *at_step.items)] == [None, None]

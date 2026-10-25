@@ -47,4 +47,4 @@ async def put_mark(
     :rtype: PageVersionSchema
     """
     version = await marks.set(book, address.page_id, address.version_id, form.to_note())
-    return PageVersionSchema.of(version, book.id, request)
+    return PageVersionSchema.of(version, address.book_id, request)

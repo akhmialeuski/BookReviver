@@ -1,53 +1,37 @@
-"""Providers of the source and asset storage adapters, one class per backend selectable in the settings.
+"""Providers of the storage adapter of the directories of the books, one class per backend selectable in the settings.
 
 ``STORAGE_PROVIDERS`` maps each ``StorageBackend`` to its provider, so ``build_container`` selects the backend from
-``Settings.storage`` and the port contract tests run against every registered backend.
+``Settings.storage`` and the port contract tests run against every registered backend. A provider provides the opener
+of its backend, the function from the directory name of a book to its ``BookDirectory``, which ``prepare_start`` and the
+``bookreviver-migrate`` command register with ``BookDirectory.register``.
 """
+
+from collections.abc import Callable
 
 from dishka import Provider, Scope, provide
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
+from bookreviver.adapters.storage import LocalBookDirectory
 from bookreviver.app.settings import Settings, StorageBackend
-from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+from bookreviver.domain.ids import BookDirectoryName
+from bookreviver.ports.storage import BookDirectory
 
 
 class LocalStorageProvider(Provider):
-    """Builds the source and asset stores, one of each per application, over the local storage root."""
+    """Provides the opener of the local directories of the books, over the storage root."""
 
     scope = Scope.APP
 
     @provide
-    def source_store(self, settings: Settings) -> SourceStore:
-        """Build the store of uploaded sources.
+    def book_directory(self, settings: Settings) -> Callable[[BookDirectoryName], BookDirectory]:
+        """Build the function that opens the local directory of a book under the storage root.
 
         :param settings: Application settings, of which ``storage_root`` is read.
         :type settings: Settings
-        :returns: The local source store under the storage root.
-        :rtype: SourceStore
+        :returns: Function from the directory name of a book to its local directory.
+        :rtype: Callable[[BookDirectoryName], BookDirectory]
         """
-        return LocalSourceStore(root=settings.storage_root)
-
-    @provide
-    def asset_store(self, settings: Settings) -> AssetStore:
-        """Build the store of derived page images and tile pyramids.
-
-        :param settings: Application settings, of which ``storage_root`` is read.
-        :type settings: Settings
-        :returns: The local asset store under the storage root.
-        :rtype: AssetStore
-        """
-        return LocalAssetStore(root=settings.storage_root)
-
-    @provide
-    def book_archive(self, settings: Settings) -> BookArchive:
-        """Build the archive of whole books, which packs the directory of a book and unpacks one as a new book.
-
-        :param settings: Application settings, of which ``storage_root`` is read.
-        :type settings: Settings
-        :returns: The local book archive under the storage root.
-        :rtype: BookArchive
-        """
-        return LocalBookArchive(root=settings.storage_root)
+        root = settings.storage_root
+        return lambda dir_name: LocalBookDirectory(dir_name, root=root)
 
 
 STORAGE_PROVIDERS: dict[StorageBackend, type[Provider]] = {

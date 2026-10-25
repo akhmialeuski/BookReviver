@@ -14,9 +14,8 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
-from bookreviver.ports.persistence import UnitOfWork
-from bookreviver.ports.storage import AssetStore, SourceStore
-from tests.helpers.builders import make_page, make_record
+from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase
+from tests.helpers.builders import directory_of, make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account, store_book
 from tests.helpers.storage import BookFiles
@@ -27,8 +26,9 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import BookRecord
-    from tests.helpers.database import SharedDatabaseProvider
+    from bookreviver.domain.entities import Page
+    from bookreviver.domain.ids import BookId
+    from tests.helpers.database import BookDatabasesFactory, SharedDatabaseProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -55,23 +55,18 @@ async def fx_container(
     await container.close()
 
 
-async def _stored(container: AsyncContainer, book_record: BookRecord) -> bool:
+async def _stored(book_id: BookId) -> bool:
     """Return whether the book is still stored.
 
-    :param container: The application's container.
-    :type container: AsyncContainer
-    :param book_record: Record of the book to look up.
-    :type book_record: BookRecord
-    :returns: True when a new unit of work still finds the book.
+    :param book_id: The book to look up.
+    :type book_id: BookId
+    :returns: True when a new book database still finds the book in its directory.
     :rtype: bool
     """
-    async with container() as scope:
-        try:
-            await (await scope.get(UnitOfWork)).read_book(
-                book_record.id, lambda repos: repos.book_record.get(book_record.id)
-            )
-        except NotFoundError:
-            return False
+    try:
+        await BookDatabase.open(directory_of(book_id)).read(lambda repos: repos.book_record.get())
+    except NotFoundError:
+        return False
     return True
 
 
@@ -79,7 +74,7 @@ class TestDelete:
     """Tests for UserManager.delete(), which runs the on_before_delete hook first."""
 
     async def test_deleting_an_account_deletes_its_books_with_their_files(
-        self, fx_container: AsyncContainer, fx_settings: Settings
+        self, fx_container: AsyncContainer, fx_settings: Settings, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the account's books go with their rows and files, then the account, and another's stay.
 
@@ -89,24 +84,21 @@ class TestDelete:
         :type fx_container: AsyncContainer
         :param fx_settings: Settings of the test, whose storage root the stores share.
         :type fx_settings: Settings
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         database = await fx_container.get(SqlDatabase)
         owner_id, neighbour_id = await commit_account(database), await commit_account(database)
-        owned = [make_record(minutes=minute) for minute in range(OWNED_BOOKS)]
-        kept = make_record()
-        pages = {book_record.id: make_page() for book_record in (*owned, kept)}
+        pages: dict[BookId, Page] = {}
         async with fx_container() as scope:
-            uow = await scope.get(UnitOfWork)
-            for book_record in (*owned, kept):
-                owner = neighbour_id if book_record is kept else owner_id
-                await store_book(uow, book_record, pages[book_record.id], owner=owner)
-        files = BookFiles(
-            sources=await fx_container.get(SourceStore),
-            assets=await fx_container.get(AssetStore),
-            root=fx_settings.storage_root,
-        )
-        for page in pages.values():
-            await files.store(book_record.id, page)
+            catalogue = await scope.get(CatalogueDatabase)
+            for owner in (*[owner_id] * OWNED_BOOKS, neighbour_id):
+                page = make_page()
+                pages[await store_book(catalogue, make_record(), page, owner=owner, databases=fx_databases())] = page
+        *owned, kept = pages
+        files = BookFiles(root=fx_settings.storage_root)
+        for book_id, page in pages.items():
+            await files.store(book_id, page)
 
         async with fx_container() as scope:
             manager = await scope.get(UserManager)
@@ -115,10 +107,10 @@ class TestDelete:
         async with fx_container() as scope:
             accounts = await scope.get(UserManager)
             expect(await accounts.user_db.get(AccountId(owner_id)) is None)
-        expect([await _stored(fx_container, book_record) for book_record in owned] == [False] * OWNED_BOOKS)
-        expect(all(files.gone(book_record.id) for book_record in owned))
-        expect(await _stored(fx_container, kept))
-        expect(files.kept(pages[kept.id]))
+        expect([await _stored(book_id) for book_id in owned] == [False] * OWNED_BOOKS)
+        expect(all(files.gone(book_id) for book_id in owned))
+        expect(await _stored(kept))
+        expect(files.kept(pages[kept]))
         assert_expectations()
 
 

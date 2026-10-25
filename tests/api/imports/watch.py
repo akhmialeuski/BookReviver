@@ -5,7 +5,7 @@ the job. It reads the jobs and the report through the routes a browser reads, an
 queued or running, which is also when the split of the new pages, which a successful import queues, is done.
 """
 
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any
 
 import anyio
 
@@ -36,18 +36,17 @@ class JobEndBus(RecordingEventBus):
     """
 
     def __init__(self) -> None:
-        """Start with no job ended."""
+        """Start with no job ended, announcing the end of a job after each event is delivered."""
         super().__init__()
         self.ended = anyio.Event()
+        self.after_publish = self._announce_end
 
-    @override
-    async def publish(self, event: DomainEvent) -> None:
-        """Record and deliver the event, and announce the end of a job when the event is one.
+    async def _announce_end(self, event: DomainEvent) -> None:
+        """Announce the end of a job when the event delivered is one.
 
-        :param event: Event to deliver, carrying the book it belongs to.
+        :param event: The event that was delivered.
         :type event: DomainEvent
         """
-        await super().publish(event)
         if isinstance(event, JobChanged) and event.job.state.is_final:
             ended, self.ended = self.ended, anyio.Event()
             ended.set()
@@ -67,17 +66,19 @@ class ImportWatch:
         self._client = client
         self._events = events
 
-    async def finished(self, queued: dict[str, Any]) -> dict[str, Any]:
+    async def finished(self, book_id: BookId, queued: dict[str, Any]) -> dict[str, Any]:
         """Wait until the book of a job has no job queued or running, and read the job as the API shows it.
 
+        :param book_id: Identifier of the book the upload went to.
+        :type book_id: BookId
         :param queued: The job document the upload answered with.
         :type queued: dict[str, Any]
         :returns: The job document, in the state it ended in.
         :rtype: dict[str, Any]
         """
-        job_path = JOB_PATH.format(book_id=queued['book_id'], job_id=queued['id'])
+        job_path = JOB_PATH.format(book_id=book_id, job_id=queued['id'])
         with anyio.fail_after(FINISH_TIMEOUT_SECONDS):
-            active_jobs = JOBS_PATH.format(book_id=queued['book_id'])
+            active_jobs = JOBS_PATH.format(book_id=book_id)
             while True:
                 # The event is taken before the jobs are read, so a job that ends in between still wakes the wait
                 ended = self._events.ended

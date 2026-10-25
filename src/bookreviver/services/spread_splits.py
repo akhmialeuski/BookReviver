@@ -8,7 +8,7 @@ comes from ``VersionInputs`` like that of every version, with the manual cut lin
 line gives new versions of both halves and the old line finds the old ones again.
 
 Nothing of the book changes until the halves exist. The step runs first and its files are written, with no transaction
-held, and then the work of one ``change_book`` reads the page and its scan again and stores the new page, the change of
+held, and then the work of one ``Book.change`` reads the page and its scan again and stores the new page, the change of
 the left page, the versions of both halves and their heads together, so a split that fails leaves the book as it was,
 with a failed version on the page that ran it. A page that was deleted meanwhile, or whose scan got another right half,
 is not split: the files are discarded and the page that is still there is left with a failed version that says the book
@@ -21,7 +21,7 @@ the step becomes the whole scan, and a split made earlier is undone as described
 Undoing a split is running a step of the scope ``page`` on the stage, such as ``split.none``, on the left half. It
 makes the left half the whole scan again and deletes the right half, with its versions and files, and so the work on
 it. A run that was not confirmed by the user leaves the page failed with the reason and deletes nothing. The deletion
-is stored with the new current version of the page, in the work of the caller's ``change_book``, so a replacement that
+is stored with the new current version of the page, in the work of the caller's ``Book.change``, so a replacement that
 fails leaves the right half in place, and its files are removed after the transaction.
 
 The reads and writes of the book are synchronous and go through the repositories of the work that calls them, which is
@@ -31,6 +31,7 @@ after the transaction, which a preview waits for.
 
 import logging
 from contextlib import AsyncExitStack, suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -62,8 +63,9 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord, PageEdit, PageStepState, Recipe
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime, StepSource
 
@@ -140,30 +142,25 @@ class Unsplit:
 class SpreadSplit:
     """Applies a step that splits a scan to the page of the scan, and undoes the split."""
 
-    def __init__(
-        self, *, book_record: BookRecord, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords
-    ) -> None:
+    def __init__(self, *, book: Book, book_record: BookRecord, runtime: StageRuntime, records: StageRecords) -> None:
         """Work over the ports of one job.
 
+        :param book: The open book, whose ``Book.change`` stores a split once it is complete.
+        :type book: Book
         :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
-        :param uow: Unit of work, whose ``change_book`` stores a split once it is complete.
-        :type uow: UnitOfWork
-        :param runtime: The runner, the catalogue, the publisher, the clock and the order keys.
+        :param runtime: The runner, the processors and the order keys.
         :type runtime: StageRuntime
         :param records: Writer of the stage records.
         :type records: StageRecords
         """
+        self._book = book
         self._book_record = book_record
-        self._uow = uow
         self._runner = runtime.runner
-        self._catalogue = runtime.catalogue
-        self._publisher = runtime.publisher
-        self._clock = runtime.clock
+        self._processors = runtime.processors
         self._order_keys = runtime.order_keys
         self._records = records
-        self._labels = PageLabels(clock=runtime.clock)
-        self._keys = BookKeys(book_record.id)
+        self._labels = PageLabels()
 
     def splits(self, recipe: Recipe) -> bool:
         """Tell whether a recipe splits scans: it is a recipe of the page split whose step makes a part for each half.
@@ -177,7 +174,7 @@ class SpreadSplit:
         steps = recipe.enabled_steps
         if recipe.stage is not Stage.PAGE_SPLIT or not steps:
             return False
-        return self._catalogue.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
+        return self._processors.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
 
     async def split(self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool = False) -> RunOutcome:
         """Split the scan of a page into two pages, and make the base version of each half the current one.
@@ -208,7 +205,7 @@ class SpreadSplit:
         :raises ConflictError: If the page has no scan.
         """
         step = recipe.enabled_steps[0]
-        processor = self._catalogue.get(step.processor_key)
+        processor = self._processors.get(step.processor_key)
         layers = PageLayers(page)
 
         def read(repos: BookRepositories) -> SplitBasis:
@@ -241,7 +238,7 @@ class SpreadSplit:
                 state=state,
             )
 
-        basis = await self._uow.read_book(self._book_record.id, read)
+        basis = await self._book.read(read)
         run = StepRun(
             processor_key=step.processor_key,
             params=basis.params,
@@ -254,9 +251,7 @@ class SpreadSplit:
             if made is None:
                 made = await self._make(basis.templates, run)
             undoing = (
-                await self._uow.read_book(
-                    self._book_record.id, lambda repos: self.undoing(repos, page, recipe, confirmed=confirmed)
-                )
+                await self._book.read(lambda repos: self.undoing(repos, page, recipe, confirmed=confirmed))
                 if len(made) == 1
                 else None
             )
@@ -279,7 +274,7 @@ class SpreadSplit:
 
         Nothing is written. The deletion is made by ``unsplit``, with the version that replaces the split. It reads
         through the repositories of the transaction of its caller, which may be a ``read`` or the work of a
-        ``change_book``.
+        ``Book.change``.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -301,7 +296,7 @@ class SpreadSplit:
         return Unsplit(page=page, rights=rights)
 
     def unsplit(self, repos: BookRepositories, undoing: Unsplit) -> None:
-        """Delete the right halves and make the left half the whole scan, in the work of the caller's ``change_book``.
+        """Delete the right halves and make the left half the whole scan, in the work of the caller's ``Book.change``.
 
         The pages after the deleted halves move up, so those that turn over to the other side of the book are marked
         stale where the odd pages or the even pages have values for a step. Never opens a transaction. The left half is
@@ -316,7 +311,7 @@ class SpreadSplit:
         with self._records.watching_sides(repos):
             for right in undoing.rights:
                 repos.pages.delete(right.id)
-        repos.pages.update(evolve(undoing.page, slot=Page.WHOLE_SCAN, updated_at=self._clock.now()))
+        repos.pages.update(evolve(undoing.page, slot=Page.WHOLE_SCAN, updated_at=datetime.now(UTC)))
 
     async def finish_unsplit(self, undoing: Unsplit) -> None:
         """Remove the files of the deleted pages, after the transaction of the caller ended.
@@ -325,7 +320,7 @@ class SpreadSplit:
         :type undoing: Unsplit
         """
         for right in undoing.rights:
-            await self._runner.discard(self._keys.page(right.id))
+            await self._runner.discard(self._book, BookKeys.page(right.id))
 
     def _halves(self, repos: BookRepositories, page: Page, right_id: PageId | None = None) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
@@ -343,12 +338,12 @@ class SpreadSplit:
         """
         if page.scan_id is None:
             raise ConflictError(NO_SCAN.format(page_id=page.id))
-        left = page if page.slot == Page.LEFT_HALF else evolve(page, slot=Page.LEFT_HALF, updated_at=self._clock.now())
+        left = page if page.slot == Page.LEFT_HALF else evolve(page, slot=Page.LEFT_HALF, updated_at=datetime.now(UTC))
         siblings = repos.pages.list_for_scan(page.scan_id)
         if (right := next((sibling for sibling in siblings if sibling.slot == Page.RIGHT_HALF), None)) is not None:
             return Halves(left=left, right=right, left_changes=left != page, right_is_new=False)
         upper = repos.pages.neighbour_key(left.order_key, Side.AFTER)
-        moment = self._clock.now()
+        moment = datetime.now(UTC)
         right = Page(
             id=PageId(uuid4()) if right_id is None else right_id,
             order_key=self._order_keys.between(lower=left.order_key, upper=upper),
@@ -388,7 +383,7 @@ class SpreadSplit:
             state=VersionState.RUNNING,
             scale=VersionScale.FULL,
             edit_hash=edit_hash,
-            created_at=self._clock.now(),
+            created_at=datetime.now(UTC),
         )
 
     async def _cached(self, stored: Sequence[PageVersion | None]) -> list[PageVersion] | None:
@@ -422,13 +417,13 @@ class SpreadSplit:
         :raises ConflictError: If the step makes neither one output nor two.
         :raises DomainError: If the step cannot run on this input.
         """
-        async with self._runner.execute(run) as result:
+        async with self._runner.execute(self._book, run) as result:
             outputs: list[StepOutput] = list(result.outputs)
             if not 0 < len(outputs) <= len(templates):
                 raise ConflictError(WRONG_HALVES.format(key=run.processor_key, count=len(outputs)))
             return [
                 await self._runner.store(
-                    self._keys, template, output, policy=self._book_record.image_policy, tiles=True
+                    self._book, template, output, policy=self._book_record.image_policy, tiles=True
                 )
                 for template, output in zip(templates, outputs, strict=False)
             ]
@@ -436,7 +431,7 @@ class SpreadSplit:
     async def _fail(self, template: PageVersion, reason: str) -> None:
         """Store a failed version on the page that ran the step, which tells the user why, and nothing else.
 
-        Called outside any transaction, and it opens a ``change_book`` of its own, in which the page and the version of
+        Called outside any transaction, and it opens a ``Book.change`` of its own, in which the page and the version of
         that identifier are read again. A page that was deleted meanwhile gets nothing.
 
         :param template: The version the left half would have.
@@ -466,7 +461,7 @@ class SpreadSplit:
 
         # A page that was deleted meanwhile has no version to tell the reason on, and the run reports it as skipped
         with suppress(NotFoundError):
-            await self._uow.change_book(self._book_record.id, work)
+            await self._book.change(work)
 
     async def _tiled(self, version: PageVersion) -> PageVersion:
         """Cut the tile pyramid of a half that an earlier run made, if it was never cut.
@@ -476,12 +471,12 @@ class SpreadSplit:
         :returns: The version with its pyramid cut.
         :rtype: PageVersion
         """
-        return version if version.tiles_ready else await self._runner.cut_tiles(self._keys, version)
+        return version if version.tiles_ready else await self._runner.cut_tiles(self._book, version)
 
     async def _commit(self, basis: SplitBasis, made: Sequence[PageVersion], undoing: Unsplit | None) -> bool:
         """Store the pages, the versions and the heads of a split in one change, if what the split went by still holds.
 
-        Called outside any transaction, and it opens a ``change_book`` of its own, in whose work the page, the halves
+        Called outside any transaction, and it opens a ``Book.change`` of its own, in whose work the page, the halves
         of its scan, the settings and the cut line of the step, and the recipe are read again. A split whose page was
         deleted meanwhile, whose scan got another right half, or whose step, edit, recipe or undoing changed, stores
         nothing. The pages are written as the work reads them, so a move of the page since the step began is kept. The
@@ -530,8 +525,8 @@ class SpreadSplit:
             # earlier run made ready
             for version, earlier in zip(made, basis.stored, strict=False):
                 if earlier is None or earlier.state is not VersionState.READY:
-                    cleanup.push_async_callback(self._runner.discard, self._keys.version_directory(version))
-            stored = await self._uow.change_book(self._book_record.id, work)
+                    cleanup.push_async_callback(self._runner.discard, self._book, BookKeys.version_directory(version))
+            stored = await self._book.change(work)
             if stored:
                 cleanup.pop_all()
         return stored
@@ -544,7 +539,7 @@ class SpreadSplit:
         recipe: Recipe,
         undoing: Unsplit | None,
     ) -> None:
-        """Write the pages, the versions and the heads of a split, in the work of the ``change_book`` of ``_commit``.
+        """Write the pages, the versions and the heads of a split, in the work of the ``Book.change`` of ``_commit``.
 
         Never opens a transaction. The versions are written by what the work reads of them, so the notes of the user on
         a result that is made again stay with it.
@@ -595,4 +590,4 @@ class SpreadSplit:
         """
         for version, earlier in zip(made, basis.stored, strict=False):
             if earlier is None or earlier.state is not VersionState.READY:
-                await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=version))
+                await self._book.events.publish(PageVersionReady(version=version))

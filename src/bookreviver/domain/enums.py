@@ -743,7 +743,7 @@ class BookResource(LabeledStrEnum):
     STAGES = 'stages', 'Where every page stands in every stage'
     SETTINGS = 'settings', 'The settings and the edits of the steps on the pages'
     HISTORY = 'history', 'The history of the steps on the pages'
-    RECIPES = 'recipes', 'The recipes of the stages'
+    RECIPES = 'recipes', 'The recipes of the stages and the recipe profiles'
 
 
 class NewPageOrigin(LabeledStrEnum):
@@ -1275,7 +1275,7 @@ class SpanAttribute(LabeledStrEnum):
     STATUS = 'status', 'HTTP status of the answer'
     JOB_KIND = 'job.kind', 'Kind of the job'
     JOB_ID = 'job.id', 'Identifier of the job'
-    BOOK = 'book', 'Identifier of the book the block holds'
+    BOOK = 'book', 'Name of the directory of the book the block holds'
     PAGE = 'page', 'Identifier of the page'
     STAGE = 'stage', 'Stage of the run'
     RUN_OUTCOME = 'run.outcome', 'What the run came to on the page'
@@ -1294,7 +1294,7 @@ class SpanAttribute(LabeledStrEnum):
 
 
 class SpanParent(LabeledStrEnum):
-    """Which span a new span is the child of, which a unit of work of its own does not leave to the context."""
+    """Which span a new span is the child of, which work of its own, such as a job, does not leave to the context."""
 
     CURRENT = 'current', 'The span current where it is opened'
     NONE = 'none', 'No parent: the span starts a trace of its own'

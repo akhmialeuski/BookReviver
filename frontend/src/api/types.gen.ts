@@ -107,7 +107,7 @@ export type AppliedProfileSchema = {
 /**
  * ApplyProfileBody
  *
- * How to apply a profile to a book.
+ * How to apply a profile to a recipe of its book.
  *
  * :ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile.
  */
@@ -1158,7 +1158,6 @@ export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview
  * process started, is answered as not found.
  *
  * :ivar id: Identifier of the job.
- * :ivar book_id: Book the job works on.
  * :ivar kind: What the job does.
  * :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
  * :ivar state: Where the job is in its life cycle.
@@ -1173,10 +1172,6 @@ export type JobSchema = {
      * Id
      */
     id: string;
-    /**
-     * Book Id
-     */
-    book_id: string;
     kind: JobKind;
     stage: Stage | null;
     state: JobState;
@@ -1272,46 +1267,6 @@ export type LabelRange = {
  * ``roman`` package, whose one function would be about a dozen lines of ours.
  */
 export type LabelStyle = 'arabic' | 'roman-lower' | 'roman-upper' | 'alpha-lower' | 'alpha-upper' | 'none';
-
-/**
- * LibraryProfileSchema
- *
- * A recipe profile of the signed-in account with the number of books that use it.
- *
- * :ivar books: Number of books that have a recipe made from the profile.
- */
-export type LibraryProfileSchema = {
-    /**
-     * Id
-     */
-    id: string;
-    stage: Stage;
-    /**
-     * Name
-     */
-    name: string;
-    /**
-     * Steps
-     */
-    steps: Array<StepSchema>;
-    order: OrderMode;
-    /**
-     * Is Default
-     */
-    is_default: boolean;
-    /**
-     * Created At
-     */
-    created_at: string;
-    /**
-     * Updated At
-     */
-    updated_at: string;
-    /**
-     * Books
-     */
-    books: number;
-};
 
 /**
  * ManifestPage[PageSchema]
@@ -2114,32 +2069,6 @@ export type PageJobSchema = {
 };
 
 /**
- * Page[LibraryProfileSchema]
- */
-export type PageLibraryProfileSchema = {
-    /**
-     * Items
-     */
-    items: Array<LibraryProfileSchema>;
-    /**
-     * Total
-     */
-    total: number;
-    /**
-     * Page
-     */
-    page: number;
-    /**
-     * Size
-     */
-    size: number;
-    /**
-     * Pages
-     */
-    pages: number;
-};
-
-/**
  * Page[PageEditSchema]
  */
 export type PagePageEditSchema = {
@@ -2303,6 +2232,32 @@ export type PageProcessorSchema = {
      * Items
      */
     items: Array<ProcessorSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[RecipeProfileSchema]
+ */
+export type PageRecipeProfileSchema = {
+    /**
+     * Items
+     */
+    items: Array<RecipeProfileSchema>;
     /**
      * Total
      */
@@ -2678,7 +2633,7 @@ export type ProfileBody = {
 /**
  * ProfileFileSchema
  *
- * A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.
+ * A profile as a file that is exchanged between books: the answer of an export, and a body of an import.
  *
  * :ivar version: Version of the format of the file, the second, whose steps have no condition.
  * :ivar steps: The steps in the order they run.
@@ -2903,14 +2858,13 @@ export type RecipeProfileName = {
 /**
  * RecipeProfileSchema
  *
- * A recipe profile of the signed-in account.
+ * A recipe profile of a book.
  *
  * :ivar id: Identifier of the profile.
  * :ivar stage: Stage whose recipes the profile can be applied to.
  * :ivar name: Name the user sees.
  * :ivar steps: The steps in the order they run, each with its parameters and its switch.
  * :ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.
- * :ivar is_default: Whether a new book starts the stage with this profile.
  * :ivar created_at: When the profile was saved.
  * :ivar updated_at: When the profile was last changed.
  */
@@ -2930,10 +2884,6 @@ export type RecipeProfileSchema = {
     steps: Array<StepSchema>;
     order: OrderMode;
     /**
-     * Is Default
-     */
-    is_default: boolean;
-    /**
      * Created At
      */
     created_at: string;
@@ -2952,7 +2902,7 @@ export type RecipeProfileSchema = {
  * :ivar stage: Stage the recipe processes.
  * :ivar kind: Kind of the pages the recipe processes, which is also its name.
  * :ivar steps: The steps in the order they run.
- * :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
+ * :ivar profile_id: The profile of the book the recipe was made from, or null for a recipe that was not.
  * :ivar created_at: When the recipe was created.
  * :ivar updated_at: When the recipe was last changed.
  * :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual
@@ -3973,9 +3923,11 @@ export type CreateBookApiV1BooksPostError = CreateBookApiV1BooksPostErrors[keyof
 
 export type CreateBookApiV1BooksPostResponses = {
     /**
+     * Response Create Book Api V1 Books Post
+     *
      * Successful Response
      */
-    201: BookSchema;
+    201: string;
 };
 
 export type CreateBookApiV1BooksPostResponse = CreateBookApiV1BooksPostResponses[keyof CreateBookApiV1BooksPostResponses];
@@ -4016,9 +3968,11 @@ export type ImportBookApiV1BooksArchivePostError = ImportBookApiV1BooksArchivePo
 
 export type ImportBookApiV1BooksArchivePostResponses = {
     /**
+     * Response Import Book Api V1 Books Archive Post
+     *
      * Successful Response
      */
-    201: BookSchema;
+    201: string;
 };
 
 export type ImportBookApiV1BooksArchivePostResponse = ImportBookApiV1BooksArchivePostResponses[keyof ImportBookApiV1BooksArchivePostResponses];
@@ -4138,7 +4092,7 @@ export type UpdateBookApiV1BooksBookIdPatchResponses = {
     /**
      * Successful Response
      */
-    200: BookSchema;
+    204: void;
 };
 
 export type UpdateBookApiV1BooksBookIdPatchResponse = UpdateBookApiV1BooksBookIdPatchResponses[keyof UpdateBookApiV1BooksBookIdPatchResponses];
@@ -6151,9 +6105,16 @@ export type CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses = {
 
 export type CollectVersionsApiV1BooksBookIdVersionsCollectPostResponse = CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses[keyof CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses];
 
-export type ListProfilesApiV1RecipeProfilesGetData = {
+export type ListProfilesApiV1BooksBookIdRecipeProfilesGetData = {
     body?: never;
-    path?: never;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+    };
     query?: {
         /**
          * Page
@@ -6168,10 +6129,10 @@ export type ListProfilesApiV1RecipeProfilesGetData = {
          */
         stage?: Stage | null;
     };
-    url: '/api/v1/recipe-profiles';
+    url: '/api/v1/books/{book_id}/recipe-profiles';
 };
 
-export type ListProfilesApiV1RecipeProfilesGetErrors = {
+export type ListProfilesApiV1BooksBookIdRecipeProfilesGetErrors = {
     /**
      * Validation Error
      */
@@ -6186,25 +6147,32 @@ export type ListProfilesApiV1RecipeProfilesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListProfilesApiV1RecipeProfilesGetError = ListProfilesApiV1RecipeProfilesGetErrors[keyof ListProfilesApiV1RecipeProfilesGetErrors];
+export type ListProfilesApiV1BooksBookIdRecipeProfilesGetError = ListProfilesApiV1BooksBookIdRecipeProfilesGetErrors[keyof ListProfilesApiV1BooksBookIdRecipeProfilesGetErrors];
 
-export type ListProfilesApiV1RecipeProfilesGetResponses = {
+export type ListProfilesApiV1BooksBookIdRecipeProfilesGetResponses = {
     /**
      * Successful Response
      */
-    200: PageLibraryProfileSchema;
+    200: PageRecipeProfileSchema;
 };
 
-export type ListProfilesApiV1RecipeProfilesGetResponse = ListProfilesApiV1RecipeProfilesGetResponses[keyof ListProfilesApiV1RecipeProfilesGetResponses];
+export type ListProfilesApiV1BooksBookIdRecipeProfilesGetResponse = ListProfilesApiV1BooksBookIdRecipeProfilesGetResponses[keyof ListProfilesApiV1BooksBookIdRecipeProfilesGetResponses];
 
-export type CreateProfileApiV1RecipeProfilesPostData = {
+export type CreateProfileApiV1BooksBookIdRecipeProfilesPostData = {
     body: RecipeProfileBody;
-    path?: never;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+    };
     query?: never;
-    url: '/api/v1/recipe-profiles';
+    url: '/api/v1/books/{book_id}/recipe-profiles';
 };
 
-export type CreateProfileApiV1RecipeProfilesPostErrors = {
+export type CreateProfileApiV1BooksBookIdRecipeProfilesPostErrors = {
     /**
      * Validation Error
      */
@@ -6219,18 +6187,18 @@ export type CreateProfileApiV1RecipeProfilesPostErrors = {
     '5XX': Problem;
 };
 
-export type CreateProfileApiV1RecipeProfilesPostError = CreateProfileApiV1RecipeProfilesPostErrors[keyof CreateProfileApiV1RecipeProfilesPostErrors];
+export type CreateProfileApiV1BooksBookIdRecipeProfilesPostError = CreateProfileApiV1BooksBookIdRecipeProfilesPostErrors[keyof CreateProfileApiV1BooksBookIdRecipeProfilesPostErrors];
 
-export type CreateProfileApiV1RecipeProfilesPostResponses = {
+export type CreateProfileApiV1BooksBookIdRecipeProfilesPostResponses = {
     /**
      * Successful Response
      */
     201: RecipeProfileSchema;
 };
 
-export type CreateProfileApiV1RecipeProfilesPostResponse = CreateProfileApiV1RecipeProfilesPostResponses[keyof CreateProfileApiV1RecipeProfilesPostResponses];
+export type CreateProfileApiV1BooksBookIdRecipeProfilesPostResponse = CreateProfileApiV1BooksBookIdRecipeProfilesPostResponses[keyof CreateProfileApiV1BooksBookIdRecipeProfilesPostResponses];
 
-export type ImportProfileApiV1RecipeProfilesImportPostData = {
+export type ImportProfileApiV1BooksBookIdRecipeProfilesImportPostData = {
     /**
      * Body
      */
@@ -6239,12 +6207,19 @@ export type ImportProfileApiV1RecipeProfilesImportPostData = {
     } & ProfileFileV1) | ({
         version: 2;
     } & ProfileFileSchema);
-    path?: never;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+    };
     query?: never;
-    url: '/api/v1/recipe-profiles/import';
+    url: '/api/v1/books/{book_id}/recipe-profiles/import';
 };
 
-export type ImportProfileApiV1RecipeProfilesImportPostErrors = {
+export type ImportProfileApiV1BooksBookIdRecipeProfilesImportPostErrors = {
     /**
      * Validation Error
      */
@@ -6259,18 +6234,18 @@ export type ImportProfileApiV1RecipeProfilesImportPostErrors = {
     '5XX': Problem;
 };
 
-export type ImportProfileApiV1RecipeProfilesImportPostError = ImportProfileApiV1RecipeProfilesImportPostErrors[keyof ImportProfileApiV1RecipeProfilesImportPostErrors];
+export type ImportProfileApiV1BooksBookIdRecipeProfilesImportPostError = ImportProfileApiV1BooksBookIdRecipeProfilesImportPostErrors[keyof ImportProfileApiV1BooksBookIdRecipeProfilesImportPostErrors];
 
-export type ImportProfileApiV1RecipeProfilesImportPostResponses = {
+export type ImportProfileApiV1BooksBookIdRecipeProfilesImportPostResponses = {
     /**
      * Successful Response
      */
     201: RecipeProfileSchema;
 };
 
-export type ImportProfileApiV1RecipeProfilesImportPostResponse = ImportProfileApiV1RecipeProfilesImportPostResponses[keyof ImportProfileApiV1RecipeProfilesImportPostResponses];
+export type ImportProfileApiV1BooksBookIdRecipeProfilesImportPostResponse = ImportProfileApiV1BooksBookIdRecipeProfilesImportPostResponses[keyof ImportProfileApiV1BooksBookIdRecipeProfilesImportPostResponses];
 
-export type ExportProfileApiV1RecipeProfilesProfileIdExportGetData = {
+export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetData = {
     body?: never;
     path: {
         /**
@@ -6279,12 +6254,18 @@ export type ExportProfileApiV1RecipeProfilesProfileIdExportGetData = {
          * Identifier of the recipe profile
          */
         profile_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}/export';
+    url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/export';
 };
 
-export type ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors = {
+export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetErrors = {
     /**
      * Validation Error
      */
@@ -6299,18 +6280,18 @@ export type ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors = {
     '5XX': Problem;
 };
 
-export type ExportProfileApiV1RecipeProfilesProfileIdExportGetError = ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors[keyof ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors];
+export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetError = ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetErrors[keyof ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetErrors];
 
-export type ExportProfileApiV1RecipeProfilesProfileIdExportGetResponses = {
+export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetResponses = {
     /**
      * Successful Response
      */
     200: ProfileFileSchema;
 };
 
-export type ExportProfileApiV1RecipeProfilesProfileIdExportGetResponse = ExportProfileApiV1RecipeProfilesProfileIdExportGetResponses[keyof ExportProfileApiV1RecipeProfilesProfileIdExportGetResponses];
+export type ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetResponse = ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetResponses[keyof ExportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGetResponses];
 
-export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostData = {
+export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostData = {
     body?: never;
     path: {
         /**
@@ -6319,12 +6300,18 @@ export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostData = {
          * Identifier of the recipe profile
          */
         profile_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}/duplicate';
+    url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/duplicate';
 };
 
-export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors = {
+export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostErrors = {
     /**
      * Validation Error
      */
@@ -6339,18 +6326,18 @@ export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors = {
     '5XX': Problem;
 };
 
-export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostError = DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors[keyof DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors];
+export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostError = DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostErrors[keyof DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostErrors];
 
-export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponses = {
+export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostResponses = {
     /**
      * Successful Response
      */
     201: RecipeProfileSchema;
 };
 
-export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponse = DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponses[keyof DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponses];
+export type DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostResponse = DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostResponses[keyof DuplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePostResponses];
 
-export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteData = {
+export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteData = {
     body?: never;
     path: {
         /**
@@ -6359,12 +6346,18 @@ export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteData = {
          * Identifier of the recipe profile
          */
         profile_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}';
+    url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
 };
 
-export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors = {
+export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -6379,18 +6372,18 @@ export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors = {
     '5XX': Problem;
 };
 
-export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteError = DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors[keyof DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors];
+export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteError = DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteErrors[keyof DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteErrors];
 
-export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses = {
+export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponse = DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses[keyof DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses];
+export type DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteResponse = DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteResponses[keyof DeleteProfileApiV1BooksBookIdRecipeProfilesProfileIdDeleteResponses];
 
-export type RenameProfileApiV1RecipeProfilesProfileIdPatchData = {
+export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchData = {
     body: RecipeProfileName;
     path: {
         /**
@@ -6399,12 +6392,18 @@ export type RenameProfileApiV1RecipeProfilesProfileIdPatchData = {
          * Identifier of the recipe profile
          */
         profile_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}';
+    url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
 };
 
-export type RenameProfileApiV1RecipeProfilesProfileIdPatchErrors = {
+export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchErrors = {
     /**
      * Validation Error
      */
@@ -6419,18 +6418,18 @@ export type RenameProfileApiV1RecipeProfilesProfileIdPatchErrors = {
     '5XX': Problem;
 };
 
-export type RenameProfileApiV1RecipeProfilesProfileIdPatchError = RenameProfileApiV1RecipeProfilesProfileIdPatchErrors[keyof RenameProfileApiV1RecipeProfilesProfileIdPatchErrors];
+export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchError = RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchErrors[keyof RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchErrors];
 
-export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponses = {
+export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchResponses = {
     /**
      * Successful Response
      */
     200: RecipeProfileSchema;
 };
 
-export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponse = RenameProfileApiV1RecipeProfilesProfileIdPatchResponses[keyof RenameProfileApiV1RecipeProfilesProfileIdPatchResponses];
+export type RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchResponse = RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchResponses[keyof RenameProfileApiV1BooksBookIdRecipeProfilesProfileIdPatchResponses];
 
-export type PutProfileApiV1RecipeProfilesProfileIdPutData = {
+export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutData = {
     body: ProfileBody;
     path: {
         /**
@@ -6439,132 +6438,58 @@ export type PutProfileApiV1RecipeProfilesProfileIdPutData = {
          * Identifier of the recipe profile
          */
         profile_id: string;
-    };
-    query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}';
-};
-
-export type PutProfileApiV1RecipeProfilesProfileIdPutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type PutProfileApiV1RecipeProfilesProfileIdPutError = PutProfileApiV1RecipeProfilesProfileIdPutErrors[keyof PutProfileApiV1RecipeProfilesProfileIdPutErrors];
-
-export type PutProfileApiV1RecipeProfilesProfileIdPutResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeProfileSchema;
-};
-
-export type PutProfileApiV1RecipeProfilesProfileIdPutResponse = PutProfileApiV1RecipeProfilesProfileIdPutResponses[keyof PutProfileApiV1RecipeProfilesProfileIdPutResponses];
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteData = {
-    body?: never;
-    path: {
-        /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-    };
-    query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}/default';
-};
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteError = DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors[keyof DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors];
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeProfileSchema;
-};
-
-export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponse = DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses[keyof DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses];
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutData = {
-    body?: never;
-    path: {
-        /**
-         * Profile Id
-         *
-         * Identifier of the recipe profile
-         */
-        profile_id: string;
-    };
-    query?: never;
-    url: '/api/v1/recipe-profiles/{profile_id}/default';
-};
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutError = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors];
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeProfileSchema;
-};
-
-export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponse = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses];
-
-export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostData = {
-    body: ApplyProfileBody;
-    path: {
         /**
          * Book Id
          *
          * Identifier of the book
          */
         book_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}';
+};
+
+export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutError = PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutErrors[keyof PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutErrors];
+
+export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeProfileSchema;
+};
+
+export type PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutResponse = PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutResponses[keyof PutProfileApiV1BooksBookIdRecipeProfilesProfileIdPutResponses];
+
+export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostData = {
+    body: ApplyProfileBody;
+    path: {
         /**
          * Profile Id
          *
          * Identifier of the recipe profile
          */
         profile_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/apply';
@@ -7514,7 +7439,7 @@ export type BookEventsApiV1BooksBookIdEventsGetResponses = {
     200: unknown;
 };
 
-export type IiifFileApiV1IiifKeyGetData = {
+export type IiifFileApiV1IiifBookIdKeyGetData = {
     body?: never;
     path: {
         /**
@@ -7523,12 +7448,18 @@ export type IiifFileApiV1IiifKeyGetData = {
          * Storage key of the file, as found in the image addresses of a page or a scan
          */
         key: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/iiif/{key}';
+    url: '/api/v1/iiif/{book_id}/{key}';
 };
 
-export type IiifFileApiV1IiifKeyGetErrors = {
+export type IiifFileApiV1IiifBookIdKeyGetErrors = {
     /**
      * Validation Error
      */
@@ -7543,9 +7474,9 @@ export type IiifFileApiV1IiifKeyGetErrors = {
     '5XX': Problem;
 };
 
-export type IiifFileApiV1IiifKeyGetError = IiifFileApiV1IiifKeyGetErrors[keyof IiifFileApiV1IiifKeyGetErrors];
+export type IiifFileApiV1IiifBookIdKeyGetError = IiifFileApiV1IiifBookIdKeyGetErrors[keyof IiifFileApiV1IiifBookIdKeyGetErrors];
 
-export type IiifFileApiV1IiifKeyGetResponses = {
+export type IiifFileApiV1IiifBookIdKeyGetResponses = {
     /**
      * Successful Response
      */

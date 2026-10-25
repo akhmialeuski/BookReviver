@@ -1,4 +1,4 @@
-"""Contract of the JobBoard port, run against every adapter listed in ``BoardAdapter``.
+"""Contract of the BookJobs port, run against every adapter listed in ``BoardAdapter``.
 
 The runner is scripted, and a test looks at the board while a job is held inside its first task. ``wait_all_tasks_blocked``
 lets every task of the board and of the runner run until each waits for something, which is the state a test inspects.
@@ -15,7 +15,7 @@ from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.values import JobEnd
-from tests.helpers.builders import make_job
+from tests.helpers.builders import directory_of, make_job
 from tests.helpers.job_boards import open_board_under_test
 from tests.helpers.scripted_runner import TASKS_PER_JOB, Phase
 
@@ -41,8 +41,8 @@ async def settle(under_test: BoardUnderTest) -> None:
     await anyio.wait_all_tasks_blocked()
 
 
-class TestJobBoard:
-    """Contract of JobBoard: queues of books, one job of a book at a time, cancellation and the jobs it keeps."""
+class TestBookJobs:
+    """Contract of BookJobs: queues of books, one job of a book at a time, cancellation and the jobs it keeps."""
 
     async def test_the_jobs_of_a_book_run_in_the_order_they_were_put(self, fx_board_adapter: BoardAdapter) -> None:
         """Verify the jobs of one book begin in the order they were put, and all of them succeed.
@@ -50,12 +50,12 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        jobs = [make_job(book_id=BOOK, kind=JobKind.RUN_STAGE, minutes=minute) for minute in range(JOBS_PUT)]
+        jobs = [make_job(kind=JobKind.RUN_STAGE, minutes=minute) for minute in range(JOBS_PUT)]
         async with open_board_under_test(fx_board_adapter) as under_test:
             for job in jobs:
-                under_test.board.put(job)
+                under_test.jobs(BOOK).put(job)
             await settle(under_test)
-            states = [under_test.board.get(job.id).state for job in jobs]
+            states = [under_test.jobs(BOOK).get(job.id).state for job in jobs]
         expect(under_test.runner.begun() == [job.id for job in jobs])
         expect(states == [JobState.SUCCEEDED] * JOBS_PUT)
 
@@ -65,13 +65,13 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        first, second = (make_job(book_id=BOOK, minutes=minute) for minute in range(2))
+        first, second = (make_job(minutes=minute) for minute in range(2))
         async with open_board_under_test(fx_board_adapter) as under_test:
             release = under_test.runner.hold(first)
-            under_test.board.put(first)
-            under_test.board.put(second)
+            under_test.jobs(BOOK).put(first)
+            under_test.jobs(BOOK).put(second)
             await settle(under_test)
-            states_while_held = [under_test.board.get(job.id).state for job in (first, second)]
+            states_while_held = [under_test.jobs(BOOK).get(job.id).state for job in (first, second)]
             begun_while_held = under_test.runner.begun()
             release.set()
             await settle(under_test)
@@ -86,7 +86,7 @@ class TestJobBoard:
                 (Phase.RETURNED, second.id),
             ]
         )
-        expect(under_test.runner.peak[BOOK] == 1)
+        expect(under_test.runner.peak[directory_of(BOOK)] == 1)
 
     async def test_books_do_not_wait_for_each_other(self, fx_board_adapter: BoardAdapter) -> None:
         """Verify a job of one book runs to the end while a job of another book is held inside its task.
@@ -94,13 +94,16 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        held, free = make_job(book_id=BOOK), make_job(book_id=OTHER_BOOK)
+        held, free = make_job(), make_job()
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.runner.hold(held)
-            under_test.board.put(held)
-            under_test.board.put(free)
+            under_test.jobs(BOOK).put(held)
+            under_test.jobs(OTHER_BOOK).put(free)
             await settle(under_test)
-            states = (under_test.board.get(held.id).state, under_test.board.get(free.id).state)
+            states = (
+                under_test.jobs(BOOK).get(held.id).state,
+                under_test.jobs(OTHER_BOOK).get(free.id).state,
+            )
         expect(states == (JobState.RUNNING, JobState.SUCCEEDED))
 
     async def test_a_queued_job_that_is_cancelled_never_runs(self, fx_board_adapter: BoardAdapter) -> None:
@@ -109,16 +112,16 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        first, dropped, last = (make_job(book_id=BOOK, minutes=minute) for minute in range(3))
+        first, dropped, last = (make_job(minutes=minute) for minute in range(3))
         async with open_board_under_test(fx_board_adapter) as under_test:
             release = under_test.runner.hold(first)
             for job in (first, dropped, last):
-                under_test.board.put(job)
+                under_test.jobs(BOOK).put(job)
             await settle(under_test)
-            cancelled = await under_test.board.cancel(dropped.id)
+            cancelled = await under_test.jobs(BOOK).cancel(dropped.id)
             release.set()
             await settle(under_test)
-            states = [under_test.board.get(job.id).state for job in (first, dropped, last)]
+            states = [under_test.jobs(BOOK).get(job.id).state for job in (first, dropped, last)]
         expect(cancelled.state is JobState.CANCELLED)
         expect(under_test.runner.begun() == [first.id, last.id])
         expect(states == [JobState.SUCCEEDED, JobState.CANCELLED, JobState.SUCCEEDED])
@@ -131,20 +134,20 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        running, next_job = make_job(book_id=BOOK, minutes=0), make_job(book_id=BOOK, minutes=1)
+        running, next_job = make_job(minutes=0), make_job(minutes=1)
         async with open_board_under_test(fx_board_adapter) as under_test:
             release = under_test.runner.hold(running)
-            under_test.board.put(running)
-            under_test.board.put(next_job)
+            under_test.jobs(BOOK).put(running)
+            under_test.jobs(BOOK).put(next_job)
             await settle(under_test)
-            cancelled = await under_test.board.cancel(running.id)
+            cancelled = await under_test.jobs(BOOK).cancel(running.id)
             begun_before_return = under_test.runner.begun()
             await settle(under_test)
             begun_while_still_inside = under_test.runner.begun()
             release.set()
             await settle(under_test)
-            final = under_test.board.get(running.id)
-            next_state = under_test.board.get(next_job.id).state
+            final = under_test.jobs(BOOK).get(running.id)
+            next_state = under_test.jobs(BOOK).get(next_job.id).state
         expect(cancelled.state is JobState.CANCELLED)
         expect(begun_before_return == [running.id])
         expect(begun_while_still_inside == [running.id])
@@ -167,11 +170,11 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        job = make_job(book_id=BOOK)
+        job = make_job()
         async with open_board_under_test(fx_board_adapter) as under_test:
-            under_test.board.put(job)
+            under_test.jobs(BOOK).put(job)
             await settle(under_test)
-            ended = under_test.board.get(job.id)
+            ended = under_test.jobs(BOOK).get(job.id)
         expect(ended.progress.done == TASKS_PER_JOB)
         expect(ended.progress.total == TASKS_PER_JOB)
         expect(ended.finished_at is not None)
@@ -182,14 +185,14 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        broken, next_job = make_job(book_id=BOOK, minutes=0), make_job(book_id=BOOK, minutes=1)
+        broken, next_job = make_job(minutes=0), make_job(minutes=1)
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.runner.fail(broken)
-            under_test.board.put(broken)
-            under_test.board.put(next_job)
+            under_test.jobs(BOOK).put(broken)
+            under_test.jobs(BOOK).put(next_job)
             await settle(under_test)
-            failed = under_test.board.get(broken.id)
-            next_state = under_test.board.get(next_job.id).state
+            failed = under_test.jobs(BOOK).get(broken.id)
+            next_state = under_test.jobs(BOOK).get(next_job.id).state
         expect(failed.state is JobState.FAILED)
         expect(failed.error == JobEnd.UNEXPECTED_FAILURE)
         expect(next_state is JobState.SUCCEEDED)
@@ -200,40 +203,38 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        jobs = [make_job(book_id=BOOK, minutes=minute) for minute in range(JOBS_PUT)]
+        jobs = [make_job(minutes=minute) for minute in range(JOBS_PUT)]
         async with open_board_under_test(fx_board_adapter, kept_ended=KEPT_ENDED) as under_test:
             for job in jobs:
-                under_test.board.put(job)
+                under_test.jobs(BOOK).put(job)
             await settle(under_test)
-            kept = under_test.board.jobs(BOOK, active=False)
+            kept = under_test.jobs(BOOK).jobs()
             with pytest.raises(NotFoundError):
-                under_test.board.get(jobs[0].id)
+                under_test.jobs(BOOK).get(jobs[0].id)
         expect([job.id for job in kept] == [job.id for job in reversed(jobs[-KEPT_ENDED:])])
 
-    async def test_it_lists_the_jobs_of_books_newest_first_and_the_active_ones_alone(
+    async def test_it_lists_the_jobs_of_a_book_newest_first_and_the_active_ones_alone(
         self, fx_board_adapter: BoardAdapter
     ) -> None:
-        """Verify the listings of one book and of several books, with and without the ended jobs.
+        """Verify the listings of one book, with and without the ended jobs, which leave out the jobs of another book.
 
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        ended, held, waiting = (make_job(book_id=BOOK, minutes=minute) for minute in range(3))
-        elsewhere = make_job(book_id=OTHER_BOOK, minutes=3)
+        ended, held, waiting = (make_job(minutes=minute) for minute in range(3))
+        elsewhere = make_job(minutes=3)
         async with open_board_under_test(fx_board_adapter) as under_test:
-            under_test.board.put(ended)
+            under_test.jobs(BOOK).put(ended)
             await settle(under_test)
             under_test.runner.hold(held)
             under_test.runner.hold(elsewhere)
             for job in (held, waiting, elsewhere):
-                under_test.board.put(job)
+                under_test.jobs(BOOK).put(job)
             await settle(under_test)
-            everything = under_test.board.jobs(BOOK, active=False)
-            active = under_test.board.jobs(BOOK, active=True)
-            of_both = under_test.board.jobs_of([BOOK, OTHER_BOOK], active=True)
+            everything = under_test.jobs(BOOK).jobs()
+            active = under_test.jobs(BOOK).active()
         expect([job.id for job in everything] == [waiting.id, held.id, ended.id])
         expect([job.id for job in active] == [waiting.id, held.id])
-        expect([job.id for job in of_both] == [elsewhere.id, waiting.id, held.id])
 
     async def test_the_mark_of_a_book_changes_with_its_jobs_alone(self, fx_board_adapter: BoardAdapter) -> None:
         """Verify putting and running a job of a book changes the mark of that book and leaves another book's mark.
@@ -242,13 +243,13 @@ class TestJobBoard:
         :type fx_board_adapter: BoardAdapter
         """
         async with open_board_under_test(fx_board_adapter) as under_test:
-            empty, other = under_test.board.revision(BOOK), under_test.board.revision(OTHER_BOOK)
-            under_test.board.put(make_job(book_id=BOOK))
-            queued = under_test.board.revision(BOOK)
+            empty, other = under_test.jobs(BOOK).revision(), under_test.jobs(OTHER_BOOK).revision()
+            under_test.jobs(BOOK).put(make_job())
+            queued = under_test.jobs(BOOK).revision()
             await settle(under_test)
-            ended = under_test.board.revision(BOOK)
+            ended = under_test.jobs(BOOK).revision()
             expect(len({empty, queued, ended}) == len((empty, queued, ended)))
-            expect(under_test.board.revision(OTHER_BOOK) == other)
+            expect(under_test.jobs(OTHER_BOOK).revision() == other)
         assert_expectations()
 
     async def test_it_does_not_know_a_job_it_was_not_given(self, fx_board_adapter: BoardAdapter) -> None:
@@ -259,9 +260,9 @@ class TestJobBoard:
         """
         async with open_board_under_test(fx_board_adapter) as under_test:
             with pytest.raises(NotFoundError):
-                under_test.board.get(UNKNOWN_JOB)
+                under_test.jobs(BOOK).get(UNKNOWN_JOB)
             with pytest.raises(NotFoundError):
-                await under_test.board.cancel(UNKNOWN_JOB)
+                await under_test.jobs(BOOK).cancel(UNKNOWN_JOB)
 
     async def test_a_job_that_ended_cannot_be_cancelled(self, fx_board_adapter: BoardAdapter) -> None:
         """Verify cancelling a job that has ended is a conflict, and leaves it as it ended.
@@ -269,11 +270,11 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        job = make_job(book_id=BOOK)
+        job = make_job()
         async with open_board_under_test(fx_board_adapter) as under_test:
-            under_test.board.put(job)
+            under_test.jobs(BOOK).put(job)
             await settle(under_test)
             with pytest.raises(ConflictError):
-                await under_test.board.cancel(job.id)
-            state = under_test.board.get(job.id).state
+                await under_test.jobs(BOOK).cancel(job.id)
+            state = under_test.jobs(BOOK).get(job.id).state
         expect(state is JobState.SUCCEEDED)

@@ -9,9 +9,9 @@ import { ProfileLibraryPanel } from '@/features/profiles/ProfileLibraryPanel';
 import { parseProblem } from '@/shared/http/problem';
 
 /**
- * The library of profiles: a tab for each stage with profiles, a card for each profile with its books and its steps, the
+ * The library of profiles of a book: a tab for each stage with profiles, a card for each profile with its steps, the
  * application of a profile to the recipe of a kind of page, the copy, the file that is saved and the file that is
- * read, and the same list without a book.
+ * read.
  *
  * The generated client is replaced by functions the test reads, so each request is seen as the server gets it.
  */
@@ -31,12 +31,12 @@ const files = vi.hoisted(() => ({ save: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listProfilesApiV1RecipeProfilesGet: sdk.list,
+  listProfilesApiV1BooksBookIdRecipeProfilesGet: sdk.list,
   listProcessorsApiV1ProcessorsGet: sdk.processors,
   applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPost: sdk.apply,
-  duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePost: sdk.duplicate,
-  exportProfileApiV1RecipeProfilesProfileIdExportGet: sdk.exporter,
-  importProfileApiV1RecipeProfilesImportPost: sdk.importer,
+  duplicateProfileApiV1BooksBookIdRecipeProfilesProfileIdDuplicatePost: sdk.duplicate,
+  exportProfileApiV1BooksBookIdRecipeProfilesProfileIdExportGet: sdk.exporter,
+  importProfileApiV1BooksBookIdRecipeProfilesImportPost: sdk.importer,
   listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
   listRecipesApiV1BooksBookIdStagesStageRecipesGet: sdk.recipes,
 }));
@@ -52,13 +52,10 @@ const PROFILES = [
   profile('p3', { name: 'Plain split', stage: 'page-split', steps: [step('split.none')] }),
   profile('p1', {
     name: 'Clean flatbed scan',
-    is_default: true,
-    books: 7,
     steps: [step('geometry.deskew'), step('geometry.crop')],
   }),
   profile('p2', {
     name: 'Old book with plates',
-    books: 1,
     steps: [step('geometry.deskew', {}), step('geometry.deskew', { enabled: false })],
   }),
 ];
@@ -92,13 +89,10 @@ describe('ProfileLibrary', () => {
     });
   }
 
-  async function render(options: { book?: boolean; dirty?: boolean } = {}): Promise<void> {
-    const book =
-      options.book === false
-        ? undefined
-        : {
-            processing: processing({ chooseRecipe, dirty: options.dirty ?? false }),
-          };
+  async function render(options: { dirty?: boolean } = {}): Promise<void> {
+    const book = {
+      processing: processing({ chooseRecipe, dirty: options.dirty ?? false }),
+    };
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
@@ -196,15 +190,6 @@ describe('ProfileLibrary', () => {
       ]);
     });
 
-    it('shows the books that use a profile and marks the default', async () => {
-      await render();
-
-      expect(inCard('Clean flatbed scan', 'profile-books')?.textContent).toBe('Used in 7 books');
-      expect(inCard('Old book with plates', 'profile-books')?.textContent).toBe('Used in 1 book');
-      expect(inCard('Clean flatbed scan', 'profile-default-badge')).not.toBeNull();
-      expect(inCard('Old book with plates', 'profile-default-badge')).toBeNull();
-    });
-
     it('names the steps by their titles, with the ones that are off', async () => {
       await render();
 
@@ -232,18 +217,6 @@ describe('ProfileLibrary', () => {
 
       expect(byId('profiles-empty')?.textContent).toContain('no Geometry profile');
       expect(all('profile-row')).toHaveLength(0);
-    });
-
-    it('starts on all stages and leaves out what needs a book when it is opened from the account', async () => {
-      await render({ book: false });
-
-      expect(
-        all('profile-tab').find((tab) => tab.getAttribute('aria-selected') === 'true')?.dataset.tab,
-      ).toBe('all');
-      expect(all('profile-apply-book')).toHaveLength(0);
-      expect(byId('profile-from-book')).toBeNull();
-      expect(byId('profile-import')).not.toBeNull();
-      expect(sdk.jobs).not.toHaveBeenCalled();
     });
   });
 
@@ -335,7 +308,7 @@ describe('ProfileLibrary', () => {
       await click(inCard('Clean flatbed scan', 'profile-duplicate'));
 
       expect(sdk.duplicate).toHaveBeenCalledWith(
-        expect.objectContaining({ path: { profile_id: 'p1' } }),
+        expect.objectContaining({ path: { book_id: 'book', profile_id: 'p1' } }),
       );
       expect(sdk.list).toHaveBeenCalledTimes(2);
       expect(inCard('Clean flatbed scan', 'profile-notice')?.textContent).toBe(
@@ -348,7 +321,7 @@ describe('ProfileLibrary', () => {
       await click(inCard('Clean flatbed scan', 'profile-export'));
 
       expect(sdk.exporter).toHaveBeenCalledWith(
-        expect.objectContaining({ path: { profile_id: 'p1' } }),
+        expect.objectContaining({ path: { book_id: 'book', profile_id: 'p1' } }),
       );
       expect(files.save).toHaveBeenCalledWith(
         'clean-flatbed-scan.bookreviver-profile.json',

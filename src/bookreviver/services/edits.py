@@ -12,7 +12,7 @@ earlier one.
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
 Saving and deleting an edit write the manual layer of the step to the history of the page, with the edit before and
 after as snapshots, so an undo can put either back. The rows of an edit are written by the work of one
-``change_book``, with the stale marks.
+``Book.change``, with the stale marks.
 
 A mask arrives as an upload. It is written to a scratch key while its digest is worked out, since its final key holds
 the hash of the whole edit, and then copied to that key and the scratch removed, all before the transaction opens.
@@ -20,6 +20,7 @@ the hash of the whole edit, and then copied to that key and the scratch removed,
 
 import hashlib
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -40,9 +41,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
@@ -68,30 +68,18 @@ class EditService:
     def __init__(
         self,
         *,
-        uow: UnitOfWork,
-        assets: AssetStore,
-        catalogue: ProcessorCatalog,
+        processors: ProcessorCatalog,
         records: StageRecords,
-        clock: Clock,
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
-        :param assets: Store of the derived files, where masks are kept.
-        :type assets: AssetStore
-        :param catalogue: The processors the application can run, which say what edit each reads.
-        :type catalogue: ProcessorCatalog
+        :param processors: The processors the application can run, which say what edit each reads.
+        :type processors: ProcessorCatalog
         :param records: Writer of the stage records, which an edit marks stale.
         :type records: StageRecords
-        :param clock: Clock stamping the edits.
-        :type clock: Clock
         """
-        self._uow = uow
-        self._assets = assets
-        self._catalogue = catalogue
+        self._processors = processors
         self._records = records
-        self._clock = clock
 
     async def save(self, book: Book, key: PageStepKey, edit: NewPageEdit, mask: IncomingFile | None) -> PageEdit:
         """Store the edit a step reads, replacing the one it read before, and mark the stage stale.
@@ -126,15 +114,14 @@ class EditService:
 
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
-        await self._uow.read_book(book.id, check)
-        keys = BookKeys(book.id)
-        mask_digest, scratch = (None, None) if mask is None else await self._receive(keys, key, mask)
+        await book.read(check)
+        mask_digest, scratch = (None, None) if mask is None else await self._receive(key, mask, assets=book.assets)
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
         mask_key = None
         if scratch is not None:
-            directory = keys.page_edit(key.page_id, key.step_id, edit_hash)
-            mask_key = StorageKey(f'{directory}{keys.SEPARATOR}{Rendition.MASK}')
-            await self._keep(scratch, mask_key)
+            directory = BookKeys.page_edit(key.page_id, key.step_id, edit_hash)
+            mask_key = StorageKey(f'{directory}{BookKeys.SEPARATOR}{Rendition.MASK}')
+            await self._keep(scratch, mask_key, assets=book.assets)
         stored = PageEdit(
             page_id=key.page_id,
             stage=key.stage,
@@ -143,7 +130,7 @@ class EditService:
             geometry=edit.geometry,
             mask_key=mask_key,
             edit_hash=edit_hash,
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -167,7 +154,7 @@ class EditService:
             self._records.mark_stale(repos, key.page_id, key.stage)
 
         # A mask stays when the change fails, since its key holds the hash of the edit and an equal edit finds it there
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
         return stored
 
     async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageEdit]:
@@ -197,7 +184,7 @@ class EditService:
             states = repos.page_step_states.list_for_page(page_id, stage)
             return [state.edit for state in states if state.edit is not None]
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def delete(self, book: Book, key: PageStepKey) -> None:
         """Delete the edit a step reads, and mark the stage stale.
@@ -225,10 +212,10 @@ class EditService:
             state = repos.page_step_states.find(key)
             if state is None or state.edit is None:
                 raise NotFoundError(key)
-            self._store(repos, state, evolve(state, edit=None, updated_at=self._clock.now()))
+            self._store(repos, state, evolve(state, edit=None, updated_at=datetime.now(UTC)))
             self._records.mark_stale(repos, key.page_id, key.stage)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     @staticmethod
     def _store(repos: BookRepositories, state: PageStepState, changed: PageStepState) -> None:
@@ -264,7 +251,7 @@ class EditService:
         :raises NotFoundError: If no recipe of the stage has the step, or its processor is not installed.
         """
         step = find_step(repos.recipes, key)
-        return self._catalogue.get(step.processor_key).spec
+        return self._processors.get(step.processor_key).spec
 
     def _check(self, repos: BookRepositories, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool) -> None:
         """Check that the edit is the one the processor of the step reads.
@@ -293,35 +280,38 @@ class EditService:
         if not masked and edit.geometry is None:
             raise InvalidParametersError(NEEDS_GEOMETRY.format(editor=edit.kind.label))
 
-    async def _receive(self, keys: BookKeys, key: PageStepKey, mask: IncomingFile) -> tuple[str, StorageKey]:
+    async def _receive(self, key: PageStepKey, mask: IncomingFile, *, assets: AssetStore) -> tuple[str, StorageKey]:
         """Write an uploaded mask to a scratch key, and work out its digest while it streams in.
 
-        :param keys: Keys of the book.
-        :type keys: BookKeys
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :param mask: The upload.
         :type mask: IncomingFile
+        :param assets: Store of the derived files of the book, where masks are kept.
+        :type assets: AssetStore
         :returns: The SHA-256 digest of the mask and the scratch key it was written to.
         :rtype: tuple[str, StorageKey]
         """
-        scratch = keys.page_edit(key.page_id, key.step_id, f'upload-{uuid4().hex}')
+        scratch = BookKeys.page_edit(key.page_id, key.step_id, f'upload-{uuid4().hex}')
         digest = hashlib.sha256()
-        async with self._assets.writable(scratch) as target, await anyio.open_file(target, 'wb') as out:
+        async with assets.writable(scratch) as target, await anyio.open_file(target, 'wb') as out:
             while chunk := await mask.read(self.UPLOAD_CHUNK_BYTES):
                 digest.update(chunk)
                 await out.write(chunk)
         return digest.hexdigest(), scratch
 
-    async def _keep(self, scratch: StorageKey, target: StorageKey) -> None:
+    @staticmethod
+    async def _keep(scratch: StorageKey, target: StorageKey, *, assets: AssetStore) -> None:
         """Move a received mask to its final key, unless an equal edit stored it there before.
 
         :param scratch: Key the mask was written to.
         :type scratch: StorageKey
         :param target: Final key, which holds the hash of the edit.
         :type target: StorageKey
+        :param assets: Store of the derived files of the book, where masks are kept.
+        :type assets: AssetStore
         """
         # A conflict means the same edit was stored before, and a stored file is never replaced
         with suppress(ConflictError):
-            await self._assets.copy(scratch, target)
-        await self._assets.delete_prefix(scratch)
+            await assets.copy(scratch, target)
+        await assets.delete_prefix(scratch)

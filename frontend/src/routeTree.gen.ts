@@ -18,7 +18,6 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AuthenticatedBooksIndexRouteImport } from './routes/_authenticated/books/index'
 import { Route as AuthenticatedBooksBookIdRouteRouteImport } from './routes/_authenticated/books/$bookId/route'
-import { Route as AuthenticatedSettingsProfilesRouteImport } from './routes/_authenticated/settings/profiles'
 import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provider.callback'
 import { Route as AuthenticatedBooksBookIdIndexRouteImport } from './routes/_authenticated/books/$bookId/index'
 import { Route as AuthenticatedBooksBookIdAboutRouteImport } from './routes/_authenticated/books/$bookId/about'
@@ -72,12 +71,6 @@ const AuthenticatedBooksBookIdRouteRoute =
     path: '/books/$bookId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedSettingsProfilesRoute =
-  AuthenticatedSettingsProfilesRouteImport.update({
-    id: '/settings/profiles',
-    path: '/settings/profiles',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
 const AuthProviderCallbackRoute = AuthProviderCallbackRouteImport.update({
   id: '/auth/$provider/callback',
   path: '/auth/$provider/callback',
@@ -128,7 +121,6 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
   '/books/$bookId': typeof AuthenticatedBooksBookIdRouteRouteWithChildren
-  '/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/books/': typeof AuthenticatedBooksIndexRoute
   '/books/$bookId/about': typeof AuthenticatedBooksBookIdAboutRoute
@@ -145,7 +137,6 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
-  '/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/books': typeof AuthenticatedBooksIndexRoute
   '/books/$bookId/about': typeof AuthenticatedBooksBookIdAboutRoute
@@ -164,7 +155,6 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
   '/_authenticated/books/$bookId': typeof AuthenticatedBooksBookIdRouteRouteWithChildren
-  '/_authenticated/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/_authenticated/books/': typeof AuthenticatedBooksIndexRoute
   '/_authenticated/books/$bookId/about': typeof AuthenticatedBooksBookIdAboutRoute
@@ -184,7 +174,6 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/verify-email'
     | '/books/$bookId'
-    | '/settings/profiles'
     | '/auth/$provider/callback'
     | '/books/'
     | '/books/$bookId/about'
@@ -201,7 +190,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/sign-in'
     | '/verify-email'
-    | '/settings/profiles'
     | '/auth/$provider/callback'
     | '/books'
     | '/books/$bookId/about'
@@ -219,7 +207,6 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/verify-email'
     | '/_authenticated/books/$bookId'
-    | '/_authenticated/settings/profiles'
     | '/auth/$provider/callback'
     | '/_authenticated/books/'
     | '/_authenticated/books/$bookId/about'
@@ -304,13 +291,6 @@ declare module '@tanstack/react-router' {
       path: '/books/$bookId'
       fullPath: '/books/$bookId'
       preLoaderRoute: typeof AuthenticatedBooksBookIdRouteRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/settings/profiles': {
-      id: '/_authenticated/settings/profiles'
-      path: '/settings/profiles'
-      fullPath: '/settings/profiles'
-      preLoaderRoute: typeof AuthenticatedSettingsProfilesRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/auth/$provider/callback': {
@@ -406,14 +386,12 @@ const AuthenticatedBooksBookIdRouteRouteWithChildren =
 
 interface AuthenticatedRouteChildren {
   AuthenticatedBooksBookIdRouteRoute: typeof AuthenticatedBooksBookIdRouteRouteWithChildren
-  AuthenticatedSettingsProfilesRoute: typeof AuthenticatedSettingsProfilesRoute
   AuthenticatedBooksIndexRoute: typeof AuthenticatedBooksIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedBooksBookIdRouteRoute:
     AuthenticatedBooksBookIdRouteRouteWithChildren,
-  AuthenticatedSettingsProfilesRoute: AuthenticatedSettingsProfilesRoute,
   AuthenticatedBooksIndexRoute: AuthenticatedBooksIndexRoute,
 }
 

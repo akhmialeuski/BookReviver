@@ -14,7 +14,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.pages import PagePath
@@ -33,7 +33,7 @@ from bookreviver.api.schemas.processing import (
 )
 from bookreviver.domain.entities import PageStage, PageVersion, Recipe
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.book import Book
 from bookreviver.services.processing import ProcessingService
@@ -87,10 +87,12 @@ class PageStagePath:
 class VersionPath:
     """The identifiers in the address of one version of a page of a book.
 
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar version_id: Identifier of the version.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
     version_id: Annotated[PageVersionId, Path(description=VERSION_ID_DESCRIPTION, pattern=r'^[0-9a-f]{16}$')]
 
@@ -166,16 +168,15 @@ async def reset_recipe(
 ) -> RecipeSchema:
     """Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.
 
-    The steps are those of the account's default profile for the stage when the recipe is the one of text pages and the
-    account has a usable profile, and otherwise those of the built-in template of the kind. The recipe keeps its
-    identifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.
+    The steps are those of the built-in template of the kind. The recipe keeps its identifier and its kind, and every
+    step in it is new. The answer is 404 for a stage that has no steps by default.
 
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
     :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
-    :param profiles: Recipe profile service of the request, which also puts the default steps back.
+    :param profiles: Recipe profile service of the request, which also puts the built-in steps back.
     :type profiles: RecipeProfiles
     :param order: Finder of the steps that stand off the place their processors ask for.
     :type order: RecipeOrder
@@ -212,8 +213,7 @@ async def run_stage(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    job = await processing.start_run(book, address.stage, body.to_run(address.stage))
-    return JobSchema.model_validate(job)
+    return JobSchema.model_validate(await processing.start_run(book, address.stage, body.to_run(address.stage)))
 
 
 @router.post('/{book_id}/stages/{stage}/run-impact')
@@ -269,14 +269,12 @@ async def preview_step(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    job = await processing.start_preview(book, body.to_preview(address.stage))
-    return JobSchema.model_validate(job)
+    return JobSchema.model_validate(await processing.start_preview(book, body.to_preview(address.stage)))
 
 
 @router.post('/{book_id}/stages/geometry/measure', status_code=status.HTTP_202_ACCEPTED)
 async def measure_book(
-    book: Annotated[Book, Depends(open_book)],
-    processing: FromDishka[ProcessingService],
+    book: Annotated[Book, Depends(open_book)], processing: FromDishka[ProcessingService]
 ) -> JobSchema:
     """Measure the book in the background, and answer with the queued job.
 
@@ -384,7 +382,7 @@ async def list_versions(
         :returns: The schema.
         :rtype: PageVersionSchema
         """
-        return PageVersionSchema.of(version, book.id, request)
+        return PageVersionSchema.of(version, address.book_id, request)
 
     pager = Pager[PageVersion, PageVersionSchema](query, to_schema)
     found = await processing.versions(book, address.page_id, query.to_filter(), pager.request)
@@ -413,7 +411,7 @@ async def get_version(
     :rtype: PageVersionSchema
     """
     version = await processing.version(book, address.page_id, address.version_id)
-    return PageVersionSchema.of(version, book.id, request)
+    return PageVersionSchema.of(version, address.book_id, request)
 
 
 @router.post('/{book_id}/pages/{page_id}/versions/{version_id}/tiles', status_code=status.HTTP_202_ACCEPTED)
@@ -434,8 +432,7 @@ async def cut_version_tiles(
     :returns: The queued job; its end is announced as ``page-version-ready``.
     :rtype: JobSchema
     """
-    job = await processing.start_tiles(book, address.page_id, address.version_id)
-    return JobSchema.model_validate(job)
+    return JobSchema.model_validate(await processing.start_tiles(book, address.page_id, address.version_id))
 
 
 @router.get('/{book_id}/versions/collectable')
@@ -460,8 +457,7 @@ async def collectable_versions(
 
 @router.post('/{book_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
 async def collect_versions(
-    book: Annotated[Book, Depends(open_book)],
-    processing: FromDishka[ProcessingService],
+    book: Annotated[Book, Depends(open_book)], processing: FromDishka[ProcessingService]
 ) -> JobSchema:
     """Delete the versions nothing needs, in the background, and answer with the queued job.
 

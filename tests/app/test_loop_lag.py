@@ -20,7 +20,7 @@ pytestmark = pytest.mark.anyio
 INTERVAL_SECONDS: float = 0.01
 # Ten intervals, so the tick that sleeps through the block ends about 90 ms late
 BLOCKED_SECONDS: float = 0.1
-# Below the 90 ms of the block, so that a coarse clock does not fail the test
+# Below the 90 ms of the block, so that a coarse timer does not fail the test
 LATE_TICK_MS: float = 80.0
 
 

@@ -5,6 +5,7 @@ reader's client writes the place after every move, so the write is one replaceme
 merged.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from attrs import asdict
@@ -13,24 +14,11 @@ from bookreviver.domain.entities import BookPlace
 
 if TYPE_CHECKING:
     from bookreviver.domain.values import NewBookPlace
-    from bookreviver.ports.persistence import UnitOfWork
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
 
 
 class PlaceService:
     """Reads and replaces the place the owner left a book at."""
-
-    def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
-        """Work over the ports of one request.
-
-        :param uow: Unit of work of the request, whose ``change_book`` ends the use case that changes data.
-        :type uow: UnitOfWork
-        :param clock: Clock stamping the places.
-        :type clock: Clock
-        """
-        self._uow = uow
-        self._clock = clock
 
     async def find(self, book: Book) -> BookPlace | None:
         """Return the place the owner left the book at.
@@ -40,7 +28,7 @@ class PlaceService:
         :returns: The place, or None when the owner has not worked on the book yet.
         :rtype: BookPlace | None
         """
-        return await self._uow.read_book(book.id, lambda repos: repos.book_places.find())
+        return await book.read(lambda repos: repos.book_places.find())
 
     async def save(self, book: Book, place: NewBookPlace) -> BookPlace:
         """Replace the place the owner left the book at.
@@ -55,5 +43,5 @@ class PlaceService:
         :returns: The place as stored, which is a newer place of another request when that one was stamped later.
         :rtype: BookPlace
         """
-        stored = BookPlace(updated_at=self._clock.now(), **asdict(place, recurse=False))
-        return await self._uow.change_book(book.id, lambda repos, _book_record: repos.book_places.save(stored))
+        stored = BookPlace(updated_at=datetime.now(UTC), **asdict(place, recurse=False))
+        return await book.change(lambda repos, _book_record: repos.book_places.save(stored))

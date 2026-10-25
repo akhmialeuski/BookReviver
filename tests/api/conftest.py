@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 import pytest
 from dishka import AsyncContainer
 
-from bookreviver.ports.runtime import EventStream, JobBoard
-from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.board_idle import JobsIdle
 from tests.helpers.storage import BookFiles
 
@@ -34,54 +32,27 @@ def fx_container(fx_app: FastAPI) -> AsyncContainer:
 
 
 @pytest.fixture
-async def fx_idle(fx_container: AsyncContainer) -> JobsIdle:
+def fx_idle() -> JobsIdle:
     """Return the wait that a test calls to let the jobs of a book on the application's job board finish.
 
-    :param fx_container: Container of the running application.
-    :type fx_container: AsyncContainer
+    The wait opens the job queue and the event channel of the book, which the running application registered.
+
     :returns: The wait, called with the identifier of the book.
     :rtype: JobsIdle
     """
-    return JobsIdle(await fx_container.get(JobBoard), await fx_container.get(EventStream))
+    return JobsIdle()
 
 
 @pytest.fixture
-async def fx_files(fx_container: AsyncContainer, fx_settings: Settings) -> BookFiles:
+def fx_files(fx_container: AsyncContainer, fx_settings: Settings) -> BookFiles:
     """Return the files of imported books in the stores of the running application.
 
-    :param fx_container: Container of the application, holding the local stores.
+    :param fx_container: Container of the application, which has registered its local storage by the time it runs.
     :type fx_container: AsyncContainer
     :param fx_settings: Settings of the application, which name the storage root.
     :type fx_settings: Settings
     :returns: Files of the test's books, in the application's own stores.
     :rtype: BookFiles
     """
-    return BookFiles(
-        sources=await fx_container.get(SourceStore),
-        assets=await fx_container.get(AssetStore),
-        root=fx_settings.storage_root,
-    )
-
-
-@pytest.fixture
-async def fx_asset_store(fx_container: AsyncContainer) -> AssetStore:
-    """Return the asset store of the running application, to store the files that earlier requests would have.
-
-    :param fx_container: Container of the application, holding the local stores.
-    :type fx_container: AsyncContainer
-    :returns: The store every request of the application reads derived files from.
-    :rtype: AssetStore
-    """
-    return await fx_container.get(AssetStore)
-
-
-@pytest.fixture
-async def fx_source_store(fx_container: AsyncContainer) -> SourceStore:
-    """Return the source store of the running application, to store the sources that earlier requests would have.
-
-    :param fx_container: Container of the application, holding the local stores.
-    :type fx_container: AsyncContainer
-    :returns: The store the application keeps uploads and sources in.
-    :rtype: SourceStore
-    """
-    return await fx_container.get(SourceStore)
+    del fx_container
+    return BookFiles(root=fx_settings.storage_root)
