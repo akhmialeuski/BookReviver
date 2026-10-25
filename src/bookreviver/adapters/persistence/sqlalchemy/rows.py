@@ -27,7 +27,7 @@ from advanced_alchemy.repository import DEFAULT_ERROR_MESSAGE_TEMPLATES, SQLAlch
 from sqlalchemy import Table, UniqueConstraint, delete, exists
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from bookreviver.adapters.persistence.sqlalchemy.catalogue import AccountProfileRow, LibraryRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BookPlaceRow,
@@ -412,12 +412,6 @@ class RecipeRows(RowRepository[RecipeRow]):
     """Rows of the ``recipes`` table."""
 
     model_type = RecipeRow
-
-
-class AccountProfileRows(RowRepository[AccountProfileRow]):
-    """Rows of the ``recipe_profiles`` table of the catalogue."""
-
-    model_type = AccountProfileRow
 
 
 class RecipeProfileRows(RowRepository[RecipeProfileRow]):

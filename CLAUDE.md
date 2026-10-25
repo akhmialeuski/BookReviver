@@ -17,7 +17,6 @@ uv run fastapi dev                       # API on http://127.0.0.1:8000, data in
 uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # catalogue revision
 uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
 uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
-uv run bookreviver-migrate copy-recipe-profiles  # the profiles of the catalogue into the books of their owners, again safely
 uv run pytest tests/contracts            # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes

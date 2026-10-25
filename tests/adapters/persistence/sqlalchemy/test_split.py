@@ -23,15 +23,11 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.repositories import (
-    SqlAlchemyBookRepositories,
-    SqlAlchemyCatalogueRepositories,
-)
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.split import SHARED_REVISION, SharedDatabaseSplit, SplitRefusedError
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import (
-    make_account_profile,
     make_book_place,
     make_page,
     make_page_stage,
@@ -148,7 +144,7 @@ def _merge(target: Path, parts: Sequence[Path], *, leaving_out: Collection[str])
 
 
 async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
-    """Write a shared database of the earlier releases with one account, one profile and two books.
+    """Write a shared database of the earlier releases with one account and two books.
 
     The tables come from the baselines of the catalogue and of a book, which the split was written against, and the
     rows from the repositories of the adapter, so they have the shape the application wrote.
@@ -171,7 +167,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
     parts.mkdir()
 
     def store_catalogue(session: Session) -> None:
-        """Store the account and its profile.
+        """Store the account.
 
         :param session: Session of the transaction.
         :type session: Session
@@ -187,7 +183,6 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
             )
         )
         session.flush()
-        SqlAlchemyCatalogueRepositories(session).recipe_profiles.add(make_account_profile(account_id=owner_id))
 
     def store_first(session: Session) -> None:
         """Store the first book, with every kind of row the split copies.
@@ -274,7 +269,7 @@ async def fx_shared(fx_settings: Settings) -> SharedBooks:
 class TestSplit:
     """Tests for a split of a shared database at its last revision."""
 
-    async def test_accounts_profiles_and_owners_go_to_the_catalogue_and_each_book_to_its_file(
+    async def test_accounts_and_owners_go_to_the_catalogue_and_each_book_to_its_file(
         self,
         fx_shared: SharedBooks,
         fx_empty_catalogue: SqlDatabase,
@@ -300,7 +295,6 @@ class TestSplit:
         ).run()
         catalogue = SqlAlchemyCatalogueDatabase(fx_empty_catalogue)
         entries = await catalogue.read(lambda repos: repos.library.list_for_owner(fx_shared.owner_id, SliceRequest()))
-        profiles = await catalogue.read(lambda repos: repos.recipe_profiles.list_for_account(fx_shared.owner_id))
         first = (
             await fx_databases()
             .open(fx_shared.first_id)
@@ -323,7 +317,6 @@ class TestSplit:
         expect(
             {entry.book_id: entry.added_at for entry in entries.items}[fx_shared.first_id] == fx_shared.first.created_at
         )
-        expect(len(profiles) == 1)
         expect(first[0] == fx_shared.first)
         expect(first[1:3] == (PAGES_OF_FIRST, 1))
         expect(first[3] is not None)

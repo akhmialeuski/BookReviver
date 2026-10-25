@@ -25,7 +25,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
-    AccountProfile,
     LibraryEntry,
     Page,
     PageStage,
@@ -886,25 +885,6 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
         """
 
 
-class AccountProfileRepository(Repository[AccountProfile, RecipeProfileId]):
-    """The recipe profiles of the accounts, which only the command that copies them into the books still reads.
-
-    Deleting an account removes its profiles.
-    """
-
-    @abstractmethod
-    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[AccountProfile]:
-        """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
-
-        :param account_id: Account owning the profiles.
-        :type account_id: AccountId
-        :param stage: The stage whose profiles are wanted, or None for every stage.
-        :type stage: Stage | None
-        :returns: The profiles of the account.
-        :rtype: Sequence[AccountProfile]
-        """
-
-
 class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
     """The recipe profiles of the book, which the recipes of the book may name as the profile they were made from.
 
@@ -954,11 +934,9 @@ class CatalogueRepositories(ABC):
     """Every repository of one transaction of the catalogue, which the work of ``read`` and ``change`` receives.
 
     :ivar library: Repository of the library, which account owns which book, of this transaction.
-    :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
     """
 
     library: LibraryRepository
-    recipe_profiles: AccountProfileRepository
 
 
 class BookRepositories(ABC):

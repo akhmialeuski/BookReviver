@@ -2,11 +2,11 @@
 
 Before the catalogue and the files of the books, every account and every book lived in one SQLite file,
 ``bookreviver.db`` in the data directory, at revision ``15e015051f5c`` of its chain. :class:`SharedDatabaseSplit`
-reads that file and never writes to it. It fills an empty catalogue at its head revision with the accounts, the recipe
-profiles and one library entry for each book, whose time of joining the library is the time the book was created, and
-makes the file of each book in the directory the book already has under the storage root, filled with the rows of the
-book. A row moves with the columns the new table still has, so the owner of a book and the account of a place, which
-no table of a book keeps any more, stay behind.
+reads that file and never writes to it. It fills an empty catalogue at its head revision with the accounts and one
+library entry for each book, whose time of joining the library is the time the book was created, and makes the file of
+each book in the directory the book already has under the storage root, filled with the rows of the book. A row moves
+with the columns the new table still has, so the owner of a book and the account of a place, which no table of a book
+keeps any more, stay behind.
 
 The file of a book is filled at the baseline revision of its schema, ``99e96bc47c3c``, whose tables are those of the
 shared database without the accounts, and then brought to the head, so the rows go through every later revision as the
@@ -181,7 +181,7 @@ class SharedDatabaseSplit:
         return [BookId(UUID(bytes=row[0])) for row in rows]
 
     def _fill_catalogue(self, catalogue: Path) -> int:
-        """Copy the accounts and the recipe profiles into the catalogue, and give every book its library entry.
+        """Copy the accounts into the catalogue, and give every book its library entry.
 
         :param catalogue: The file of the catalogue, at its head revision.
         :type catalogue: Path

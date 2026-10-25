@@ -29,7 +29,6 @@ from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import (
     EPOCH,
     directory_of,
-    make_account_profile,
     make_book_place,
     make_page,
     make_page_history_entry,
@@ -171,7 +170,7 @@ class ChangeKind(NamedTuple):
         :type book: Book
         :param number: Which pair of rows to build.
         :type number: int
-        :returns: A recipe and a source of the book, or a recipe profile and a library entry of the owner.
+        :returns: A recipe and a source of the book, or two library entries of the owner.
         :rtype: tuple[Any, Any]
         """
         if self.of_book:
@@ -179,15 +178,21 @@ class ChangeKind(NamedTuple):
                 make_recipe(stage=list(Stage)[number]),
                 make_source(name=f'{number}.pdf'),
             )
-        return (
-            make_account_profile(account_id=book.owner_id, minutes=number),
-            LibraryEntry(
+
+        def entry() -> LibraryEntry:
+            """Build one library entry of the owner, of a book that is not stored.
+
+            :returns: The entry.
+            :rtype: LibraryEntry
+            """
+            return LibraryEntry(
                 book_id=BookId(uuid4()),
                 owner_id=book.owner_id,
                 directory=directory_of(new_book_id()),
                 added_at=EPOCH + timedelta(minutes=number),
-            ),
-        )
+            )
+
+        return entry(), entry()
 
     def add(self, repos: Any, rows: tuple[Any, Any]) -> None:
         """Add a pair of rows through the repositories of the store.
@@ -202,13 +207,13 @@ class ChangeKind(NamedTuple):
             repos.recipes.add(first)
             repos.sources.add(second)
         else:
-            repos.recipe_profiles.add(first)
+            repos.library.add(first)
             repos.library.add(second)
 
     def found(self, repos: Any, book: Book) -> set[Any]:
         """List the identifiers of the rows of the store that ``rows`` builds and the book or its owner has.
 
-        The recipes and the sources of the book count, and the profiles and the library entries of the owner do.
+        The recipes and the sources of the book count, and the library entries of the owner do.
 
         :param repos: Repositories of the transaction.
         :type repos: Any
@@ -221,10 +226,7 @@ class ChangeKind(NamedTuple):
             return {recipe.id for recipe in repos.recipes.list_all()} | {
                 source.id for source in repos.sources.list_all()
             }
-        listed = repos.library.list_for_owner(book.owner_id, SLICE_ALL).items
-        return {profile.id for profile in repos.recipe_profiles.list_for_account(book.owner_id)} | {
-            entry.book_id for entry in listed
-        }
+        return {entry.book_id for entry in repos.library.list_for_owner(book.owner_id, SLICE_ALL).items}
 
 
 type Run[T] = Callable[[Stores, Book, Callable[[Any], T]], Coroutine[Any, Any, T]]
@@ -447,9 +449,7 @@ async def fx_rows(
     :rtype: dict[str, Row]
     """
     owner_id = fx_book.owner_id
-    profile = make_account_profile(account_id=owner_id)
     entry = await fx_catalogue().read(lambda repos: repos.library.get(fx_book.book_id))
-    await fx_catalogue().change(lambda repos: repos.recipe_profiles.add(profile))
     return {
         **fx_book_rows,
         'library': Row(
@@ -462,12 +462,6 @@ async def fx_rows(
                 added_at=entry.added_at,
             ),
             entry.book_id,
-        ),
-        'recipe_profiles': Row(
-            profile,
-            evolve(profile, updated_at=profile.updated_at + ONE_MINUTE),
-            make_account_profile(account_id=owner_id, stage=Stage.CLEANUP),
-            profile.id,
         ),
     }
 

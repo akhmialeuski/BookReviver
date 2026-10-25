@@ -704,18 +704,6 @@ class RecipeProfile:
 
 
 @frozen(kw_only=True)
-class AccountProfile(RecipeProfile):
-    """A recipe profile as the catalogue still keeps it, with the account that owns it.
-
-    The profiles moved into the books, and the catalogue table is read only by the command that copies them there.
-
-    :ivar account_id: Account owning the profile.
-    """
-
-    account_id: AccountId
-
-
-@frozen(kw_only=True)
 class PageStage:
     """The current version of one stage of one page, and whether it still matches the stage's inputs.
 

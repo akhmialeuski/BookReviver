@@ -20,8 +20,8 @@ from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import contains_eager
 
 from bookreviver.adapters.persistence.sqlalchemy.book_record import SqlAlchemyBookRecordRepository
-from bookreviver.adapters.persistence.sqlalchemy.catalogue import AccountProfileRow, LibraryRow
-from bookreviver.adapters.persistence.sqlalchemy.catalogue_mappers import AccountProfileMapper, LibraryEntryMapper
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_mappers import LibraryEntryMapper
 from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
@@ -39,7 +39,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
 )
 from bookreviver.adapters.persistence.sqlalchemy.profile_mappers import RecipeProfileMapper
 from bookreviver.adapters.persistence.sqlalchemy.rows import (
-    AccountProfileRows,
     BookPlaceRows,
     GroupValuesRows,
     LibraryRows,
@@ -74,7 +73,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     StepValuesRow,
 )
 from bookreviver.domain.entities import (
-    AccountProfile,
     LibraryEntry,
     Page,
     PageStage,
@@ -116,7 +114,6 @@ from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
-    AccountProfileRepository,
     BookPlaceRepository,
     BookRepositories,
     CatalogueRepositories,
@@ -1587,39 +1584,6 @@ class SqlAlchemyRecipeProfileRepository(
         )
 
 
-class SqlAlchemyAccountProfileRepository(
-    SqlAlchemyRepository[AccountProfile, RecipeProfileId, AccountProfileRow], AccountProfileRepository
-):
-    """The recipe profiles of the accounts, which the profiles of the books replace."""
-
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``recipe_profiles`` table of the catalogue.
-
-        :param session: Session of the transaction.
-        :type session: Session
-        """
-        super().__init__(rows=AccountProfileRows(session=session), mapper=AccountProfileMapper())
-
-    @override
-    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[AccountProfile]:
-        """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
-
-        :param account_id: Account owning the profiles.
-        :type account_id: AccountId
-        :param stage: The stage whose profiles are wanted, or None for every stage.
-        :type stage: Stage | None
-        :returns: The profiles of the account.
-        :rtype: Sequence[AccountProfile]
-        """
-        rows = self._rows.get_many(
-            order_by=[AccountProfileRow.created_at.asc(), AccountProfileRow.id.asc()], account_id=account_id
-        )
-        return sorted(
-            (self._mapper.to_entity(row) for row in rows if stage is None or row.stage is stage),
-            key=lambda profile: profile.stage.position,
-        )
-
-
 class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
     """Every repository of the catalogue, bound to the session of one transaction of the catalogue.
 
@@ -1627,7 +1591,6 @@ class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
     session, and with it the transaction, and are dropped with it.
 
     :ivar library: Library repository bound to the session.
-    :ivar recipe_profiles: Account profile repository bound to the session.
     """
 
     def __init__(self, session: Session) -> None:
@@ -1637,7 +1600,6 @@ class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
         :type session: Session
         """
         self.library = SqlAlchemyLibraryRepository(session)
-        self.recipe_profiles = SqlAlchemyAccountProfileRepository(session)
 
 
 class SqlAlchemyBookRepositories(BookRepositories):

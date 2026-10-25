@@ -5,10 +5,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from attrs import asdict, frozen
+from attrs import frozen
 
 from bookreviver.domain.entities import (
-    AccountProfile,
     BookPlace,
     BookRecord,
     Job,
@@ -450,30 +449,6 @@ def make_recipe_profile(
         created_at=moment,
         updated_at=moment,
     )
-
-
-def make_account_profile(
-    *,
-    account_id: AccountId,
-    stage: Stage = Stage.GEOMETRY,
-    steps: tuple[Step, ...] | None = None,
-    minutes: int = 0,
-) -> AccountProfile:
-    """Build a profile of an account as the catalogue keeps it, named ``Photographed book``.
-
-    :param account_id: Account owning the profile.
-    :type account_id: AccountId
-    :param stage: Stage whose recipes the profile fits.
-    :type stage: Stage
-    :param steps: Steps of the profile, or None for one deskew step.
-    :type steps: tuple[Step, ...] | None
-    :param minutes: Minutes after ``EPOCH`` the profile was saved.
-    :type minutes: int
-    :returns: A profile with a fresh identifier.
-    :rtype: AccountProfile
-    """
-    profile = make_recipe_profile(stage=stage, steps=steps, minutes=minutes)
-    return AccountProfile(account_id=account_id, **asdict(profile, recurse=False))
 
 
 def make_page_stage(

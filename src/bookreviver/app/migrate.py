@@ -13,8 +13,7 @@ file made at the head revision for the command in a temporary directory: that is
 --autogenerate`` compares the tables of a book with.
 
 ``split-shared-database`` moves the shared database of the releases before the catalogue into the catalogue and the
-files of the books, once. ``copy-recipe-profiles`` copies the recipe profiles of the catalogue into the books of their
-owners, and can run again.
+files of the books, once.
 """
 
 from functools import partial
@@ -26,9 +25,7 @@ from advanced_alchemy.cli import add_migration_commands
 from advanced_alchemy.utils.cli_tools import click, group
 
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
-from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.profile_copy import RecipeProfileCopy
 from bookreviver.adapters.persistence.sqlalchemy.split import SharedDatabaseSplit
 from bookreviver.adapters.storage import LocalBookDirectory
 from bookreviver.adapters.tracing.null import NullTracer
@@ -113,41 +110,6 @@ def split_shared_database() -> None:
             await books.dispose()
             await catalogue.dispose()
         click.echo(f'Moved {report.accounts} accounts and {report.books} books.')
-
-    anyio.run(run)
-
-
-@migrate.command(name='copy-recipe-profiles')
-def copy_recipe_profiles() -> None:
-    """Copy the recipe profiles of each account into every book it owns, keeping their identifiers.
-
-    The catalogue must be at its head revision, and each book is brought to the head revision of its schema first, as
-    opening it does. A profile the book holds already is skipped, so the command can run again. One line is printed for
-    each book, with its directory, the profiles copied and the profiles skipped. The catalogue is left as it is.
-    """
-    settings = Settings()
-    catalogue = open_catalogue(settings)
-    books = BookRegistry(
-        tracer=NullTracer(), wait_seconds=settings.change_wait.job_seconds, idle_seconds=settings.book_idle_seconds
-    )
-    copy = RecipeProfileCopy(
-        catalogue=SqlAlchemyCatalogueDatabase(catalogue, wait_seconds=settings.change_wait.job_seconds),
-        books=books,
-        root=settings.storage_root,
-        wait_seconds=settings.change_wait.job_seconds,
-    )
-
-    async def run() -> None:
-        """Copy the profiles book by book and close the databases it opened."""
-        try:
-            if not (await catalogue.schema_revisions()).is_current:
-                err_msg = 'The catalogue is not at its head revision: run `bookreviver-migrate upgrade head` first.'
-                raise click.ClickException(err_msg)
-            async for report in copy.run():
-                click.echo(f'{report.directory}: {report.copied} profiles copied, {report.skipped} skipped.')
-        finally:
-            await books.dispose()
-            await catalogue.dispose()
 
     anyio.run(run)
 
