@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 from dishka.integrations.fastapi import setup_dishka
-from fastapi import APIRouter, FastAPI
+from fastapi import FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
@@ -18,7 +18,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.freshness import NotModifiedError, not_modified
 from bookreviver.api.problems import problem_handler
-from bookreviver.api.routing import API_PREFIX, ROUTERS
+from bookreviver.api.routing import mount_api
 from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import SessionCleanup, account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
@@ -149,11 +149,7 @@ def create_app(
     app.add_exception_handler(NotModifiedError, not_modified)
     add_pagination(app)
     accounts = account_routes(resolved, sign_in_throttle(), social_clients)
-    api = APIRouter(prefix=API_PREFIX)
-    for router in ROUTERS:
-        api.include_router(router)
-    api.include_router(accounts.router())
-    app.include_router(api)
+    mount_api(app, accounts.router())
     app.dependency_overrides[signed_in_user] = accounts.current_user
     install_security(app, resolved)
     # Added after the security middleware, so it is the outer one and times what the CSRF check refuses too

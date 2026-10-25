@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from attrs import frozen
-from dishka.integrations.fastapi import DishkaRoute
 from fastapi import APIRouter
 from fastapi.routing import APIRoute
 from fastapi_users.models import UserProtocol
@@ -26,8 +25,6 @@ AUTH_TAG: str = 'auth'
 OAUTH_CALLBACK_PAGE: str = '{public_url}/auth/{name}/callback'
 # The routes of the fastapi-users users router that the application keeps, those of the signed-in account
 CURRENT_USER_ROUTES: frozenset[str] = frozenset({'users:current_user', 'users:patch_current_user'})
-
-router = APIRouter(tags=[ACCOUNTS_TAG], route_class=DishkaRoute)
 
 
 @frozen(kw_only=True)

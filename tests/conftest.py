@@ -11,7 +11,7 @@ from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
-from bookreviver.api.auth import current_actor
+from bookreviver.api.auth import signed_in_user
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
@@ -28,6 +28,7 @@ from tests.helpers.database import (
     waiting,
 )
 from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.fakes_accounts import SignedInUser
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -405,7 +406,10 @@ async def fx_app(
     """
     providers = [fx_shared_database, InProcessExecutorProvider(), *fx_extra_providers]
     app = create_app(fx_settings, providers, fx_social_clients)
-    app.dependency_overrides[current_actor] = lambda: fx_actor
+    # The sign-in of fastapi-users stays reachable for a test that signs out, and the stub is the account of the actor
+    app.state.current_user = app.dependency_overrides[signed_in_user]
+    user = SignedInUser(id=fx_actor.account_id)
+    app.dependency_overrides[signed_in_user] = lambda: user
     async with app.router.lifespan_context(app):
         yield app
 
