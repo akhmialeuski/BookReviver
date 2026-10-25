@@ -53,11 +53,9 @@ router = APIRouter(prefix='/books', tags=['processing'], route_class=DishkaRoute
 class StagePath:
     """The identifiers in the address of one stage of a book, read together so a route keeps to a few parameters.
 
-    :ivar book_id: Identifier of the book.
     :ivar stage: The stage.
     """
 
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
 
 
@@ -215,8 +213,7 @@ async def run_stage(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    job = await processing.start_run(book, address.stage, body.to_run(address.stage))
-    return JobSchema.of(job, address.book_id)
+    return JobSchema.model_validate(await processing.start_run(book, address.stage, body.to_run(address.stage)))
 
 
 @router.post('/{book_id}/stages/{stage}/run-impact')
@@ -272,15 +269,12 @@ async def preview_step(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    job = await processing.start_preview(book, body.to_preview(address.stage))
-    return JobSchema.of(job, address.book_id)
+    return JobSchema.model_validate(await processing.start_preview(book, body.to_preview(address.stage)))
 
 
 @router.post('/{book_id}/stages/geometry/measure', status_code=status.HTTP_202_ACCEPTED)
 async def measure_book(
-    book: Annotated[Book, Depends(open_book)],
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    processing: FromDishka[ProcessingService],
+    book: Annotated[Book, Depends(open_book)], processing: FromDishka[ProcessingService]
 ) -> JobSchema:
     """Measure the book in the background, and answer with the queued job.
 
@@ -292,14 +286,12 @@ async def measure_book(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param processing: Processing service of the request.
     :type processing: ProcessingService
     :returns: The queued job.
     :rtype: JobSchema
     """
-    return JobSchema.of(await processing.start_measure(book), book_id)
+    return JobSchema.model_validate(await processing.start_measure(book))
 
 
 @router.get('/{book_id}/pages/{page_id}/stages')
@@ -440,8 +432,7 @@ async def cut_version_tiles(
     :returns: The queued job; its end is announced as ``page-version-ready``.
     :rtype: JobSchema
     """
-    job = await processing.start_tiles(book, address.page_id, address.version_id)
-    return JobSchema.of(job, address.book_id)
+    return JobSchema.model_validate(await processing.start_tiles(book, address.page_id, address.version_id))
 
 
 @router.get('/{book_id}/versions/collectable')
@@ -466,9 +457,7 @@ async def collectable_versions(
 
 @router.post('/{book_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
 async def collect_versions(
-    book: Annotated[Book, Depends(open_book)],
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    processing: FromDishka[ProcessingService],
+    book: Annotated[Book, Depends(open_book)], processing: FromDishka[ProcessingService]
 ) -> JobSchema:
     """Delete the versions nothing needs, in the background, and answer with the queued job.
 
@@ -479,11 +468,9 @@ async def collect_versions(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param processing: Processing service of the request.
     :type processing: ProcessingService
     :returns: The queued job.
     :rtype: JobSchema
     """
-    return JobSchema.of(await processing.start_collection(book), book_id)
+    return JobSchema.model_validate(await processing.start_collection(book))

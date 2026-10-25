@@ -72,7 +72,7 @@ class TestUploadLimits:
         )
         assert response.status_code == HTTPStatus.ACCEPTED, response.text
 
-        finished = await fx_import.finished(response.json())
+        finished = await fx_import.finished(fx_book, response.json())
 
         report = await fx_import.report(fx_book)
         expect(finished['state'] == JobState.FAILED)

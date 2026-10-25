@@ -323,7 +323,7 @@ export function applyBookEvent(
       if (isJob(event.data)) {
         queryClient.setQueryData(
           readJobApiV1BooksBookIdJobsJobIdGetQueryKey({
-            path: { book_id: event.data.book_id, job_id: event.data.id },
+            path: { book_id: bookId, job_id: event.data.id },
           }),
           event.data,
         );

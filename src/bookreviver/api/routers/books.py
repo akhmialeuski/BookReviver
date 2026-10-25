@@ -125,8 +125,7 @@ async def create_book(
     actor: ActorDep,
     links: Annotated[BookLinks, Depends()],
     books: FromDishka[BooksService],
-    stages: FromDishka[StageSummaries],
-) -> BookSchema:
+) -> BookId:
     """Create a book from its description, and point to it in the ``Location`` header.
 
     \N{FORM FEED}
@@ -138,14 +137,12 @@ async def create_book(
     :type links: BookLinks
     :param books: Books service of the request.
     :type books: BooksService
-    :param stages: Stage summaries of the request, which give the book its progress.
-    :type stages: StageSummaries
-    :returns: The new book.
-    :rtype: BookSchema
+    :returns: The identifier of the new book.
+    :rtype: BookId
     """
-    created = await books.create(actor, body.to_details())
-    links.created(created.book_id)
-    return BookSchema.from_overview(book_id=created.book_id, overview=await stages.overview(created.book))
+    book_id = await books.create(actor, body.to_details())
+    links.created(book_id)
+    return book_id
 
 
 @one_book.get('/{book_id}', name=RouteName.BOOK)
@@ -228,8 +225,7 @@ async def import_book(
     actor: ActorDep,
     links: Annotated[BookLinks, Depends()],
     books: FromDishka[BooksService],
-    stages: FromDishka[StageSummaries],
-) -> BookSchema:
+) -> BookId:
     """Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.
 
     The book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive
@@ -245,14 +241,12 @@ async def import_book(
     :type links: BookLinks
     :param books: Books service of the request.
     :type books: BooksService
-    :param stages: Stage summaries of the request, which give the book its progress.
-    :type stages: StageSummaries
-    :returns: The new book.
-    :rtype: BookSchema
+    :returns: The identifier of the new book.
+    :rtype: BookId
     """
-    imported = await books.import_archive(actor, archive.file)
-    links.created(imported.book_id)
-    return BookSchema.from_overview(book_id=imported.book_id, overview=await stages.overview(imported.book))
+    book_id = await books.import_archive(actor, archive.file)
+    links.created(book_id)
+    return book_id
 
 
 # The dependency answers 404 for a book of another account, and the service reads the library entry of the identifier

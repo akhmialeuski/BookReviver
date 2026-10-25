@@ -13,7 +13,6 @@ leaves it only after the stream ends, which unsubscribes at once. Domain events 
 
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
-from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
@@ -21,7 +20,7 @@ from fastapi import APIRouter, Depends, Header, Path
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi_pagination import Page
 
-from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
+from bookreviver.api.access import open_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import (
@@ -34,7 +33,7 @@ from bookreviver.api.schemas.jobs import (
 )
 from bookreviver.domain.entities import Job
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged, PageVersionReady
-from bookreviver.domain.ids import BookId, JobId
+from bookreviver.domain.ids import JobId
 from bookreviver.services.book import Book
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.jobs import JobService
@@ -48,12 +47,7 @@ router = APIRouter(prefix='/books', tags=['jobs'], route_class=DishkaRoute)
 
 
 @router.get('/{book_id}/jobs/{job_id}')
-async def read_job(
-    book: Annotated[Book, Depends(open_book)],
-    job_id: JobIdPath,
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    service: JobServiceDep,
-) -> JobSchema:
+async def read_job(book: Annotated[Book, Depends(open_book)], job_id: JobIdPath, service: JobServiceDep) -> JobSchema:
     """Return the state and progress of a job.
 
     \N{FORM FEED}
@@ -61,23 +55,16 @@ async def read_job(
     :type book: Book
     :param job_id: Identifier of the job.
     :type job_id: JobId
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param service: Job service of the request.
     :type service: JobService
     :returns: The job.
     :rtype: JobSchema
     """
-    return JobSchema.of(await service.get(book, job_id), book_id)
+    return JobSchema.model_validate(await service.get(book, job_id))
 
 
 @router.delete('/{book_id}/jobs/{job_id}')
-async def cancel_job(
-    book: Annotated[Book, Depends(open_book)],
-    job_id: JobIdPath,
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    service: JobServiceDep,
-) -> JobSchema:
+async def cancel_job(book: Annotated[Book, Depends(open_book)], job_id: JobIdPath, service: JobServiceDep) -> JobSchema:
     """Cancel a queued or running job and return it; a running job stops at the boundary of its current task.
 
     \N{FORM FEED}
@@ -85,20 +72,17 @@ async def cancel_job(
     :type book: Book
     :param job_id: Identifier of the job.
     :type job_id: JobId
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param service: Job service of the request.
     :type service: JobService
     :returns: The job in the cancelled state.
     :rtype: JobSchema
     """
-    return JobSchema.of(await service.cancel(book, job_id), book_id)
+    return JobSchema.model_validate(await service.cancel(book, job_id))
 
 
 @router.get('/{book_id}/jobs')
 async def list_book_jobs(
     book: Annotated[Book, Depends(open_book)],
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     query: Annotated[JobQuery, Depends()],
     service: JobServiceDep,
 ) -> Page[JobSchema]:
@@ -107,8 +91,6 @@ async def list_book_jobs(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param query: Page number and size, and whether to list running jobs alone.
     :type query: JobQuery
     :param service: Job service of the request.
@@ -116,7 +98,7 @@ async def list_book_jobs(
     :returns: One page of the book's jobs.
     :rtype: Page[JobSchema]
     """
-    pager = Pager[Job, JobSchema](query, partial(JobSchema.of, book_id=book_id))
+    pager = Pager[Job, JobSchema](query, JobSchema.model_validate)
     return pager.page(await service.list_for_book(book, pager.request, active=query.active))
 
 
@@ -145,7 +127,6 @@ async def open_event_stream(
 @router.get('/{book_id}/events', response_class=EventSourceResponse, name=RouteName.BOOK_EVENTS)
 async def stream_book_events(
     book: Annotated[Book, Depends(open_book)],
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     events: Annotated[BookEvents, Depends(open_event_stream)],
     freshness: FromDishka[BookFreshness],
     last_event_id: Annotated[str | None, Header()] = None,
@@ -160,8 +141,6 @@ async def stream_book_events(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param events: The book's events, subscribed to by ``open_event_stream`` before the version is read.
     :type events: BookEvents
     :param freshness: Freshness of the reads of the books of the request, which knows the version of the book.
@@ -173,23 +152,21 @@ async def stream_book_events(
     """
     current = await freshness.version(book)
     if last_event_id is None:
-        named = BookVersionSchema(book_id=book_id, version=current)
-        yield ServerSentEvent(event=EventName.BOOK_VERSION, id=str(current), data=named)
+        yield ServerSentEvent(event=EventName.BOOK_VERSION, id=str(current), data=BookVersionSchema(version=current))
     elif last_event_id != str(current):
-        reset = BookVersionSchema(book_id=book_id, version=current)
-        yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=reset)
+        yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=BookVersionSchema(version=current))
     async for event in events:
         match event:
             case BookChanged(version=changed_version, resources=resources):
                 yield ServerSentEvent(
                     event=EventName.BOOK_CHANGED,
                     id=str(changed_version),
-                    data=BookChangedSchema(book_id=book_id, version=changed_version, resources=sorted(resources)),
+                    data=BookChangedSchema(version=changed_version, resources=sorted(resources)),
                 )
             case JobChanged(job=job):
-                yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.of(job, book_id))
+                yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.model_validate(job))
             case PageVersionReady(version=version):
                 yield ServerSentEvent(
                     event=EventName.PAGE_VERSION_READY,
-                    data=PageVersionReadySchema(book_id=book_id, page_id=version.page_id, version_id=version.id),
+                    data=PageVersionReadySchema(page_id=version.page_id, version_id=version.id),
                 )

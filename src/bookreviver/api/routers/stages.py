@@ -9,15 +9,15 @@ from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.access import open_book
+from bookreviver.api.access import BOOK_ID_DESCRIPTION, open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, ManifestParams, Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
-from bookreviver.domain.ids import StepId
+from bookreviver.domain.ids import BookId, StepId
 from bookreviver.domain.stage_summaries import StageRow, StageSummary
 from bookreviver.services.book import Book
 from bookreviver.services.stage_summaries import StageSummaries
@@ -27,9 +27,11 @@ from bookreviver.services.stage_summaries import StageSummaries
 class StageRowsPath(StagePath):
     """The address of the rows of a stage, with the request, whose application knows the route that serves the images.
 
+    :ivar book_id: Identifier of the book, which names its images in their addresses.
     :ivar request: The request.
     """
 
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     request: Request
 
 

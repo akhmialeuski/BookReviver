@@ -1158,7 +1158,6 @@ export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview
  * process started, is answered as not found.
  *
  * :ivar id: Identifier of the job.
- * :ivar book_id: Book the job works on.
  * :ivar kind: What the job does.
  * :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
  * :ivar state: Where the job is in its life cycle.
@@ -1173,10 +1172,6 @@ export type JobSchema = {
      * Id
      */
     id: string;
-    /**
-     * Book Id
-     */
-    book_id: string;
     kind: JobKind;
     stage: Stage | null;
     state: JobState;
@@ -3928,9 +3923,11 @@ export type CreateBookApiV1BooksPostError = CreateBookApiV1BooksPostErrors[keyof
 
 export type CreateBookApiV1BooksPostResponses = {
     /**
+     * Response Create Book Api V1 Books Post
+     *
      * Successful Response
      */
-    201: BookSchema;
+    201: string;
 };
 
 export type CreateBookApiV1BooksPostResponse = CreateBookApiV1BooksPostResponses[keyof CreateBookApiV1BooksPostResponses];
@@ -3971,9 +3968,11 @@ export type ImportBookApiV1BooksArchivePostError = ImportBookApiV1BooksArchivePo
 
 export type ImportBookApiV1BooksArchivePostResponses = {
     /**
+     * Response Import Book Api V1 Books Archive Post
+     *
      * Successful Response
      */
-    201: BookSchema;
+    201: string;
 };
 
 export type ImportBookApiV1BooksArchivePostResponse = ImportBookApiV1BooksArchivePostResponses[keyof ImportBookApiV1BooksArchivePostResponses];

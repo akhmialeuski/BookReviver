@@ -525,10 +525,9 @@ class TestExportAndImport:
         await fx_files.store(book_id, page)
         archive = await _archive(book_id)
 
-        copy = await fx_service().import_archive(fx_actor, archive)
-        imported = await _stages().overview(copy.book)
+        copy_id = await fx_service().import_archive(fx_actor, archive)
+        imported = await _stages().overview(Book(directory_of(copy_id)))
 
-        copy_id = copy.book_id
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)
         listed = await _listed(fx_catalogue(), fx_actor)
         expect(copy_id != book_id)
@@ -580,15 +579,15 @@ class TestExportAndImport:
         async with fx_directories.assets(book_id).writable(StorageKey(f'{directory}/{Rendition.MASK}')) as path:
             path.write_bytes(MASK_CONTENT)
 
-        imported = await fx_service().import_archive(fx_actor, await _archive(book_id))
+        imported = Book(directory_of(await fx_service().import_archive(fx_actor, await _archive(book_id))))
 
-        state = await imported.book.read(
+        state = await imported.read(
             lambda repos: repos.page_step_states.find(PageStepKey(page.id, edit.stage, edit.step_id))
         )
         assert state is not None
         assert state.edit is not None
         assert state.edit.mask_key is not None
-        async with imported.book.assets.readable(state.edit.mask_key) as path:
+        async with imported.assets.readable(state.edit.mask_key) as path:
             assert path.read_bytes() == MASK_CONTENT
 
     @pytest.mark.usefixtures('fx_book_parts')

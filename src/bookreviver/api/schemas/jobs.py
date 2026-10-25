@@ -3,22 +3,18 @@
 Each server-sent event carries a name from ``EventName`` and exactly the data TanStack Query needs to patch or
 invalidate the queries it affects: the whole job for ``job-changed``, the version and the parts written for
 ``book-changed``, the version alone for ``book-version`` and ``book-reset``, and the identifiers of a ready version for
-``page-version-ready``.
+``page-version-ready``. None of them names the book, which the browser named in the path of the request or the stream.
 """
 
 import enum
 from datetime import datetime
-from typing import TYPE_CHECKING, Self
 
 from fastapi import Query
 from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
-from bookreviver.domain.ids import BookId, JobId, PageId, PageVersionId
-
-if TYPE_CHECKING:
-    from bookreviver.domain.entities import Job
+from bookreviver.domain.ids import JobId, PageId, PageVersionId
 
 
 class EventName(enum.StrEnum):
@@ -51,7 +47,6 @@ class JobSchema(ResponseModel):
     process started, is answered as not found.
 
     :ivar id: Identifier of the job.
-    :ivar book_id: Book the job works on.
     :ivar kind: What the job does.
     :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
     :ivar state: Where the job is in its life cycle.
@@ -63,7 +58,6 @@ class JobSchema(ResponseModel):
     """
 
     id: JobId
-    book_id: BookId
     kind: JobKind
     stage: Stage | None
     state: JobState
@@ -72,30 +66,6 @@ class JobSchema(ResponseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
-
-    @classmethod
-    def of(cls, job: Job, book_id: BookId) -> Self:
-        """Build the schema of a job of a book, whose identifier the job does not hold.
-
-        :param job: The job.
-        :type job: Job
-        :param book_id: Identifier of the book the job works on, from the path.
-        :type book_id: BookId
-        :returns: The job resource.
-        :rtype: Self
-        """
-        return cls(
-            id=job.id,
-            book_id=book_id,
-            kind=job.kind,
-            stage=job.stage,
-            state=job.state,
-            progress=ProgressSchema.model_validate(job.progress),
-            error=job.error,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            finished_at=job.finished_at,
-        )
 
 
 class JobQuery(Params):
@@ -112,12 +82,10 @@ class JobQuery(Params):
 class BookChangedSchema(ResponseModel):
     """A committed change of a book; the data of a ``book-changed`` event, whose id is the version.
 
-    :ivar book_id: Identifier of the book whose reads to repeat.
     :ivar version: The version of the book after the change.
     :ivar resources: The parts of the book the change wrote, whose reads are the ones to repeat.
     """
 
-    book_id: BookId
     version: int
     resources: list[BookResource]
 
@@ -129,22 +97,18 @@ class BookVersionSchema(ResponseModel):
     that comes back that the book changed while it was not listening, and since the stream keeps no changes, every read
     of the book is to be repeated.
 
-    :ivar book_id: Identifier of the book.
     :ivar version: The version of the book now.
     """
 
-    book_id: BookId
     version: int
 
 
 class PageVersionReadySchema(ResponseModel):
     """A page version with its result; the data of a ``page-version-ready`` event.
 
-    :ivar book_id: Identifier of the book owning the page.
     :ivar page_id: Identifier of the page.
     :ivar version_id: Identifier of the ready version to read again.
     """
 
-    book_id: BookId
     page_id: PageId
     version_id: PageVersionId

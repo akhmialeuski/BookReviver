@@ -70,7 +70,7 @@ function FileRow({
   );
 }
 
-function ImportRow({ job }: { job: JobSchema }): React.JSX.Element {
+function ImportRow({ bookId, job }: { bookId: string; job: JobSchema }): React.JSX.Element {
   // The cancelled job and whatever the import wrote before it stopped reach the screen by the events of the book
   const stop = useMutation(cancelJobApiV1BooksBookIdJobsJobIdDeleteMutation());
   const labels = MESSAGES.import.files;
@@ -93,7 +93,7 @@ function ImportRow({ job }: { job: JobSchema }): React.JSX.Element {
           variant="ghost"
           size="sm"
           disabled={stop.isPending}
-          onClick={() => stop.mutate({ path: { book_id: job.book_id, job_id: job.id } })}
+          onClick={() => stop.mutate({ path: { book_id: bookId, job_id: job.id } })}
         >
           {stop.isPending ? labels.stopping : labels.stop}
         </Button>
@@ -156,7 +156,7 @@ export function FileList({
           />
         ))}
         {imports.map((job) => (
-          <ImportRow key={job.id} job={job} />
+          <ImportRow key={job.id} bookId={bookId} job={job} />
         ))}
       </ul>
     </section>

@@ -116,7 +116,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
+                  "type": "string",
+                  "format": "uuid",
+                  "title": "Response Create Book Api V1 Books Post"
                 }
               }
             }
@@ -204,7 +206,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
+                  "type": "string",
+                  "format": "uuid",
+                  "title": "Response Import Book Api V1 Books Archive Post"
                 }
               }
             }
@@ -10490,11 +10494,6 @@
             "format": "uuid",
             "title": "Id"
           },
-          "book_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Book Id"
-          },
           "kind": {
             "$ref": "#/components/schemas/JobKind"
           },
@@ -10551,7 +10550,6 @@
         "type": "object",
         "required": [
           "id",
-          "book_id",
           "kind",
           "stage",
           "state",
@@ -10562,7 +10560,7 @@
           "finished_at"
         ],
         "title": "JobSchema",
-        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar book_id: Book the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
+        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
       },
       "JobState": {
         "type": "string",

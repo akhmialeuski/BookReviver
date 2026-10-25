@@ -285,7 +285,7 @@ class TestCreateBook:
     """Tests for POST /books."""
 
     async def test_creates_and_points_to_the_new_book(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify the answer is 201 with the stored book, trimmed input and a Location that reads it back.
+        """Verify the answer is 201 with the identifier of the new book and a Location that reads the stored book.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -294,14 +294,14 @@ class TestCreateBook:
             BOOKS_PATH, json={TITLE_FIELD: f'  {TITLE} ', ORTHOGRAPHY_FIELD: Orthography.PRE_REFORM}
         )
 
-        created = BookSchema.model_validate_json(response.content)
         location = response.headers[LOCATION_HEADER]
+        created = BookSchema.model_validate_json((await fx_client.get(location)).content)
         expect(response.status_code == status.HTTP_201_CREATED)
+        expect(response.json() == str(created.id))
         expect(location == f'{TEST_BASE_URL}{_book_path(created.id)}')
         expect((created.details.title, created.details.orthography) == (TITLE, Orthography.PRE_REFORM))
         expect((created.page_count, created.source_count, created.scan_count) == (0, 0, 0))
         expect((created.image_policy, created.cover_page_id) == (ImagePolicy.COMPACT, None))
-        expect(BookSchema.model_validate_json((await fx_client.get(location)).content) == created)
         assert_expectations()
 
     async def test_stores_the_full_description_with_normalized_identifiers(self, fx_client: httpx.AsyncClient) -> None:
@@ -330,8 +330,9 @@ class TestCreateBook:
         }
 
         response = await fx_client.post(BOOKS_PATH, json=body)
+        created = await fx_client.get(response.headers[LOCATION_HEADER])
 
-        details = BookSchema.model_validate_json(response.content).details
+        details = BookSchema.model_validate_json(created.content).details
         expect(response.status_code == status.HTTP_201_CREATED)
         expect(
             [(person.name, person.role) for person in details.contributors]
@@ -815,7 +816,8 @@ class TestArchive:
             f'{BOOKS_PATH}{ARCHIVE_SUFFIX}', files={ARCHIVE_FIELD: (ARCHIVE_NAME, exported.content, ZIP_MEDIA_TYPE)}
         )
 
-        copy = BookSchema.model_validate(imported.json())
+        copy = BookSchema.model_validate_json((await fx_client.get(imported.headers[LOCATION_HEADER])).content)
+        expect(imported.json() == str(copy.id))
         expect(exported.status_code == status.HTTP_200_OK)
         expect(exported.headers[CONTENT_TYPE_HEADER] == ZIP_MEDIA_TYPE)
         expect(quote(ARCHIVED_TITLE, safe='') in exported.headers[DISPOSITION_HEADER])

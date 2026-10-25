@@ -316,7 +316,7 @@ class TestStreamBookEvents:
         expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.BOOK_CHANGED])
         expect(reader.events[0].data[JOB_ID_FIELD] == str(fx_queued_job.job.id))
         expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
-        expect(reader.events[1].data[BOOK_ID_FIELD] == str(book_id))
+        expect(BOOK_ID_FIELD not in reader.events[0].data and BOOK_ID_FIELD not in reader.events[1].data)
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 
@@ -489,7 +489,7 @@ class TestStreamBookEvents:
         assert reader.events == [
             StreamedEvent(
                 EventName.PAGE_VERSION_READY,
-                {BOOK_ID_FIELD: str(book_id), PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id},
+                {PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id},
             )
         ]
 

@@ -154,7 +154,7 @@ class TestUploadSources:
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book), files=_multipart(files))
         queued = response.json()
-        finished = await fx_import.finished(queued)
+        finished = await fx_import.finished(fx_book, queued)
 
         book = await stored_book(fx_book, databases=fx_databases())
         sources, pages = book.sources, book.pages
@@ -230,7 +230,7 @@ class TestUploadSources:
         parts = [*_multipart(files), (FILES_FIELD, ('notes.txt', b'not a page', 'text/plain'))]
 
         queued = (await fx_client.post(SOURCES_PATH.format(book_id=fx_book), files=parts)).json()
-        finished = await fx_import.finished(queued)
+        finished = await fx_import.finished(fx_book, queued)
 
         imported = (await fx_client.get(SOURCES_PATH.format(book_id=fx_book))).json()
         [rejected] = await fx_import.report(fx_book)
@@ -277,7 +277,7 @@ class TestUploadSources:
                 files=_multipart(djvu_uploads([*complete, *incomplete[:-1]])),
             )
         ).json()
-        finished = await fx_import.finished(queued)
+        finished = await fx_import.finished(fx_book, queued)
 
         [source] = (await stored_book(fx_book, databases=fx_databases())).sources
         [rejected] = await fx_import.report(fx_book)

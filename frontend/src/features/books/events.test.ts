@@ -31,7 +31,6 @@ const BY_PREDICATE = 'predicate';
 function job(state: JobSchema['state'], done = 1, total = 4): JobSchema {
   return {
     id: 'j-1',
-    book_id: BOOK_ID,
     kind: 'import-source',
     stage: null,
     state,
@@ -45,7 +44,7 @@ function job(state: JobSchema['state'], done = 1, total = 4): JobSchema {
 
 /** A change of the book from version 1 to version 2 that wrote the given parts. */
 function change(resources: BookResource[], version = 2) {
-  return { event: EventName.BookChanged, data: { book_id: BOOK_ID, version, resources } };
+  return { event: EventName.BookChanged, data: { version, resources } };
 }
 
 /** Start recording the endpoints whose queries are invalidated; the returned function lists them. */
@@ -199,7 +198,7 @@ describe('applyBookEvent', () => {
     applyBookEvent(
       queryClient,
       BOOK_ID,
-      { event: EventName.BookVersion, data: { book_id: BOOK_ID, version: 4 } },
+      { event: EventName.BookVersion, data: { version: 4 } },
       sync,
     );
 
@@ -211,7 +210,7 @@ describe('applyBookEvent', () => {
     applyBookEvent(
       queryClient,
       BOOK_ID,
-      { event: EventName.BookReset, data: { book_id: BOOK_ID, version: 9 } },
+      { event: EventName.BookReset, data: { version: 9 } },
       sync,
     );
 
@@ -291,7 +290,7 @@ describe('applyBookEvent', () => {
       BOOK_ID,
       {
         event: EventName.PageVersionReady,
-        data: { book_id: BOOK_ID, page_id: 'pg-1', version_id: 'abc' },
+        data: { page_id: 'pg-1', version_id: 'abc' },
       },
       sync,
     );
@@ -305,7 +304,7 @@ describe('applyBookEvent', () => {
   it('shows a version announced twice as a new event', () => {
     const event = {
       event: EventName.PageVersionReady,
-      data: { book_id: BOOK_ID, page_id: 'pg-1', version_id: 'abc' },
+      data: { page_id: 'pg-1', version_id: 'abc' },
     };
     vi.setSystemTime(1000);
     applyBookEvent(queryClient, BOOK_ID, event, sync);

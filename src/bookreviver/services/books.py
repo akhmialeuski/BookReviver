@@ -5,7 +5,7 @@ A use case works on the ``Book`` objects it is given and checks no owner: the ac
 book of the signed-in account, and they choose the books of a list. ``book_pages`` is a synchronous function over
 repositories: the work of ``Book.read`` or ``Book.change`` calls it with the repositories it receives, and a caller
 outside a transaction wraps the call in ``Book.read``. A book knows no identifier, so ``create`` and ``import_archive``
-return the identifier of the new book with it, and ``delete`` reads the library entry of the identifier it is given.
+return the identifier they gave the new book, and ``delete`` reads the library entry of the identifier it is given.
 
 A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
 ``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
@@ -18,8 +18,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
-
-from attrs import frozen
 
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
@@ -56,18 +54,6 @@ def book_pages(pages: PageRepository) -> list[Page]:
         book.extend(window.items)
         if len(book) >= window.total or not window.items:
             return book
-
-
-@frozen
-class NewBook:
-    """A book just made, with the identifier its library entry gives it.
-
-    :ivar book_id: Identifier of the book in the library.
-    :ivar book: The book, open for its owner.
-    """
-
-    book_id: BookId
-    book: Book
 
 
 class BooksService:
@@ -114,23 +100,22 @@ class BooksService:
         entries = await self._catalogue.read(lambda repos: repos.library.list_all())
         return [Book(entry.directory) for entry in entries]
 
-    async def create(self, owner: Actor, details: BookDetails) -> NewBook:
+    async def create(self, owner: Actor, details: BookDetails) -> BookId:
         """Create an empty book of an account: its directory, its database with its description, then its entry.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
         :param details: Description of the book.
         :type details: BookDetails
-        :returns: The new book with its identifier, open for its owner, which has no pages, sources or scans yet.
-        :rtype: NewBook
+        :returns: The identifier of the new book, which has no pages, sources or scans yet.
+        :rtype: BookId
         """
         entry = self._new_entry(owner)
-        book = Book(entry.directory)
-        await book.create(details)
+        await Book(entry.directory).create(details)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
-        return NewBook(book_id=entry.book_id, book=book)
+        return entry.book_id
 
-    async def import_archive(self, owner: Actor, archive: BinaryIO) -> NewBook:
+    async def import_archive(self, owner: Actor, archive: BinaryIO) -> BookId:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
         The book unpacks the archive into its new directory and brings its database to this release, and the entry of
@@ -141,16 +126,15 @@ class BooksService:
         :type owner: Actor
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
-        :returns: The new book with its identifier, open for its owner.
-        :rtype: NewBook
+        :returns: The identifier of the new book.
+        :rtype: BookId
         :raises InvalidArchiveError: If the file is not the archive of a book.
         :raises BookTooNewError: If the book was exported by a newer release.
         """
         entry = self._new_entry(owner)
-        book = Book(entry.directory)
-        await book.unpack(archive)
+        await Book(entry.directory).unpack(archive)
         await self._catalogue.change(lambda repos: repos.library.add(entry))
-        return NewBook(book_id=entry.book_id, book=book)
+        return entry.book_id
 
     def _new_entry(self, owner: Actor) -> LibraryEntry:
         """Build the library entry of a new book of an account, whose directory is named by its new identifier.

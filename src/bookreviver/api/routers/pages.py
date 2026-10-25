@@ -221,7 +221,6 @@ async def fill_blank_pages(
 @router.post('/{book_id}/pages/content-types/detect', status_code=status.HTTP_202_ACCEPTED)
 async def detect_content_types(
     book: Annotated[Book, Depends(open_book)],
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: ContentDetectionRequest,
     pages: FromDishka[PageService],
 ) -> JobSchema:
@@ -238,8 +237,6 @@ async def detect_content_types(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param book_id: Identifier of the book, from the path.
-    :type book_id: BookId
     :param body: The pages to detect, or none for those that are not detected yet.
     :type body: ContentDetectionRequest
     :param pages: Page service of the request.
@@ -247,7 +244,7 @@ async def detect_content_types(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    return JobSchema.of(await pages.start_detection(book, body.page_ids), book_id)
+    return JobSchema.model_validate(await pages.start_detection(book, body.page_ids))
 
 
 @router.patch('/{book_id}/pages/{page_id}')

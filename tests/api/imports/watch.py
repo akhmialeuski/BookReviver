@@ -66,17 +66,19 @@ class ImportWatch:
         self._client = client
         self._events = events
 
-    async def finished(self, queued: dict[str, Any]) -> dict[str, Any]:
+    async def finished(self, book_id: BookId, queued: dict[str, Any]) -> dict[str, Any]:
         """Wait until the book of a job has no job queued or running, and read the job as the API shows it.
 
+        :param book_id: Identifier of the book the upload went to.
+        :type book_id: BookId
         :param queued: The job document the upload answered with.
         :type queued: dict[str, Any]
         :returns: The job document, in the state it ended in.
         :rtype: dict[str, Any]
         """
-        job_path = JOB_PATH.format(book_id=queued['book_id'], job_id=queued['id'])
+        job_path = JOB_PATH.format(book_id=book_id, job_id=queued['id'])
         with anyio.fail_after(FINISH_TIMEOUT_SECONDS):
-            active_jobs = JOBS_PATH.format(book_id=queued['book_id'])
+            active_jobs = JOBS_PATH.format(book_id=book_id)
             while True:
                 # The event is taken before the jobs are read, so a job that ends in between still wakes the wait
                 ended = self._events.ended
