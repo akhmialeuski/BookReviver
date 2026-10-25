@@ -199,6 +199,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         *,
         hasher: PasswordHasher,
         mailer: Mailer,
+        tokens: AccessTokenDatabase,
         settings: Settings,
     ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
@@ -209,6 +210,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :type hasher: PasswordHasher
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
+        :param tokens: Session tokens of the current request, which a new password ends the other sessions in.
+        :type tokens: AccessTokenDatabase
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
         """
@@ -218,6 +221,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         self.reset_password_token_secret = secret
         self._hasher = hasher
         self._mailer = mailer
+        self._tokens = tokens
         self._public_url = settings.public_url
 
     @override
@@ -511,6 +515,38 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         await self._mailer.send(AccountMail.RESET.to(user.email, public_url=self._public_url, token=token))
 
     @override
+    async def on_after_reset_password(self, user: AccountTable, request: Request | None = None) -> None:
+        """End every session of the account, since whoever held one did not know the new password.
+
+        :param user: Account that reset its password.
+        :type user: AccountTable
+        :param request: Request that triggered the reset, if any.
+        :type request: Request | None
+        """
+        await self._tokens.delete_of_user(user.id)
+
+    @override
+    async def on_after_update(
+        self, user: AccountTable, update_dict: dict[str, Any], request: Request | None = None
+    ) -> None:
+        """End the other sessions of an account that changed its password, and keep the one that changed it.
+
+        The dictionary is the one ``update`` was given by the route, so a new password is under ``password`` in the
+        clear, and not under ``hashed_password`` as ``_update`` stores it.
+
+        :param user: The updated account.
+        :type user: AccountTable
+        :param update_dict: Fields the update changed.
+        :type update_dict: dict[str, Any]
+        :param request: Request that triggered the update, whose session cookie names the session to keep.
+        :type request: Request | None
+        """
+        if update_dict.get(PASSWORD_FIELD) is None:
+            return
+        current = None if request is None else request.cookies.get(SESSION_COOKIE)
+        await self._tokens.delete_of_user(user.id, keep=current)
+
+    @override
     async def on_after_login(
         self, user: AccountTable, request: Request | None = None, response: Response | None = None
     ) -> None:
@@ -668,6 +704,7 @@ class AccountsProvider(Provider):
         user_db: AccountDatabase,
         hasher: PasswordHasher,
         mailer: Mailer,
+        tokens: AccessTokenDatabase,
         settings: Settings,
     ) -> UserManager:
         """Build the user manager over the users of the request.
@@ -678,12 +715,14 @@ class AccountsProvider(Provider):
         :type hasher: PasswordHasher
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
+        :param tokens: Session tokens of the request, shared with the session strategy.
+        :type tokens: AccessTokenDatabase
         :param settings: Application settings holding the secret and the public URL.
         :type settings: Settings
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(user_db, hasher=hasher, mailer=mailer, settings=settings)
+        return UserManager(user_db, hasher=hasher, mailer=mailer, tokens=tokens, settings=settings)
 
     @provide(scope=Scope.REQUEST)
     def session_strategy(self, tokens: AccessTokenDatabase, settings: Settings) -> SessionStrategy:

@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 EMAIL: str = 'Reader@Example.org'
+OTHER_EMAIL: str = 'neighbour@example.org'
 PASSWORD_HASH: str = 'hash-of-a-password'
 NEW_HASH: str = 'new-hash'
 PROVIDER: str = 'google'
@@ -721,6 +722,42 @@ class TestAccessTokenDatabase:
         expect(await fx_tokens.get_by_token(OTHER_TOKEN) is not None)
         expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
         expect(await _count(fx_counting_catalogue, AccessTokenTable) == EXPECTED_KEPT)
+        assert_expectations()
+
+    @pytest.mark.parametrize('keep', [None, SESSION_TOKEN], ids=['all', 'all-but-one'])
+    async def test_delete_of_user_removes_the_tokens_of_that_user_only(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        keep: str | None,
+    ) -> None:
+        """Verify the tokens of the user go, but for the one to keep, and the token of another user stays.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user the first two tokens are for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param keep: Value of the token to keep, or None to remove them all.
+        :type keep: str | None
+        """
+        neighbour = await fx_users.create({**NEW_USER, 'email': OTHER_EMAIL})
+        await fx_tokens.create(_token(fx_user))
+        await fx_tokens.create(_token(fx_user, token=OTHER_TOKEN))
+        await fx_tokens.create(_token(neighbour, token=NEWER_TOKEN))
+        fx_counting_catalogue.blocks = 0
+
+        await fx_tokens.delete_of_user(fx_user.id, keep=keep)
+
+        expect((await fx_tokens.get_by_token(SESSION_TOKEN) is not None) == (keep == SESSION_TOKEN))
+        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is None)
+        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(fx_counting_catalogue.blocks == ONE_BLOCK)
         assert_expectations()
 
     @pytest.mark.parametrize(

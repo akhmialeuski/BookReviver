@@ -377,3 +377,16 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         """
         statement = delete(AccessTokenTable).where(ACCESS_TOKENS.created_at < cutoff)
         await self.catalogue.change_session(lambda session: session.execute(statement))
+
+    async def delete_of_user(self, user_id: UUID, *, keep: str | None = None) -> None:
+        """Remove every token of a user, in one statement, which signs all its sessions out.
+
+        :param user_id: Identifier of the user.
+        :type user_id: UUID
+        :param keep: Value of the one token to leave, or None to remove them all.
+        :type keep: str | None
+        """
+        statement = delete(AccessTokenTable).where(ACCESS_TOKENS.user_id == user_id)
+        if keep is not None:
+            statement = statement.where(ACCESS_TOKENS.token != keep)
+        await self.catalogue.change_session(lambda session: session.execute(statement))

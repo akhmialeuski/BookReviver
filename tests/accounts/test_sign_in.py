@@ -10,10 +10,12 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from fastapi_users.router.common import ErrorCode
 
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenDatabase
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.schemas.accounts import AccountRead
 from bookreviver.app.providers.accounts import SESSION_COOKIE, AccountMail, UserManager
 from tests.helpers.fakes_accounts import (
+    CSRF_COOKIE,
     DETAIL_FIELD,
     EMAIL_FIELD,
     FORGOT_PATH,
@@ -44,6 +46,24 @@ OTHER_EMAIL: str = 'stranger@example.org'
 NEW_PASSWORD: str = 'a completely different phrase'
 ACTOR_PATH: str = '/test/actor'
 HTTPS_BASE_URL: str = 'https://testserver'
+
+
+async def _status_with_session(client: httpx.AsyncClient, token: str) -> HTTPStatus:
+    """Answer what ``GET /users/me`` says to a request that carries only the given session token.
+
+    The header replaces the cookie jar of the client, which holds the token of the last sign-in. It repeats the CSRF
+    cookie of the jar, since a request without it is handed a new one, and the header of the client no longer matches.
+
+    :param client: Client of the application.
+    :type client: httpx.AsyncClient
+    :param token: Value of the session cookie to send.
+    :type token: str
+    :returns: The status of the answer.
+    :rtype: HTTPStatus
+    """
+    cookies = f'{SESSION_COOKIE}={token}; {CSRF_COOKIE}={client.cookies[CSRF_COOKIE]}'
+    response = await client.get(ME_PATH, headers={'cookie': cookies})
+    return HTTPStatus(response.status_code)
 
 
 def _session_cookie_header(response: httpx.Response) -> str:
@@ -321,6 +341,33 @@ class TestPasswordReset:
         expect((await fx_visitor.login(EMAIL, NEW_PASSWORD)).status_code == HTTPStatus.NO_CONTENT)
         assert_expectations()
 
+    async def test_reset_ends_every_session_of_the_account(
+        self, fx_visitor: Visitor, fx_mailer: RecordingMailer, fx_app: FastAPI
+    ) -> None:
+        """Verify a session opened before the reset gets 401 afterwards, and no session row of the account is left.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_mailer: Recording mailer of the application.
+        :type fx_mailer: RecordingMailer
+        :param fx_app: The running application, whose container reads the session rows.
+        :type fx_app: FastAPI
+        """
+        await fx_visitor.sign_up(EMAIL)
+        old = fx_visitor.client.cookies[SESSION_COOKIE]
+        await fx_visitor.client.post(FORGOT_PATH, json={EMAIL_FIELD: EMAIL})
+        token = fx_mailer.token(AccountMail.RESET.subject)
+        before = await _status_with_session(fx_visitor.client, old)
+
+        await fx_visitor.client.post(RESET_PATH, json={TOKEN_PARAMETER: token, PASSWORD_FIELD: NEW_PASSWORD})
+
+        async with fx_app.state.dishka_container() as scope:
+            stored = await (await scope.get(AccessTokenDatabase)).get_by_token(old)
+        expect(before == HTTPStatus.OK)
+        expect(await _status_with_session(fx_visitor.client, old) == HTTPStatus.UNAUTHORIZED)
+        expect(stored is None)
+        assert_expectations()
+
     async def test_unknown_address_answers_like_a_known_one(
         self, fx_browser: httpx.AsyncClient, fx_mailer: RecordingMailer
     ) -> None:
@@ -351,6 +398,27 @@ class TestUpdateMe:
         await fx_visitor.client.post(LOGOUT_PATH)
         expect(response.status_code == HTTPStatus.OK)
         expect((await fx_visitor.login(EMAIL, NEW_PASSWORD)).status_code == HTTPStatus.NO_CONTENT)
+        assert_expectations()
+
+    async def test_new_password_ends_the_other_sessions_and_keeps_the_current_one(self, fx_visitor: Visitor) -> None:
+        """Verify changing the password signs the account's other sessions out, and the session that changed it stays.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        """
+        await fx_visitor.sign_up(EMAIL)
+        other = fx_visitor.client.cookies[SESSION_COOKIE]
+        await fx_visitor.login(EMAIL)
+        current = fx_visitor.client.cookies[SESSION_COOKIE]
+        before = await _status_with_session(fx_visitor.client, other)
+
+        response = await fx_visitor.client.patch(ME_PATH, json={PASSWORD_FIELD: NEW_PASSWORD})
+
+        expect(other != current)
+        expect(before == HTTPStatus.OK)
+        expect(response.status_code == HTTPStatus.OK)
+        expect(await _status_with_session(fx_visitor.client, other) == HTTPStatus.UNAUTHORIZED)
+        expect(await _status_with_session(fx_visitor.client, current) == HTTPStatus.OK)
         assert_expectations()
 
     async def test_email_cannot_be_changed(self, fx_visitor: Visitor) -> None:
