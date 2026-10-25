@@ -495,6 +495,15 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
 
     @override
+    def list_all(self) -> Sequence[Page]:
+        """Return every page of the book in book order, in one query.
+
+        :returns: The pages of the book.
+        :rtype: Sequence[Page]
+        """
+        return [self._mapper.to_entity(row) for row in self._rows.get_many(order_by=PageRow.order_key.asc())]
+
+    @override
     def list_by_ids(self, page_ids: Collection[PageId]) -> Sequence[Page]:
         """Return the given pages of a book in book order, in one ``IN`` query.
 

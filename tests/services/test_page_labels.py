@@ -12,7 +12,6 @@ from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import ContentType, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import PageAnchor
-from bookreviver.services.books import book_pages
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
 from tests.helpers.seeding import ensure_account, store_book
@@ -85,7 +84,7 @@ async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> dict[P
     :returns: The pages of the book as committed, in book order, by identifier.
     :rtype: dict[PageId, Page]
     """
-    return await databases.open(book_id).read(lambda repos: {page.id: page for page in book_pages(repos.pages)})
+    return await databases.open(book_id).read(lambda repos: {page.id: page for page in repos.pages.list_all()})
 
 
 async def _update_kind(
@@ -260,7 +259,7 @@ class TestConcurrentWrites:
             :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
-            seen_by_job.extend(page.id for page in book_pages(repos.pages))
+            seen_by_job.extend(page.id for page in repos.pages.list_all())
             repos.pages.update(evolve(repos.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
 
         mover = fx_service()

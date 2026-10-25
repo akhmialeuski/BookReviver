@@ -24,7 +24,6 @@ from bookreviver.domain.errors import ConflictError, NotFoundError, ReversedRang
 from bookreviver.domain.ids import PaginationSectionId
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import NumberedPage, Slice
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_labels import PageLabels
 
 if TYPE_CHECKING:
@@ -298,7 +297,7 @@ class PaginationService:
         :raises NotFoundError: If the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         """
-        pages = book_pages(repos.pages)
+        pages = repos.pages.list_all()
         position = {page.id: index for index, page in enumerate(pages)}
         if numbering.first_page_id not in position:
             raise NotFoundError(numbering.first_page_id)

@@ -35,7 +35,6 @@ from bookreviver.domain.step_values import (
     StepValues,
     StepValuesKey,
 )
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
@@ -114,7 +113,7 @@ class _Scene:
                 group_label=target.group_label,
                 updated_at=moment,
             )
-            named = book_pages(repos.pages)
+            named = repos.pages.list_all()
             positions = {page.id: index for index, page in enumerate(named, start=1)}
         pages = [
             page

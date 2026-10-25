@@ -32,7 +32,6 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import ContentDetection
-from bookreviver.services.books import book_pages
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -152,7 +151,7 @@ class ContentDetector:
                 return [page for page in repos.pages.list_by_ids(detection.page_ids) if self._readable(page)]
             return [
                 page
-                for page in book_pages(repos.pages)
+                for page in repos.pages.list_all()
                 if self._readable(page) and page.content_type is None and page.kind in self.KINDS
             ]
 

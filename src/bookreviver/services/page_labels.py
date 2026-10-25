@@ -21,7 +21,6 @@ from attrs import evolve
 
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.pagination import Pagination
-from bookreviver.services.books import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -58,7 +57,7 @@ class PageLabels:
             repos.pages.update_many([evolve(page, manual_label=None, updated_at=moment) for page in pinned])
         if not (sections := repos.pagination_sections.list_all()):
             return
-        pages = book_pages(repos.pages)
+        pages = repos.pages.list_all()
         sections = self._hand_over(repos, sections, pages, set(leaving))
         try:
             Pagination(sections, [page for page in pages if page.id not in leaving]).labels()
@@ -80,7 +79,7 @@ class PageLabels:
         :rtype: Numbering
         """
         sections = repos.pagination_sections.list_all()
-        return Pagination(sections, book_pages(repos.pages) if sections else pages).numbering()
+        return Pagination(sections, repos.pages.list_all() if sections else pages).numbering()
 
     def _hand_over(
         self,

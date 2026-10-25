@@ -924,10 +924,11 @@ class TestPageRepository:
     async def test_pages_list_in_the_byte_order_of_their_keys(
         self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
-        """Verify pages list by order key compared byte by byte, sliced, with every page of the book in the total.
+        """Verify pages list by order key compared byte by byte, sliced or whole, with every page of the book in the total.
 
         Upper-case letters sort before lower-case ones, and two keys differing only in case are two positions, which
-        a case-insensitive collation would get wrong.
+        a case-insensitive collation would get wrong. ``list_all`` gives the whole book in the same order, a page kept
+        out of the book included.
 
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
@@ -937,10 +938,12 @@ class TestPageRepository:
         :type fx_databases: BookDatabasesFactory
         """
         pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
+        pages[0] = evolve(pages[0], included=False)
         book_id = await store_book(
             fx_catalogue(), make_record(), *pages, owner=await fx_new_owner(), databases=fx_databases()
         )
         everything = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_window(SliceRequest()))
+        whole = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_all())
         window = (
             await fx_databases()
             .open(book_id)
@@ -954,6 +957,7 @@ class TestPageRepository:
             )
         )
         expect([page.order_key for page in everything.items] == [KEY_ZZ, KEY_A0, KEY_A0_UPPER, KEY_A0_LOWER, KEY_A1])
+        expect(list(whole) == list(everything.items))
         expect([page.order_key for page in window.items] == [KEY_A0, KEY_A0_UPPER])
         expect((window.total, list(beyond.items), beyond.total) == (len(UNORDERED_KEYS), [], len(UNORDERED_KEYS)))
         assert_expectations()

@@ -377,6 +377,14 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
+    def list_all(self) -> Sequence[Page]:
+        """Return every page of a book in book order, the placeholders and the pages kept out of the book included.
+
+        :returns: The pages of the book.
+        :rtype: Sequence[Page]
+        """
+
+    @abstractmethod
     def list_by_ids(self, page_ids: Collection[PageId]) -> Sequence[Page]:
         """Return the given pages of a book in book order.
 

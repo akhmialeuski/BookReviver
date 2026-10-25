@@ -30,7 +30,6 @@ from bookreviver.domain.ids import ChangeBatchId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.version_chains import StepVersions, step_places
-from bookreviver.services.books import book_pages
 from bookreviver.services.processing_parts import BOOK_BUSY
 
 if TYPE_CHECKING:
@@ -374,7 +373,7 @@ class PageHistoryService:
             if target.scope is not ValueScope.PAGES:
                 parts.setdefault(StepValuesKey(target.step_id, target.scope, target.group_label), []).append(target)
         undone: list[PageHistoryEntry] = []
-        book = book_pages(repos.pages) if parts else []
+        book = repos.pages.list_all() if parts else []
         for key, changes in parts.items():
             stored = repos.step_values.find(key)
             current = {} if stored is None else dict(stored.params)

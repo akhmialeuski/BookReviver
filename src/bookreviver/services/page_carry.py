@@ -23,7 +23,6 @@ from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import CarryScope, ChangeSource, PageOrigin, StepLayer
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.history import CarryOver
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
 from bookreviver.services.recipes import find_step
 
@@ -153,7 +152,7 @@ class CarryOverService:
                 raise InvalidParametersError(SELECTED_NEEDS_PAGES)
             candidates = repos.pages.list_by_ids(request.page_ids)
         else:
-            book = book_pages(repos.pages)
+            book = repos.pages.list_all()
             if request.scope is CarryScope.FOLLOWING:
                 book = book[next((index for index, page in enumerate(book) if page.id == key.page_id), -1) + 1 :]
             candidates = [page for page in book if not page.is_leaf and page.recipe_kind is source.recipe_kind]

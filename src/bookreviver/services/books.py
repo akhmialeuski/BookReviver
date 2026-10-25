@@ -2,10 +2,9 @@
 
 What reads or changes one open book, such as its description or its archive, is a method of ``Book``.
 A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
-book of the signed-in account, and they choose the books of a list. ``book_pages`` is a synchronous function over
-repositories: the work of ``Book.read`` or ``Book.change`` calls it with the repositories it receives, and a caller
-outside a transaction wraps the call in ``Book.read``. A book knows no identifier, so ``create`` and ``import_archive``
-return the identifier they gave the new book, and ``delete`` takes the library entry the caller has read.
+book of the signed-in account, and they choose the books of a list. A book knows no identifier, so ``create`` and
+``import_archive`` return the identifier they gave the new book, and ``delete`` takes the library entry the caller has
+read.
 
 A new book makes itself, with ``Book.create``, and an imported book unpacks itself from its archive, with
 ``Book.unpack``. Either way its library entry comes last, so a creation broken off half way leaves a directory nobody
@@ -23,7 +22,6 @@ from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
@@ -31,29 +29,10 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.ids import StorageKey
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import CatalogueDatabase, PageRepository
-
-# How many pages are read from the book at a time, when a use case needs all of them
-PAGE_WINDOW: int = 1_000
-
-
-def book_pages(pages: PageRepository) -> list[Page]:
-    """Read every page of the book in book order, window by window, which a transaction of the book calls.
-
-    :param pages: Repository of the transaction to read the pages from.
-    :type pages: PageRepository
-    :returns: The pages of the book, the placeholders and the pages kept out of the book included.
-    :rtype: list[Page]
-    """
-    book: list[Page] = []
-    while True:
-        window = pages.list_window(SliceRequest(offset=len(book), limit=PAGE_WINDOW))
-        book.extend(window.items)
-        if len(book) >= window.total or not window.items:
-            return book
+    from bookreviver.ports.persistence import CatalogueDatabase
 
 
 class BooksService:

@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState, VersionState
 from bookreviver.domain.values import RunImpact
 from bookreviver.services.book_measure import leaves_to_the_book
-from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
@@ -155,7 +154,7 @@ class RunPlan:
                 :raises NotFoundError: If a page the run names is not one of the book.
                 """
                 if self._run.page_ids is None:
-                    return book_pages(repos.pages)
+                    return list(repos.pages.list_all())
                 return list(repos.pages.list_by_ids(self._run.page_ids))
 
             found = await self._book.read(work)

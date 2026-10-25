@@ -30,7 +30,6 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import JobEnd, NewPage, PageAnchor, PageSize, Renditions
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book import Book
-from bookreviver.services.books import book_pages
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
 from tests.helpers.acting_renditions import ActingRenditionWriter
 from tests.helpers.book_hold import hold_book_in_thread
@@ -273,7 +272,7 @@ async def _stored_pages(*books: BookId, databases: LocatedBookDatabases) -> list
         :returns: Its pages.
         :rtype: list[Page]
         """
-        return await databases.open(book_id).read(lambda repos: book_pages(repos.pages))
+        return await databases.open(book_id).read(lambda repos: list(repos.pages.list_all()))
 
     return [page for book_id in books for page in await pages_of(book_id)]
 

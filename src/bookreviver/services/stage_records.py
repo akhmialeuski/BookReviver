@@ -23,7 +23,6 @@ from bookreviver.domain.entities import PageStage
 from bookreviver.domain.enums import Stage, StageState, ValueScope
 from bookreviver.domain.step_values import SIDE_SCOPES, pages_changing_side
 from bookreviver.domain.values import PageStageKey
-from bookreviver.services.books import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable
@@ -314,4 +313,4 @@ class SideWatch:
         :returns: The identifiers of the pages, by place.
         :rtype: list[PageId]
         """
-        return [page.id for page in book_pages(self._repos.pages)]
+        return [page.id for page in self._repos.pages.list_all()]
