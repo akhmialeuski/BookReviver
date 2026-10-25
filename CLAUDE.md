@@ -76,7 +76,10 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - Everything on the event loop is async: the API and the ports of files, jobs, events and HTTP. The persistence
   repositories are synchronous and run only inside the work a service or an access dependency hands to
   `CatalogueDatabase.read` or `change` of the catalogue, or `Book.read` or `change` of one book, which the adapter runs
-  in a worker thread as one transaction of that file. Other blocking library calls go through
+  in a worker thread as one transaction of that file. A change of the catalogue waits for its writer for the short
+  limit of a request or the long one of a job (`change_wait`), while a change of a book always waits for the long one,
+  because a book opens its database through the registration `app` makes once, which knows no scope of a request.
+  Other blocking library calls go through
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.
