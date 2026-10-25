@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import (
     AccessTokenDatabase,
@@ -314,6 +315,33 @@ class TestAccountDatabase:
         """
         looked_up = await fx_users.get_by_email(spelling)
         assert (looked_up is not None and looked_up.id == fx_user.id) if is_matched else looked_up is None
+
+    @pytest.mark.parametrize('spelling', [EMAIL.lower(), EMAIL.upper()], ids=['lower-case', 'upper-case'])
+    async def test_create_refuses_an_address_that_differs_only_in_case(
+        self,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        spelling: str,
+    ) -> None:
+        """Verify the catalogue refuses a second user whose address differs from a stored one only in case.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user, registered as ``Reader@Example.org``.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param spelling: The address of the second user.
+        :type spelling: str
+        """
+        with pytest.raises(IntegrityError):
+            await fx_users.create({**NEW_USER, 'email': spelling})
+
+        stored = await _committed_user(fx_counting_catalogue, fx_user.id)
+        expect(stored is not None and stored.email == EMAIL)
+        expect(await fx_users.get_by_email(spelling) is not None)
+        assert_expectations()
 
     @pytest.mark.parametrize(
         ('provider', 'account', 'is_linked'),

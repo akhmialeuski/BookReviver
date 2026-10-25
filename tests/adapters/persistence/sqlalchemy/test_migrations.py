@@ -24,6 +24,7 @@ from sqlalchemy import func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
@@ -113,6 +114,12 @@ SUPERUSER_COLUMN: str = 'is_superuser'
 # The revision before the tokens of the provider accounts were dropped, and the one that drops them
 BEFORE_TOKENS: str = SUPERUSER_REVISION
 TOKENS_REVISION: str = 'df4b7a534833'
+# The revision before the unique index of the addresses ignored their case, and the one that makes it so
+BEFORE_ADDRESS_INDEX: str = TOKENS_REVISION
+ADDRESS_INDEX_REVISION: str = '7306aaee3202'
+# Two spellings of one address
+ADDRESS: str = 'Reader@Example.org'
+OTHER_ADDRESS: str = 'stranger@example.org'
 TOKEN_COLUMNS: set[str] = {'access_token', 'expires_at', 'refresh_token'}
 # The token a provider account holds before that revision
 PROVIDER_TOKEN: str = 'provider-access-token'
@@ -1015,6 +1022,58 @@ class TestTokensRevision:
         expect(upgraded_columns.isdisjoint(TOKEN_COLUMNS))
         expect(upgraded == [(PROVIDER, PROVIDER_ACCOUNT, PROVIDER_EMAIL)])
         expect([tuple(row) for row in tokens] == [('', None, None)])
+        assert_expectations()
+
+
+class TestAddressIndexRevision:
+    """Tests for the revision of the catalogue that makes the address of an account unique whatever its case."""
+
+    @staticmethod
+    def _add_accounts(database: SqlDatabase, *addresses: str) -> None:
+        """Store an account for each address, in a catalogue migrated to the revision before the index.
+
+        :param database: Catalogue migrated to the revision before the index.
+        :type database: SqlDatabase
+        :param addresses: Addresses of the accounts, which the earlier index compares as typed.
+        :type addresses: str
+        """
+        with _session(database) as session, session.begin():
+            session.add_all(AccountTable(email=address, hashed_password='') for address in addresses)
+
+    async def test_two_addresses_that_differ_only_in_case_stop_the_revision(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify accounts holding one address in two cases stop the revision before it changes the index.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_ADDRESS_INDEX)
+        self._add_accounts(fx_empty_catalogue, ADDRESS, ADDRESS.lower())
+
+        with pytest.raises(RuntimeError, match='differ only in case'):
+            await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, ADDRESS_INDEX_REVISION)
+
+        assert await fx_empty_catalogue.current_revisions() == (BEFORE_ADDRESS_INDEX,)
+
+    async def test_distinct_addresses_keep_their_rows_and_the_index_ignores_case(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the revision runs on distinct addresses, keeps them as typed and then refuses a case variant.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_ADDRESS_INDEX)
+        self._add_accounts(fx_empty_catalogue, ADDRESS, OTHER_ADDRESS)
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, ADDRESS_INDEX_REVISION)
+
+        with _session(fx_empty_catalogue) as session:
+            kept = set(session.scalars(text('SELECT email FROM user')))
+        with pytest.raises(IntegrityError, match='UNIQUE constraint failed'):
+            self._add_accounts(fx_empty_catalogue, ADDRESS.upper())
+        expect(kept == {ADDRESS, OTHER_ADDRESS})
         assert_expectations()
 
 

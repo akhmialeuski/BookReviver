@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 from advanced_alchemy.base import DefaultBase
 from fastapi_users.authentication.strategy.db import AccessTokenDatabase as AccessTokenDatabaseProtocol
 from fastapi_users.db import BaseUserDatabase
-from sqlalchemy import ForeignKey, String, UniqueConstraint, func, select
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, select, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 # The column the keys of the other account tables refer to
 USER_TABLE: str = 'user'
 USER_ID: str = f'{USER_TABLE}.id'
+EMAIL_INDEX: str = 'ix_user_email'
 # ORM cascade of a user to its linked provider accounts; the deletion itself is left to the database
 LINKED_ACCOUNT_CASCADE: str = 'all, delete'
 
@@ -75,6 +76,9 @@ class AccountTable(DefaultBase):
     """A user who signs in with a password or a social provider."""
 
     __tablename__ = USER_TABLE
+    # An address is taken whatever its case, as ``AccountDatabase.get_by_email`` reads it, and the address is stored as
+    # typed, so the key is the lower-cased one, which the search by it uses too
+    __table_args__ = (Index(EMAIL_INDEX, text('lower(email)'), unique=True),)
 
     # The type checkers read the plain annotations, which are what the ``UserOAuthProtocol`` of fastapi-users asks
     # for, because a ``Mapped`` attribute is a descriptor to them
@@ -88,7 +92,7 @@ class AccountTable(DefaultBase):
         oauth_accounts: list[OAuthAccountTable]
     else:
         id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-        email: Mapped[str] = mapped_column(String(length=320), unique=True, index=True)
+        email: Mapped[str] = mapped_column(String(length=320))
         hashed_password: Mapped[str] = mapped_column(String(length=1024))
         is_active: Mapped[bool] = mapped_column(default=True)
         # fastapi-users reads the flag, and the application has no superuser, so it is no column and never set
