@@ -14,9 +14,10 @@ from bookreviver.adapters.imaging.pdf_labels import (
     read_label_rules,
 )
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.domain.enums import LabelStyle, PageKind, SourceKind
-from bookreviver.domain.page_label_rules import BookLabeling, PageLabelRule
+from bookreviver.domain.page_label_rules import BookLabeling, LabelStyle, PageLabelRule
+from bookreviver.domain.pages import PageKind
 from bookreviver.domain.pagination import Pagination
+from bookreviver.domain.sources import SourceKind
 from tests.adapters.imaging.samples import (
     ROMAN_THEN_ARABIC_RULES,
     PdfPage,

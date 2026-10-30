@@ -2,8 +2,9 @@
 
 import pytest
 
-from bookreviver.domain.enums import RunMode, Stage
-from bookreviver.domain.values import THROUGH_STEP_KEY, RunImpact, StageRun
+from bookreviver.domain.jobs import THROUGH_STEP_KEY, StageRun
+from bookreviver.domain.runs import RunImpact, RunMode
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import new_book_id
 
 BOOK_ID = new_book_id()

@@ -12,10 +12,11 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import Stage
 from bookreviver.domain.geometry import Point, Rotation
+from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import NewPageEdit, StageRun
+from bookreviver.domain.page_steps import NewPageEdit
+from bookreviver.domain.stages import Stage
 from tests.helpers.samples import find_mark, mark, png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -28,8 +29,10 @@ from tests.helpers.spreads import (
 )
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page, PageVersion
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 

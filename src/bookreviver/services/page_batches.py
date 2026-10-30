@@ -13,19 +13,19 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.entities import PageHistoryEntry
-from bookreviver.domain.enums import StepLayer
+from bookreviver.domain.history import PageHistoryEntry
 from bookreviver.domain.ids import ChangeBatchId
+from bookreviver.domain.page_steps import StepLayer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import PageStepState
-    from bookreviver.domain.enums import ChangeSource
+    from bookreviver.domain.history import ChangeSource
     from bookreviver.domain.ids import PageId
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.page_steps import PageStepState
     from bookreviver.domain.step_values import StepValues
-    from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import BookRepositories
 
 

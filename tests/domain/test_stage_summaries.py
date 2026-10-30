@@ -8,28 +8,26 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Recipe
-from bookreviver.domain.enums import (
+from bookreviver.domain.ids import BookId, PageId, RecipeId
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import Recipe, Step
+from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepRow, StepTally
+from bookreviver.domain.stages import (
     FigureState,
     PageStageStatus,
-    RecipeKind,
-    ResultMark,
     ReviewReason,
     Stage,
     StageState,
     StageStatus,
     StepFlag,
-    StepMeasure,
-    VersionData,
 )
-from bookreviver.domain.ids import BookId, PageId, RecipeId
-from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepRow, StepTally
-from bookreviver.domain.values import ProcessorRef, Step
+from bookreviver.domain.step_measures import StepMeasure
+from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionData
 from tests.helpers.builders import make_page_version
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageVersion
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.versions import PageVersion
 
 BOOK_ID: BookId = BookId(uuid4())
 PAGES: int = 5

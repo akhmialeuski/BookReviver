@@ -9,9 +9,8 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.values import RenditionInfo
+from bookreviver.domain.images import Rendition, RenditionInfo
 from bookreviver.ports.imaging import RenditionWriter
 from bookreviver.ports.processing import ProcessorCatalog
 
@@ -19,8 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import ColorMode
-    from bookreviver.domain.values import ProcessorSpec
+    from bookreviver.domain.images import ColorMode
+    from bookreviver.domain.processors import ProcessorSpec
     from bookreviver.ports.processing import Processor
 
 # What the fake writer says every image measures, and what it writes as the smaller files

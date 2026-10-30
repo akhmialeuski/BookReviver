@@ -2,20 +2,12 @@
 
 import pytest
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    ContributorRole,
-    FileType,
-    ImagePolicy,
-    JobState,
-    PageSide,
-    Rendition,
-    RightsStatus,
-    Script,
-    SourceKind,
-    Stage,
-    SystemFile,
-)
+from bookreviver.domain.books import ContributorRole, RightsStatus, Script
+from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
+from bookreviver.domain.jobs import JobState
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.sources import FileType, SourceKind, SystemFile
+from bookreviver.domain.stages import Stage
 
 # Written out rather than taken from the enum, so the test pins the value stored and sent over the API
 PAGE_SPLIT_VALUE: str = 'page-split'

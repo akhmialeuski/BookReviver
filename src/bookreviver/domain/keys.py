@@ -19,13 +19,14 @@ accepted by ``BookKeys.is_asset`` climbs out of its book.
 
 from typing import TYPE_CHECKING, ClassVar
 
-from bookreviver.domain.enums import LabeledStrEnum
 from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.labels import LabeledStrEnum
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageVersion, Scan
-    from bookreviver.domain.enums import Rendition
     from bookreviver.domain.ids import JobId, PageId, SourceId, StepId
+    from bookreviver.domain.images import Rendition
+    from bookreviver.domain.sources import Scan
+    from bookreviver.domain.versions import PageVersion
 
 
 class KeySegment(LabeledStrEnum):

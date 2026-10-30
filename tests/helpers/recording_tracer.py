@@ -10,13 +10,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.enums import SpanParent
+from bookreviver.domain.spans import SpanParent
 from bookreviver.ports.tracing import StartedSpan, Tracer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from bookreviver.domain.enums import SpanAttribute, SpanName
+    from bookreviver.domain.spans import SpanAttribute, SpanName
     from bookreviver.ports.tracing import AttributeValue, Span, SpanAttributes
 
 # The span a ``span`` block of any recording tracer is inside of; a tracer ignores one that another tracer opened

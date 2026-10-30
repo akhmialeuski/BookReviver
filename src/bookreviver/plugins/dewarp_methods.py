@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from bookreviver.domain.enums import ReviewReason
 from bookreviver.domain.geometry import Mesh, Point
+from bookreviver.domain.stages import ReviewReason
 from bookreviver.plugins.cv_image import COLOR_PLANES, MIN_TONE_CONTRAST, OtsuSplit, sheet_of
 from bookreviver.plugins.mesh_warp import CURVE_DEGREE, Flattening, FlatteningField, Unfound
 from bookreviver.plugins.text_lines import BAND_WIDTH_PX, MIN_BANDS, SEARCH_WIDTH_PX, LineSample, TextLineSearch

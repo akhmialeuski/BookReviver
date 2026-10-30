@@ -20,8 +20,8 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
-from bookreviver.domain.enums import ImagePolicy
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
+from bookreviver.domain.images import ImagePolicy
 from bookreviver.ports.storage import BookDirectory
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import directory_of, make_page, make_record, new_book_id
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import Book
     from tests.helpers.database import BookDatabasesFactory

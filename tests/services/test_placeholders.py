@@ -10,24 +10,17 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.domain.enums import (
-    BookResource,
-    JobKind,
-    JobState,
-    NewPageOrigin,
-    PageKind,
-    PageOrigin,
-    Rendition,
-    Side,
-    Stage,
-    VersionData,
-    VersionState,
-)
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.errors import ConflictError, NotAPlaceholderError, NotFoundError, ScanAlreadyInBookError
 from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.ids import PageId
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import JobEnd, NewPage, PageAnchor, PageSize, Renditions
+from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKind, PageOrigin
+from bookreviver.domain.sides import Side
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import PageSize, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book import Book
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
@@ -47,10 +40,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageOverview, PageVersion, Scan, Source
-    from bookreviver.domain.enums import ColorMode
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
-    from bookreviver.domain.values import RenditionInfo
+    from bookreviver.domain.images import ColorMode, RenditionInfo
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page, PageOverview
+    from bookreviver.domain.sources import Scan, Source
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService

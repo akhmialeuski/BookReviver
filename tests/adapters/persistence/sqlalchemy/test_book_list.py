@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.book import Book
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import make_job, make_page, make_page_stage, make_record
@@ -22,7 +22,7 @@ from tests.helpers.seeding import store_book
 from tests.helpers.statements import STATEMENT_EVENT, StatementCounter
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, PageId
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.builders import BookOpener

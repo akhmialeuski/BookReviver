@@ -29,18 +29,17 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import JobCancelledError, JobFinishedError, NotFoundError
 from bookreviver.domain.events import JobChanged
-from bookreviver.domain.values import JobEnd, Progress
+from bookreviver.domain.jobs import JobEnd, JobState, Progress
 from bookreviver.ports.runtime import BookEvents, BookJobs, JobControl
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Sequence
     from types import TracebackType
 
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName, JobId
+    from bookreviver.domain.jobs import Job
 
 # What the application supplies to run a job: it takes the name of the directory of the book whose queue the job was
 # taken from, does the tasks of the job, reports through the control after each, and returns how the job ended, or lets

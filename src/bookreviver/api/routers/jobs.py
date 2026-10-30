@@ -31,9 +31,9 @@ from bookreviver.api.schemas.jobs import (
     JobSchema,
     PageVersionReadySchema,
 )
-from bookreviver.domain.entities import Job
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged, PageVersionReady
 from bookreviver.domain.ids import BookId, JobId
+from bookreviver.domain.jobs import Job
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.jobs import JobService
 

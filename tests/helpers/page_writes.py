@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
     import pytest
 
-    from bookreviver.domain.entities import Page
     from bookreviver.domain.ids import PageId
+    from bookreviver.domain.pages import Page
 
 
 class PageWrites:

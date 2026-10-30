@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING, Any, override
 import pymupdf
 from anyio import to_thread
 
-from bookreviver.domain.enums import LabelStyle
-from bookreviver.domain.page_label_rules import PageLabelRule
+from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule
 from bookreviver.ports.imaging import PageLabelWriter
 
 if TYPE_CHECKING:

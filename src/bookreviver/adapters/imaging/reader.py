@@ -20,17 +20,16 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 from anyio import to_thread
 
-from bookreviver.domain.enums import FileType, SourceKind, UploadProblem
-from bookreviver.domain.errors import UploadRejectedError
-from bookreviver.domain.values import UploadedSource
+from bookreviver.domain.errors import UploadProblem, UploadRejectedError
+from bookreviver.domain.sources import FileType, SourceKind, UploadedSource
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import Rendition
-    from bookreviver.domain.values import SourceAnalysis
+    from bookreviver.domain.images import Rendition
+    from bookreviver.domain.sources import SourceAnalysis
 
 
 class SourceFormat(ABC):

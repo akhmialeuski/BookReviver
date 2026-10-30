@@ -12,18 +12,11 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import (
-    ContentSource,
-    ContentType,
-    JobKind,
-    JobState,
-    PageKind,
-    Stage,
-    StageState,
-)
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import ContentDetection, PageStageKey
+from bookreviver.domain.jobs import ContentDetection, JobKind, JobState
+from bookreviver.domain.pages import ContentSource, ContentType, PageKind
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.content_detection import ContentDetector
 from tests.helpers.builders import make_page, make_page_stage, open_for
@@ -35,8 +28,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService

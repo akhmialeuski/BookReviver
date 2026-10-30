@@ -12,18 +12,24 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import NormalizeParam, SpanName, Stage, TransformKind, VersionData
-from bookreviver.domain.geometry import ContentBox, Rect
-from bookreviver.domain.margins import NOMINAL_BLOCK_MM
-from bookreviver.domain.values import NewPageEdit, Progress, RecipeDraft, StageRun, Step
+from bookreviver.domain.geometry import ContentBox, Rect, TransformKind
+from bookreviver.domain.jobs import Progress, StageRun
+from bookreviver.domain.margins import NOMINAL_BLOCK_MM, NormalizeParam
+from bookreviver.domain.page_steps import NewPageEdit
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.spans import SpanName
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionData
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processing import stored_job
 from tests.helpers.samples import PAPER, png_bytes, text_page
 from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page, PageVersion
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 

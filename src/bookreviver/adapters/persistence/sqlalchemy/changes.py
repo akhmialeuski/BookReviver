@@ -18,7 +18,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.sql.dml import UpdateBase
 from sqlalchemy.sql.expression import TableClause
 
-from bookreviver.domain.enums import BookResource
+from bookreviver.domain.books import BookResource
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

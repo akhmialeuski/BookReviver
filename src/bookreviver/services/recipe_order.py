@@ -12,14 +12,14 @@ does not offer has no rules, and a rule that names one has nothing to compare wi
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import OrderMode, OrderRuleKind
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.values import OrderIssue
+from bookreviver.domain.processors import OrderIssue, OrderRuleKind
+from bookreviver.domain.recipes import OrderMode
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.values import Step
+    from bookreviver.domain.recipes import Step
     from bookreviver.ports.processing import ProcessorCatalog
 
 

@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import ColorMode
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Mesh, Point
+from bookreviver.domain.images import ColorMode
 from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:

@@ -24,8 +24,12 @@ from typing import TYPE_CHECKING, override
 import pyvips
 from pydantic import Field
 
-from bookreviver.domain.enums import ColorMode, PaperFill, ProcessorScope, Stage, VersionOutput
-from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, ProcessorSpec
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.sources import COLOR_MODE_KEY
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_settings import PaperFill
+from bookreviver.domain.versions import PageSize
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.ports.processing import StepOutput, StepResult
 

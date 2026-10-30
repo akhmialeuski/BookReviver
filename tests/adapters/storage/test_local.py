@@ -9,9 +9,9 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalAssetStore, LocalBookDirectory, local
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write, upload

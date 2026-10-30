@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 
-from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.events import JobChanged
+from bookreviver.domain.sources import SourceStatus
 from tests.helpers.fakes_jobs import RecordingEventBus
 
 if TYPE_CHECKING:

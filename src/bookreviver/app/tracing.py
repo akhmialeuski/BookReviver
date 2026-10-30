@@ -17,7 +17,7 @@ import anyio
 
 from bookreviver.app.security import RESPONSE_START
 from bookreviver.app.trace_report import MILLISECONDS_PER_SECOND
-from bookreviver.domain.enums import SpanAttribute, SpanName, SpanParent
+from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent
 from bookreviver.ports.tracing import Tracer
 
 if TYPE_CHECKING:

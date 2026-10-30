@@ -15,15 +15,35 @@ from typing import TYPE_CHECKING, Any
 
 from attrs import field, frozen
 
-from bookreviver.domain.enums import ValueScope
+from bookreviver.domain.labels import LabeledStrEnum
+
+
+class ValueScope(LabeledStrEnum):
+    """The part of the pages a value of a setting of a step is for, from the strongest to the weakest part.
+
+    A value for pages names them one by one: the open page, or the pages the user selected. The odd pages and the even
+    pages are told apart by the place of the page in the book, an odd place being a right page, and a group is the pages
+    that carry one label of ``Page.group_label``. What the recipe holds is the value of every other page.
+    """
+
+    PAGES = 'pages', 'Pages'
+    GROUP = 'group', 'Group'
+    ODD = 'odd', 'Odd pages'
+    EVEN = 'even', 'Even pages'
+
+    @property
+    def is_part(self) -> bool:
+        """Whether the scope is a part of the pages the program tells apart, which is stored once for all of them."""
+        return self is not ValueScope.PAGES
+
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, StepId
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.stages import Stage
 
 NO_PAGES_NAMED: str = 'A value for pages names at least one page.'
 PAGES_UNEXPECTED: str = 'A value for {scope} names no pages.'

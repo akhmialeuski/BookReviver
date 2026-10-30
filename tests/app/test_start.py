@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.storage import SourceStore
     from tests.helpers.builders import BookOpener

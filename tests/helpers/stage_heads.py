@@ -4,14 +4,16 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import StageState, VersionState
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.stages import StageState
+from bookreviver.domain.versions import VersionState
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import PageStageKey
+    from bookreviver.domain.stages import PageStageKey
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import LocatedBookDatabases
 

@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from contextlib import AbstractAsyncContextManager
 
-    from bookreviver.domain.entities import Job
+    from bookreviver.domain.accounts import MailMessage
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId
-    from bookreviver.domain.values import MailMessage
+    from bookreviver.domain.jobs import Job
 
 
 class JobControl(ABC):

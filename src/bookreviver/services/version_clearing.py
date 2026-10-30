@@ -16,14 +16,15 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import VersionData, VersionState
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.versions import VersionData, VersionState
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from bookreviver.domain.entities import BookRecord, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageVersionId
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 

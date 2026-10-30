@@ -17,10 +17,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.library import LibraryEntry
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookDetails
     from bookreviver.domain.ids import StorageKey
-    from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import CatalogueDatabase
 
 

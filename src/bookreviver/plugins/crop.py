@@ -34,20 +34,14 @@ import numpy as np
 from attrs import frozen
 from pydantic import Field, model_validator
 
-from bookreviver.domain.enums import (
-    Binarization,
-    CropMethod,
-    ProcessorScope,
-    ReviewReason,
-    SheetEdge,
-    Stage,
-    StepMeasure,
-    VersionData,
-    VersionOutput,
-)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.sides import SheetEdge
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_measures import StepMeasure
+from bookreviver.domain.step_settings import Binarization, CropMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
@@ -69,7 +63,7 @@ from bookreviver.ports.processing import StepOutput, StepResult
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.plugins.cv_image import Indices, Samples
     from bookreviver.ports.processing import StepInput
 

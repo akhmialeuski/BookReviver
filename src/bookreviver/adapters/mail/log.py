@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 from bookreviver.ports.runtime import Mailer
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import MailMessage
+    from bookreviver.domain.accounts import MailMessage
 
 logger = logging.getLogger(__name__)
 

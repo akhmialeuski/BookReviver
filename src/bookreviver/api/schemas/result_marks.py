@@ -2,8 +2,7 @@
 
 from bookreviver.api.schemas.base import RequestModel
 from bookreviver.api.schemas.types import LongText
-from bookreviver.domain.enums import ResultMark
-from bookreviver.domain.values import ResultNote
+from bookreviver.domain.versions import ResultMark, ResultNote
 
 
 class ResultMarkForm(RequestModel):

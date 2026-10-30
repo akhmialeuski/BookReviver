@@ -7,9 +7,11 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.domain.enums import BookResource, Side
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError, NotFoundError
-from bookreviver.domain.values import PageAnchor, SliceRequest
+from bookreviver.domain.pages import PageAnchor
+from bookreviver.domain.sides import Side
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.ports.ordering import OrderKeys
 from tests.helpers.builders import (
     make_page,
@@ -25,8 +27,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Page, Source
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Source
     from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener

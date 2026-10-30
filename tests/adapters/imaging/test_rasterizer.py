@@ -11,8 +11,9 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from PIL import ExifTags, Image, ImageChops, ImageCms, TiffImagePlugin
 
-from bookreviver.domain.enums import Rendition, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.sources import SourceKind
 from tests.adapters.imaging.samples import (
     PdfPage,
     ScanImage,

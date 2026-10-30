@@ -4,9 +4,8 @@ from typing import NamedTuple
 
 import pytest
 
-from bookreviver.domain.enums import IdentifierScheme
+from bookreviver.domain.books import BookIdentifier, IdentifierScheme
 from bookreviver.domain.errors import DomainError, InvalidIdentifierError
-from bookreviver.domain.values import BookIdentifier
 
 ISBN_10: str = '0306406152'
 ISBN_13: str = '9780306406157'

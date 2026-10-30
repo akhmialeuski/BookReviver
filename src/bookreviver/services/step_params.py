@@ -16,10 +16,10 @@ from bookreviver.domain.step_values import StepValueLayers
 if TYPE_CHECKING:
     from typing import Any
 
-    from bookreviver.domain.entities import Page
     from bookreviver.domain.ids import StepId
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.pages import Page
     from bookreviver.domain.step_values import StepValues
-    from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import BookRepositories
 
 

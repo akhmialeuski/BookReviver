@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, override
 
 import numpy as np
 
-from bookreviver.domain.enums import VersionData
 from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import ModelProcessor
 from bookreviver.plugins.cv_image import (
     BLACK,

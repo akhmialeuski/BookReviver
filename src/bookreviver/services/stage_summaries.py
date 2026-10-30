@@ -16,20 +16,22 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import PageStageStatus, Stage
+from bookreviver.domain.slices import Slice
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary
-from bookreviver.domain.values import Slice
+from bookreviver.domain.stages import PageStageStatus, Stage
 from bookreviver.services.stage_inputs import StageInputs
 from bookreviver.services.step_rows import StepRows
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import BookOverview, PageVersion, Recipe
-    from bookreviver.domain.enums import RecipeKind
     from bookreviver.domain.ids import PageVersionId, StepId
+    from bookreviver.domain.library import BookOverview
+    from bookreviver.domain.pages import RecipeKind
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.stage_summaries import StageTally, StepTally
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book

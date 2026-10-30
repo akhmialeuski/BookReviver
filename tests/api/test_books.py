@@ -13,8 +13,9 @@ from fastapi_pagination import Page
 
 from bookreviver.api.schemas.books import BookCreate, BookDetailsSchema, BookSchema, BookUpdate
 from bookreviver.api.schemas.types import CONTRIBUTORS_MAX_LENGTH, HEIGHT_CM_MAX, TITLE_MAX_LENGTH
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography, PageKind
-from bookreviver.domain.values import BookDetails, Contributor
+from bookreviver.domain.books import BookDetails, Contributor, ContributorRole, IdentifierScheme, Orthography
+from bookreviver.domain.images import ImagePolicy
+from bookreviver.domain.pages import PageKind
 from tests.conftest import TEST_BASE_URL
 from tests.helpers.builders import (
     FULL_DETAILS,
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.storage import BookFiles
 

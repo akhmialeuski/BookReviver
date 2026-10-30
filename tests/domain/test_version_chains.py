@@ -6,14 +6,15 @@ from uuid import uuid4
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, PageVersionId, StepId
-from bookreviver.domain.values import ProcessorRef, Step
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.stages import Stage
 from bookreviver.domain.version_chains import StepVersions, readers_first, stage_depths, step_places, versions_of_step
+from bookreviver.domain.versions import ProcessorRef
 from tests.helpers.builders import make_page_version, make_recipe
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageVersion
+    from bookreviver.domain.versions import PageVersion
 
 DESKEW_KEY: str = 'geometry.deskew'
 CROP_KEY: str = 'geometry.crop'

@@ -9,7 +9,9 @@ from fastapi import status
 
 from bookreviver.api.schemas.processing import ProcessorSchema, RecipeSchema
 from bookreviver.api.schemas.profiles import AppliedProfileSchema
-from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.processors import OrderRuleKind
+from bookreviver.domain.recipes import OrderMode
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.recipes import DefaultRecipes
@@ -36,7 +38,7 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 

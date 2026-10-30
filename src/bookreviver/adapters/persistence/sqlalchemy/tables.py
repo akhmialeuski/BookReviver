@@ -37,40 +37,20 @@ from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, UniqueC
 from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE, SET_NULL, enum_by_value
-from bookreviver.domain.enums import (
-    BlankFill,
-    ChangeSource,
-    ColorMode,
-    CompareMode,
-    ContentType,
-    EditorKind,
-    FileType,
-    ImagePolicy,
-    LabelStyle,
-    NumberDisplay,
-    OrderMode,
-    Orthography,
-    PageFilter,
-    PageKind,
-    PageOrigin,
-    PlaceMode,
-    RecipeKind,
-    RejectionReason,
-    Rendition,
-    ResultMark,
-    ReviewReason,
-    RightsStatus,
-    Script,
-    SourceKind,
-    SourceStatus,
-    Stage,
-    StageState,
-    StepLayer,
-    ValueScope,
-    VersionScale,
-    VersionState,
-    ViewMode,
-)
+from bookreviver.domain.books import Orthography, RightsStatus, Script
+from bookreviver.domain.geometry import EditorKind
+from bookreviver.domain.history import ChangeSource
+from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.page_steps import StepLayer
+from bookreviver.domain.pages import BlankFill, ContentType, PageFilter, PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.pagination import NumberDisplay
+from bookreviver.domain.places import CompareMode, PlaceMode, ViewMode
+from bookreviver.domain.recipes import OrderMode
+from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
+from bookreviver.domain.stages import ReviewReason, Stage, StageState
+from bookreviver.domain.step_values import ValueScope
+from bookreviver.domain.versions import ResultMark, VersionScale, VersionState
 
 # Format of the ``full`` image of the scans stored before the format was recorded, which were all JPEG
 LEGACY_FULL_FORMAT: Final = Rendition.FULL_JPEG.value

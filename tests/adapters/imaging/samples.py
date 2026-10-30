@@ -23,7 +23,7 @@ from attrs import field, frozen
 from PIL import Image, ImageOps, TiffImagePlugin
 
 from bookreviver.adapters.imaging import DjvuLibreTools
-from bookreviver.domain.enums import ColorMode
+from bookreviver.domain.images import ColorMode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

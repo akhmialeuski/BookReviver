@@ -10,8 +10,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from bookreviver.domain.enums import ColorMode, Rendition
-    from bookreviver.domain.values import RenditionInfo
+    from bookreviver.domain.images import ColorMode, Rendition, RenditionInfo
 
 PAGES_DIRECTORY: str = 'pages'
 

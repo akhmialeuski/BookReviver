@@ -11,16 +11,17 @@ from sqlalchemy import func, select
 from bookreviver.adapters.persistence.sqlalchemy.mappers import BookRecordMapper
 from bookreviver.adapters.persistence.sqlalchemy.rows import BookRecordRows
 from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORD_ID, PageRow, ScanRow, SourceRow
-from bookreviver.domain.entities import BookOverview
-from bookreviver.domain.enums import PageKind, PageOrigin, SourceStatus
 from bookreviver.domain.ids import PageId
+from bookreviver.domain.library import BookOverview
+from bookreviver.domain.pages import PageKind, PageOrigin
+from bookreviver.domain.sources import SourceStatus
 from bookreviver.ports.persistence import BookRecordRepository
 
 if TYPE_CHECKING:
     from sqlalchemy import ScalarSelect
     from sqlalchemy.orm import Session
 
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
 
 
 class SqlAlchemyBookRecordRepository(BookRecordRepository):

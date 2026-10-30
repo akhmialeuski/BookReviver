@@ -38,9 +38,9 @@ from sqlalchemy.exc import DatabaseError
 from bookreviver.adapters.persistence.sqlalchemy.changes import WrittenParts
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow
-from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
 from bookreviver.domain.events import BookChanged
+from bookreviver.domain.spans import BlockKind
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import BookEvents
 
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName
     from bookreviver.ports.persistence import BookRepositories
 

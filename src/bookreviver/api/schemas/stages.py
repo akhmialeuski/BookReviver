@@ -11,16 +11,9 @@ from typing import TYPE_CHECKING, Self
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.processing import PageVersionSchema
-from bookreviver.domain.enums import (
-    FigureState,
-    PageStageStatus,
-    RecipeKind,
-    ReviewReason,
-    Stage,
-    StageStatus,
-    StepFlag,
-)
 from bookreviver.domain.ids import PageId, RecipeId, StepId
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.stages import FigureState, PageStageStatus, ReviewReason, Stage, StageStatus, StepFlag
 
 if TYPE_CHECKING:
     from starlette.requests import Request

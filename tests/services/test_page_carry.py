@@ -7,27 +7,23 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import (
-    CarryScope,
-    ChangeSource,
-    EditorKind,
-    PageKind,
-    Stage,
-    StageState,
-    StepLayer,
-)
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
-from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.geometry import EditorKind, Rotation
+from bookreviver.domain.history import ChangeSource
 from bookreviver.domain.ids import StepId
-from bookreviver.domain.values import CarryRequest, NewPageEdit, StageRun
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.page_steps import CarryRequest, CarryScope, NewPageEdit, StepLayer
+from bookreviver.domain.pages import PageKind
+from bookreviver.domain.stages import Stage, StageState
 from tests.helpers.page_batches import PageValues, carry_over
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage, stage_of
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import PageStepKey
+    from bookreviver.domain.page_steps import PageStepKey
+    from bookreviver.domain.pages import Page
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit

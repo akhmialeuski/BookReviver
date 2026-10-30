@@ -5,14 +5,16 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import OrderMode, ProfileDraft, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_profiles import COPY_NAME
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import RecipeProfile
+    from bookreviver.domain.recipes import RecipeProfile
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit

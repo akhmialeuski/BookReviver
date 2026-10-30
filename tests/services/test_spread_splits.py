@@ -14,14 +14,19 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.entities import Page
-from bookreviver.domain.enums import JobState, Stage, StageState, ValueScope, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId
+from bookreviver.domain.jobs import JobState, StageRun, StepPreview
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import NewPageEdit, PageStageKey, SliceRequest, StageRun, Step, StepPreview
+from bookreviver.domain.page_steps import NewPageEdit
+from bookreviver.domain.pages import Page
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.step_values import ValueScope
+from bookreviver.domain.versions import VersionState
 from tests.helpers.builders import make_page_stage, make_step_values, open_for
 from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.processing import stored_job
@@ -41,9 +46,12 @@ from tests.helpers.spreads import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, BookRecord, PageStage, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import Slice
+    from bookreviver.domain.slices import Slice
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

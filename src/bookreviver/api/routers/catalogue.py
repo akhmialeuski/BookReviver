@@ -13,7 +13,8 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.processing import ProcessorSchema
-from bookreviver.domain.values import ProcessorSpec, Slice
+from bookreviver.domain.processors import ProcessorSpec
+from bookreviver.domain.slices import Slice
 from bookreviver.services.processing import ProcessingService
 
 router = APIRouter(prefix='/processors', tags=['processing'], route_class=DishkaRoute)

@@ -19,11 +19,13 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.settings import ChangeWaitSettings
-from bookreviver.domain.entities import LibraryEntry
-from bookreviver.domain.enums import Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, DomainError
 from bookreviver.domain.ids import BookId
-from bookreviver.domain.values import PageStepKey, SliceRequest
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.page_steps import PageStepKey
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, NoChangeOpenError
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import (
@@ -48,7 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase
     from tests.contracts.conftest import Book
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

@@ -29,17 +29,12 @@ from typing import TYPE_CHECKING, Annotated, Literal, override
 
 from pydantic import ConfigDict, Field, RootModel, Tag
 
-from bookreviver.domain.enums import (
-    DewarpMethod,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    VersionData,
-    VersionOutput,
-)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Mesh
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import DewarpMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params, method_discriminator
 from bookreviver.plugins.cv_image import (
     MANUAL_CONFIDENCE,
@@ -57,7 +52,7 @@ from bookreviver.plugins.uvdoc import UvDocModel
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
-    from bookreviver.domain.enums import ColorMode
+    from bookreviver.domain.images import ColorMode
     from bookreviver.plugins.cv_image import Samples
     from bookreviver.ports.processing import ProcessorSettings, StepInput
 

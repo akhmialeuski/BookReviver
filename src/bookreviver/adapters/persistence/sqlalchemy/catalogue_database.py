@@ -23,7 +23,7 @@ and with the same transactions, for the account database.
 from typing import TYPE_CHECKING, override
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyCatalogueRepositories
-from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.spans import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, CatalogueDatabase
 
 if TYPE_CHECKING:

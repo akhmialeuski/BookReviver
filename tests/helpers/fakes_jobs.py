@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 
     from bookreviver.adapters.jobs.board import JobRunner
-    from bookreviver.domain.enums import BookResource
+    from bookreviver.domain.books import BookResource
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import BookDirectoryName
 

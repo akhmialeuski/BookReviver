@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Self
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE
-from bookreviver.domain.enums import Rendition
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 
 if TYPE_CHECKING:

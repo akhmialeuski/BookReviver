@@ -7,37 +7,19 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    ImagePolicy,
-    JobKind,
-    JobState,
-    RecipeKind,
-    Rendition,
-    ResultMark,
-    Stage,
-    StageState,
-    VersionData,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
-from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.geometry import EditorKind, Rotation
 from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
+from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import (
-    NewPageEdit,
-    PageStageKey,
-    PageStepKey,
-    RecipeDraft,
-    RecipeKey,
-    SliceRequest,
-    StageRun,
-    Step,
-    StepPreview,
-)
+from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ResultMark, VersionData, VersionScale, VersionState
 from bookreviver.ports.persistence import BookDatabase
 from tests.helpers.builders import make_job, make_page, open_for
 from tests.helpers.counting import CountingBookDatabase
@@ -61,8 +43,11 @@ from tests.helpers.stage_heads import seed_head
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, BookRecord, Job, Page
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
 

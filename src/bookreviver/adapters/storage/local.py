@@ -31,10 +31,15 @@ from uuid import uuid4
 
 import anyio
 
-from bookreviver.domain.enums import UploadProblem
-from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError, UploadRejectedError
+from bookreviver.domain.errors import (
+    ConflictError,
+    InvalidArchiveError,
+    NotFoundError,
+    UploadProblem,
+    UploadRejectedError,
+)
 from bookreviver.domain.keys import BookKeys, KeySegment
-from bookreviver.domain.values import SourceFile, UploadPath
+from bookreviver.domain.sources import SourceFile, UploadPath
 from bookreviver.ports.storage import AssetStore, BookDirectory, SourceStore
 
 if TYPE_CHECKING:

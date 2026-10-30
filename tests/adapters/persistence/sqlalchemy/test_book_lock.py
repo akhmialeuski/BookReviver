@@ -13,15 +13,15 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import ContentType
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.pages import ContentType
+from bookreviver.domain.slices import SliceRequest
 from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
 from tests.helpers.builders import make_page
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import LocatedBookDatabases

@@ -17,9 +17,12 @@ from bookreviver.domain.step_measures import median_of, read_measure
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import Page, PageStage, PageVersion, Recipe
-    from bookreviver.domain.enums import Stage, StepMeasure
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage, Stage
+    from bookreviver.domain.step_measures import StepMeasure
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
 

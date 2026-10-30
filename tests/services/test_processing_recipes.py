@@ -9,18 +9,13 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
-from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import (
-    PageStageKey,
-    RecipeDraft,
-    RecipeKey,
-    SliceRequest,
-    StageRun,
-    Step,
-    StepPreview,
-)
+from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview
+from bookreviver.domain.pages import PageKind, RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.ports.persistence import BookDatabase
 from tests.helpers.builders import make_page_stage, open_for
 from tests.helpers.processing import open_book
@@ -30,8 +25,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, Recipe
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener

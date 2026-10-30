@@ -17,8 +17,8 @@ from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pagination import PaginationSectionBody, PaginationSectionSchema
-from bookreviver.domain.entities import PaginationSection
 from bookreviver.domain.ids import BookId, PaginationSectionId
+from bookreviver.domain.pagination import PaginationSection
 from bookreviver.services.pagination import PaginationService
 
 router = APIRouter(prefix='/books', tags=['pagination'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])

@@ -20,9 +20,8 @@ from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pages import PageAnchorBody
 from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
-from bookreviver.domain.entities import Scan, Source
-from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.ids import BookId, SourceId
+from bookreviver.domain.sources import Scan, Source, SourceStatus
 from bookreviver.services.pages import PageService
 from bookreviver.services.sources import SourceService
 

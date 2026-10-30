@@ -21,7 +21,7 @@ from attrs import frozen
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
 from bookreviver.app.trace_report import load_spans
-from bookreviver.domain.enums import SpanName, SpanParent
+from bookreviver.domain.spans import SpanName, SpanParent
 from tests.helpers.recording_tracer import RecordingTracer
 
 if TYPE_CHECKING:

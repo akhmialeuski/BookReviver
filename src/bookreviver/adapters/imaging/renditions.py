@@ -17,8 +17,7 @@ from typing import TYPE_CHECKING, override
 import pyvips
 from anyio import to_thread
 
-from bookreviver.domain.enums import ColorMode, Rendition
-from bookreviver.domain.values import RenditionInfo, Renditions
+from bookreviver.domain.images import ColorMode, Rendition, RenditionInfo, Renditions
 from bookreviver.ports.imaging import RenditionWriter
 
 if TYPE_CHECKING:

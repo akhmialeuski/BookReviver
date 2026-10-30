@@ -15,17 +15,17 @@ after every reconnect, and the stream carries every change from there on.
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind
-from bookreviver.domain.values import Slice
+from bookreviver.domain.jobs import JobKind
+from bookreviver.domain.slices import Slice
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from contextlib import AbstractAsyncContextManager
 
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.slices import SliceRequest
     from bookreviver.services.book import Book
 
 

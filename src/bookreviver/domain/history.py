@@ -13,18 +13,169 @@ read them. The changes of a batch on other pages stay, and an undo of the batch 
 finds.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
+from uuid import uuid4
 
-from attrs import frozen
+from attrs import evolve, frozen
 
-from bookreviver.domain.enums import ChangeSource
 from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.ids import PageHistoryEntryId
+from bookreviver.domain.labels import LabeledStrEnum
+from bookreviver.domain.page_steps import PageStepKey, StepLayer
+from bookreviver.domain.step_values import ValueScope
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
-    from bookreviver.domain.entities import PageHistoryEntry, PageVersion
-    from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId
+    from bookreviver.domain.ids import ChangeBatchId, PageId, StepId
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.page_steps import PageStepState
+    from bookreviver.domain.stages import Stage
+    from bookreviver.domain.step_values import StepValues
+    from bookreviver.domain.versions import PageVersion
+
+
+class ChangeSource(LabeledStrEnum):
+    """What made a change of a layer of a step on a page."""
+
+    USER = 'user', 'The user'
+    RUN = 'run', 'A run'
+    CARRY_OVER = 'carry-over', 'A carry-over from another page'
+    UNDO = 'undo', 'An undo of an earlier change'
+
+
+@frozen(kw_only=True)
+class PageHistoryEntry:
+    """One change of a layer of a step on a page, which the history of the page keeps and never rewrites.
+
+    The values are the whole content of the layer before and after the change, so undoing a change writes ``before``
+    back without knowing how the layer is built. The layer of the settings holds the fields the page changes, by name.
+
+    :ivar id: Identifier of the change.
+    :ivar page_id: Page the change was made on.
+    :ivar stage: Stage of the step.
+    :ivar step_id: The step whose layer changed.
+    :ivar layer: The layer that changed.
+    :ivar scope: Whose settings the layer holds: those of the page itself, or those of the odd pages, the even pages or
+                 a group the page takes values from, which the history of each page they change keeps a change of.
+    :ivar group_label: Label of the group for the scope of a group, and empty for the others.
+    :ivar before: Content of the layer before the change, or None when the layer was empty.
+    :ivar after: Content of the layer after the change, or None when the change emptied it.
+    :ivar source: What made the change.
+    :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
+    :ivar undoes: The change this one takes back, for a change whose source is an undo, or None. The history is never
+                  rewritten, so a change is undone when another change names it here.
+    :ivar created_at: When the change was made.
+    :ivar sequence: Place of the change in the history of its page, from one, which the repository gives it when it is
+                    added, so changes made at the same instant keep the order they were written in.
+    """
+
+    id: PageHistoryEntryId
+    page_id: PageId
+    stage: Stage
+    step_id: StepId
+    layer: StepLayer
+    scope: ValueScope = ValueScope.PAGES
+    group_label: str = ''
+    before: MetadataMap | None = None
+    after: MetadataMap | None = None
+    source: ChangeSource
+    batch_id: ChangeBatchId | None = None
+    undoes: PageHistoryEntryId | None = None
+    created_at: datetime
+    sequence: int = 0
+
+    @property
+    def key(self) -> PageStepKey:
+        """The key of the state of the step on the page that the change was made on."""
+        return PageStepKey(self.page_id, self.stage, self.step_id)
+
+    @classmethod
+    def between(cls, before: PageStepState, after: PageStepState, layer: StepLayer, source: ChangeSource) -> Self:
+        """Describe what the change of one layer from a state to another did.
+
+        :param before: The state of the step on the page before the change, which is empty for a page with none.
+        :type before: PageStepState
+        :param after: The state after the change, which carries the time of the change.
+        :type after: PageStepState
+        :param layer: The layer that changed.
+        :type layer: StepLayer
+        :param source: What made the change.
+        :type source: ChangeSource
+        :returns: The change, with a new identifier, no batch, nothing undone and no sequence yet.
+        :rtype: Self
+        """
+        return cls(
+            id=PageHistoryEntryId(uuid4()),
+            page_id=after.page_id,
+            stage=after.stage,
+            step_id=after.step_id,
+            layer=layer,
+            before=before.layer(layer),
+            after=after.layer(layer),
+            source=source,
+            created_at=after.updated_at,
+        )
+
+    def taken_back(self, moment: datetime, batch_id: ChangeBatchId | None) -> Self:
+        """Describe the undo of this change: the same layer changed from what it left to what it replaced.
+
+        :param moment: When the change is taken back.
+        :type moment: datetime
+        :param batch_id: The batch the undos of one action share, or None for an undo of one change.
+        :type batch_id: ChangeBatchId | None
+        :returns: The undo, with a new identifier, naming this change and with no sequence yet.
+        :rtype: Self
+        """
+        return evolve(
+            self,
+            id=PageHistoryEntryId(uuid4()),
+            before=self.after,
+            after=self.before,
+            source=ChangeSource.UNDO,
+            batch_id=batch_id,
+            undoes=self.id,
+            created_at=moment,
+            sequence=0,
+        )
+
+    @classmethod
+    def of_values(
+        cls, pages: Sequence[PageId], before: StepValues, after: StepValues, source: ChangeSource
+    ) -> list[Self]:
+        """Describe a change of the values of a part of the pages, once for each page whose history keeps it.
+
+        The entries are one change, so they share its identifier and differ only in the page.
+
+        :param pages: The pages whose histories keep the change, which are those that take the values.
+        :type pages: Sequence[PageId]
+        :param before: The values of the part before the change, which are empty for a part that had none.
+        :type before: StepValues
+        :param after: The values after the change, which carry the time of the change.
+        :type after: StepValues
+        :param source: What made the change.
+        :type source: ChangeSource
+        :returns: The change for each page, with one new identifier, no batch, nothing undone and no sequence yet.
+        :rtype: list[Self]
+        """
+        change_id = PageHistoryEntryId(uuid4())
+        return [
+            cls(
+                id=change_id,
+                page_id=page_id,
+                stage=after.stage,
+                step_id=after.step_id,
+                layer=StepLayer.SETTINGS,
+                scope=after.scope,
+                group_label=after.group_label,
+                before=dict(before.params) or None,
+                after=dict(after.params) or None,
+                source=source,
+                created_at=after.updated_at,
+            )
+            for page_id in pages
+        ]
 
 
 @frozen

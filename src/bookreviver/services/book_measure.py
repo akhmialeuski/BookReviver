@@ -31,19 +31,23 @@ from typing import TYPE_CHECKING, ClassVar, Self
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import MarginsSource, NormalizeParam, OrderMode, Stage, VersionData, VersionState
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
-from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
+from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale, MarginsSource, NormalizeParam
+from bookreviver.domain.recipes import OrderMode, RecipeDraft
+from bookreviver.domain.stages import Stage
 from bookreviver.domain.text_scale import DEFAULT_MAX_SCALE_CHANGE, scale_factor
-from bookreviver.domain.values import RecipeDraft
+from bookreviver.domain.versions import VersionData, VersionState
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, PageStage, PageVersion, Recipe
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId
-    from bookreviver.domain.values import MetadataMap, Step
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.recipes import Recipe, Step
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook

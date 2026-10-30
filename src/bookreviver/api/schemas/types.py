@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import AfterValidator, Field, StringConstraints
 
-from bookreviver.domain.entities import VERSION_ID_PATTERN
-from bookreviver.domain.enums import PageKind
 from bookreviver.domain.ids import PageId, PageVersionId
+from bookreviver.domain.pages import PageKind
+from bookreviver.domain.versions import VERSION_ID_PATTERN
 
 if TYPE_CHECKING:
     from collections.abc import Hashable, Sequence

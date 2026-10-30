@@ -21,9 +21,13 @@ from typing import TYPE_CHECKING, override
 import cv2
 import numpy as np
 
-from bookreviver.domain.enums import ColorMode, ContentType, ProcessorScope, Stage, VersionData
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.values import COLOR_MODE_KEY, ProcessorSpec
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.pages import ContentType
+from bookreviver.domain.processors import ProcessorScope, ProcessorSpec
+from bookreviver.domain.sources import COLOR_MODE_KEY
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.cv_image import COLOR_PLANES, OtsuSplit, read_samples
 from bookreviver.plugins.pictures import PictureZones, level_light

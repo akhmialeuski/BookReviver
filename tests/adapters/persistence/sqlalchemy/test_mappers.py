@@ -9,32 +9,14 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import BookRecordMapper
-from bookreviver.domain.enums import (
-    ColorMode,
-    ContributorRole,
-    FileType,
-    IdentifierScheme,
-    ImagePolicy,
-    PageKind,
-    RejectionReason,
-    Rendition,
-    ReviewReason,
-    SourceKind,
-    SourceStatus,
-    TransformKind,
-    VersionState,
-)
-from bookreviver.domain.geometry import Point, Quad, Transform
+from bookreviver.domain.books import BookIdentifier, Contributor, ContributorRole, IdentifierScheme, MetadataSuggestion
+from bookreviver.domain.geometry import Point, Quad, Transform, TransformKind
 from bookreviver.domain.ids import StorageKey
-from bookreviver.domain.values import (
-    BookIdentifier,
-    Contributor,
-    MetadataSuggestion,
-    ProcessorRef,
-    Renditions,
-    ScanFacts,
-    SourceFile,
-)
+from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition, Renditions
+from bookreviver.domain.pages import PageKind
+from bookreviver.domain.sources import FileType, RejectionReason, ScanFacts, SourceFile, SourceKind, SourceStatus
+from bookreviver.domain.stages import ReviewReason
+from bookreviver.domain.versions import ProcessorRef, VersionState
 from tests.helpers.builders import (
     EPOCH,
     FULL_DETAILS,

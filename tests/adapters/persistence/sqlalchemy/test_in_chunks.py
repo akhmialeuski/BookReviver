@@ -19,8 +19,10 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
-    from bookreviver.domain.entities import BookRecord, Page, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 

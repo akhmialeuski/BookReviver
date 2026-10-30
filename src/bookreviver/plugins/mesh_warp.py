@@ -22,8 +22,8 @@ import cv2
 import numpy as np
 from attrs import frozen
 
-from bookreviver.domain.enums import ColorMode
 from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.images import ColorMode
 from bookreviver.plugins.cv_image import to_bilevel
 
 if TYPE_CHECKING:
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from bookreviver.domain.enums import ReviewReason
     from bookreviver.domain.geometry import Mesh
+    from bookreviver.domain.stages import ReviewReason
     from bookreviver.plugins.cv_image import Floats, Samples
 
 # The places OpenCV takes the pixels of a remapped image from, one for each pixel

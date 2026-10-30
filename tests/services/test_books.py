@@ -11,11 +11,12 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys, KeySegment
-from bookreviver.domain.values import PageStepKey, SliceRequest
+from bookreviver.domain.page_steps import PageStepKey
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
@@ -41,8 +42,10 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalSourceStore
-    from bookreviver.domain.entities import Actor, BookOverview, BookRecord
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
+    from bookreviver.domain.library import BookOverview
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

@@ -24,27 +24,30 @@ from typing import TYPE_CHECKING, Any, Self
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import PageStepState
-from bookreviver.domain.enums import ChangeSource, PageOrigin, StepLayer, ValueScope
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.history import ValueChanges
+from bookreviver.domain.history import ChangeSource, ValueChanges
+from bookreviver.domain.page_steps import PageStepState, StepLayer
+from bookreviver.domain.pages import PageOrigin
 from bookreviver.domain.step_values import (
     NOT_A_PART,
     PageStepSettings,
     StepValueLayers,
     StepValues,
     StepValuesKey,
+    ValueScope,
 )
 from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page
-    from bookreviver.domain.enums import RecipeKind, Stage
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.pages import Page, RecipeKind
+    from bookreviver.domain.recipes import Step
+    from bookreviver.domain.stages import Stage
     from bookreviver.domain.step_values import ValueField
-    from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book

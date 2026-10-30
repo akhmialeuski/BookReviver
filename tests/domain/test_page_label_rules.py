@@ -3,9 +3,9 @@
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import ColorMode, LabelStyle, SourceKind
-from bookreviver.domain.page_label_rules import PageLabelRule
-from bookreviver.domain.values import ScanFacts, SourceAnalysis
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule
+from bookreviver.domain.sources import ScanFacts, SourceAnalysis, SourceKind
 
 ROMAN_LIMIT: int = 3999
 SCAN_COUNT: int = 4

@@ -13,8 +13,7 @@ from attrs import evolve
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
-from bookreviver.domain.enums import JobKind, JobState
-from bookreviver.domain.values import JobEnd
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.services.book import Book
 from tests.helpers.builders import make_record
 from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file, waiting
@@ -29,8 +28,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId
+    from bookreviver.domain.jobs import Job
     from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener

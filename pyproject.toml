@@ -130,6 +130,12 @@ name = "Adapter families are independent of each other"
 type = "independence"
 modules = ["bookreviver.adapters.*"]
 
+# Imports under TYPE_CHECKING count too, since a cycle hidden there still ties the two modules together
+[[tool.importlinter.contracts]]
+name = "Domain modules import each other in one direction only"
+type = "acyclic_siblings"
+ancestors = ["bookreviver.domain"]
+
 [[tool.importlinter.contracts]]
 name = "The core imports no framework and no I/O library"
 type = "forbidden"

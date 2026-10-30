@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, ClassVar
 from fastapi_problem.error import StatusProblem
 from fastapi_problem.handler import new_exception_handler
 
-from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import (
     BookBusyError,
     ConflictError,
@@ -17,6 +16,7 @@ from bookreviver.domain.errors import (
     PermissionDeniedError,
     UnsupportedSourceError,
     UnsupportedTransformError,
+    UploadProblem,
     UploadRejectedError,
 )
 

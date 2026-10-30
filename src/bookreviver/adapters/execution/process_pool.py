@@ -50,8 +50,8 @@ from typing import TYPE_CHECKING, ClassVar, Self, assert_never, override
 
 import anyio
 
-from bookreviver.domain.enums import VersionScale
 from bookreviver.domain.errors import DomainError
+from bookreviver.domain.versions import VersionScale
 from bookreviver.ports.processing import StepExecutor
 
 if TYPE_CHECKING:
