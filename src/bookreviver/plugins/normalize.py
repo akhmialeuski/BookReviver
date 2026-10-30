@@ -39,28 +39,16 @@ import numpy as np
 from attrs import frozen
 from pydantic import Field, model_validator
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    HorizontalAlign,
-    MarginsBy,
-    MarginsSource,
-    NormalizeParam,
-    PageSide,
-    PaperFill,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    TransformKind,
-    VersionData,
-    VersionOutput,
-    VerticalAlign,
-)
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import ContentBox, Rect, Transform
-from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
+from bookreviver.domain.geometry import ContentBox, EditorKind, Rect, Transform, TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginsBy, MarginScale, MarginsSource, NormalizeParam
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import HorizontalAlign, PaperFill, VerticalAlign
 from bookreviver.domain.text_scale import DEFAULT_MAX_SCALE_CHANGE, scale_factor
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.crop import CropParams, FrameSearch, cut_edges_of
 from bookreviver.plugins.cv_image import (
@@ -81,7 +69,7 @@ from bookreviver.plugins.cv_image import (
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.plugins.cv_image import Samples
     from bookreviver.ports.processing import StepInput
 

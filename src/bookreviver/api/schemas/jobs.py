@@ -13,8 +13,10 @@ from fastapi import Query
 from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.ids import JobId, PageId, PageVersionId
+from bookreviver.domain.jobs import JobKind, JobState
+from bookreviver.domain.stages import Stage
 
 
 class EventName(enum.StrEnum):

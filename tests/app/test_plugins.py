@@ -8,8 +8,9 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.plugins import PROCESSOR_GROUP, EntryPointCatalog
-from bookreviver.domain.enums import StepMeasure, WorkerPool
 from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.processors import WorkerPool
+from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.plugins.base import ModelProcessor
 from tests.helpers.samples import CV_MISSING
 

@@ -18,9 +18,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
+    from bookreviver.domain.images import ColorMode, Rendition, RenditionInfo
     from bookreviver.domain.page_label_rules import BookLabeling
-    from bookreviver.domain.values import RenditionInfo, SourceAnalysis, UploadedSource
+    from bookreviver.domain.sources import SourceAnalysis, SourceKind, UploadedSource
 
 
 class SourceInspector(ABC):

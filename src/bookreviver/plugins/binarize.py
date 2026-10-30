@@ -30,20 +30,13 @@ import doxapy
 import numpy as np
 from pydantic import ConfigDict, Field, RootModel, Tag, field_validator
 
-from bookreviver.domain.enums import (
-    BinarizationMethod,
-    ColorMode,
-    EditorKind,
-    OutputMode,
-    ProcessorScope,
-    Stage,
-    TransformKind,
-    VersionData,
-    VersionOutput,
-)
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import Regions, Transform
-from bookreviver.domain.values import PageSize, ProcessorSpec
+from bookreviver.domain.geometry import EditorKind, Regions, Transform, TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_settings import BinarizationMethod, OutputMode
+from bookreviver.domain.versions import PageSize, VersionData
 from bookreviver.plugins.base import METHOD_KEY, METHOD_TITLE, ModelProcessor, Params, labelled, method_discriminator
 from bookreviver.plugins.cv_image import (
     BLACK,

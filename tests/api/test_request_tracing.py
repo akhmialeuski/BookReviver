@@ -14,7 +14,7 @@ from dishka import Provider, Scope, provide
 from fastapi import status
 
 from bookreviver.app.settings import TracingSettings
-from bookreviver.domain.enums import SpanAttribute, SpanName
+from bookreviver.domain.spans import SpanAttribute, SpanName
 from bookreviver.ports.tracing import Tracer
 from tests.helpers.builders import make_record
 from tests.helpers.seeding import store_book
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.recording_tracer import RecordingTracer
 

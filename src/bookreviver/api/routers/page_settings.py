@@ -26,10 +26,10 @@ from bookreviver.api.schemas.page_settings import (
     ValueForm,
     ValueTargetModel,
 )
-from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import BookId, PageId, StepId
+from bookreviver.domain.slices import Slice
+from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_values import PageStepSettings, ValueField
-from bookreviver.domain.values import Slice
 from bookreviver.services.page_settings import PageSettingsService
 
 if TYPE_CHECKING:

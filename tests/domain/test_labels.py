@@ -8,9 +8,12 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import ColorMode, ContentType, LabelStyle, PageKind, SourceKind
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import PageNumbering, ScanFacts, SourceAnalysis
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pages import ContentType, PageKind
+from bookreviver.domain.pagination import PageNumbering
+from bookreviver.domain.sources import ScanFacts, SourceAnalysis, SourceKind
 from tests.helpers.builders import make_page
 
 

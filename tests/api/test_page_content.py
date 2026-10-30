@@ -12,8 +12,8 @@ from fastapi_pagination import Page
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobState, PageKind
-from bookreviver.domain.values import ContentDetection
+from bookreviver.domain.jobs import ContentDetection, JobKind, JobState
+from bookreviver.domain.pages import ContentSource, ContentType, PageKind
 from tests.helpers.builders import make_job, make_page, make_record, new_account_id
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider
@@ -27,9 +27,9 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor
-    from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page as BookPage
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio

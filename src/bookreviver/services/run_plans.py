@@ -14,18 +14,25 @@ are one batch, so one undo gives the work back on every page.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState, VersionState
-from bookreviver.domain.values import RunImpact
+from bookreviver.domain.history import ChangeSource
+from bookreviver.domain.pages import PageOrigin
+from bookreviver.domain.runs import RunImpact, RunMode
+from bookreviver.domain.stages import StageState
+from bookreviver.domain.versions import VersionState
 from bookreviver.services.book_measure import leaves_to_the_book
 from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page, PageHistoryEntry, PageStage, PageStepState, Recipe
-    from bookreviver.domain.enums import Stage
+    from bookreviver.domain.books import BookRecord
+    from bookreviver.domain.history import PageHistoryEntry
     from bookreviver.domain.ids import PageId, PageVersionId, StepId
-    from bookreviver.domain.values import StageRun
+    from bookreviver.domain.jobs import StageRun
+    from bookreviver.domain.page_steps import PageStepState
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage, Stage
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook

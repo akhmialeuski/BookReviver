@@ -24,18 +24,6 @@ nest, and a use case that needs both stores runs one transaction of each.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
-from bookreviver.domain.entities import (
-    LibraryEntry,
-    Page,
-    PageStage,
-    PageStepState,
-    PageVersion,
-    PaginationSection,
-    Recipe,
-    RecipeProfile,
-    Scan,
-    Source,
-)
 from bookreviver.domain.ids import (
     BookId,
     PageId,
@@ -46,29 +34,37 @@ from bookreviver.domain.ids import (
     ScanId,
     SourceId,
 )
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.page_steps import PageStepKey, PageStepState
+from bookreviver.domain.pages import Page
+from bookreviver.domain.pagination import PaginationSection
+from bookreviver.domain.recipes import Recipe, RecipeProfile
+from bookreviver.domain.sources import Scan, Source
+from bookreviver.domain.stages import PageStage, PageStageKey
 from bookreviver.domain.step_values import StepValues, StepValuesKey
-from bookreviver.domain.values import PageStageKey, PageStepKey
+from bookreviver.domain.versions import PageVersion
 from bookreviver.ports.book_parts import BookPart
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import (
-        BookOverview,
-        BookPlace,
-        BookRecord,
-        PageHistoryEntry,
-    )
-    from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
+    from bookreviver.domain.books import BookRecord
+    from bookreviver.domain.history import PageHistoryEntry
     from bookreviver.domain.ids import (
         AccountId,
         ChangeBatchId,
         PageHistoryEntryId,
         StepId,
     )
+    from bookreviver.domain.library import BookOverview
+    from bookreviver.domain.pages import RecipeKind
+    from bookreviver.domain.places import BookPlace
+    from bookreviver.domain.sides import Side
+    from bookreviver.domain.slices import Slice, SliceRequest
     from bookreviver.domain.stage_summaries import StageTally, StepTally
-    from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
+    from bookreviver.domain.stages import Stage
+    from bookreviver.domain.versions import PageSize, ProcessorRef, ResultMark, VersionScale
 
 # How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
 DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0

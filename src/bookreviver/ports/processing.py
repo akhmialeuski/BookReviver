@@ -24,9 +24,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bookreviver.domain.entities import PageEdit
-    from bookreviver.domain.enums import ColorMode, PageSide, ReviewReason, VersionScale
-    from bookreviver.domain.values import MetadataMap, ProcessorSpec
+    from bookreviver.domain.images import ColorMode
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.page_steps import PageEdit
+    from bookreviver.domain.processors import ProcessorSpec
+    from bookreviver.domain.sides import PageSide
+    from bookreviver.domain.stages import ReviewReason
+    from bookreviver.domain.versions import VersionScale
 
 
 @frozen(kw_only=True)

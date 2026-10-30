@@ -38,9 +38,9 @@ from bookreviver.adapters.imaging.common import (
 from bookreviver.adapters.imaging.pdf_labels import read_label_rules
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
-from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import ScanFacts, SourceAnalysis
+from bookreviver.domain.images import ColorMode, Rendition
+from bookreviver.domain.sources import ScanFacts, SourceAnalysis, SourceKind
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -6,8 +6,10 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image, ImageOps
 
-from bookreviver.domain.enums import ColorMode, PaperFill, TransformKind
 from bookreviver.domain.errors import InvalidParametersError
+from bookreviver.domain.geometry import TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.step_settings import PaperFill
 from bookreviver.plugins.blank import BlankPage, median_paper
 from bookreviver.ports.processing import StepInput
 from bookreviver.services.base_versions import PAGES_BLANK
@@ -16,7 +18,7 @@ from tests.helpers.samples import pixel, ruled_page, same_colour, text_page
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
 
 
 PAPER_COLOUR: tuple[int, int, int] = (205, 185, 140)

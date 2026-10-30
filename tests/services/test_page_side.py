@@ -6,8 +6,10 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import PageSide, RecipeKind, Stage
-from bookreviver.domain.values import PageStageKey, StageRun
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import StepResult
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
@@ -18,8 +20,9 @@ from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import StepInput
     from tests.helpers.builders import BookOpener

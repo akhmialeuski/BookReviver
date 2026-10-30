@@ -26,7 +26,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.split import SHARED_REVISION, SharedDatabaseSplit, SplitRefusedError
 from bookreviver.adapters.tracing.null import NullTracer
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
 from tests.helpers.builders import (
     make_book_place,
     make_page,
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId, PageId
     from tests.helpers.database import BookDatabasesFactory
 

@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import BookResource, Stage, StageState, VersionState
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.events import BookChanged
-from bookreviver.domain.values import PageStageKey, Renditions
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import VersionState
 from tests.helpers.builders import (
     make_page,
     make_page_stage,
@@ -27,8 +29,13 @@ if TYPE_CHECKING:
 
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, PageVersion, Scan, Source
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Scan, Source
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import RecordingEventBus

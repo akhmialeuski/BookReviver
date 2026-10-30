@@ -31,8 +31,8 @@ from bookreviver.api.schemas.pages import (
     PageUpdate,
     ScanAttach,
 )
-from bookreviver.domain.entities import PageOverview
 from bookreviver.domain.ids import BookId, PageId
+from bookreviver.domain.pages import PageOverview
 from bookreviver.services.pages import PageService
 from bookreviver.services.pagination import PaginationService
 

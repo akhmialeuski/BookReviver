@@ -12,8 +12,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, PageStage, Recipe
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.page_stage_writes import PageStageWrites

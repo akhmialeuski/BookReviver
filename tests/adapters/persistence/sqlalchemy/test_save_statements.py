@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import (
     directory_of,
     make_page,
@@ -25,8 +25,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
-    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 

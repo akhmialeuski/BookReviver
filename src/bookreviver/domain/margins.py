@@ -14,7 +14,36 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import frozen
 
-from bookreviver.domain.enums import NormalizeParam
+from bookreviver.domain.labels import LabeledStrEnum
+
+
+class MarginsBy(LabeledStrEnum):
+    """How the side margins of a page are told apart."""
+
+    INNER_OUTER = 'inner-outer', 'Inner and outer, by the side of the page in the book'
+    LEFT_RIGHT = 'left-right', 'Left and right, the same on every page'
+
+
+class MarginsSource(LabeledStrEnum):
+    """Who sets the margins of the step ``geometry.normalize``: the measure of the book or the user."""
+
+    MEASURED = 'measured', 'Measured from the pages of the book'
+    MANUAL = 'manual', 'Set by hand'
+
+
+class NormalizeParam(LabeledStrEnum):
+    """Names of the parameters of the step ``geometry.normalize`` that measuring the book reads or writes."""
+
+    MARGINS_SOURCE = 'margins_source', 'Who sets the margins'
+    LINE_HEIGHT = 'line_height', 'Distance between the lines of text, in pixels'
+    MAX_SCALE_CHANGE = 'max_scale_change', 'Largest change of the size of the text, in percent'
+    PAGE_WIDTH = 'page_width', 'Width of the page, in pixels'
+    PAGE_HEIGHT = 'page_height', 'Height of the page, in pixels'
+    MARGIN_TOP = 'margin_top', 'Margin at the top, in millimetres'
+    MARGIN_BOTTOM = 'margin_bottom', 'Margin at the bottom, in millimetres'
+    MARGIN_INNER = 'margin_inner', 'Margin at the gutter, in millimetres'
+    MARGIN_OUTER = 'margin_outer', 'Margin at the outer edge, in millimetres'
+
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobState, RejectionReason, UploadProblem
+from bookreviver.domain.errors import UploadProblem
+from bookreviver.domain.jobs import JobState
+from bookreviver.domain.sources import RejectionReason
 
 if TYPE_CHECKING:
     import httpx

@@ -15,16 +15,18 @@ The class touches no file itself: images are read and written through the asset 
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.entities import PageVersion, VersionInputs
-from bookreviver.domain.enums import BlankParam, PaperFill, Rendition, Stage, VersionState
-from bookreviver.domain.values import PageSize, ProcessorRef, Renditions
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_settings import BlankParam, PaperFill
+from bookreviver.domain.versions import PageSize, PageVersion, ProcessorRef, VersionInputs, VersionState
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection
     from datetime import datetime
 
-    from bookreviver.domain.entities import Page, Scan
     from bookreviver.domain.ids import PageVersionId, StorageKey
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Scan
     from bookreviver.ports.imaging import Tiler
     from bookreviver.ports.storage import AssetStore
 

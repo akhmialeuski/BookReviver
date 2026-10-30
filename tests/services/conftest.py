@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.domain.enums import JobKind, JobState
-from bookreviver.domain.values import JobEnd
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.book import Book
 from bookreviver.services.pagination import PaginationService
@@ -28,8 +27,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName
+    from bookreviver.domain.jobs import Job
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener

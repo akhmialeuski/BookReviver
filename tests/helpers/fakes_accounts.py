@@ -16,7 +16,7 @@ from bookreviver.ports.runtime import Mailer
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.domain.values import MailMessage
+    from bookreviver.domain.accounts import MailMessage
 
 TOKEN_PARAMETER: str = 'token'
 EMAIL_FIELD: str = 'email'

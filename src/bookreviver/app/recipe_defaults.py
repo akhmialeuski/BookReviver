@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel, ValidationError
 
-from bookreviver.domain.enums import RecipeKind, Stage
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.stages import Stage
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 
 if TYPE_CHECKING:

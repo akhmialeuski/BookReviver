@@ -18,8 +18,8 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.database import MILLISECONDS_PER_SECOND
-from bookreviver.domain.enums import BlockKind, BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
+from bookreviver.domain.spans import BlockKind, BlockOutcome, SpanAttribute, SpanName
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import make_page
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
@@ -27,7 +27,7 @@ from tests.helpers.wait_limits import IMPATIENT_SECONDS
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, CatalogueRepositories
     from tests.helpers.database import LocatedBookDatabases

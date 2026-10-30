@@ -9,12 +9,11 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
-from bookreviver.domain.enums import NormalizeParam
-from bookreviver.domain.margins import MM_PER_INCH, NOMINAL_BLOCK_MM
+from bookreviver.domain.margins import MM_PER_INCH, NOMINAL_BLOCK_MM, NormalizeParam
 from bookreviver.services.book_measure import BlockMeasure, BookSize
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
 
 BLOCK_PX: tuple[float, float] = (300.0, 600.0)
 # The line height of the book, which the median of the pages is

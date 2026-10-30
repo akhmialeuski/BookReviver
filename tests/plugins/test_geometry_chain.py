@@ -12,14 +12,15 @@ import numpy as np
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import ReviewReason, TransformKind, VersionData
-from bookreviver.domain.geometry import Rect
+from bookreviver.domain.geometry import Rect, TransformKind
+from bookreviver.domain.stages import ReviewReason
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import save
 from tests.plugins.synthetic import draw_sheet
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
 
 SCAN_ON_BINDING: Path = Path(__file__).parent / 'data' / 'book_scan_on_binding.jpg'

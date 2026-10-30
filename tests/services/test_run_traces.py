@@ -6,14 +6,19 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import RecipeKind, RunOutcome, SpanAttribute, SpanName, Stage, StepOutcome, VersionScale
-from bookreviver.domain.values import StageRun
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.runs import RunOutcome
+from bookreviver.domain.spans import SpanAttribute, SpanName, StepOutcome
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionScale
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio

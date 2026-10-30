@@ -19,21 +19,31 @@ without its picture. A preview goes only once it is old.
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, OrderMode, RunMode, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
+from bookreviver.domain.jobs import JobKind, StepPreview, TileCut
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import CollectionReport, PageStageKey, Slice, StepPreview, TileCut
+from bookreviver.domain.recipes import OrderMode
+from bookreviver.domain.runs import RunMode
+from bookreviver.domain.slices import Slice
+from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
+from bookreviver.domain.versions import CollectionReport, VersionScale, VersionState
 from bookreviver.services.processing_parts import BOOK_BUSY
 from bookreviver.services.run_plans import RunPlan
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageStage, PageVersion, Recipe
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId
-    from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, StageRun, VersionFilter
+    from bookreviver.domain.jobs import Job, StageRun
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.processors import ProcessorSpec
+    from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey
+    from bookreviver.domain.slices import SliceRequest
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book

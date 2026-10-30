@@ -94,8 +94,8 @@ from sqlalchemy.exc import OperationalError
 
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.tables import BookTable
-from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
+from bookreviver.domain.spans import BlockOutcome, SpanAttribute, SpanName
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, NoChangeOpenError
 
 if TYPE_CHECKING:
@@ -107,8 +107,8 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import ORMExecuteState, Session
     from sqlalchemy.pool import ConnectionPoolEntry
 
-    from bookreviver.domain.enums import BlockKind
     from bookreviver.domain.ids import BookDirectoryName
+    from bookreviver.domain.spans import BlockKind
     from bookreviver.ports.tracing import StartedSpan, Tracer
 
 SQLITE_DIALECT: str = 'sqlite'

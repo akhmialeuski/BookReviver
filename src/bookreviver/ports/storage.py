@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
     from bookreviver.domain.ids import JobId, SourceId, StorageKey
-    from bookreviver.domain.values import SourceFile
+    from bookreviver.domain.sources import SourceFile
 
 
 class IncomingFile(Protocol):

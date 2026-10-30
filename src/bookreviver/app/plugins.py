@@ -25,8 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
     from importlib.metadata import EntryPoint
 
-    from bookreviver.domain.enums import WorkerPool
-    from bookreviver.domain.values import ProcessorSpec
+    from bookreviver.domain.processors import ProcessorSpec, WorkerPool
     from bookreviver.ports.processing import ProcessorSettings
 
 # The entry point group the processors are registered in

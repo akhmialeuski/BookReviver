@@ -11,17 +11,10 @@ from fastapi_pagination import Page
 
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.sources import ScanSchema, SourceSchema
-from bookreviver.domain.enums import (
-    FileType,
-    ImagePolicy,
-    JobKind,
-    RejectionReason,
-    Rendition,
-    SourceKind,
-    SourceStatus,
-)
+from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
+from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
 from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
 from tests.helpers.builders import make_job, make_record, make_scan, make_source
 from tests.helpers.fake_board import FakeJobBoard
@@ -37,7 +30,8 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Source
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.sources import Source
     from tests.helpers.books import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

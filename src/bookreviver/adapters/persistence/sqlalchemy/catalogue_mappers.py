@@ -8,8 +8,8 @@ from typing import override
 
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId
+from bookreviver.domain.library import LibraryEntry
 
 
 class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):

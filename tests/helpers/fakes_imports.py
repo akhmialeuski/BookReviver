@@ -27,7 +27,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.domain.pagination import Pagination
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
@@ -49,10 +49,12 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
-    from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, SourceId
-    from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
+    from bookreviver.domain.images import Rendition
+    from bookreviver.domain.jobs import Job, JobEnd
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.pagination import PaginationSection
+    from bookreviver.domain.sources import Scan, Source, SourceAnalysis, SourceKind, UploadedSource
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl

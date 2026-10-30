@@ -10,8 +10,12 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import ColorMode, ContentType, ProcessorScope, Stage, VersionData
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.pages import ContentType
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.plugins.cleanup_pages import lit_unevenly, run_step, text_ink, with_picture
 

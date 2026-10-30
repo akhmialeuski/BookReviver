@@ -12,20 +12,14 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image, ImageDraw
 
-from bookreviver.domain.enums import (
-    Binarization,
-    ColorMode,
-    CropMethod,
-    EditorKind,
-    ProcessorScope,
-    ReviewReason,
-    SheetEdge,
-    Stage,
-    TransformKind,
-    VersionData,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Rect
+from bookreviver.domain.geometry import EditorKind, Rect, TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.sides import SheetEdge
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import Binarization, CropMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import CV_MISSING, LINE_PITCH_PX, PAPER, save, text_page
 from tests.plugins.runner import run_on
@@ -36,7 +30,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.plugins.crop import FrameSearch
     from bookreviver.ports.processing import Processor
 

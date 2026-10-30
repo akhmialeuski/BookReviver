@@ -15,13 +15,48 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import EditorKind, TransformKind, ZoneMode
 from bookreviver.domain.errors import UnsupportedTransformError
+from bookreviver.domain.labels import LabeledStrEnum
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.ids import StorageKey
+
+
+class ZoneMode(LabeledStrEnum):
+    """What a zone of the ``regions`` editor does to the picture zones a step found."""
+
+    ADD = 'add', 'Picture'
+    REMOVE = 'remove', 'Not a picture'
+
+
+class EditorKind(LabeledStrEnum):
+    """The editor a processor offers for the manual edit of its input."""
+
+    NONE = 'none', 'No editor'
+    RECT = 'rect', 'Frame'
+    QUAD = 'quad', 'Quadrilateral'
+    LINE = 'line', 'Line'
+    ROTATION = 'rotation', 'Rotation'
+    SPLIT = 'split', 'Page split'
+    MESH = 'mesh', 'Mesh'
+    BRUSH_MASK = 'brush-mask', 'Brush mask'
+    REGIONS = 'regions', 'Regions'
+    CONTENT_BOX = 'content-box', 'Content box'
+
+
+class TransformKind(LabeledStrEnum):
+    """Kind of the coordinate transform a processing step applies from its input to its output."""
+
+    IDENTITY = 'identity', 'Unchanged coordinates'
+    CROP = 'crop', 'Crop to a quadrilateral'
+    ROTATE = 'rotate', 'Rotation by an angle'
+    PERSPECTIVE = 'perspective', 'Perspective correction of a quadrilateral'
+    SCALE = 'scale', 'Scaling by a factor'
+    MESH = 'mesh', 'Dewarping along a stored mesh'
+    PLACE = 'place', 'Scaling and placing a block of text on a page'
+
 
 # The numbers of a 3 by 3 matrix
 MATRIX_SIZE: int = 9

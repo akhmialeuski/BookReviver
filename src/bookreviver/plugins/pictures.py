@@ -19,8 +19,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from bookreviver.domain.enums import ZoneMode
-from bookreviver.domain.geometry import Point, Zone
+from bookreviver.domain.geometry import Point, Zone, ZoneMode
 from bookreviver.plugins.cv_image import COLOR_PLANES, WHITE, OtsuSplit, odd_size
 
 if TYPE_CHECKING:

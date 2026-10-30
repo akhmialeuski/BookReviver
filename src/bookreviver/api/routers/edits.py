@@ -17,10 +17,10 @@ from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
-from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import BookId, PageId, StepId
-from bookreviver.domain.values import PageStepKey, Slice
+from bookreviver.domain.page_steps import PageEdit, PageStepKey
+from bookreviver.domain.slices import Slice
+from bookreviver.domain.stages import Stage
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_carry import CarryOverService
 

@@ -23,38 +23,35 @@ from bookreviver.api.schemas.types import (
     ProcessorKeyText,
     VersionIdentifier,
 )
-from bookreviver.domain.enums import (
-    EditorKind,
-    OrderMode,
-    OrderRuleKind,
-    ProcessorScope,
-    RecipeKind,
-    Rendition,
+from bookreviver.domain.geometry import EditorKind, TransformKind
+from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, RecipeProfileId, StepId
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import StageRun, StepPreview
+from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.processors import OrderRuleKind, ProcessorScope, VersionOutput, WorkerPool
+from bookreviver.domain.recipes import OrderMode, RecipeDraft, Step
+from bookreviver.domain.runs import RunMode
+from bookreviver.domain.stages import ReviewReason, Stage, StageState
+from bookreviver.domain.versions import (
     ResultMark,
-    ReviewReason,
-    RunMode,
-    Stage,
-    StageState,
-    TransformKind,
     VersionData,
+    VersionFilter,
     VersionOrigin,
-    VersionOutput,
     VersionScale,
     VersionState,
-    WorkerPool,
 )
-from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, RecipeProfileId, StepId
-from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from starlette.requests import Request
 
-    from bookreviver.domain.entities import PageStage, PageVersion, Recipe
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import OrderIssue
+    from bookreviver.domain.processors import OrderIssue
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
 
 STEP_INDEX_OUT_OF_RANGE: str = 'The step index must name one of the steps.'
 

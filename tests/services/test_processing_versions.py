@@ -11,32 +11,23 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import (
-    JobKind,
-    JobState,
-    Rendition,
-    ResultMark,
-    Stage,
-    StageState,
-    TransformKind,
-    VersionData,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import JobChanged, PageVersionReady
-from bookreviver.domain.geometry import Point, Quad, Transform
+from bookreviver.domain.geometry import Point, Quad, Transform, TransformKind
 from bookreviver.domain.ids import PageVersionId, StepId
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview, TileCut
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import (
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import Stage, StageState
+from bookreviver.domain.versions import (
     CollectionReport,
-    RecipeDraft,
-    SliceRequest,
-    StageRun,
-    Step,
-    StepPreview,
-    TileCut,
+    ResultMark,
+    VersionData,
     VersionFilter,
+    VersionScale,
+    VersionState,
 )
 from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
 from bookreviver.services.version_clearing import BEING_COLLECTED
@@ -58,8 +49,12 @@ from tests.helpers.spreads import run_stage, stage_of
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, StorageKey
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

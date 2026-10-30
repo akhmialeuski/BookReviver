@@ -25,9 +25,9 @@ from bookreviver.domain.pagination import Pagination
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-    from bookreviver.domain.entities import Page, PaginationSection
     from bookreviver.domain.ids import PageId
-    from bookreviver.domain.pagination import Numbering
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.pagination import Numbering, PaginationSection
     from bookreviver.ports.persistence import BookRepositories
 
 

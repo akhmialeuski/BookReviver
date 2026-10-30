@@ -11,26 +11,21 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    PerspectiveMethod,
-    ProcessorScope,
-    ReviewReason,
-    SheetEdge,
-    Stage,
-    TransformKind,
-    VersionData,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Point, Quad
+from bookreviver.domain.geometry import EditorKind, Point, Quad, TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.sides import SheetEdge
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import PerspectiveMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import save
 from tests.plugins.runner import run_on
 from tests.plugins.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor
     from tests.plugins.synthetic import SyntheticSheet
 

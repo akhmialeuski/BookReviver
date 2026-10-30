@@ -23,13 +23,15 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import StageState
+from bookreviver.domain.stages import StageState
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, PageStage, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageVersionId
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book

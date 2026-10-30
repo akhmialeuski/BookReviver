@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
 
 PAGE_SIZE_PX: tuple[int, int] = (600, 800)

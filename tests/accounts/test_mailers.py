@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.mail.log import LogMailer
 from bookreviver.adapters.mail.smtp import SmtpMailer, SmtpServer
 from bookreviver.app.container import build_container
-from bookreviver.domain.values import MailMessage
+from bookreviver.domain.accounts import MailMessage
 from bookreviver.ports.runtime import Mailer
 
 if TYPE_CHECKING:

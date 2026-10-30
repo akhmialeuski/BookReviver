@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.ordering import OrderKeys
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

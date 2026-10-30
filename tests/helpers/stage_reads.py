@@ -2,15 +2,15 @@
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
 from tests.helpers.processing import open_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookOverview
-    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import BookId, StepId
+    from bookreviver.domain.library import BookOverview
+    from bookreviver.domain.slices import Slice
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
-    from bookreviver.domain.values import Slice
+    from bookreviver.domain.stages import Stage
     from tests.helpers.processing import ProcessingKit
 
 

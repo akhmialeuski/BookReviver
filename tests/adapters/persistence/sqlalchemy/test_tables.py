@@ -10,9 +10,12 @@ from sqlalchemy.exc import IntegrityError
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.mappers import SourceMapper
 from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, SourceRow, StepChangeRow
-from bookreviver.domain.entities import LibraryEntry, PageHistoryEntry
-from bookreviver.domain.enums import BlockKind, ChangeSource, RejectionReason, SourceStatus, ValueScope
 from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.sources import RejectionReason, SourceStatus
+from bookreviver.domain.spans import BlockKind
+from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import (
     EPOCH,

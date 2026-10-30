@@ -11,8 +11,9 @@ from typing import TYPE_CHECKING
 from attrs import frozen
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Job, PageVersion
-    from bookreviver.domain.enums import BookResource
+    from bookreviver.domain.books import BookResource
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.versions import PageVersion
 
 
 @frozen(kw_only=True)

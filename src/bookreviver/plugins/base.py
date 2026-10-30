@@ -20,8 +20,8 @@ from bookreviver.ports.processing import Processor
 if TYPE_CHECKING:
     from enum import StrEnum
 
-    from bookreviver.domain.enums import LabeledStrEnum
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.labels import LabeledStrEnum
+    from bookreviver.domain.metadata import MetadataMap
 
 # The field of the parameters of a processor with several methods that names the method, and so the parameters it takes
 METHOD_KEY: str = 'method'

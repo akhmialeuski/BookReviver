@@ -26,24 +26,15 @@ from bookreviver.api.schemas.processing import (
     StageRunBody,
 )
 from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH
-from bookreviver.domain.enums import (
-    EditorKind,
-    JobKind,
-    JobState,
-    PageKind,
-    RecipeKind,
-    Rendition,
-    ResultMark,
-    RunMode,
-    Stage,
-    StageState,
-    VersionOrigin,
-    VersionScale,
-)
-from bookreviver.domain.geometry import ContentBox, Line, Mesh, SplitChoice
+from bookreviver.domain.geometry import ContentBox, EditorKind, Line, Mesh, SplitChoice
 from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobKind, JobState, StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import PageStageKey, Renditions, StageRun
+from bookreviver.domain.pages import PageKind, RecipeKind
+from bookreviver.domain.runs import RunMode
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ResultMark, VersionOrigin, VersionScale
 from tests.helpers.builders import make_page, make_record, make_scan, make_source, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import store_book
@@ -54,8 +45,11 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page, Scan
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Scan
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle

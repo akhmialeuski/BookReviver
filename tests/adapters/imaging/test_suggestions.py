@@ -3,8 +3,7 @@
 import pytest
 
 from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme
-from bookreviver.domain.values import BookIdentifier, Contributor, MetadataSuggestion
+from bookreviver.domain.books import BookIdentifier, Contributor, ContributorRole, IdentifierScheme, MetadataSuggestion
 from tests.adapters.imaging.samples import xmp_packet
 
 TITLE: str = 'Сборникъ народныхъ пѣсенъ'

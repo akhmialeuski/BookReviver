@@ -9,9 +9,9 @@ import anyio
 import pytest
 from delayed_assert import expect
 
-from bookreviver.domain.enums import JobState
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import BookId
+from bookreviver.domain.jobs import JobState
 from tests.helpers.builders import make_job
 from tests.helpers.job_boards import BoardAdapter, open_board_under_test
 from tests.helpers.scripted_runner import TASKS_PER_JOB, Phase

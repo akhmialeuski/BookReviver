@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     import pytest
 
-    from bookreviver.domain.entities import PageStage
+    from bookreviver.domain.stages import PageStage
 
 
 class PageStageWrites:

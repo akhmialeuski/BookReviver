@@ -7,12 +7,12 @@ from fastapi_pagination import Page, Params
 from fastapi_pagination.customization import CustomizedPage, UseName, UseParams
 from pydantic import BaseModel
 
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.domain.values import Slice
+    from bookreviver.domain.slices import Slice
 
 PageItemT = TypeVar('PageItemT')
 MANIFEST_DEFAULT_SIZE: int = 50

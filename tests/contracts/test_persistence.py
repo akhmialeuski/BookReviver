@@ -15,32 +15,17 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import LibraryEntry
-from bookreviver.domain.enums import (
-    BlankFill,
-    ContentType,
-    FileType,
-    PageKind,
-    PageOrigin,
-    RecipeKind,
-    RejectionReason,
-    Rendition,
-    Side,
-    SourceKind,
-    SourceStatus,
-    Stage,
-    VersionState,
-)
+from bookreviver.domain.books import BookDetails, MetadataSuggestion
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, PageVersionId, SourceId
-from bookreviver.domain.values import (
-    BookDetails,
-    MetadataSuggestion,
-    PageSize,
-    ProcessorRef,
-    Renditions,
-    SliceRequest,
-)
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.pages import BlankFill, ContentType, PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.sides import Side
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import PageSize, ProcessorRef, VersionState
 from tests.helpers.builders import (
     EPOCH,
     FULL_DETAILS,
@@ -56,8 +41,10 @@ from tests.helpers.builders import (
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, Page, Source
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, PageId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Source
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

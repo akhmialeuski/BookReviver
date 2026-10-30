@@ -12,13 +12,22 @@ fewer than ``MIN_READINGS`` pages there is no book to compare with, so no page d
 import statistics
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import StepMeasure, VersionData
 from bookreviver.domain.geometry import Rect
+from bookreviver.domain.versions import VersionData
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
+from bookreviver.domain.labels import LabeledStrEnum
+
+
+class StepMeasure(LabeledStrEnum):
+    """What a step finds on each page that can be compared with the rest of the book, to tell a page that departs."""
+
+    ANGLE = 'angle', 'Angle the page was turned by'
+    FRAME_SIZE = 'frame-size', 'Width and height of the frame of the content'
+
 
 type Reading = tuple[float, ...]
 

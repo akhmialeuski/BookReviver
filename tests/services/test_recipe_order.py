@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.values import ProfileDraft, RecipeDraft, Step
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.processors import OrderRuleKind
+from bookreviver.domain.recipes import OrderMode, ProfileDraft, RecipeDraft, Step
+from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_order import RecipeOrder
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.processors import (

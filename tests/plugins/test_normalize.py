@@ -10,23 +10,15 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    HorizontalAlign,
-    MarginsBy,
-    NormalizeParam,
-    PageSide,
-    PaperFill,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    TransformKind,
-    VersionData,
-    VerticalAlign,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import ContentBox, Point, Rect
+from bookreviver.domain.geometry import ContentBox, EditorKind, Point, Rect, TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.margins import MarginsBy, NormalizeParam
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import HorizontalAlign, PaperFill, VerticalAlign
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.cv_image import line_pitch
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import INK, LINE_PITCH_PX, PAPER, save, text_page
@@ -35,7 +27,7 @@ from tests.plugins.runner import run_on
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
     from tests.plugins.runner import StepExtras
 

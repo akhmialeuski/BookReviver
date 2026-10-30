@@ -7,8 +7,8 @@ from uuid import uuid4
 from fastapi import UploadFile
 
 from bookreviver.adapters.storage import LocalBookDirectory, LocalSourceStore
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId, SourceId
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import directory_of, make_page_version
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Page
     from bookreviver.domain.ids import BookDirectoryName, BookId, PageId, StorageKey
+    from bookreviver.domain.pages import Page
     from bookreviver.ports.storage import AssetStore
 
 # The function from the directory name of a book to its directory, which the storage backend under test registers

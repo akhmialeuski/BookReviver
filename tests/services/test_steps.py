@@ -7,19 +7,12 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    ImagePolicy,
-    Rendition,
-    ReviewReason,
-    Stage,
-    TransformKind,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.geometry import TransformKind
+from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition, Renditions
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.versions import VersionScale, VersionState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepOutput
@@ -45,7 +38,8 @@ from tests.helpers.storage import book_directory
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.entities import PageVersion, Scan
+    from bookreviver.domain.sources import Scan
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.storage import SharedBookDirectories
 

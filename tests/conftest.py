@@ -14,7 +14,7 @@ from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.api.auth import signed_in_user
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
-from bookreviver.domain.entities import Actor
+from bookreviver.domain.accounts import Actor
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.ports.storage import BookDirectory

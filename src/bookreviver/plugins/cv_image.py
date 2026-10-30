@@ -16,17 +16,19 @@ import cv2
 import numpy as np
 from attrs import frozen
 
-from bookreviver.domain.enums import ColorMode, ReviewReason, VersionData
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
-from bookreviver.domain.values import COLOR_MODE_KEY, PageSize
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.sources import COLOR_MODE_KEY
+from bookreviver.domain.stages import ReviewReason
+from bookreviver.domain.versions import PageSize, VersionData
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from numpy.typing import NDArray
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
 
 type Samples = NDArray[np.uint8]
 type Floats = NDArray[np.float64]

@@ -7,7 +7,7 @@ from bookreviver.ports.persistence import BookDatabase
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.ports.persistence import BookRepositories
 
 

@@ -3,8 +3,17 @@
 import attrs
 import pytest
 
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, Orthography, RightsStatus, Script
-from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor, MetadataSuggestion
+from bookreviver.domain.books import (
+    BookDetails,
+    BookIdentifier,
+    Contributor,
+    ContributorRole,
+    IdentifierScheme,
+    MetadataSuggestion,
+    Orthography,
+    RightsStatus,
+    Script,
+)
 from tests.helpers.builders import FULL_DETAILS
 
 TITLE: str = 'Сборникъ народныхъ пѣсенъ'

@@ -9,8 +9,8 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 
 from bookreviver.api.schemas.processing import RecipeSchema
-from bookreviver.domain.enums import RecipeKind
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.pages import RecipeKind
 from tests.helpers.builders import make_page, make_record, make_scan, make_source
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import store_book
@@ -21,8 +21,9 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio

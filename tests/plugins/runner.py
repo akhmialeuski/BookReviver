@@ -10,9 +10,9 @@ from tests.helpers.builders import make_geometry_edit
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.enums import PageSide
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.sides import PageSide
     from bookreviver.ports.processing import Processor, StepOutput
 
 

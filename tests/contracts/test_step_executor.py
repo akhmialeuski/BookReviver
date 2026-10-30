@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.domain.enums import VersionScale
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
+from bookreviver.domain.versions import VersionScale
 from tests.helpers.step_executors import (
     FAILING_KEY,
     FAILING_MESSAGE,

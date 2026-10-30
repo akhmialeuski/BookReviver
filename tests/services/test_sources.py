@@ -8,11 +8,13 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalSourceStore
-from bookreviver.domain.enums import JobKind, RejectionReason, Rendition, SourceStatus
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.sources import RejectionReason, SourceStatus
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.sources import SourceService
@@ -28,8 +30,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Source
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
+    from bookreviver.domain.sources import Source
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book

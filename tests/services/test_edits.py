@@ -7,20 +7,24 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import EditorKind, Rendition, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
-from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
+from bookreviver.domain.geometry import BrushStrokes, EditorKind, Line, Point, Rect, Rotation, Stroke
 from bookreviver.domain.ids import StepId
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import NewPageEdit, PageStepKey, RecipeDraft, StageRun, Step
+from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.stages import Stage, StageState
 from tests.helpers.builders import make_page_stage, open_for
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.spreads import run_stage, stage_of
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 

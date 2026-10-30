@@ -15,7 +15,8 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.app.settings import ProcessingSettings
-from bookreviver.domain.enums import DewarpMethod, VersionData
+from bookreviver.domain.step_settings import DewarpMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import Processor, ProcessorSettings
 from tests.helpers.samples import CV_MISSING, save
 from tests.plugins.runner import run_on

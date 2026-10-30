@@ -10,12 +10,14 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobState, Rendition, Stage, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import JobState, StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import StageRun
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionState
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
@@ -24,9 +26,11 @@ from tests.helpers.processing import change_versions, open_book, stored_job
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, Page, PageVersion
-    from bookreviver.domain.enums import RunOutcome
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.runs import RunOutcome
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

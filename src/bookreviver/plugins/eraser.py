@@ -19,18 +19,13 @@ import cv2
 import numpy as np
 from pydantic import Field
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    EraserFill,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    VersionData,
-    VersionOutput,
-)
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.geometry import EditorKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import EraserFill
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import ModelProcessor, Params, labelled
 from bookreviver.plugins.cv_image import (
     BILEVEL_THRESHOLD,

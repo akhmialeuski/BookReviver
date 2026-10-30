@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from bookreviver.adapters.imaging import DjvuFormat, ImageFormat, PdfFormat, SourceReader
-from bookreviver.domain.enums import FileType, Rendition, SourceKind, UploadProblem
-from bookreviver.domain.errors import UnsupportedSourceError, UploadRejectedError
-from bookreviver.domain.values import UploadedSource
+from bookreviver.domain.errors import UnsupportedSourceError, UploadProblem, UploadRejectedError
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.sources import FileType, SourceKind, UploadedSource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

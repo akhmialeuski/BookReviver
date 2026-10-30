@@ -18,13 +18,13 @@ same place in a trace whichever component happened to start it from inside a req
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import SpanParent
+from bookreviver.domain.spans import SpanParent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from contextlib import AbstractContextManager
 
-    from bookreviver.domain.enums import SpanAttribute, SpanName
+    from bookreviver.domain.spans import SpanAttribute, SpanName
 
 # What a span can carry: a text, a number or a flag. An identifier is given as its text.
 type AttributeValue = str | int | float | bool

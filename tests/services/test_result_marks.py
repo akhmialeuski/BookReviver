@@ -6,11 +6,13 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import ResultMark, Stage, VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import RecipeDraft, ResultNote, StageRun, Step
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import ResultMark, ResultNote, VersionScale
 from bookreviver.services.result_marks import ResultMarksService
 from tests.helpers.processors import STRENGTH_PARAMETER
 from tests.helpers.spreads import run_stage

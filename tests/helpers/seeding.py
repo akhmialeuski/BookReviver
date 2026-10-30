@@ -3,8 +3,8 @@
 from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.domain.entities import LibraryEntry
-from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.spans import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import directory_of, new_account_id, new_book_id
 
@@ -12,8 +12,11 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, Page, PageVersion, Scan, Source
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Scan, Source
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from tests.helpers.database import LocatedBookDatabases
 

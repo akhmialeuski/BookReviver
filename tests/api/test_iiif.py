@@ -10,8 +10,8 @@ from fastapi import status
 
 from bookreviver.api.routers.iiif import IMMUTABLE_CACHE
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId, SourceId, StorageKey
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import make_page, make_page_version, make_record
 from tests.helpers.seeding import commit_account, store_book
@@ -21,8 +21,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, PageVersion
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import CatalogueDatabase
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

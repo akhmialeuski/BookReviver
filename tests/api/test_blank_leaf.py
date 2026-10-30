@@ -16,9 +16,12 @@ from PIL import Image
 
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.enums import BlankFill, JobKind, JobState, PageKind, Rendition, Stage, VersionState
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobKind, JobState
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.pages import BlankFill, PageKind
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionState
 from bookreviver.services.base_versions import BaseVersions
 from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_record, make_scan, make_source
 from tests.helpers.seeding import store_book
@@ -26,9 +29,10 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.domain.entities import Actor, BookRecord
-    from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page as BookPage
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory

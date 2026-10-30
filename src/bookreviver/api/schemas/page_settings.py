@@ -8,9 +8,8 @@ from pydantic import Field, model_validator
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.api.schemas.types import GroupLabel, PageIdList
-from bookreviver.domain.enums import ValueScope
 from bookreviver.domain.ids import ChangeBatchId, StepId
-from bookreviver.domain.step_values import ValueTarget
+from bookreviver.domain.step_values import ValueScope, ValueTarget
 
 
 class ValueTargetModel(RequestModel):

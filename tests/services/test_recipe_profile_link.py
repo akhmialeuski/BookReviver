@@ -5,14 +5,16 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.values import ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, Step
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import OrderMode, ProfileDraft, RecipeDraft, RecipeKey, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import Stage
 from tests.helpers.processors import SECOND_KEY, THIRD_KEY
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Recipe, RecipeProfile
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.recipes import Recipe, RecipeProfile
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

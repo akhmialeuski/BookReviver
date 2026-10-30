@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING
 
 from PIL import ExifTags, Image
 
-from bookreviver.domain.enums import Rendition
+from bookreviver.domain.images import Rendition
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import SourceKind
+    from bookreviver.domain.sources import SourceKind
 
 # Pillow refuses images above this many pixels as decompression bombs, and raises outright above twice as many.
 # Its default of about 89 million pixels rejects a broadsheet newspaper scanned at 600 DPI, while an A1 sheet at

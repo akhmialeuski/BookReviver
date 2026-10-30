@@ -7,9 +7,9 @@ from uuid import uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write

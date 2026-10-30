@@ -20,25 +20,22 @@ from typing import TYPE_CHECKING, ClassVar
 
 from attrs import evolve
 
-from bookreviver.domain.enums import (
-    ContentType,
-    PageKind,
-    PageOrigin,
-    Rendition,
-    VersionData,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import ContentDetection
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import ContentDetection
+from bookreviver.domain.pages import ContentType, PageKind, PageOrigin
+from bookreviver.domain.versions import VersionData, VersionScale, VersionState
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book

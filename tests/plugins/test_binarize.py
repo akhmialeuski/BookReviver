@@ -10,19 +10,13 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import (
-    BinarizationMethod,
-    ColorMode,
-    EditorKind,
-    OutputMode,
-    ProcessorScope,
-    Stage,
-    TransformKind,
-    VersionData,
-    ZoneMode,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Point, Regions, Zone
+from bookreviver.domain.geometry import EditorKind, Point, Regions, TransformKind, Zone, ZoneMode
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_settings import BinarizationMethod, OutputMode
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import save
 from tests.plugins.cleanup_pages import (
@@ -42,7 +36,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor
 
 PAGE_NAME: str = 'page.png'

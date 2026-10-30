@@ -1,9 +1,9 @@
 """Mappers between table rows and frozen domain entities, one per aggregate.
 
 A domain entity and a table row have different shapes, and neither can stand in for the other. The entity is a frozen
-``attrs`` class with nested value objects: a :class:`~bookreviver.domain.entities.BookRecord` holds a
-:class:`~bookreviver.domain.values.BookDetails`, and a :class:`~bookreviver.domain.entities.PageVersion` a
-:class:`~bookreviver.domain.values.ProcessorRef` and a :class:`~bookreviver.domain.geometry.Transform`. The row is a
+``attrs`` class with nested value objects: a :class:`~bookreviver.domain.books.BookRecord` holds a
+:class:`~bookreviver.domain.books.BookDetails`, and a :class:`~bookreviver.domain.versions.PageVersion` a
+:class:`~bookreviver.domain.versions.ProcessorRef` and a :class:`~bookreviver.domain.geometry.Transform`. The row is a
 flat, mutable class instrumented by SQLAlchemy, which assigns its attributes on load and tracks their changes. The
 domain may not import SQLAlchemy, which import-linter enforces, so the translation lives here: ``to_row`` spreads the
 value objects over columns, or into JSON where no query looks inside them, and ``to_entity`` gathers them back.
@@ -37,22 +37,17 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     StepChangeRow,
     StepValuesRow,
 )
-from bookreviver.domain.entities import (
-    BookPlace,
+from bookreviver.domain.books import (
+    BookDetails,
+    BookIdentifier,
     BookRecord,
-    Page,
-    PageEdit,
-    PageHistoryEntry,
-    PageStage,
-    PageStepState,
-    PageVersion,
-    PaginationSection,
-    Recipe,
-    Scan,
-    Source,
+    Contributor,
+    ContributorRole,
+    IdentifierScheme,
+    MetadataSuggestion,
 )
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, TransformKind, ValueScope
-from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
+from bookreviver.domain.geometry import Point, Quad, Transform, TransformKind, geometry_from_data
+from bookreviver.domain.history import PageHistoryEntry
 from bookreviver.domain.ids import (
     ChangeBatchId,
     PageHistoryEntryId,
@@ -66,19 +61,16 @@ from bookreviver.domain.ids import (
     StepId,
     StorageKey,
 )
-from bookreviver.domain.step_values import StepValues
-from bookreviver.domain.values import (
-    BookDetails,
-    BookIdentifier,
-    CanvasPosition,
-    Contributor,
-    MetadataSuggestion,
-    ProcessorRef,
-    Renditions,
-    ScanFacts,
-    SourceFile,
-    Step,
-)
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.page_steps import PageEdit, PageStepState
+from bookreviver.domain.pages import Page, PageKind
+from bookreviver.domain.pagination import PaginationSection
+from bookreviver.domain.places import BookPlace, CanvasPosition
+from bookreviver.domain.recipes import Recipe, Step
+from bookreviver.domain.sources import Scan, ScanFacts, Source, SourceFile
+from bookreviver.domain.stages import PageStage
+from bookreviver.domain.step_values import StepValues, ValueScope
+from bookreviver.domain.versions import PageVersion, ProcessorRef
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -10,11 +10,13 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image, ImageDraw
 
-from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import EditorKind, ProcessorScope, ReviewReason, Stage, TransformKind, VersionData
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Line, Point, SplitChoice
+from bookreviver.domain.geometry import EditorKind, Line, Point, SplitChoice, TransformKind
 from bookreviver.domain.ids import PageId, StepId
+from bookreviver.domain.page_steps import PageEdit
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import EPOCH
 from tests.helpers.samples import GUTTER_SHADE, PAPER, find_mark, mark, save, spread
@@ -23,7 +25,7 @@ from tests.plugins.synthetic import draw_spread
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
 
 PAGE_WIDTH_PX: int = 900

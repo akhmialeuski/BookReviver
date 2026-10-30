@@ -15,15 +15,16 @@ from fastapi_pagination import Params
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.books import ContributorSchema, IdentifierSchema
 from bookreviver.api.schemas.images import ImagePathsSchema
-from bookreviver.domain.enums import ColorMode, FileType, RejectionReason, SourceKind, SourceStatus
 from bookreviver.domain.ids import ScanId, SourceId
+from bookreviver.domain.images import ColorMode
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-    from bookreviver.domain.entities import Scan
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.sources import Scan
 
 
 class ScanQuery(Params):

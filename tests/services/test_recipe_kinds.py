@@ -7,9 +7,12 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import ContentType, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.values import PageStageKey, RecipeDraft, RecipeKey, SliceRequest, StageRun, Step
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.pages import ContentType, PageKind, RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from tests.helpers.builders import open_for
 from tests.helpers.page_services import make_page_service
@@ -19,8 +22,11 @@ from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, PageStage, Recipe
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

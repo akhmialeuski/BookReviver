@@ -4,7 +4,7 @@ from fastapi_pagination import Params
 
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.slices import Slice, SliceRequest
 
 PAGE_SIZE: int = 10
 TOTAL: int = 25

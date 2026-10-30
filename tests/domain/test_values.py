@@ -4,9 +4,8 @@ from typing import NamedTuple
 
 import pytest
 
-from bookreviver.domain.enums import UploadProblem
-from bookreviver.domain.errors import UploadRejectedError
-from bookreviver.domain.values import UploadPath
+from bookreviver.domain.errors import UploadProblem, UploadRejectedError
+from bookreviver.domain.sources import UploadPath
 
 
 class ParsedPathCase(NamedTuple):

@@ -7,10 +7,9 @@ from uuid import uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import UploadProblem
-from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
+from bookreviver.domain.errors import ConflictError, NotFoundError, UploadProblem, UploadRejectedError
 from bookreviver.domain.ids import BookId, JobId, SourceId
-from bookreviver.domain.values import SourceFile
+from bookreviver.domain.sources import SourceFile
 from tests.helpers.builders import directory_of
 from tests.helpers.storage import LARGE_CONTENT, upload
 

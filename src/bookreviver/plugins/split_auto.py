@@ -23,10 +23,11 @@ from typing import TYPE_CHECKING, override
 
 from pydantic import Field
 
-from bookreviver.domain.enums import ProcessorScope, ReviewReason, Stage, VersionData, VersionOutput
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import SplitChoice
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.cv_image import MANUAL_CONFIDENCE, NO_IMAGE, color_mode_of, image_data, read_samples
 from bookreviver.plugins.gutter import GutterSearch
 from bookreviver.plugins.split_spread import SplitSpread, SpreadParams

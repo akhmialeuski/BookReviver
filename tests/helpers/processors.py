@@ -5,26 +5,21 @@ from typing import TYPE_CHECKING, override
 
 from attrs import evolve
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    ProcessorScope,
-    Stage,
-    StepMeasure,
-    VersionData,
-    VersionOutput,
-    WorkerPool,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.geometry import EditorKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput, WorkerPool
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_measures import StepMeasure
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import Processor, StepOutput, StepResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import ContentType
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.pages import ContentType
     from bookreviver.ports.processing import StepInput
 
 # The marker a fake processor writes into the data of its output, so a test can tell which step ran

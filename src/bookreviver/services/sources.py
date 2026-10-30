@@ -21,18 +21,18 @@ A source is not deleted while the book imports, because the import may be writin
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Slice
+from bookreviver.domain.slices import Slice
+from bookreviver.domain.sources import SourceStatus
 from bookreviver.services.imports import IMPORT_JOBS
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-    from bookreviver.domain.entities import Scan, Source
     from bookreviver.domain.ids import SourceId
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.slices import SliceRequest
+    from bookreviver.domain.sources import Scan, Source
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 

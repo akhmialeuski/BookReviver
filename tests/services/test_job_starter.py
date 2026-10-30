@@ -8,11 +8,12 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, JobState, Stage
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.values import StageRun, Step, StepPreview, TileCut
+from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview, TileCut
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import directory_of
 from tests.helpers.held_steps import steps_held
 from tests.helpers.processing import open_book
@@ -21,9 +22,11 @@ from tests.helpers.processors import FakeProcessor
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, Job, Page
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId, JobId
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.pages import Page
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from tests.helpers.builders import BookOpener

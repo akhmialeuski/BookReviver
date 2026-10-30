@@ -9,7 +9,9 @@ from fastapi import status
 
 from bookreviver.api.schemas.places import BookPlaceSchema
 from bookreviver.api.schemas.types import CANVAS_CENTRE_MAX, CANVAS_ZOOM_MAX
-from bookreviver.domain.enums import CompareMode, PageFilter, PlaceMode, Stage, ViewMode
+from bookreviver.domain.pages import PageFilter
+from bookreviver.domain.places import CompareMode, PlaceMode, ViewMode
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import make_record, new_account_id
 from tests.helpers.seeding import commit_record, store_book
 
@@ -17,7 +19,7 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 

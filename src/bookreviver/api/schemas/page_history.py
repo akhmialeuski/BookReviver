@@ -6,8 +6,11 @@ from typing import Any
 from pydantic import Field
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.domain.enums import ChangeSource, Stage, StepLayer, ValueScope
+from bookreviver.domain.history import ChangeSource
 from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId, StepId
+from bookreviver.domain.page_steps import StepLayer
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_values import ValueScope
 
 
 class UndoForm(RequestModel):

@@ -12,13 +12,14 @@ import pytest
 from bookreviver.app.plugins import EntryPointCatalog
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import ProcessingSettings
-from bookreviver.domain.enums import Stage, WorkerPool
-from bookreviver.domain.values import Step
+from bookreviver.domain.processors import WorkerPool
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_order import RecipeOrder
 from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import ProcessorSpec
+    from bookreviver.domain.processors import ProcessorSpec
 
 MARGINS_KEY: str = 'geometry.normalize'
 CROP_KEY: str = 'geometry.crop'

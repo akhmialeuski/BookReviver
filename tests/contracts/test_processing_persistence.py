@@ -14,24 +14,18 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import PageEdit, PageHistoryEntry
-from bookreviver.domain.enums import (
-    ChangeSource,
-    PageOrigin,
-    RecipeKind,
-    ResultMark,
-    ReviewReason,
-    Stage,
-    StageState,
-    ValueScope,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry
 from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId, PageVersionId, StepId
+from bookreviver.domain.page_steps import PageEdit, PageStepKey
+from bookreviver.domain.pages import PageOrigin, RecipeKind
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stage_summaries import StepTally
-from bookreviver.domain.values import PageStageKey, PageStepKey, ProcessorRef, SliceRequest, Step
+from bookreviver.domain.stages import PageStageKey, ReviewReason, Stage, StageState
+from bookreviver.domain.step_values import ValueScope
+from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionScale, VersionState
 from tests.helpers.builders import (
     DESKEW_STEP_ID,
     EPOCH,
@@ -52,9 +46,12 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page, PageStage, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.stages import PageStage
     from bookreviver.domain.step_values import StepValues
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

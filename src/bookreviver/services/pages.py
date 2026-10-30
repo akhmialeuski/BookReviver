@@ -49,24 +49,6 @@ from uuid import uuid4
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import Job, Page, PageOverview
-from bookreviver.domain.enums import (
-    BlankFill,
-    BlankParam,
-    ColorMode,
-    JobKind,
-    JobState,
-    NewPageOrigin,
-    NormalizeParam,
-    PageKind,
-    PageOrigin,
-    PaperFill,
-    RecipeKind,
-    Side,
-    Stage,
-    VersionData,
-    VersionState,
-)
 from bookreviver.domain.errors import (
     AnchorInsideMovedPagesError,
     ConflictError,
@@ -77,9 +59,17 @@ from bookreviver.domain.errors import (
 )
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.jobs import ContentDetection, Job, JobEnd, JobKind, JobState
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.margins import NormalizeParam
+from bookreviver.domain.pages import BlankFill, NewPageOrigin, Page, PageKind, PageOrigin, PageOverview, RecipeKind
 from bookreviver.domain.pagination import Numbering
-from bookreviver.domain.values import ContentDetection, JobEnd, PageSize, PageStageKey, Slice, SliceRequest
+from bookreviver.domain.sides import Side
+from bookreviver.domain.slices import Slice, SliceRequest
+from bookreviver.domain.stages import PageStageKey, Stage
+from bookreviver.domain.step_settings import BlankParam, PaperFill
+from bookreviver.domain.versions import PageSize, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book_measure import NORMALIZE_KEY
 from bookreviver.services.page_labels import PageLabels
@@ -89,10 +79,12 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.changes import PageChanges
-    from bookreviver.domain.entities import BookRecord, PageVersion
     from bookreviver.domain.ids import PageVersionId, ScanId, SourceId
-    from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.pages import NewPage, PageAnchor
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl

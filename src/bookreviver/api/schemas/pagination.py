@@ -11,12 +11,13 @@ from pydantic import Field, model_validator
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.types import NumberPrefix, PageKindList, SectionName
-from bookreviver.domain.enums import LabelStyle, NumberDisplay, PageKind
 from bookreviver.domain.ids import PageId, PaginationSectionId
-from bookreviver.domain.values import PaginationSectionDraft
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pages import PageKind
+from bookreviver.domain.pagination import NumberDisplay, PaginationSectionDraft
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PaginationSection
+    from bookreviver.domain.pagination import PaginationSection
 
 
 class PaginationSectionSchema(ResponseModel):

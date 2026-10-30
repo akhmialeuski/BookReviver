@@ -9,8 +9,8 @@ from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageVersionRepository
-from bookreviver.domain.enums import Stage, StageState, VersionState
-from bookreviver.domain.values import PageStageKey, ProcessorRef
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ProcessorRef, VersionState
 from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
 from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
@@ -19,8 +19,11 @@ from tests.helpers.processors import CleanupProcessor, FakeProcessor
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page, PageStage, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, PageVersionId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.page_stage_writes import PageStageWrites
     from tests.helpers.processing import ProcessingKit

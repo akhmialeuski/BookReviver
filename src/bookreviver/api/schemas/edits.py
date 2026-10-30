@@ -15,18 +15,17 @@ from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import iiif_path
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.api.schemas.types import PageIdList
-from bookreviver.domain.enums import CarryScope, EditorKind, Stage
-from bookreviver.domain.geometry import geometry_from_data
+from bookreviver.domain.geometry import EditorKind, geometry_from_data
 from bookreviver.domain.ids import ChangeBatchId, PageId, StepId
-from bookreviver.domain.values import CarryRequest, NewPageEdit
+from bookreviver.domain.page_steps import CarryRequest, CarryScope, NewPageEdit
+from bookreviver.domain.stages import Stage
 from bookreviver.services.page_carry import SELECTED_NEEDS_PAGES
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-    from bookreviver.domain.entities import PageEdit
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import PageStepKey
+    from bookreviver.domain.page_steps import PageEdit, PageStepKey
 
 SHAPE_DOES_NOT_FIT: str = 'The shape does not fit the {editor} editor: {reason}.'
 
