@@ -3,8 +3,8 @@
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import NewPageOrigin, PageKind, PageOrigin, VersionData
-from bookreviver.domain.values import NewPage, PageSize
+from bookreviver.domain.pages import NewPage, NewPageOrigin, PageKind, PageOrigin
+from bookreviver.domain.versions import PageSize, VersionData
 
 
 class TestPageSize:

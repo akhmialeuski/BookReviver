@@ -31,9 +31,8 @@ from bookreviver.api.schemas.profiles import (
     RecipeProfileName,
     RecipeProfileSchema,
 )
-from bookreviver.domain.entities import RecipeProfile
 from bookreviver.domain.ids import BookId, RecipeProfileId
-from bookreviver.domain.values import RecipeKey
+from bookreviver.domain.recipes import RecipeKey, RecipeProfile
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 

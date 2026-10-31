@@ -7,10 +7,13 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, Stage, VersionState
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import Renditions, SliceRequest
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.jobs import JobKind
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionState
 from tests.helpers.builders import (
     make_page,
     make_page_stage,
@@ -26,8 +29,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener

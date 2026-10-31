@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import RecordingEventBus

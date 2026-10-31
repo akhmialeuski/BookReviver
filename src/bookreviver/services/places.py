@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 
 from attrs import asdict
 
-from bookreviver.domain.entities import BookPlace
+from bookreviver.domain.places import BookPlace
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import NewBookPlace
+    from bookreviver.domain.places import NewBookPlace
     from bookreviver.services.book import Book
 
 

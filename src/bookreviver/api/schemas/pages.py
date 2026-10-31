@@ -19,26 +19,29 @@ from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
 from bookreviver.api.schemas.types import Dpi, GroupLabel, LongText, PageIdList, PageLabel, PagePixels
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import (
+from bookreviver.domain.ids import PageId, PaginationSectionId, ScanId, SourceId
+from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pages import (
     BlankFill,
     ContentSource,
     ContentType,
-    LabelStyle,
+    NewPage,
     NewPageOrigin,
+    PageAnchor,
     PageKind,
     PageOrigin,
-    Side,
 )
-from bookreviver.domain.ids import PageId, PaginationSectionId, ScanId, SourceId
-from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, PageSize
+from bookreviver.domain.pagination import PageNumbering
+from bookreviver.domain.sides import Side
+from bookreviver.domain.versions import PageSize
 from bookreviver.services.pages import PageService
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-    from bookreviver.domain.entities import PageOverview
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import PageOverview
 
 EXACTLY_ONE_ANCHOR: str = 'Give exactly one of before_page_id and after_page_id.'
 AT_MOST_ONE_ANCHOR: str = 'Give at most one of before_page_id and after_page_id.'

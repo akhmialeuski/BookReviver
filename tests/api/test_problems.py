@@ -8,13 +8,13 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.problems import NOT_FOUND_DETAIL, RETRY_AFTER_HEADER, UNEXPECTED_DETAIL
-from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import (
     BookBusyError,
     ConflictError,
     NotFoundError,
     PermissionDeniedError,
     UnsupportedSourceError,
+    UploadProblem,
     UploadRejectedError,
 )
 from tests.conftest import TEST_BASE_URL

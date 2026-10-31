@@ -14,38 +14,26 @@ from PIL import Image
 
 from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyScanRepository
-from bookreviver.domain.entities import Actor, VersionInputs
-from bookreviver.domain.enums import (
-    BookResource,
-    ColorMode,
-    ContributorRole,
-    DjvuDocumentKind,
-    FileType,
-    ImagePolicy,
-    JobKind,
-    JobState,
-    LabelStyle,
-    NumberDisplay,
-    PageOrigin,
-    RecipeKind,
-    RejectionReason,
-    Rendition,
-    SourceKind,
-    SourceStatus,
-    Stage,
-    UploadProblem,
-    VersionState,
-)
+from bookreviver.domain.accounts import Actor
+from bookreviver.domain.books import BookResource, Contributor, ContributorRole
 from bookreviver.domain.errors import (
     ConflictError,
     JobCancelledError,
     NotFoundError,
     UnsupportedSourceError,
+    UploadProblem,
     UploadRejectedError,
 )
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged
+from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Contributor, JobEnd, StageRun
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pages import PageOrigin, RecipeKind
+from bookreviver.domain.pagination import NumberDisplay
+from bookreviver.domain.sources import DjvuDocumentKind, FileType, RejectionReason, SourceKind, SourceStatus
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionInputs, VersionState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.runtime import JobControl
 from bookreviver.services.base_versions import SPLIT_NONE
@@ -97,9 +85,13 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, PaginationSection, Scan, Source
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageId, StorageKey
-    from bookreviver.domain.values import SourceFile
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.pagination import PaginationSection
+    from bookreviver.domain.sources import Scan, Source, SourceFile
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from tests.helpers.builders import BookOpener

@@ -23,28 +23,24 @@ from typing import TYPE_CHECKING
 import anyio
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    Rendition,
-    ReviewReason,
-    TransformKind,
-    VersionData,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import Transform
+from bookreviver.domain.geometry import Transform, TransformKind
+from bookreviver.domain.images import ColorMode, Rendition, Renditions
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import COLOR_MODE_KEY, Renditions
+from bookreviver.domain.sources import COLOR_MODE_KEY
+from bookreviver.domain.stages import ReviewReason
+from bookreviver.domain.versions import VersionData, VersionScale, VersionState
 from bookreviver.ports.processing import StepInput, StepOutput, StepResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
-    from bookreviver.domain.entities import PageEdit, PageVersion
-    from bookreviver.domain.enums import ImagePolicy, PageSide
     from bookreviver.domain.ids import StorageKey
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.images import ImagePolicy
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.page_steps import PageEdit
+    from bookreviver.domain.sides import PageSide
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.imaging import RenditionWriter, Tiler
     from bookreviver.ports.processing import StepExecutor
     from bookreviver.services.book import Book

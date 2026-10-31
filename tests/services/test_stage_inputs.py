@@ -7,8 +7,9 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import Stage, StageState, VersionState
-from bookreviver.domain.values import PageStageKey, Renditions
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import VersionState
 from bookreviver.services.stage_inputs import StageInputs
 from tests.helpers.builders import make_page_stage, make_page_version
 from tests.helpers.stage_heads import seed_head
@@ -16,8 +17,9 @@ from tests.helpers.stage_heads import seed_head
 if TYPE_CHECKING:
     from collections.abc import Collection
 
-    from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit

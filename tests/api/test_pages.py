@@ -11,9 +11,9 @@ from fastapi_pagination import Page
 
 from bookreviver.api.pagination import MANIFEST_MAX_SIZE
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.enums import ImagePolicy, PageOrigin, Rendition
+from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.pages import PageOrigin
 from tests.helpers.builders import make_page, make_page_version, make_record, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_record, store_book
 
@@ -21,9 +21,10 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, PageVersion
-    from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page as BookPage
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.storage import SharedBookDirectories
 

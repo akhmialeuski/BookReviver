@@ -3,15 +3,16 @@
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import StepMeasure, VersionData
 from bookreviver.domain.step_measures import (
     ANGLE_TOLERANCE_DEGREES,
     FRAME_TOLERANCE_SHARE,
     MIN_READINGS,
+    StepMeasure,
     departs,
     median_of,
     read_measure,
 )
+from bookreviver.domain.versions import VersionData
 
 FRAME_WIDTH_PX: float = 1000.0
 FRAME_HEIGHT_PX: float = 1600.0

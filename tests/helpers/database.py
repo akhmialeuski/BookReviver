@@ -24,8 +24,8 @@ from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemy
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
-from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.keys import KeySegment
+from bookreviver.domain.spans import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from bookreviver.ports.storage import BookDirectory
 from tests.helpers.builders import directory_of
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import Schema
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import BookRecord
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.ports.persistence import CatalogueDatabase
 

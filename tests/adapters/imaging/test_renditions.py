@@ -7,7 +7,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.app.settings import ImagingSettings
-from bookreviver.domain.enums import ColorMode, Rendition
+from bookreviver.domain.images import ColorMode, Rendition
 from tests.adapters.imaging.samples import write_image
 
 if TYPE_CHECKING:

@@ -7,15 +7,19 @@ reads through a catalogue database of its own, as committed.
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, Step
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStageKey
 from tests.helpers.builders import open_for
 from tests.helpers.samples import png_bytes, spread
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion
-    from bookreviver.domain.enums import Stage
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import StageRun
+    from bookreviver.domain.jobs import StageRun
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.stages import PageStage, Stage
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 

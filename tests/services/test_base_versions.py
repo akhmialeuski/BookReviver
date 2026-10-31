@@ -6,15 +6,16 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import VersionInputs
-from bookreviver.domain.enums import BlankParam, ColorMode, PaperFill, Rendition, Stage, VersionState
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.values import PageSize, Renditions
+from bookreviver.domain.images import ColorMode, Rendition, Renditions
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.step_settings import BlankParam, PaperFill
+from bookreviver.domain.versions import PageSize, VersionInputs, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from tests.helpers.builders import EPOCH, make_page, make_scan, make_source
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Scan
+    from bookreviver.domain.sources import Scan
 
 pytestmark = pytest.mark.anyio
 

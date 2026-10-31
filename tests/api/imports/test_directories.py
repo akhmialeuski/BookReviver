@@ -11,7 +11,9 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import JobState, RejectionReason, UploadProblem
+from bookreviver.domain.errors import UploadProblem
+from bookreviver.domain.jobs import JobState
+from bookreviver.domain.sources import RejectionReason
 from tests.adapters.imaging.samples import TiffFrame, write_tiff
 from tests.helpers.fakes_imports import image_upload, pdf_upload, stored_book
 

@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobState
-from bookreviver.domain.values import JobEnd, SliceRequest
+from bookreviver.domain.accounts import Actor
+from bookreviver.domain.jobs import JobEnd, JobState
+from bookreviver.domain.slices import SliceRequest
 from tests.helpers.builders import make_record, open_for
 from tests.helpers.fakes_imports import pdf_upload
 from tests.helpers.seeding import store_book

@@ -18,7 +18,7 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
-from bookreviver.domain.enums import SpanParent
+from bookreviver.domain.spans import SpanParent
 from bookreviver.ports.tracing import StartedSpan, Tracer
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from opentelemetry.trace import Span as SdkSpan
 
-    from bookreviver.domain.enums import SpanAttribute, SpanName
+    from bookreviver.domain.spans import SpanAttribute, SpanName
     from bookreviver.ports.tracing import AttributeValue, Span, SpanAttributes
 
 

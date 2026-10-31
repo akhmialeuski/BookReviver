@@ -7,51 +7,18 @@ from uuid import UUID, uuid4
 
 from attrs import frozen
 
-from bookreviver.domain.entities import (
-    BookPlace,
+from bookreviver.domain.books import (
     BookRecord,
-    Job,
-    Page,
-    PageEdit,
-    PageHistoryEntry,
-    PageStage,
-    PageStepState,
-    PageVersion,
-    PaginationSection,
-    Recipe,
-    RecipeProfile,
-    Scan,
-    Source,
-)
-from bookreviver.domain.enums import (
     BookResource,
-    ChangeSource,
-    ColorMode,
-    CompareMode,
     ContributorRole,
-    FileType,
     IdentifierScheme,
-    JobKind,
-    JobState,
-    LabelStyle,
-    NumberDisplay,
     Orthography,
-    PageFilter,
-    PageKind,
-    PageOrigin,
-    PlaceMode,
-    RecipeKind,
     RightsStatus,
     Script,
-    SourceKind,
-    Stage,
-    StageState,
-    StepLayer,
-    ValueScope,
-    ViewMode,
 )
 from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry
 from bookreviver.domain.ids import (
     AccountId,
     BookDirectoryName,
@@ -67,25 +34,32 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.jobs import Job, JobKind, JobState
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.page_steps import PageEdit, PageStepState, StepLayer
+from bookreviver.domain.pages import Page, PageFilter, PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.pagination import NumberDisplay, PaginationSection
+from bookreviver.domain.places import BookPlace, CompareMode, PlaceMode, ViewMode
+from bookreviver.domain.recipes import Recipe, RecipeProfile
+from bookreviver.domain.sources import FileType, Scan, Source, SourceKind
+from bookreviver.domain.stages import PageStage, Stage, StageState
+from bookreviver.domain.step_values import ValueScope
+from bookreviver.domain.versions import PageVersion
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.helpers.storage import SharedBookDirectories
+from bookreviver.domain.books import BookDetails, BookIdentifier, Contributor
+from bookreviver.domain.places import CanvasPosition
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.sources import ScanFacts, SourceFile
 from bookreviver.domain.step_values import StepValues
-from bookreviver.domain.values import (
-    BookDetails,
-    BookIdentifier,
-    CanvasPosition,
-    Contributor,
-    ProcessorRef,
-    ScanFacts,
-    SourceFile,
-    Step,
-)
+from bookreviver.domain.versions import ProcessorRef
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
 # Largest number of undelivered events each subscriber of a test's event bus keeps

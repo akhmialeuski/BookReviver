@@ -11,7 +11,8 @@ from fastapi_pagination import Page
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.enums import LabelStyle, PageKind
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pages import PageKind
 from tests.helpers.builders import make_page, make_record, new_account_id
 from tests.helpers.seeding import commit_record, store_book
 
@@ -19,9 +20,9 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor
-    from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page as BookPage
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio

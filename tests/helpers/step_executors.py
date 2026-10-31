@@ -19,9 +19,10 @@ from typing import TYPE_CHECKING, override
 from attrs import frozen
 
 from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor, ThreadVariable
-from bookreviver.domain.enums import ColorMode, Stage
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorSpec
+from bookreviver.domain.stages import Stage
 from bookreviver.ports.processing import Processor, StepInput, StepOutput, StepResult
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.in_process_executor import InProcessStepExecutor
@@ -29,7 +30,7 @@ from tests.helpers.in_process_executor import InProcessStepExecutor
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import StepExecutor
 
 # The keys of the processors of the catalogue

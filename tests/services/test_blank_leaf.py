@@ -13,30 +13,20 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import (
-    BlankFill,
-    BlankParam,
-    BookResource,
-    JobKind,
-    JobState,
-    NewPageOrigin,
-    NormalizeParam,
-    PageKind,
-    PageOrigin,
-    PaperFill,
-    RecipeKind,
-    Rendition,
-    Stage,
-    StageState,
-    VersionData,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import BookChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobKind, JobState
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import NewPage, ProcessorRef, Renditions, Step
+from bookreviver.domain.margins import NormalizeParam
+from bookreviver.domain.pages import BlankFill, NewPage, NewPageOrigin, PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.stages import Stage, StageState
+from bookreviver.domain.step_settings import BlankParam, PaperFill
+from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
 from bookreviver.services.book import Book
 from tests.helpers.acting_renditions import ActingRenditionWriter
@@ -61,9 +51,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
-    from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageOverview, PageStage, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId, PageId
-    from bookreviver.domain.values import JobEnd
+    from bookreviver.domain.jobs import Job, JobEnd
+    from bookreviver.domain.pages import Page, PageOverview
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl

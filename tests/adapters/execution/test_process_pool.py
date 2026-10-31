@@ -21,7 +21,8 @@ from bookreviver.adapters.execution.process_pool import (
     threads_per_process,
 )
 from bookreviver.app.plugins import EntryPointCatalogSource
-from bookreviver.domain.enums import VersionData, VersionScale, WorkerPool
+from bookreviver.domain.processors import WorkerPool
+from bookreviver.domain.versions import VersionData, VersionScale
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import CV_MISSING, save, text_page
 from tests.helpers.step_executors import (

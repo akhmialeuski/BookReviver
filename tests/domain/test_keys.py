@@ -6,10 +6,10 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StepId, StorageKey
+from bookreviver.domain.images import Rendition, Renditions
 from bookreviver.domain.keys import BookKeys, KeySegment
-from bookreviver.domain.values import ProcessorRef, Renditions
+from bookreviver.domain.versions import ProcessorRef
 from tests.helpers.builders import make_page_version, make_scan, make_source
 
 BOOK_ID: BookId = BookId(uuid4())

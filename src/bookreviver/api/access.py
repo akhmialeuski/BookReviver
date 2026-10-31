@@ -19,16 +19,16 @@ from fastapi import Depends
 from fastapi_users.models import UserProtocol
 
 from bookreviver.api.auth import signed_in_user
-from bookreviver.domain.entities import Actor
+from bookreviver.domain.accounts import Actor
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import LibraryEntry
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import Slice, SliceRequest
+    from bookreviver.domain.library import LibraryEntry
+    from bookreviver.domain.slices import Slice, SliceRequest
 
 BOOK_ID_DESCRIPTION: Final = 'Identifier of the book'
 

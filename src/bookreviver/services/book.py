@@ -21,8 +21,7 @@ from typing import TYPE_CHECKING
 
 from attrs import Factory, evolve, field, frozen
 
-from bookreviver.domain.entities import BookRecord
-from bookreviver.domain.values import ArchivedBook
+from bookreviver.domain.books import ArchivedBook, BookRecord
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.ports.storage import BookDirectory
@@ -31,9 +30,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import BinaryIO
 
+    from bookreviver.domain.books import BookDetails
     from bookreviver.domain.changes import BookChanges
     from bookreviver.domain.ids import BookDirectoryName
-    from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore, SourceStore
 

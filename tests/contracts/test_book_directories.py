@@ -12,15 +12,15 @@ from uuid import uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import SOURCE_NAME, upload
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageVersion
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.storage import DirectoryOpener
 
 pytestmark = pytest.mark.anyio

@@ -18,10 +18,11 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
-from bookreviver.domain.enums import BlockKind, BookResource
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.events import BookChanged
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.spans import BlockKind
 from bookreviver.ports.persistence import NoChangeOpenError
 from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
 from tests.helpers.builders import make_book_place, make_page, make_page_version, make_record
@@ -33,8 +34,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import RecordingEventBus

@@ -6,11 +6,10 @@ from typing import Any
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import EditorKind, TransformKind, ZoneMode
 from bookreviver.domain.errors import UnsupportedTransformError
 from bookreviver.domain.geometry import (
     BrushStrokes,
+    EditorKind,
     Line,
     Mesh,
     Point,
@@ -21,10 +20,13 @@ from bookreviver.domain.geometry import (
     SplitChoice,
     Stroke,
     Transform,
+    TransformKind,
     Zone,
+    ZoneMode,
     geometry_from_data,
 )
 from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.page_steps import PageEdit
 
 # The left half of a spread 2200 px wide and 1561 px high
 QUAD: Quad = Quad(

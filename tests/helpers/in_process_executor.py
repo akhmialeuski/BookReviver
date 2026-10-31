@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 
-from bookreviver.domain.enums import VersionScale
+from bookreviver.domain.versions import VersionScale
 from bookreviver.ports.processing import StepExecutor
 
 if TYPE_CHECKING:

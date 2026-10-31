@@ -13,9 +13,8 @@ if TYPE_CHECKING:
 
     import pytest
 
-    from bookreviver.domain.enums import ColorMode, Rendition
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.values import RenditionInfo
+    from bookreviver.domain.images import ColorMode, Rendition, RenditionInfo
     from tests.helpers.processing import ProcessingKit
 
 

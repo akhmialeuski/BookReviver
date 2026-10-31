@@ -5,16 +5,20 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import NewPageOrigin, PageKind, Side, Stage, StageState, ValueScope
-from bookreviver.domain.values import NewPage, PageAnchor
+from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKind
+from bookreviver.domain.sides import Side
+from bookreviver.domain.stages import Stage, StageState
+from bookreviver.domain.step_values import ValueScope
 from tests.helpers.builders import make_page, make_page_stage, make_record, make_step_values
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener

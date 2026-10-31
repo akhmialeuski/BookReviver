@@ -9,9 +9,10 @@ from delayed_assert import assert_expectations, expect
 from PIL import ExifTags, TiffImagePlugin
 
 from bookreviver.adapters.imaging.common import FactKey
-from bookreviver.domain.enums import ColorMode, ContributorRole, SourceKind
+from bookreviver.domain.books import Contributor, ContributorRole, MetadataSuggestion
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import Contributor, MetadataSuggestion
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.sources import SourceKind
 from tests.adapters.imaging.samples import (
     ROMAN_THEN_ARABIC_LABELS,
     ROMAN_THEN_ARABIC_RULES,

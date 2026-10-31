@@ -5,10 +5,13 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import ChangeSource, EditorKind, RunMode, Stage, StepLayer
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.values import NewPageEdit, PageStageKey, StageRun
+from bookreviver.domain.geometry import EditorKind, Rotation
+from bookreviver.domain.history import ChangeSource
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.page_steps import NewPageEdit, StepLayer
+from bookreviver.domain.runs import RunMode
+from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.services.run_plans import RunPlan
 from tests.helpers.builders import open_for
 from tests.helpers.page_batches import PageValues, run_impact
@@ -19,9 +22,12 @@ from tests.helpers.spreads import run_stage
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageHistoryEntry, PageStepState, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.history import PageHistoryEntry
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import PageStepKey
+    from bookreviver.domain.page_steps import PageStepKey, PageStepState
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit

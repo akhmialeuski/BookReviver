@@ -22,16 +22,17 @@ from uuid import uuid4
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import RecipeProfile
-from bookreviver.domain.enums import OrderMode
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.ids import RecipeProfileId
-from bookreviver.domain.values import RecipeDraft, RecipeKey, Slice
+from bookreviver.domain.recipes import OrderMode, RecipeDraft, RecipeKey, RecipeProfile
+from bookreviver.domain.slices import Slice
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, Recipe
-    from bookreviver.domain.enums import RecipeKind, Stage
-    from bookreviver.domain.values import ProfileDraft, SliceRequest
+    from bookreviver.domain.books import BookRecord
+    from bookreviver.domain.pages import RecipeKind
+    from bookreviver.domain.recipes import ProfileDraft, Recipe
+    from bookreviver.domain.slices import SliceRequest
+    from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.processing import ProcessingService

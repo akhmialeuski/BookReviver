@@ -25,17 +25,11 @@ from typing import TYPE_CHECKING, override
 import numpy as np
 from pydantic import Field
 
-from bookreviver.domain.enums import (
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    TransformKind,
-    VersionData,
-    VersionOutput,
-)
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import Line, Point, Quad, SplitChoice, Transform
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.geometry import Line, Point, Quad, SplitChoice, Transform, TransformKind
+from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import ModelProcessor
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,

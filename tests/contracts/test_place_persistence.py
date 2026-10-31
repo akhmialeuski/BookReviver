@@ -11,9 +11,9 @@ from uuid import uuid4
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import PlaceMode, Stage
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import CanvasPosition
+from bookreviver.domain.places import CanvasPosition, PlaceMode
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import make_book_place, make_record
 from tests.helpers.seeding import store_book
 

@@ -9,8 +9,9 @@ from fastapi import status
 
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import AppliedProfileSchema, ProfileFileSchema, RecipeProfileSchema
-from bookreviver.domain.enums import RecipeKind, Stage
-from bookreviver.domain.values import Step
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import make_recipe_profile, make_record
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import store_book
@@ -21,8 +22,9 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, RecipeProfile
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.recipes import RecipeProfile
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio

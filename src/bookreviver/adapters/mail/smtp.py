@@ -9,7 +9,7 @@ from attrs import field, frozen
 from bookreviver.ports.runtime import Mailer
 
 if TYPE_CHECKING:
-    from bookreviver.domain.values import MailMessage
+    from bookreviver.domain.accounts import MailMessage
 
 
 @frozen(kw_only=True)

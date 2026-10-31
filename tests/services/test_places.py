@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.domain.entities import Actor
+from bookreviver.domain.accounts import Actor
 from bookreviver.services.places import PlaceService
 from tests.helpers.builders import make_record, new_account_id
 from tests.helpers.seeding import commit_record

@@ -30,7 +30,7 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.api.routers.accounts import AccountRoutes
 from bookreviver.app.settings import Settings
-from bookreviver.domain.values import MailMessage
+from bookreviver.domain.accounts import MailMessage
 from bookreviver.ports.runtime import Mailer
 
 if TYPE_CHECKING:

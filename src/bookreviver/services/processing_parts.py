@@ -25,11 +25,9 @@ from uuid import uuid4
 
 from attrs import frozen
 
-from bookreviver.domain.entities import Job
-from bookreviver.domain.enums import JobKind
 from bookreviver.domain.errors import ConflictError, JobFinishedError, NotFoundError
 from bookreviver.domain.ids import JobId
-from bookreviver.domain.values import TileCut, VersionCollection
+from bookreviver.domain.jobs import Job, JobKind, TileCut, VersionCollection
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.stage_records import StageRecords
@@ -39,7 +37,7 @@ if TYPE_CHECKING:
     from datetime import timedelta
 
     from bookreviver.domain.ids import PageVersionId
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book
     from bookreviver.services.recipes import DefaultRecipes

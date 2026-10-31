@@ -12,18 +12,12 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app import trace_report
-from bookreviver.domain.enums import (
-    JobKind,
-    SpanAttribute,
-    SpanName,
-    SpanParent,
-    Stage,
-    StepOutcome,
-    VersionData,
-    VersionScale,
-)
 from bookreviver.domain.events import PageVersionReady
-from bookreviver.domain.values import Step, StepPreview
+from bookreviver.domain.jobs import JobKind, StepPreview
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent, StepOutcome
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionData, VersionScale
 from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
 
 if TYPE_CHECKING:

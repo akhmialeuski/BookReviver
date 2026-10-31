@@ -31,10 +31,10 @@ from bookreviver.api.schemas.processing import (
     StepPreviewBody,
     VersionQuery,
 )
-from bookreviver.domain.entities import PageStage, PageVersion, Recipe
-from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
-from bookreviver.domain.values import RecipeKey
+from bookreviver.domain.recipes import Recipe, RecipeKey
+from bookreviver.domain.stages import PageStage, Stage
+from bookreviver.domain.versions import PageVersion
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles

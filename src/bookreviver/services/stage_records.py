@@ -19,10 +19,8 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import evolve
 
-from bookreviver.domain.entities import PageStage
-from bookreviver.domain.enums import Stage, StageState, ValueScope
-from bookreviver.domain.step_values import SIDE_SCOPES, pages_changing_side
-from bookreviver.domain.values import PageStageKey
+from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
+from bookreviver.domain.step_values import SIDE_SCOPES, ValueScope, pages_changing_side
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable

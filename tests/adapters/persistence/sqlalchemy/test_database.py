@@ -17,7 +17,7 @@ from sqlalchemy import text
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
-from bookreviver.domain.entities import LibraryEntry
+from bookreviver.domain.library import LibraryEntry
 from tests.helpers.builders import EPOCH, directory_of, make_record, new_book_id
 from tests.helpers.seeding import store_book
 

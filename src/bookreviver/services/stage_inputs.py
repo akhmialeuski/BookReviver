@@ -11,13 +11,14 @@ runs in, so it is called from the work of ``CatalogueDatabase.read`` or ``Book.c
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import Stage, VersionState
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionState
 
 if TYPE_CHECKING:
     from collections.abc import Collection
 
-    from bookreviver.domain.entities import PageVersion
     from bookreviver.domain.ids import PageId, PageVersionId
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
 
 

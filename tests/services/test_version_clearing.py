@@ -7,7 +7,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import VersionData, VersionState
+from bookreviver.domain.versions import VersionData, VersionState
 from bookreviver.services.book import Book
 from bookreviver.services.version_clearing import BEING_COLLECTED, VersionClearing
 from tests.helpers.builders import directory_of, make_page, make_page_version, make_record, new_account_id

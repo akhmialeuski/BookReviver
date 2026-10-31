@@ -7,13 +7,13 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.domain.enums import LabelStyle, NumberDisplay
-from bookreviver.domain.page_label_rules import PageLabelRule
+from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule
+from bookreviver.domain.pagination import NumberDisplay
 from bookreviver.services.source_labels import SourceLabels
 from tests.helpers.builders import EPOCH, make_page
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page
+    from bookreviver.domain.pages import Page
 
 HAND_WRITTEN: str = '12a'
 ROMAN_LIMIT: int = 3999

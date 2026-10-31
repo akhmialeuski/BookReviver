@@ -10,10 +10,11 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import JobEnd, StageRun
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StageRun
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import (
     directory_of,
     make_book_change,
@@ -31,8 +32,9 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Job
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.jobs import Job
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.helpers.fakes_jobs import JobFakes

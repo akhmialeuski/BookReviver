@@ -41,14 +41,14 @@ from PIL import Image, ImageChops
 from bookreviver.adapters.imaging.common import GRAY_MODE, FactKey, to_mm, write_full
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
-from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import ScanFacts, SourceAnalysis
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.sources import DjvuDocumentKind, ScanFacts, SourceAnalysis, SourceKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import Rendition
+    from bookreviver.domain.images import Rendition
 
 logger = logging.getLogger(__name__)
 

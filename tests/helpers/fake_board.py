@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.adapters.jobs.board import InMemoryBookJobs, JobRunner
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId
+    from bookreviver.domain.jobs import Job
 
 DEFAULT_KEPT_ENDED: int = 20
 

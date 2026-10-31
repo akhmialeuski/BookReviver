@@ -11,36 +11,27 @@ import pytest
 from attrs import evolve, fields
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import (
+from bookreviver.domain.books import BookDetails
+from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.geometry import Line, Point, Rotation
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry, StepHistory
+from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, ScanId, StorageKey
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobKind, Progress, StageRun
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.page_steps import PageEdit, StepLayer
+from bookreviver.domain.pages import BlankFill, ContentSource, ContentType, PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.recipes import Step, StepField
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import (
     VERSION_ID_PATTERN,
-    LibraryEntry,
-    PageEdit,
-    PageHistoryEntry,
-    VersionInputs,
-)
-from bookreviver.domain.enums import (
-    BlankFill,
-    ChangeSource,
-    ContentSource,
-    ContentType,
-    JobKind,
-    PageKind,
-    PageOrigin,
-    PageSide,
-    RecipeKind,
-    Rendition,
+    ProcessorRef,
     ResultMark,
-    Stage,
-    StepField,
-    StepLayer,
+    VersionInputs,
     VersionOrigin,
     VersionScale,
 )
-from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.geometry import Line, Point, Rotation
-from bookreviver.domain.history import StepHistory
-from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, ScanId, StorageKey
-from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, StageRun, Step
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
@@ -59,7 +50,7 @@ from tests.helpers.builders import (
 )
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Recipe
+    from bookreviver.domain.recipes import Recipe
 
 PAGE_ID: PageId = PageId(uuid4())
 DESKEW_KEY: str = 'geometry.deskew'

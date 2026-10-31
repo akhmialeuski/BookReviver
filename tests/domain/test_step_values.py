@@ -5,9 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from bookreviver.domain.enums import ValueScope
 from bookreviver.domain.ids import BookId, PageId
-from bookreviver.domain.step_values import StepValueLayers, ValueTarget, pages_changing_side
+from bookreviver.domain.step_values import StepValueLayers, ValueScope, ValueTarget, pages_changing_side
 from tests.helpers.builders import make_step_values
 
 if TYPE_CHECKING:

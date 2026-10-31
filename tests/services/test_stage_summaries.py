@@ -7,34 +7,24 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import (
-    EditorKind,
+from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.geometry import EditorKind, Rotation
+from bookreviver.domain.ids import StepId
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
+from bookreviver.domain.pages import PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import (
     FigureState,
-    PageKind,
-    PageOrigin,
     PageStageStatus,
-    RecipeKind,
-    ResultMark,
     ReviewReason,
     Stage,
     StageState,
     StageStatus,
     StepFlag,
-    VersionState,
 )
-from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.ids import StepId
-from bookreviver.domain.values import (
-    NewPageEdit,
-    PageStepKey,
-    ProcessorRef,
-    RecipeDraft,
-    RecipeKey,
-    SliceRequest,
-    StageRun,
-    Step,
-)
+from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionState
 from tests.helpers.builders import make_page, make_page_stage, make_page_version, open_for
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
@@ -42,9 +32,12 @@ from tests.helpers.spreads import run_stage
 from tests.helpers.stage_reads import book_summaries, books_with_progress, stage_rows
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
     from bookreviver.domain.stage_summaries import StageSummary
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

@@ -11,19 +11,14 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image, ImageDraw
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    DeskewMethod,
-    EditorKind,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    TransformKind,
-    VersionData,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Point
+from bookreviver.domain.geometry import EditorKind, Point, TransformKind
 from bookreviver.domain.ids import PageId
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import DeskewMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import make_page_edit
 from tests.helpers.samples import ANGLE_TOLERANCE, INK, save, spread, text_page, turned
@@ -31,7 +26,7 @@ from tests.helpers.samples import ANGLE_TOLERANCE, INK, save, spread, text_page,
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor
 
 HOUGH_TOLERANCE: float = 0.2

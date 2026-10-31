@@ -6,14 +6,14 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.changes import BookChanges
-from bookreviver.domain.enums import ImagePolicy
+from bookreviver.domain.images import ImagePolicy
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import make_page, make_record, make_scan, make_source
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import CatalogueDatabaseFactory
 

@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.versions import VersionScale
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, PageVersion
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId
-    from bookreviver.domain.values import ResultNote
+    from bookreviver.domain.versions import PageVersion, ResultNote
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 

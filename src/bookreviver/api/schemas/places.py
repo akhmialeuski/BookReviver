@@ -8,9 +8,10 @@ from datetime import datetime
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.types import CanvasCentre, CanvasZoom
-from bookreviver.domain.enums import CompareMode, PageFilter, PlaceMode, Stage, ViewMode
 from bookreviver.domain.ids import PageId, ScanId, SourceId
-from bookreviver.domain.values import CanvasPosition, NewBookPlace
+from bookreviver.domain.pages import PageFilter
+from bookreviver.domain.places import CanvasPosition, CompareMode, NewBookPlace, PlaceMode, ViewMode
+from bookreviver.domain.stages import Stage
 
 
 class CanvasPositionBody(RequestModel):

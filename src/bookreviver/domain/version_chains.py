@@ -21,9 +21,10 @@ from attrs import frozen
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping, Sequence
 
-    from bookreviver.domain.entities import PageVersion, Recipe
-    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageVersionId, StepId
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import Stage
+    from bookreviver.domain.versions import PageVersion
 
 
 def collectable_versions(

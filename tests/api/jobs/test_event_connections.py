@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.persistence import CatalogueDatabase
     from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases

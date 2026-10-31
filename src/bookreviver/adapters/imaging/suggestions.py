@@ -30,9 +30,8 @@ from attrs import fields_dict
 from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import ParseError, fromstring
 
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme
+from bookreviver.domain.books import BookIdentifier, Contributor, ContributorRole, IdentifierScheme, MetadataSuggestion
 from bookreviver.domain.errors import InvalidIdentifierError
-from bookreviver.domain.values import BookIdentifier, Contributor, MetadataSuggestion
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping

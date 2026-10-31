@@ -10,16 +10,13 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    EditorKind,
-    EraserFill,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    VersionData,
-)
 from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.geometry import EditorKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import EraserFill
+from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import save
 from tests.plugins.cleanup_pages import INK, PAPER, read_gray, run_step
@@ -27,7 +24,7 @@ from tests.plugins.cleanup_pages import INK, PAPER, read_gray, run_step
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor
 
 PAGE_NAME: str = 'page.png'

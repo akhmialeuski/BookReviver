@@ -72,31 +72,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     StepChangeRow,
     StepValuesRow,
 )
-from bookreviver.domain.entities import (
-    LibraryEntry,
-    Page,
-    PageStage,
-    PageStepState,
-    PageVersion,
-    PaginationSection,
-    Recipe,
-    RecipeProfile,
-    Scan,
-    Source,
-)
-from bookreviver.domain.enums import (
-    ContentType,
-    PageOrigin,
-    RecipeKind,
-    ResultMark,
-    Side,
-    SourceStatus,
-    Stage,
-    StageState,
-    ValueScope,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import (
     BookId,
@@ -109,10 +84,19 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.page_steps import PageStepKey, PageStepState
+from bookreviver.domain.pages import ContentType, Page, PageOrigin, RecipeKind
+from bookreviver.domain.pagination import PaginationSection
+from bookreviver.domain.recipes import Recipe, RecipeProfile
+from bookreviver.domain.sides import Side
+from bookreviver.domain.slices import Slice
+from bookreviver.domain.sources import Scan, Source, SourceStatus
 from bookreviver.domain.stage_summaries import StageTally, StepTally
-from bookreviver.domain.step_values import StepValues
-from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
+from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
+from bookreviver.domain.step_values import StepValues, ValueScope
 from bookreviver.domain.version_chains import collectable_versions
+from bookreviver.domain.versions import PageSize, PageVersion, ResultMark, VersionScale, VersionState
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
     BookRepositories,
@@ -145,17 +129,16 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.rows import (
         RowRepository,
     )
-    from bookreviver.domain.entities import (
-        BookPlace,
-        PageHistoryEntry,
-    )
+    from bookreviver.domain.history import PageHistoryEntry
     from bookreviver.domain.ids import (
         AccountId,
         ChangeBatchId,
         PageHistoryEntryId,
     )
+    from bookreviver.domain.places import BookPlace
+    from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.step_values import StepValuesKey
-    from bookreviver.domain.values import ProcessorRef, SliceRequest
+    from bookreviver.domain.versions import ProcessorRef
 
 
 class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT, IdT]):

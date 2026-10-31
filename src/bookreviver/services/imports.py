@@ -40,30 +40,22 @@ from uuid import uuid4
 import anyio
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import Job, Page, Scan, Source
-from bookreviver.domain.enums import (
-    FileType,
-    JobKind,
-    JobState,
-    PageOrigin,
-    RecipeKind,
-    RejectionReason,
-    SourceStatus,
-    Stage,
-    SystemFile,
-    UploadProblem,
-    VersionState,
-)
 from bookreviver.domain.errors import (
     ConflictError,
     DomainError,
     JobCancelledError,
     UnsupportedSourceError,
+    UploadProblem,
     UploadRejectedError,
 )
 from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
+from bookreviver.domain.images import Renditions
+from bookreviver.domain.jobs import ImportRequest, Job, JobEnd, JobKind, JobState, StageRun
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import ImportRequest, JobEnd, PageStageKey, Renditions, StageRun, UploadPath
+from bookreviver.domain.pages import Page, PageOrigin, RecipeKind
+from bookreviver.domain.sources import FileType, RejectionReason, Scan, Source, SourceStatus, SystemFile, UploadPath
+from bookreviver.domain.stages import PageStageKey, Stage
+from bookreviver.domain.versions import VersionState
 from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.source_labels import SourceLabels
@@ -73,9 +65,8 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord
-    from bookreviver.domain.enums import SourceKind
-    from bookreviver.domain.values import MetadataSuggestion, UploadedSource
+    from bookreviver.domain.books import BookRecord, MetadataSuggestion
+    from bookreviver.domain.sources import SourceKind, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories

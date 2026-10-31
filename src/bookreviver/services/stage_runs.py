@@ -36,26 +36,18 @@ from typing import TYPE_CHECKING, override
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import Page, PageVersion, VersionInputs
-from bookreviver.domain.enums import (
-    PageOrigin,
-    PageSide,
-    ProcessorScope,
-    Rendition,
-    RunOutcome,
-    SpanAttribute,
-    SpanName,
-    Stage,
-    StageState,
-    StepOutcome,
-    VersionData,
-    VersionScale,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey
+from bookreviver.domain.page_steps import PageStepKey
+from bookreviver.domain.pages import Page, PageOrigin
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.runs import RunOutcome
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.spans import SpanAttribute, SpanName, StepOutcome
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import PageSize, PageVersion, VersionData, VersionInputs, VersionScale, VersionState
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.stage_inputs import StageInputs
@@ -65,9 +57,12 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, PageEdit, PageStage, PageStepState, Recipe
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
-    from bookreviver.domain.values import MetadataMap, Step
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.page_steps import PageEdit, PageStepState
+    from bookreviver.domain.recipes import Recipe, Step
+    from bookreviver.domain.stages import PageStage
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog

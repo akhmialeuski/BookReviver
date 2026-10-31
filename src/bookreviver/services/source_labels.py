@@ -18,17 +18,15 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.entities import PaginationSection
-from bookreviver.domain.enums import LabelStyle, NumberDisplay
 from bookreviver.domain.ids import PaginationSectionId
-from bookreviver.domain.page_label_rules import PageLabelRule
-from bookreviver.domain.pagination import Pagination
+from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule
+from bookreviver.domain.pagination import NumberDisplay, Pagination, PaginationSection
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Page
+    from bookreviver.domain.pages import Page
 
 
 class SourceLabels:

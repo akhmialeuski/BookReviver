@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import ResultMark
+from bookreviver.domain.versions import ResultMark
 from tests.helpers.builders import (
     make_page,
     make_page_version,

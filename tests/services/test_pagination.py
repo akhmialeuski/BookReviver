@@ -8,17 +8,14 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
+from bookreviver.domain.books import BookResource
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import BookResource, LabelStyle, NewPageOrigin, NumberDisplay, PageKind, Side
 from bookreviver.domain.errors import ConflictError, NotFoundError, ReversedRangeError
-from bookreviver.domain.values import (
-    NewPage,
-    NumberedPage,
-    PageAnchor,
-    PageNumbering,
-    PaginationSectionDraft,
-    SliceRequest,
-)
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKind
+from bookreviver.domain.pagination import NumberDisplay, NumberedPage, PageNumbering, PaginationSectionDraft
+from bookreviver.domain.sides import Side
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.page_labels import PageLabels
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import make_page, make_record, new_account_id
@@ -28,8 +25,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PaginationSection
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.pagination import PaginationSection
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService

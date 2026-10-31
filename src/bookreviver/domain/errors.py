@@ -5,7 +5,19 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import UploadProblem
+from bookreviver.domain.labels import LabeledStrEnum
+
+
+class UploadProblem(LabeledStrEnum):
+    """Why an upload cannot become a source."""
+
+    NO_FILES = 'no-files', 'Choose PDF files, DjVu files or page images to upload.'
+    EMPTY_NAME = 'empty-name', 'Every uploaded file needs a name.'
+    UNSAFE_PATH = 'unsafe-path', 'An uploaded file has a path that leaves its folder, such as an absolute path or ..'
+    DUPLICATE_NAME = 'duplicate-name', 'Two uploaded files have the same path.'
+    UNSUPPORTED_TYPE = 'unsupported-type', 'Only PDF, DjVu, TIFF, JPEG, JPEG 2000 and PNG files are accepted.'
+    TOO_LARGE = 'too-large', 'The upload is larger than the allowed size.'
+    TOO_MANY_FILES = 'too-many-files', 'The upload has more files than allowed.'
 
 
 class DomainError(Exception):

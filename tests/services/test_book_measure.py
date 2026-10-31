@@ -9,22 +9,15 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
-from bookreviver.domain.enums import (
-    JobKind,
-    JobState,
-    MarginsSource,
-    NormalizeParam,
-    RecipeKind,
-    Stage,
-    StageState,
-    VersionData,
-    VersionState,
-)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.margins import MM_PER_INCH
-from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
+from bookreviver.domain.jobs import JobKind, JobState, StageRun
+from bookreviver.domain.margins import MM_PER_INCH, MarginsSource, NormalizeParam
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
 from bookreviver.services.book_measure import MEASURE_OUTDATED
 from tests.helpers.builders import make_page_stage, make_page_version, open_for
 from tests.helpers.processing import stored_job
@@ -32,8 +25,13 @@ from tests.helpers.processing import stored_job
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageStage, Recipe
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases

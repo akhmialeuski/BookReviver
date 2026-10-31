@@ -8,9 +8,8 @@ from typing import override
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
 from bookreviver.adapters.persistence.sqlalchemy.tables import RecipeProfileRow
-from bookreviver.domain.entities import RecipeProfile
 from bookreviver.domain.ids import RecipeProfileId
-from bookreviver.domain.values import Step
+from bookreviver.domain.recipes import RecipeProfile, Step
 
 
 class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):

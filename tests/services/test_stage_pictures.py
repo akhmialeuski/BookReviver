@@ -5,16 +5,20 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import PageKind, RecipeKind, Stage
-from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, StageRun, Step
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.pages import PageKind, RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStageKey, Stage
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.spreads import head_of, run_stage
 from tests.helpers.stage_heads import seed_head
 from tests.helpers.stage_reads import stage_rows
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId, PageId, PageVersionId, StepId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 

@@ -9,9 +9,9 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import ContentType, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.values import PageAnchor
+from bookreviver.domain.pages import ContentType, PageAnchor, PageKind
+from bookreviver.domain.sides import Side
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
 from tests.helpers.seeding import ensure_account, store_book
@@ -21,8 +21,10 @@ if TYPE_CHECKING:
     from typing import Any
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener

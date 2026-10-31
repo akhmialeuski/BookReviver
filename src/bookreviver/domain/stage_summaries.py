@@ -15,24 +15,19 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import evolve, field, frozen, validators
 
-from bookreviver.domain.enums import (
-    FigureState,
-    PageStageStatus,
-    RecipeKind,
-    ResultMark,
-    StageStatus,
-    StepFlag,
-    VersionData,
-)
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.stages import FigureState, PageStageStatus, StageStatus, StepFlag
 from bookreviver.domain.step_measures import departs, read_measure
+from bookreviver.domain.versions import ResultMark, VersionData
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import PageVersion, Recipe
-    from bookreviver.domain.enums import ReviewReason, Stage, StepMeasure
     from bookreviver.domain.ids import PageId, RecipeId, StepId
-    from bookreviver.domain.step_measures import Reading
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import ReviewReason, Stage
+    from bookreviver.domain.step_measures import Reading, StepMeasure
+    from bookreviver.domain.versions import PageVersion
 
 # The statuses of a stage that a user still has something to do or to watch in, which a book's next stage is taken from
 STATUSES_WITH_WORK: frozenset[StageStatus] = frozenset(

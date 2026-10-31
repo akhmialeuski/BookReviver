@@ -11,12 +11,20 @@ from typing import TYPE_CHECKING
 
 from attrs import asdict, evolve, field, frozen
 
-from bookreviver.domain.enums import BlankFill, PageKind
+from bookreviver.domain.pages import BlankFill, PageKind
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, Page
-    from bookreviver.domain.enums import ContentType, ImagePolicy, Orthography, RightsStatus, Script
-    from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
+    from bookreviver.domain.books import (
+        BookDetails,
+        BookIdentifier,
+        BookRecord,
+        Contributor,
+        Orthography,
+        RightsStatus,
+        Script,
+    )
+    from bookreviver.domain.images import ImagePolicy
+    from bookreviver.domain.pages import ContentType, Page
 
 
 class Keep(enum.Enum):

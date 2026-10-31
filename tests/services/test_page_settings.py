@@ -9,29 +9,18 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageRepository
-from bookreviver.domain.enums import (
-    ChangeSource,
-    EditorKind,
-    OrderMode,
-    RecipeKind,
-    Stage,
-    StageState,
-    StepLayer,
-    ValueScope,
-    VersionScale,
-)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.geometry import EditorKind, Rotation
+from bookreviver.domain.history import ChangeSource
 from bookreviver.domain.ids import RecipeId, StepId
-from bookreviver.domain.step_values import ValueField, ValueTarget
-from bookreviver.domain.values import (
-    NewPageEdit,
-    PageStepKey,
-    RecipeDraft,
-    SliceRequest,
-    StageRun,
-    StepPreview,
-)
+from bookreviver.domain.jobs import StageRun, StepPreview
+from bookreviver.domain.page_steps import NewPageEdit, PageStepKey, StepLayer
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import OrderMode, RecipeDraft
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import Stage, StageState
+from bookreviver.domain.step_values import ValueField, ValueScope, ValueTarget
+from bookreviver.domain.versions import VersionScale
 from tests.helpers.builders import open_for
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processing import open_book
@@ -43,10 +32,11 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from unittest.mock import MagicMock
 
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Step
     from bookreviver.domain.step_values import StepValues
-    from bookreviver.domain.values import Step
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit

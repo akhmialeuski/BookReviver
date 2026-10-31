@@ -18,20 +18,21 @@ from uuid import uuid4
 
 from attrs import asdict, evolve, frozen
 
-from bookreviver.domain.entities import PaginationSection
-from bookreviver.domain.enums import LabelStyle, NumberDisplay
 from bookreviver.domain.errors import ConflictError, NotFoundError, ReversedRangeError
 from bookreviver.domain.ids import PaginationSectionId
-from bookreviver.domain.pagination import Pagination
-from bookreviver.domain.values import NumberedPage, Slice
+from bookreviver.domain.page_label_rules import LabelStyle
+from bookreviver.domain.pagination import NumberDisplay, NumberedPage, Pagination, PaginationSection
+from bookreviver.domain.slices import Slice
 from bookreviver.services.page_labels import PageLabels
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
-    from bookreviver.domain.values import PageNumbering, PaginationSectionDraft, SliceRequest
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.pagination import PageNumbering, PaginationSectionDraft
+    from bookreviver.domain.slices import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 

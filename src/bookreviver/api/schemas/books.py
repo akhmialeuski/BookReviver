@@ -40,22 +40,24 @@ from bookreviver.api.schemas.types import (
     Title,
     TitleList,
 )
-from bookreviver.domain.changes import BookChanges, BookDetailsChanges
-from bookreviver.domain.entities import BookRecord
-from bookreviver.domain.enums import (
+from bookreviver.domain.books import (
+    BookDetails,
+    BookIdentifier,
+    BookRecord,
+    Contributor,
     ContributorRole,
     IdentifierScheme,
-    ImagePolicy,
     Orthography,
     RightsStatus,
     Script,
-    Stage,
 )
+from bookreviver.domain.changes import BookChanges, BookDetailsChanges
 from bookreviver.domain.ids import BookId, PageId
-from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
+from bookreviver.domain.images import ImagePolicy
+from bookreviver.domain.stages import Stage
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookOverview
+    from bookreviver.domain.library import BookOverview
 
 TITLE_FIELD: str = 'title'
 IMAGE_POLICY_FIELD: str = 'image_policy'

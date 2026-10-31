@@ -24,19 +24,20 @@ from uuid import uuid4
 
 from attrs import evolve, field, frozen
 
-from bookreviver.domain.entities import Recipe
-from bookreviver.domain.enums import OrderMode, RecipeKind
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId
-from bookreviver.domain.values import RecipeDraft, Step
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import OrderMode, Recipe, RecipeDraft, Step
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page
-    from bookreviver.domain.enums import Stage
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
-    from bookreviver.domain.values import MetadataMap, PageStepKey
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.page_steps import PageStepKey
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.book import Book

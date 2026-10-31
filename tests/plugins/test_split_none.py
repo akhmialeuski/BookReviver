@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import ColorMode, TransformKind
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
+from bookreviver.domain.geometry import TransformKind
+from bookreviver.domain.images import ColorMode
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import StepInput
 

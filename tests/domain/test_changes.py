@@ -5,21 +5,22 @@ from typing import TYPE_CHECKING
 import attrs
 import pytest
 
-from bookreviver.domain.changes import KEEP, BookChanges, BookDetailsChanges, PageChanges
-from bookreviver.domain.enums import (
-    BlankFill,
+from bookreviver.domain.books import (
+    BookDetails,
+    BookIdentifier,
+    Contributor,
     ContributorRole,
     IdentifierScheme,
-    ImagePolicy,
     Orthography,
-    PageKind,
     Script,
 )
-from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
+from bookreviver.domain.changes import KEEP, BookChanges, BookDetailsChanges, PageChanges
+from bookreviver.domain.images import ImagePolicy
+from bookreviver.domain.pages import BlankFill, PageKind
 from tests.helpers.builders import FULL_DETAILS, make_page, make_record, make_scan, make_source
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page
+    from bookreviver.domain.pages import Page
 
 NEW_TITLE: str = 'New title'
 CURRENT: BookDetails = BookDetails(

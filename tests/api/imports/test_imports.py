@@ -13,7 +13,9 @@ from fastapi import Request
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import BookResource, JobKind, JobState, RejectionReason, SourceStatus
+from bookreviver.domain.books import BookResource
+from bookreviver.domain.jobs import JobKind, JobState
+from bookreviver.domain.sources import RejectionReason, SourceStatus
 from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_djvu_indirect
 from tests.helpers.builders import make_job, make_record, new_account_id
 from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book

@@ -9,7 +9,7 @@ from typing import Self
 from pydantic import BaseModel, Field, PositiveFloat, PositiveInt, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from bookreviver.domain.enums import WorkerPool
+from bookreviver.domain.processors import WorkerPool
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 
 TRACING_NEEDS_PATH: str = 'Tracing is enabled, so tracing.export_path must name the file the spans are written to.'

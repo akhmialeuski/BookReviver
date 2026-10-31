@@ -22,22 +22,22 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.entities import PageHistoryEntry, PageStepState
-from bookreviver.domain.enums import ChangeSource, ValueScope
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.history import ClearedStep, StepHistory
+from bookreviver.domain.history import ChangeSource, ClearedStep, PageHistoryEntry, StepHistory
 from bookreviver.domain.ids import ChangeBatchId
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.step_values import StepValues, StepValuesKey
+from bookreviver.domain.page_steps import PageStepState
+from bookreviver.domain.step_values import StepValues, StepValuesKey, ValueScope
 from bookreviver.domain.version_chains import StepVersions, step_places
 from bookreviver.services.processing_parts import BOOK_BUSY
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord, Recipe
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
-    from bookreviver.domain.values import PageStepKey
+    from bookreviver.domain.page_steps import PageStepKey
+    from bookreviver.domain.recipes import Recipe
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter

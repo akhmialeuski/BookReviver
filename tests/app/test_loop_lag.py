@@ -12,7 +12,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.tracing import LoopLagProbe
-from bookreviver.domain.enums import SpanAttribute, SpanName
+from bookreviver.domain.spans import SpanAttribute, SpanName
 from tests.helpers.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio

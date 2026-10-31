@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, SpanParent
+from bookreviver.domain.jobs import JobKind
+from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent
 from tests.helpers.tracers import FinishedSpan, open_tracer_under_test
 
 if TYPE_CHECKING:

@@ -4,17 +4,16 @@ from typing import TYPE_CHECKING
 
 from attrs import frozen
 
-from bookreviver.domain.enums import ValueScope
-from bookreviver.domain.step_values import ValueField, ValueTarget
+from bookreviver.domain.step_values import ValueField, ValueScope, ValueTarget
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.run_plans import RunImpactService
 from tests.helpers.builders import open_for
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.history import ValueChanges
     from bookreviver.domain.ids import BookId
-    from bookreviver.domain.values import PageStepKey
+    from bookreviver.domain.page_steps import PageStepKey
     from tests.helpers.processing import ProcessingKit
 
 

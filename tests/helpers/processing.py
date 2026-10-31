@@ -15,19 +15,16 @@ from dishka import Provider, Scope, provide
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import ProcessingSettings
-from bookreviver.domain.entities import Actor, PageStage
-from bookreviver.domain.enums import (
-    ImagePolicy,
-    JobKind,
-    PageKind,
-    RecipeKind,
-    Rendition,
-    Stage,
-    StageState,
-    VersionState,
-)
+from bookreviver.domain.accounts import Actor
+from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
+from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, SliceRequest
+from bookreviver.domain.page_steps import PageStepKey
+from bookreviver.domain.pages import PageKind, RecipeKind
+from bookreviver.domain.recipes import RecipeKey
+from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
+from bookreviver.domain.versions import VersionState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.ports.runtime import BookJobs
@@ -70,9 +67,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, Scan
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageVersionId
-    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
+    from bookreviver.domain.jobs import Job, JobEnd
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe, RecipeDraft
+    from bookreviver.domain.slices import Slice
+    from bookreviver.domain.sources import Scan
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, PageVersionRepository
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl

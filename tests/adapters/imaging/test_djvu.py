@@ -16,9 +16,10 @@ from PIL import Image
 from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools
 from bookreviver.adapters.imaging.common import FactKey, to_mm
 from bookreviver.adapters.imaging.djvu import HEADER_LAYOUT
-from bookreviver.domain.enums import ColorMode, ContributorRole, DjvuDocumentKind, FileType, Rendition, SourceKind
+from bookreviver.domain.books import Contributor, ContributorRole
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import Contributor, ScanFacts, UploadedSource
+from bookreviver.domain.images import ColorMode, Rendition
+from bookreviver.domain.sources import DjvuDocumentKind, FileType, ScanFacts, SourceKind, UploadedSource
 from bookreviver.ports.imaging import SourceInspector
 from tests.adapters.imaging.samples import (
     DjvuPage,

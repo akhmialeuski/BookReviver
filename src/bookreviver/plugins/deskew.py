@@ -36,20 +36,14 @@ import cv2
 import numpy as np
 from pydantic import ConfigDict, Field, RootModel, Tag
 
-from bookreviver.domain.enums import (
-    ColorMode,
-    DeskewMethod,
-    ProcessorScope,
-    ReviewReason,
-    Stage,
-    StepMeasure,
-    TransformKind,
-    VersionData,
-    VersionOutput,
-)
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import Rotation, Transform
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.geometry import Rotation, Transform, TransformKind
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_measures import StepMeasure
+from bookreviver.domain.step_settings import DeskewMethod
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params, method_discriminator
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,

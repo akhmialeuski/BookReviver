@@ -8,17 +8,18 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Page
-from bookreviver.domain.enums import ReviewReason, Stage, StageState
 from bookreviver.domain.geometry import SplitChoice
-from bookreviver.domain.values import NewPageEdit, StageRun
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.page_steps import NewPageEdit
+from bookreviver.domain.pages import Page
+from bookreviver.domain.stages import ReviewReason, Stage, StageState
 from tests.helpers.builders import open_for
 from tests.helpers.samples import png_bytes
 from tests.helpers.spreads import book_of, head_of, run_stage, stage_of
 from tests.plugins.synthetic import draw_blank, draw_single_page, draw_spread
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit

@@ -20,7 +20,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.providers.accounts import AccountMail
 from bookreviver.app.tracing import LoopLagProbe
-from bookreviver.domain.enums import SpanAttribute, SpanName
+from bookreviver.domain.spans import SpanAttribute, SpanName
 from tests.helpers.fakes_accounts import (
     EMAIL_FIELD,
     FORGOT_PATH,

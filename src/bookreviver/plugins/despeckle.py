@@ -24,8 +24,9 @@ import cv2
 import numpy as np
 from pydantic import Field
 
-from bookreviver.domain.enums import ProcessorScope, Stage, VersionData, VersionOutput
-from bookreviver.domain.values import OrderRule, ProcessorSpec
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.base import Params
 from bookreviver.plugins.cv_image import BLACK, WHITE, write_png
 from bookreviver.plugins.ink import InkProcessor

@@ -7,11 +7,11 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.accounts import Actor
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.jobs import JobKind, JobState
+from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.jobs import JobService
 from tests.helpers.builders import (
     directory_of,

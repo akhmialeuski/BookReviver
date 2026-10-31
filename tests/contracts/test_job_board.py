@@ -11,10 +11,9 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId
-from bookreviver.domain.values import JobEnd
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from tests.helpers.builders import directory_of, make_job
 from tests.helpers.job_boards import open_board_under_test
 from tests.helpers.scripted_runner import TASKS_PER_JOB, Phase

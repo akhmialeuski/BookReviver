@@ -37,12 +37,16 @@ import logging
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
-from bookreviver.domain.enums import JobState, Rendition, RunOutcome, SpanAttribute, SpanName, Stage, VersionState
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.jobs import JobEnd, JobState, StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import JobEnd, StageRun, StepPreview, TileCut, VersionCollection
+from bookreviver.domain.runs import RunOutcome
+from bookreviver.domain.spans import SpanAttribute, SpanName
+from bookreviver.domain.stages import Stage
 from bookreviver.domain.version_chains import readers_first
+from bookreviver.domain.versions import VersionState
 from bookreviver.services.book_measure import BookMeasure, leaves_to_the_book
 from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.run_plans import RunPlan
@@ -52,8 +56,12 @@ from bookreviver.services.version_clearing import VersionClearing
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book

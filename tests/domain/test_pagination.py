@@ -7,14 +7,15 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.domain.enums import LabelStyle, NumberDisplay, PageKind
-from bookreviver.domain.page_label_rules import PageLabelRule, PrintedNumber
-from bookreviver.domain.pagination import Pagination
+from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule, PrintedNumber
+from bookreviver.domain.pages import PageKind
+from bookreviver.domain.pagination import NumberDisplay, Pagination
 from tests.helpers.builders import make_page, make_section
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, PaginationSection
     from bookreviver.domain.ids import PaginationSectionId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.pagination import PaginationSection
 
 PLATES: frozenset[PageKind] = frozenset({PageKind.PLATE, PageKind.FRONTISPIECE})
 PLATE_PREFIX: str = 'Plate '

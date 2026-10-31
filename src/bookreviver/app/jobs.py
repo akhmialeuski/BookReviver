@@ -16,7 +16,8 @@ trace has the same shape however the job was put.
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, SpanParent
+from bookreviver.domain.jobs import JobKind
+from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.book import Book
 from bookreviver.services.imports import ImportService
@@ -29,9 +30,8 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.adapters.jobs.board import JobRunner
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName
-    from bookreviver.domain.values import JobEnd
+    from bookreviver.domain.jobs import Job, JobEnd
     from bookreviver.ports.runtime import JobControl
 
 # An entry: the container of the request scope the job runs in, the book of its queue, the job and its control

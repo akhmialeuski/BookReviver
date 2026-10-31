@@ -17,10 +17,11 @@ from bookreviver.api.access import BOOK_ID_DESCRIPTION, AccessDep
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.page_history import ClearedSchema, PageHistoryEntrySchema, UndoForm, UndoneSchema
-from bookreviver.domain.entities import PageHistoryEntry
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.history import PageHistoryEntry
 from bookreviver.domain.ids import BookId, PageId, StepId
-from bookreviver.domain.values import PageStepKey, Slice
+from bookreviver.domain.page_steps import PageStepKey
+from bookreviver.domain.slices import Slice
+from bookreviver.domain.stages import Stage
 from bookreviver.services.page_history import PageHistoryService
 
 router = APIRouter(prefix='/books', tags=['page-history'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])

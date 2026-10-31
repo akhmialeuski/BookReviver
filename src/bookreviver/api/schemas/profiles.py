@@ -17,12 +17,13 @@ from pydantic import Field
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.processing import RecipeBody, RecipeSchema, StepSchema
 from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH, RecipeName
-from bookreviver.domain.enums import OrderMode, ProfileFileVersion, RecipeKind, Stage
 from bookreviver.domain.ids import RecipeProfileId
-from bookreviver.domain.values import ProfileDraft, Step
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import OrderMode, ProfileDraft, ProfileFileVersion, Step
+from bookreviver.domain.stages import Stage
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import RecipeProfile
+    from bookreviver.domain.recipes import RecipeProfile
 
 
 class RecipeProfileSchema(ResponseModel):

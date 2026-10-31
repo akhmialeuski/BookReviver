@@ -5,10 +5,9 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId
+from bookreviver.domain.images import Rendition, Renditions
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page, make_page_version, make_record, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_record
 from tests.helpers.storage import book_directory, upload
@@ -17,8 +16,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Page, PageVersion, Scan, Source
+    from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Scan, Source
+    from bookreviver.domain.versions import PageVersion
     from tests.helpers.builders import BookOpener
 
 SCANS_PER_SOURCE: int = 3

@@ -27,20 +27,23 @@ from uuid import uuid4
 import anyio
 from attrs import evolve
 
-from bookreviver.domain.entities import PageEdit, PageHistoryEntry, PageStepState
-from bookreviver.domain.enums import ChangeSource, EditorKind, Rendition, StepLayer
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
+from bookreviver.domain.geometry import EditorKind
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry
 from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.page_steps import PageEdit, PageStepState, StepLayer
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord
-    from bookreviver.domain.enums import Stage
+    from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
-    from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
+    from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
+    from bookreviver.domain.processors import ProcessorSpec
+    from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.storage import AssetStore, IncomingFile

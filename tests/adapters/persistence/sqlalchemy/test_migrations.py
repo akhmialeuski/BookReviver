@@ -40,9 +40,10 @@ from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
-from bookreviver.domain.entities import PageHistoryEntry
-from bookreviver.domain.enums import BlockKind, ChangeSource, ValueScope
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry
 from bookreviver.domain.ids import BookId, ChangeBatchId, PageHistoryEntryId, PageId
+from bookreviver.domain.spans import BlockKind
+from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import (
     EPOCH,

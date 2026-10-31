@@ -10,12 +10,11 @@ from typing import TYPE_CHECKING
 
 import anyio
 
-from bookreviver.domain.enums import JobState
-from bookreviver.domain.values import JobEnd
+from bookreviver.domain.jobs import JobEnd, JobState
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import BookDirectoryName, JobId
+    from bookreviver.domain.jobs import Job
     from bookreviver.ports.runtime import JobControl
 
 # How many tasks a job of the scripted runner has

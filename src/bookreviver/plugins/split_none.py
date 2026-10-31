@@ -9,9 +9,12 @@ version, and the size of the image goes into the data of the version, which give
 
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.enums import ColorMode, ProcessorScope, Stage, VersionOutput
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, ProcessorSpec
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.sources import COLOR_MODE_KEY
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import PageSize
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.ports.processing import StepOutput, StepResult
 

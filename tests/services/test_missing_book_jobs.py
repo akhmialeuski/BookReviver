@@ -10,17 +10,26 @@ from uuid import uuid4
 
 import pytest
 
-from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobKind, JobState, Stage
+from bookreviver.domain.accounts import Actor
 from bookreviver.domain.ids import BookId, PageId, PageVersionId
-from bookreviver.domain.values import ContentDetection, StageRun, Step, StepPreview, TileCut, VersionCollection
+from bookreviver.domain.jobs import (
+    ContentDetection,
+    JobKind,
+    JobState,
+    StageRun,
+    StepPreview,
+    TileCut,
+    VersionCollection,
+)
+from bookreviver.domain.recipes import Step
+from bookreviver.domain.stages import Stage
 from tests.helpers.builders import EPOCH, new_account_id, open_for
 from tests.helpers.processing import ProcessingKit, stored_job
 from tests.helpers.processors import FakeContentProbe, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
 

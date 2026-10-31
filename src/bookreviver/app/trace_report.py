@@ -46,7 +46,8 @@ from pathlib import Path
 
 from attrs import frozen
 
-from bookreviver.domain.enums import BlockOutcome, JobKind, SpanAttribute, SpanName, StepOutcome
+from bookreviver.domain.jobs import JobKind
+from bookreviver.domain.spans import BlockOutcome, SpanAttribute, SpanName, StepOutcome
 
 MILLISECONDS_PER_SECOND: int = 1_000
 PERCENT: int = 100

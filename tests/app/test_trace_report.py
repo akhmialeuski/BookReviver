@@ -51,7 +51,9 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
 from bookreviver.app import trace_report
-from bookreviver.domain.enums import BlockOutcome, JobKind, SpanAttribute, SpanName, StepOutcome, VersionScale
+from bookreviver.domain.jobs import JobKind
+from bookreviver.domain.spans import BlockOutcome, SpanAttribute, SpanName, StepOutcome
+from bookreviver.domain.versions import VersionScale
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
