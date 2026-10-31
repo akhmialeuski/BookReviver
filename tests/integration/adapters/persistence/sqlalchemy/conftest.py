@@ -1,4 +1,4 @@
-"""Fixtures giving the SQLAlchemy adapter tests an owner and the import rig over the root ``fx_database``.
+"""Fixtures giving the SQLAlchemy adapter tests an owner and the import rig over the shared ``fx_database``.
 
 The tests of the write blocks get a catalogue and books whose blocks are timed by a tracer that tells them when a block
 asks for the writer, a second registry of books over the same files whose blocks give up almost at once, as another

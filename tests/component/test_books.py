@@ -16,7 +16,7 @@ from bookreviver.api.schemas.types import CONTRIBUTORS_MAX_LENGTH, HEIGHT_CM_MAX
 from bookreviver.domain.books import BookDetails, Contributor, ContributorRole, IdentifierScheme, Orthography
 from bookreviver.domain.images import ImagePolicy
 from bookreviver.domain.pages import PageKind
-from tests.conftest import TEST_BASE_URL
+from tests.component.conftest import TEST_BASE_URL
 from tests.harness.builders.domain import (
     FULL_DETAILS,
     make_page,

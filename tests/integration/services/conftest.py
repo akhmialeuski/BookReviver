@@ -1,4 +1,4 @@
-"""Fixtures of the service tests: the local stores over a temporary directory, on top of the root database."""
+"""Fixtures of the service tests: the local stores over a temporary directory, on top of the shared database."""
 
 from typing import TYPE_CHECKING
 
@@ -244,3 +244,15 @@ def fx_measuring_kit(
         fx_open_book,
         processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()],
     )
+
+
+@pytest.fixture
+def fx_events(fx_book_parts: RecordingEventBus) -> RecordingEventBus:
+    """Return the recording event bus of the test, which records every event of every book.
+
+    :param fx_book_parts: The bus registered for the test.
+    :type fx_book_parts: RecordingEventBus
+    :returns: The bus every service, job and book database of the test publishes to.
+    :rtype: RecordingEventBus
+    """
+    return fx_book_parts

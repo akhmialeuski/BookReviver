@@ -1,6 +1,6 @@
 """Fixtures giving the port contract tests every adapter of the port, built the way the application builds it.
 
-The persistence port has one adapter, so its contract tests run on the root ``fx_database``, ``fx_catalogue`` and
+The persistence port has one adapter, so its contract tests run on the shared ``fx_database``, ``fx_catalogue`` and
 ``fx_databases``.
 """
 

@@ -17,7 +17,7 @@ from bookreviver.domain.errors import (
     UploadProblem,
     UploadRejectedError,
 )
-from tests.conftest import TEST_BASE_URL
+from tests.component.conftest import TEST_BASE_URL
 
 if TYPE_CHECKING:
     from collections.abc import Callable
