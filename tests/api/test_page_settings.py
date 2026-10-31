@@ -11,9 +11,9 @@ from fastapi import status
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.domain.images import Renditions
 from bookreviver.domain.pages import RecipeKind
-from tests.helpers.builders import make_page, make_record, make_scan, make_source
-from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_page, make_record, make_scan, make_source
+from tests.harness.builders.processing import ProcessingFakesProvider
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

@@ -10,15 +10,15 @@ from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import OrderMode, ProfileDraft, RecipeDraft, RecipeKey, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import Stage
-from tests.helpers.processors import SECOND_KEY, THIRD_KEY
+from tests.harness.fakes.processors import SECOND_KEY, THIRD_KEY
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.recipes import Recipe, RecipeProfile
     from bookreviver.services.book import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

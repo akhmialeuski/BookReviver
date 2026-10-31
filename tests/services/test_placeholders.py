@@ -24,16 +24,16 @@ from bookreviver.domain.versions import PageSize, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book import Book
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
-from tests.helpers.acting_renditions import ActingRenditionWriter
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.books import IMAGE
-from tests.helpers.builders import EPOCH, make_job, make_page, make_record, make_scan, make_source
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fake_processing import FakeRenditionWriter
-from tests.helpers.fakes_imports import stored_book
-from tests.helpers.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make_page_service
-from tests.helpers.seeding import commit_account, store_book
-from tests.helpers.storage import book_directory
+from tests.harness.adapters.imports import stored_book
+from tests.harness.adapters.storage import book_directory
+from tests.harness.builders.books import IMAGE
+from tests.harness.builders.domain import EPOCH, make_job, make_page, make_record, make_scan, make_source
+from tests.harness.builders.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make_page_service
+from tests.harness.builders.seeding import commit_account, store_book
+from tests.harness.concurrency.book_hold import hold_book_in_thread
+from tests.harness.fakes.acting_renditions import ActingRenditionWriter
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.fakes.processing import FakeRenditionWriter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -51,10 +51,10 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

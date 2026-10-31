@@ -13,10 +13,10 @@ from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import StepResult
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
-from tests.helpers.builders import SPLIT_NONE
-from tests.helpers.processing import ProcessingKit
-from tests.helpers.processors import FakeProcessor
-from tests.helpers.spreads import run_stage
+from tests.harness.builders.domain import SPLIT_NONE
+from tests.harness.builders.processing import ProcessingKit
+from tests.harness.builders.spreads import run_stage
+from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import StepInput
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

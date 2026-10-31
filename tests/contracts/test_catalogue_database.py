@@ -27,8 +27,7 @@ from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, NoChangeOpenError
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     EPOCH,
     directory_of,
     make_book_place,
@@ -45,6 +44,7 @@ from tests.helpers.builders import (
     make_step_values,
     new_book_id,
 )
+from tests.harness.concurrency.book_hold import hold_book_in_thread
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase
     from tests.contracts.conftest import Book
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

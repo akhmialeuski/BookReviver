@@ -25,11 +25,11 @@ from bookreviver.domain.stages import (
     StepFlag,
 )
 from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionState
-from tests.helpers.builders import make_page, make_page_stage, make_page_version, open_for
-from tests.helpers.page_batches import PageValues
-from tests.helpers.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import run_stage
-from tests.helpers.stage_reads import book_summaries, books_with_progress, stage_rows
+from tests.harness.builders.domain import make_page, make_page_stage, make_page_version, open_for
+from tests.harness.builders.page_batches import PageValues
+from tests.harness.builders.spreads import run_stage
+from tests.harness.builders.stage_reads import book_summaries, books_with_progress, stage_rows
+from tests.harness.fakes.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
@@ -39,9 +39,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.stage_summaries import StageSummary
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

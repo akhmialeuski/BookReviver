@@ -13,7 +13,8 @@ from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.jobs import JobKind, JobState
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.jobs import JobService
-from tests.helpers.builders import (
+from tests.harness.adapters.storage import upload
+from tests.harness.builders.domain import (
     directory_of,
     make_book_change,
     make_job,
@@ -21,19 +22,18 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
-from tests.helpers.fakes_jobs import JobFakes
-from tests.helpers.seeding import commit_record
-from tests.helpers.storage import upload
+from tests.harness.builders.seeding import commit_record
+from tests.harness.fakes.jobs import JobFakes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.services.book import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 # The tests open books of the library with the databases of the test, whether or not they store any
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures('fx_databases')]

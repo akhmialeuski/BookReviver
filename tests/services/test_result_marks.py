@@ -14,13 +14,13 @@ from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import ResultMark, ResultNote, VersionScale
 from bookreviver.services.result_marks import ResultMarksService
-from tests.helpers.processors import STRENGTH_PARAMETER
-from tests.helpers.spreads import run_stage
+from tests.harness.builders.spreads import run_stage
+from tests.harness.fakes.processors import STRENGTH_PARAMETER
 from tests.services.test_processing_versions import ran_geometry
 
 if TYPE_CHECKING:
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

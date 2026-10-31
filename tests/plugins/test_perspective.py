@@ -20,14 +20,15 @@ from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.step_settings import PerspectiveMethod
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import save
-from tests.plugins.runner import run_on
-from tests.plugins.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
+from tests.harness.images.runner import run_on
+from tests.harness.images.samples import save
+from tests.harness.images.scans import SCANS_DIR
+from tests.harness.images.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor
-    from tests.plugins.synthetic import SyntheticSheet
+    from tests.harness.images.synthetic import SyntheticSheet
 
 SCAN_NAME: str = 'scan.png'
 MIN_SHEET: str = 'min_sheet_fraction'
@@ -42,8 +43,8 @@ KEY_PATTERN: str = r'geometry\.perspective'
 SHEET_CASE: tuple[str, str] = ('rotation', 'slant')
 # A table that makes a gray image black and white, for the point method of Pillow
 BILEVEL_TABLE: list[int] = [0] * 128 + [255] * 128
-SCAN_ON_BINDING: Path = Path(__file__).parent / 'data' / 'book_scan_on_binding.jpg'
-CLEAN_PAGE: Path = Path(__file__).parent / 'data' / 'book_clean_page.jpg'
+SCAN_ON_BINDING: Path = SCANS_DIR / 'book_scan_on_binding.jpg'
+CLEAN_PAGE: Path = SCANS_DIR / 'book_clean_page.jpg'
 # How far a corner found may be from the true one, as a share of the diagonal of the scan
 CORNER_TOLERANCE: float = 0.01
 # The turns and the slants of the drawn sheets: the largest the task asks for, and a few in between

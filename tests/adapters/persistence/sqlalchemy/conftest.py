@@ -15,13 +15,19 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAl
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.services.book import Book
-from tests.helpers.builders import make_record
-from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file, waiting
-from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
-from tests.helpers.fakes_jobs import JobFakes
-from tests.helpers.seeding import commit_account, store_book
-from tests.helpers.tracers import AskingTracer
-from tests.helpers.wait_limits import IMPATIENT_SECONDS
+from tests.harness.adapters.database import (
+    BookSessions,
+    LocatedBookDatabases,
+    copy_schema_template,
+    database_file,
+    waiting,
+)
+from tests.harness.adapters.imports import DEFAULT_PARALLEL_SCANS, ImportRig
+from tests.harness.adapters.tracers import AskingTracer
+from tests.harness.builders.domain import make_record
+from tests.harness.builders.seeding import commit_account, store_book
+from tests.harness.concurrency.wait_limits import IMPATIENT_SECONDS
+from tests.harness.fakes.jobs import JobFakes
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -32,8 +38,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job
     from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0

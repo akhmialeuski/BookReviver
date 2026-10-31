@@ -14,13 +14,13 @@ from attrs import evolve
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.places import CanvasPosition, PlaceMode
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import make_book_place, make_record
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_book_place, make_record
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

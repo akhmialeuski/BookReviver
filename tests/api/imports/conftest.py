@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.api.imports.watch import ImportWatch, JobEndBus
-from tests.helpers.builders import make_record
-from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_record
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.jobs import JobFakes, JobFakesProvider
+from tests.harness.http.import_watch import ImportWatch, JobEndBus
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 
 @pytest.fixture

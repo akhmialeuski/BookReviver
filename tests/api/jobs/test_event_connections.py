@@ -12,10 +12,10 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
-from tests.helpers.builders import directory_of, make_book_change, make_record
-from tests.helpers.connections import checked_out_connections
-from tests.helpers.seeding import commit_account, store_book
-from tests.helpers.sse import STREAM_TIMEOUT_SECONDS, EventStreamReader
+from tests.harness.adapters.connections import checked_out_connections
+from tests.harness.builders.domain import directory_of, make_book_change, make_record
+from tests.harness.builders.seeding import commit_account, store_book
+from tests.harness.http.sse import STREAM_TIMEOUT_SECONDS, EventStreamReader
 
 if TYPE_CHECKING:
     import httpx
@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.persistence import CatalogueDatabase
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.fakes_jobs import JobFakes
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.fakes.jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 

@@ -5,7 +5,7 @@ import pytest
 from bookreviver.domain.jobs import THROUGH_STEP_KEY, StageRun
 from bookreviver.domain.runs import RunImpact, RunMode
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import new_book_id
+from tests.harness.builders.domain import new_book_id
 
 BOOK_ID = new_book_id()
 THROUGH_THIRD_STEP: int = 2

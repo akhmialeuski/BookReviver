@@ -10,8 +10,8 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from tests.helpers.samples import CV_MISSING, LINE_PITCH_PX, MARGIN_PX, text_page
-from tests.plugins.synthetic import bend_columns
+from tests.harness.images.samples import CV_MISSING, LINE_PITCH_PX, MARGIN_PX, text_page
+from tests.harness.images.synthetic import bend_columns
 
 PAGE_SIZE_PX: tuple[int, int] = (900, 1_200)
 # The lines a page of this size holds, from the first row of words to the last that fits above the margin

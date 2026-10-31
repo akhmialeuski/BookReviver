@@ -12,8 +12,8 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.pagination import PaginationSectionSchema
 from bookreviver.domain.pagination import NumberDisplay
-from tests.helpers.builders import make_page, make_record, new_account_id
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_page, make_record, new_account_id
+from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page as BookPage
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

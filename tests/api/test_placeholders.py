@@ -20,8 +20,8 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import PageKind, PageOrigin
 from bookreviver.domain.versions import VersionState
 from bookreviver.services.base_versions import BaseVersions
-from tests.helpers.builders import EPOCH, make_page, make_record, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.domain import EPOCH, make_page, make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -31,9 +31,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page as BookPage
     from bookreviver.domain.sources import Scan
-    from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.concurrency.board_idle import JobsIdle
 
 pytestmark = pytest.mark.anyio
 

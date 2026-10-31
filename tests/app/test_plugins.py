@@ -12,12 +12,12 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.processors import WorkerPool
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.plugins.base import ModelProcessor
-from tests.helpers.samples import CV_MISSING
+from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Collection
 
-FAKE_MODULE: str = 'tests.helpers.processors'
+FAKE_MODULE: str = 'tests.harness.fakes.processors'
 
 
 def entry_point(name: str, target: str) -> EntryPoint:

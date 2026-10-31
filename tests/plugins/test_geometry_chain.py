@@ -16,14 +16,15 @@ from bookreviver.domain.geometry import Rect, TransformKind
 from bookreviver.domain.stages import ReviewReason
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import save
-from tests.plugins.synthetic import draw_sheet
+from tests.harness.images.samples import save
+from tests.harness.images.scans import SCANS_DIR
+from tests.harness.images.synthetic import draw_sheet
 
 if TYPE_CHECKING:
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
 
-SCAN_ON_BINDING: Path = Path(__file__).parent / 'data' / 'book_scan_on_binding.jpg'
+SCAN_ON_BINDING: Path = SCANS_DIR / 'book_scan_on_binding.jpg'
 SCAN_NAME: str = 'scan.png'
 # The steps of the recipe, in the order they run
 STEP_COUNT: int = 3

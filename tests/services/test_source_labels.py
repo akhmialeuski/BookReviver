@@ -10,7 +10,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule
 from bookreviver.domain.pagination import NumberDisplay
 from bookreviver.services.source_labels import SourceLabels
-from tests.helpers.builders import EPOCH, make_page
+from tests.harness.builders.domain import EPOCH, make_page
 
 if TYPE_CHECKING:
     from bookreviver.domain.pages import Page

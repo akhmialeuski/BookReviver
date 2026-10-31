@@ -18,8 +18,8 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.library import LibraryEntry
-from tests.helpers.builders import EPOCH, directory_of, make_record, new_book_id
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import EPOCH, directory_of, make_record, new_book_id
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

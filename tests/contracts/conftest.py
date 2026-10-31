@@ -15,11 +15,11 @@ from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
 from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.ports.storage import BookDirectory
-from tests.helpers.builders import make_record
-from tests.helpers.job_boards import BoardAdapter
-from tests.helpers.seeding import commit_account, store_book
-from tests.helpers.step_executors import StepExecutorAdapter
-from tests.helpers.tracers import TracerAdapter
+from tests.harness.adapters.job_boards import BoardAdapter
+from tests.harness.adapters.step_executors import StepExecutorAdapter
+from tests.harness.adapters.tracers import TracerAdapter
+from tests.harness.builders.domain import make_record
+from tests.harness.builders.seeding import commit_account, store_book
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.ordering import OrderKeys
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 type OwnerFactory = Callable[[], Awaitable[AccountId]]
 

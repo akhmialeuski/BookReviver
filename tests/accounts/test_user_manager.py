@@ -12,8 +12,8 @@ from pwdlib.hashers.bcrypt import BcryptHasher
 from bookreviver.adapters.persistence.sqlalchemy.accounts import OAuthAccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.app.providers.accounts import UserManager
-from tests.helpers.fakes_accounts import PASSWORD
-from tests.helpers.seeding import commit_account
+from tests.harness.builders.seeding import commit_account
+from tests.harness.fakes.accounts import PASSWORD
 
 if TYPE_CHECKING:
     from dishka import AsyncContainer

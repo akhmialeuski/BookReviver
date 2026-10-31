@@ -17,8 +17,7 @@ from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.page_steps import NewPageEdit
 from bookreviver.domain.stages import Stage
-from tests.helpers.samples import find_mark, mark, png_bytes, spread
-from tests.helpers.spreads import (
+from tests.harness.builders.spreads import (
     HEIGHT_PX,
     PAGE_WIDTH_PX,
     SPLIT_SPREAD,
@@ -27,14 +26,15 @@ from tests.helpers.spreads import (
     run_stage,
     use_recipe,
 )
+from tests.harness.images.samples import find_mark, mark, png_bytes, spread
 
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

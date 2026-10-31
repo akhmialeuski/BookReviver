@@ -4,7 +4,7 @@ import pytest
 
 from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
 from bookreviver.domain.books import BookIdentifier, Contributor, ContributorRole, IdentifierScheme, MetadataSuggestion
-from tests.adapters.imaging.samples import xmp_packet
+from tests.harness.images.documents import xmp_packet
 
 TITLE: str = 'Сборникъ народныхъ пѣсенъ'
 OTHER_TITLE: str = 'Zbiór pieśni ludowych'

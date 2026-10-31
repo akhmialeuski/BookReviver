@@ -17,9 +17,9 @@ from bookreviver.domain.pagination import NumberDisplay, NumberedPage, PageNumbe
 from bookreviver.domain.sides import Side
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.page_labels import PageLabels
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import make_page, make_record, new_account_id
-from tests.helpers.seeding import ensure_account, store_book
+from tests.harness.builders.domain import make_page, make_record, new_account_id
+from tests.harness.builders.seeding import ensure_account, store_book
+from tests.harness.concurrency.book_hold import hold_book_in_thread
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,10 +33,10 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.page_writes import PageWrites
+    from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.page_writes import PageWrites
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

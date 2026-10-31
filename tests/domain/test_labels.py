@@ -14,7 +14,7 @@ from bookreviver.domain.page_label_rules import LabelStyle
 from bookreviver.domain.pages import ContentType, PageKind
 from bookreviver.domain.pagination import PageNumbering
 from bookreviver.domain.sources import ScanFacts, SourceAnalysis, SourceKind
-from tests.helpers.builders import make_page
+from tests.harness.builders.domain import make_page
 
 
 class StyleCase(NamedTuple):

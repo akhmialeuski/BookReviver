@@ -11,7 +11,7 @@ from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.version_chains import StepVersions, readers_first, stage_depths, step_places, versions_of_step
 from bookreviver.domain.versions import ProcessorRef
-from tests.helpers.builders import make_page_version, make_recipe
+from tests.harness.builders.domain import make_page_version, make_recipe
 
 if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion

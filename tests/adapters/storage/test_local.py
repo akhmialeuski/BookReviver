@@ -13,8 +13,8 @@ from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import directory_of, make_page_version
-from tests.helpers.storage import WriterFailedError, abandon_write, upload
+from tests.harness.adapters.storage import WriterFailedError, abandon_write, upload
+from tests.harness.builders.domain import directory_of, make_page_version
 
 if TYPE_CHECKING:
     from pathlib import Path

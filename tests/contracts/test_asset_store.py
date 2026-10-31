@@ -11,14 +11,14 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import directory_of, make_page_version
-from tests.helpers.storage import WriterFailedError, abandon_write
+from tests.harness.adapters.storage import WriterFailedError, abandon_write
+from tests.harness.builders.domain import directory_of, make_page_version
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.ports.storage import AssetStore
-    from tests.helpers.storage import DirectoryOpener
+    from tests.harness.adapters.storage import DirectoryOpener
 
 pytestmark = pytest.mark.anyio
 

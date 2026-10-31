@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from bookreviver.ports.processing import Processor
-from tests.helpers.samples import CV_MISSING
+from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Callable

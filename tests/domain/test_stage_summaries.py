@@ -23,7 +23,7 @@ from bookreviver.domain.stages import (
 )
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionData
-from tests.helpers.builders import make_page_version
+from tests.harness.builders.domain import make_page_version
 
 if TYPE_CHECKING:
     from bookreviver.domain.metadata import MetadataMap

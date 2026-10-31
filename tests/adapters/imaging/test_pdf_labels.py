@@ -18,14 +18,14 @@ from bookreviver.domain.page_label_rules import BookLabeling, LabelStyle, PageLa
 from bookreviver.domain.pages import PageKind
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.sources import SourceKind
-from tests.adapters.imaging.samples import (
+from tests.harness.builders.domain import make_page, make_section
+from tests.harness.images.documents import (
     ROMAN_THEN_ARABIC_RULES,
     PdfPage,
     ScanImage,
     add_page_labels,
     write_pdf,
 )
-from tests.helpers.builders import make_page, make_section
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

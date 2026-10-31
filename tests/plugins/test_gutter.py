@@ -11,7 +11,8 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from tests.plugins.synthetic import as_samples, draw_blank, draw_single_page, draw_spread
+from tests.harness.images.scans import SCANS_DIR
+from tests.harness.images.synthetic import as_samples, draw_blank, draw_single_page, draw_spread
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,7 +33,7 @@ MAX_ERROR_SHARE: float = 0.01
 MIN_FOUND_CONFIDENCE: float = 0.1
 SLANT_TOLERANCE_DEG: float = 0.5
 # The real spread, downscaled to 1600 pixels of width, and its gutter marked by hand at the top and at the bottom row
-REAL_SPREAD: Path = Path(__file__).parent / 'data' / 'spread_1880s.jpg'
+REAL_SPREAD: Path = SCANS_DIR / 'spread_1880s.jpg'
 REAL_GUTTER_TOP_X: float = 832.0
 REAL_GUTTER_BOTTOM_X: float = 781.0
 

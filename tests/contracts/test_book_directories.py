@@ -16,12 +16,12 @@ from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFou
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import directory_of, make_page_version
-from tests.helpers.storage import SOURCE_NAME, upload
+from tests.harness.adapters.storage import SOURCE_NAME, upload
+from tests.harness.builders.domain import directory_of, make_page_version
 
 if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
-    from tests.helpers.storage import DirectoryOpener
+    from tests.harness.adapters.storage import DirectoryOpener
 
 pytestmark = pytest.mark.anyio
 

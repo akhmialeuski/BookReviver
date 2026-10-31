@@ -16,9 +16,9 @@ from fastapi import status
 from bookreviver.app.settings import TracingSettings
 from bookreviver.domain.spans import SpanAttribute, SpanName
 from bookreviver.ports.tracing import Tracer
-from tests.helpers.builders import make_record
-from tests.helpers.seeding import store_book
-from tests.helpers.tracers import AskingTracer
+from tests.harness.adapters.tracers import AskingTracer
+from tests.harness.builders.domain import make_record
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.accounts import Actor
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.recording_tracer import RecordingTracer
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.fakes.recording_tracer import RecordingTracer
 
 pytestmark = pytest.mark.anyio
 

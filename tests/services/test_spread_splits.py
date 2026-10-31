@@ -27,11 +27,9 @@ from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.domain.versions import VersionState
-from tests.helpers.builders import make_page_stage, make_step_values, open_for
-from tests.helpers.meanwhile import change_while_writing
-from tests.helpers.processing import stored_job
-from tests.helpers.samples import png_bytes, spread
-from tests.helpers.spreads import (
+from tests.harness.builders.domain import make_page_stage, make_step_values, open_for
+from tests.harness.builders.processing import stored_job
+from tests.harness.builders.spreads import (
     HEIGHT_PX,
     PAGE_WIDTH_PX,
     SPLIT_SPREAD,
@@ -42,6 +40,8 @@ from tests.helpers.spreads import (
     stage_of,
     use_recipe,
 )
+from tests.harness.concurrency.meanwhile import change_while_writing
+from tests.harness.images.samples import png_bytes, spread
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -53,9 +53,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

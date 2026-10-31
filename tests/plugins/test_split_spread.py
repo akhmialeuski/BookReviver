@@ -18,9 +18,9 @@ from bookreviver.domain.processors import ProcessorScope
 from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.builders import EPOCH
-from tests.helpers.samples import GUTTER_SHADE, PAPER, find_mark, mark, save, spread
-from tests.plugins.synthetic import draw_spread
+from tests.harness.builders.domain import EPOCH
+from tests.harness.images.samples import GUTTER_SHADE, PAPER, find_mark, mark, save, spread
+from tests.harness.images.synthetic import draw_spread
 
 if TYPE_CHECKING:
     from pathlib import Path

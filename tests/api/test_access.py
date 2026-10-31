@@ -10,7 +10,7 @@ from fastapi import status
 
 from bookreviver.api.routers.iiif import IIIF_PREFIX
 from bookreviver.api.routing import API_PREFIX
-from tests.helpers.builders import new_book_id
+from tests.harness.builders.domain import new_book_id
 
 if TYPE_CHECKING:
     import httpx

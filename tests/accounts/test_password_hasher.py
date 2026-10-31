@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 from fastapi_users.password import PasswordHelper
 
 from bookreviver.app.providers.accounts import PasswordHasher
-from tests.helpers.fakes_accounts import PASSWORD
+from tests.harness.fakes.accounts import PASSWORD
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine

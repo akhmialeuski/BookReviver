@@ -14,7 +14,7 @@ from PIL import ExifTags, Image, ImageChops, ImageCms, TiffImagePlugin
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.sources import SourceKind
-from tests.adapters.imaging.samples import (
+from tests.harness.images.documents import (
     PdfPage,
     ScanImage,
     TiffFrame,

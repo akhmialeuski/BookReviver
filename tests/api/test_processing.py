@@ -35,9 +35,9 @@ from bookreviver.domain.pages import PageKind, RecipeKind
 from bookreviver.domain.runs import RunMode
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ResultMark, VersionOrigin, VersionScale
-from tests.helpers.builders import make_page, make_record, make_scan, make_source, new_account_id
-from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_page, make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.processing import ProcessingFakesProvider
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -52,9 +52,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.sources import Scan
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
-    from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.concurrency.board_idle import JobsIdle
 
 pytestmark = pytest.mark.anyio
 

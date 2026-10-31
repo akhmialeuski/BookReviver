@@ -8,12 +8,12 @@ from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.book import Book
 from bookreviver.services.pagination import PaginationService
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.page_services import make_page_service
-from tests.helpers.page_stage_writes import PageStageWrites
-from tests.helpers.page_writes import PageWrites
-from tests.helpers.processing import CV_DEFAULTS, ProcessingKit
-from tests.helpers.processors import (
+from tests.harness.adapters.page_stage_writes import PageStageWrites
+from tests.harness.adapters.page_writes import PageWrites
+from tests.harness.builders.page_services import make_page_service
+from tests.harness.builders.processing import CV_DEFAULTS, ProcessingKit
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.fakes.processors import (
     CleanupProcessor,
     FakeProcessor,
     FirstProcessor,
@@ -21,7 +21,7 @@ from tests.helpers.processors import (
     SecondProcessor,
     ThirdProcessor,
 )
-from tests.helpers.samples import CV_MISSING
+from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 
 @pytest.fixture

@@ -13,16 +13,16 @@ from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.page_steps import NewPageEdit
 from bookreviver.domain.pages import Page
 from bookreviver.domain.stages import ReviewReason, Stage, StageState
-from tests.helpers.builders import open_for
-from tests.helpers.samples import png_bytes
-from tests.helpers.spreads import book_of, head_of, run_stage, stage_of
-from tests.plugins.synthetic import draw_blank, draw_single_page, draw_spread
+from tests.harness.builders.domain import open_for
+from tests.harness.builders.spreads import book_of, head_of, run_stage, stage_of
+from tests.harness.images.samples import png_bytes
+from tests.harness.images.synthetic import draw_blank, draw_single_page, draw_spread
 
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

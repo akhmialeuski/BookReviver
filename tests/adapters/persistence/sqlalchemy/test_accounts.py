@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.app.settings import Settings
-    from tests.helpers.database import SharedDatabaseProvider
+    from tests.harness.adapters.database import SharedDatabaseProvider
 
 pytestmark = pytest.mark.anyio
 

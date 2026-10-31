@@ -20,9 +20,9 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.persistence.sqlalchemy.database import MILLISECONDS_PER_SECOND
 from bookreviver.domain.errors import BookBusyError
 from bookreviver.domain.spans import BlockKind, BlockOutcome, SpanAttribute, SpanName
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import make_page
-from tests.helpers.wait_limits import IMPATIENT_SECONDS
+from tests.harness.builders.domain import make_page
+from tests.harness.concurrency.book_hold import hold_book_in_thread
+from tests.harness.concurrency.wait_limits import IMPATIENT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,9 +30,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, CatalogueRepositories
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.recording_tracer import RecordingSpan
-    from tests.helpers.tracers import AskingTracer
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.adapters.tracers import AskingTracer
+    from tests.harness.fakes.recording_tracer import RecordingSpan
 
 pytestmark = pytest.mark.anyio
 

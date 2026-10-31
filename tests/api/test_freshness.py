@@ -7,8 +7,8 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 
 from bookreviver.api.freshness import CACHE_CONTROL_HEADER, ETAG_HEADER, IF_NONE_MATCH_HEADER, REVALIDATE
-from tests.helpers.builders import make_page, make_record, new_account_id
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_page, make_record, new_account_id
+from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

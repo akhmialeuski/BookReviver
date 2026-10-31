@@ -12,8 +12,8 @@ from delayed_assert import assert_expectations, expect
 from sqlalchemy import event
 
 from bookreviver.adapters.persistence.sqlalchemy.rows import RowRepository
-from tests.helpers.builders import directory_of, make_page, make_page_stage, make_page_version, make_record
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import directory_of, make_page, make_page_stage, make_page_version, make_record
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

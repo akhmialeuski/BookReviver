@@ -29,8 +29,8 @@ from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
 from bookreviver.services.book import Book
-from tests.helpers.acting_renditions import ActingRenditionWriter
-from tests.helpers.builders import (
+from tests.harness.adapters.storage import book_directory
+from tests.harness.builders.domain import (
     EPOCH,
     make_page,
     make_page_stage,
@@ -41,11 +41,11 @@ from tests.helpers.builders import (
     make_source,
     open_for,
 )
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.page_services import make_page_service
-from tests.helpers.samples import pixel, ruled_page, same_colour
-from tests.helpers.seeding import store_book
-from tests.helpers.storage import book_directory
+from tests.harness.builders.page_services import make_page_service
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.acting_renditions import ActingRenditionWriter
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.images.samples import pixel, ruled_page, same_colour
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -62,9 +62,9 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.page_writes import PageWrites
+    from tests.harness.adapters.page_writes import PageWrites
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

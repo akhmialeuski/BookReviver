@@ -17,7 +17,7 @@ const SERVER_COMMAND = [
   `rm -rf ${RUN_DIR}`,
   `mkdir -p ${RUN_DIR}`,
   'uv run bookreviver-migrate upgrade head --no-prompt',
-  `uv run uvicorn tests.helpers.e2e_app:app --port ${SERVER_PORT} --timeout-keep-alive ${SERVER_KEEP_ALIVE_S} 2>&1 | tee ${SERVER_LOG}`,
+  `uv run uvicorn tests.harness.apps.e2e:app --port ${SERVER_PORT} --timeout-keep-alive ${SERVER_KEEP_ALIVE_S} 2>&1 | tee ${SERVER_LOG}`,
 ].join(' && ');
 
 // Every worker, and every scenario about accounts or about their profiles, has an account of its own (see

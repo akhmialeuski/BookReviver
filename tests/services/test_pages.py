@@ -14,7 +14,7 @@ from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionState
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     make_page,
     make_page_stage,
     make_page_version,
@@ -23,7 +23,7 @@ from tests.helpers.builders import (
     make_source,
     new_book_id,
 )
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,9 +36,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.fake_board import FakeJobBoard
+    from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 

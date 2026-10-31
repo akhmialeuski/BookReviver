@@ -6,7 +6,7 @@ import pytest
 
 from bookreviver.api.auth import signed_in_user
 from bookreviver.app.container import build_container
-from tests.helpers.fakes_accounts import (
+from tests.harness.fakes.accounts import (
     CSRF_COOKIE,
     CSRF_HEADER,
     ME_PATH,
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from bookreviver.app.settings import Settings
-    from tests.helpers.database import SharedDatabaseProvider
+    from tests.harness.adapters.database import SharedDatabaseProvider
 
 
 @pytest.fixture

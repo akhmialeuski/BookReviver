@@ -10,13 +10,13 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.versions import VersionData, VersionState
 from bookreviver.services.book import Book
 from bookreviver.services.version_clearing import BEING_COLLECTED, VersionClearing
-from tests.helpers.builders import directory_of, make_page, make_page_version, make_record, new_account_id
-from tests.helpers.seeding import commit_record
+from tests.harness.builders.domain import directory_of, make_page, make_page_version, make_record, new_account_id
+from tests.harness.builders.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 

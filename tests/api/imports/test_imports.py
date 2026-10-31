@@ -16,12 +16,12 @@ from bookreviver.api.schemas.jobs import EventName
 from bookreviver.domain.books import BookResource
 from bookreviver.domain.jobs import JobKind, JobState
 from bookreviver.domain.sources import RejectionReason, SourceStatus
-from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_djvu_indirect
-from tests.helpers.builders import make_job, make_record, new_account_id
-from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book
-from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakesProvider
-from tests.helpers.seeding import commit_record
-from tests.helpers.sse import EventStreamReader
+from tests.harness.adapters.imports import djvu_uploads, image_upload, pdf_upload, stored_book
+from tests.harness.builders.domain import make_job, make_record, new_account_id
+from tests.harness.builders.seeding import commit_record
+from tests.harness.fakes.jobs import FakeBoardProvider, JobFakesProvider
+from tests.harness.http.sse import EventStreamReader
+from tests.harness.images.documents import DjvuPage, requires_djvulibre, write_djvu_indirect
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Sequence
@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import BookId
-    from tests.api.imports.watch import ImportWatch
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.fakes_jobs import JobFakes
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.fakes.jobs import JobFakes
+    from tests.harness.http.import_watch import ImportWatch
 
 pytestmark = pytest.mark.anyio
 

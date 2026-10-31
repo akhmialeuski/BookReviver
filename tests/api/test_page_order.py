@@ -12,8 +12,8 @@ from fastapi_pagination import Page
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.errors import AnchorInsideMovedPagesError
-from tests.helpers.builders import make_page, make_record, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_page, make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page as BookPage
     from bookreviver.domain.sources import Source
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

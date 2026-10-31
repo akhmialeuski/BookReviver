@@ -19,11 +19,11 @@ from bookreviver.domain.page_steps import EDIT_HASH_FIELD, NewPageEdit, PageStep
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
-from tests.helpers.builders import make_page_step_state, open_for
-from tests.helpers.page_batches import PageValues
-from tests.helpers.processing import open_book
-from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import run_stage
+from tests.harness.builders.domain import make_page_step_state, open_for
+from tests.harness.builders.page_batches import PageValues
+from tests.harness.builders.processing import open_book
+from tests.harness.builders.spreads import run_stage
+from tests.harness.fakes.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.services.test_processing_versions import previewed, ran_geometry, ran_two_steps
 
 if TYPE_CHECKING:
@@ -37,9 +37,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

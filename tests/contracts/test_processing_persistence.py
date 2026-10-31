@@ -26,7 +26,7 @@ from bookreviver.domain.stage_summaries import StepTally
 from bookreviver.domain.stages import PageStageKey, ReviewReason, Stage, StageState
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionScale, VersionState
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     DESKEW_STEP_ID,
     EPOCH,
     make_page,
@@ -41,7 +41,7 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
-from tests.helpers.seeding import store_book
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

@@ -14,7 +14,7 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenData
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.app.providers import accounts as accounts_module
 from bookreviver.app.providers.accounts import SessionCleanup
-from tests.helpers.seeding import commit_account
+from tests.harness.builders.seeding import commit_account
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence

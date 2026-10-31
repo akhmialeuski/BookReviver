@@ -12,9 +12,9 @@ from bookreviver.api.schemas.profiles import AppliedProfileSchema, ProfileFileSc
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import make_recipe_profile, make_record
-from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_recipe_profile, make_record
+from tests.harness.builders.processing import ProcessingFakesProvider
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.recipes import RecipeProfile
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

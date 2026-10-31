@@ -31,10 +31,8 @@ from bookreviver.domain.versions import (
 )
 from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
 from bookreviver.services.version_clearing import BEING_COLLECTED
-from tests.helpers.builders import EPOCH, make_page_stage, open_for
-from tests.helpers.held_steps import steps_held
-from tests.helpers.meanwhile import change_when_published
-from tests.helpers.processing import (
+from tests.harness.builders.domain import EPOCH, make_page_stage, open_for
+from tests.harness.builders.processing import (
     IMAGE_CONTENT,
     change_versions,
     found_stage,
@@ -43,8 +41,10 @@ from tests.helpers.processing import (
     stage_versions,
     stored_job,
 )
-from tests.helpers.processors import STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import run_stage, stage_of
+from tests.harness.builders.spreads import run_stage, stage_of
+from tests.harness.concurrency.held_steps import steps_held
+from tests.harness.concurrency.meanwhile import change_when_published
+from tests.harness.fakes.processors import STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -56,9 +56,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

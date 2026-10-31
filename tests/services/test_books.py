@@ -21,7 +21,8 @@ from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import (
+from tests.harness.adapters.storage import BookFiles, SharedBookDirectories, SharedDirectory
+from tests.harness.builders.domain import (
     DESKEW_STEP_ID,
     directory_of,
     make_page,
@@ -32,9 +33,8 @@ from tests.helpers.builders import (
     new_book_id,
     open_for,
 )
-from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.seeding import commit_record, store_book
-from tests.helpers.storage import BookFiles, SharedBookDirectories, SharedDirectory
+from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.fakes.processing import FakeCatalogue
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,9 +47,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.domain.library import BookOverview
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

@@ -13,7 +13,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Mesh, Point
 from bookreviver.domain.images import ColorMode
-from tests.helpers.samples import CV_MISSING
+from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from pathlib import Path

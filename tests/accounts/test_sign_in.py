@@ -15,7 +15,7 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenData
 from bookreviver.api.access import AccessDep
 from bookreviver.api.schemas.accounts import AccountRead
 from bookreviver.app.providers.accounts import SESSION_COOKIE, AccountMail, UserManager
-from tests.helpers.fakes_accounts import (
+from tests.harness.fakes.accounts import (
     CSRF_COOKIE,
     DETAIL_FIELD,
     EMAIL_FIELD,
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from bookreviver.app.settings import Settings
-    from tests.helpers.fakes_accounts import HashCalls, RecordingMailer, Visitor
+    from tests.harness.fakes.accounts import HashCalls, RecordingMailer, Visitor
 
 pytestmark = pytest.mark.anyio
 

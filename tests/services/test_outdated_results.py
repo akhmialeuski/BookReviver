@@ -13,8 +13,8 @@ from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ProcessorRef, VersionState
 from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
-from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
-from tests.helpers.processors import CleanupProcessor, FakeProcessor
+from tests.harness.builders.domain import EPOCH, make_page_stage, make_page_version
+from tests.harness.fakes.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.page_stage_writes import PageStageWrites
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.page_stage_writes import PageStageWrites
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

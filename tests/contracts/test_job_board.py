@@ -14,12 +14,12 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
-from tests.helpers.builders import directory_of, make_job
-from tests.helpers.job_boards import open_board_under_test
-from tests.helpers.scripted_runner import TASKS_PER_JOB, Phase
+from tests.harness.adapters.job_boards import open_board_under_test
+from tests.harness.builders.domain import directory_of, make_job
+from tests.harness.concurrency.scripted_runner import TASKS_PER_JOB, Phase
 
 if TYPE_CHECKING:
-    from tests.helpers.job_boards import BoardAdapter, BoardUnderTest
+    from tests.harness.adapters.job_boards import BoardAdapter, BoardUnderTest
 
 pytestmark = pytest.mark.anyio
 

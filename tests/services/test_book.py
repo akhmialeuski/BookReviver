@@ -8,14 +8,14 @@ from attrs import evolve
 from bookreviver.domain.changes import BookChanges
 from bookreviver.domain.images import ImagePolicy
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import make_page, make_record, make_scan, make_source
-from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_page, make_record, make_scan, make_source
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.processing import FakeCatalogue
 
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import CatalogueDatabaseFactory
+    from tests.harness.adapters.database import CatalogueDatabaseFactory
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

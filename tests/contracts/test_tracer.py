@@ -13,12 +13,12 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent
-from tests.helpers.tracers import FinishedSpan, open_tracer_under_test
+from tests.harness.adapters.tracers import FinishedSpan, open_tracer_under_test
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.helpers.tracers import TracerAdapter
+    from tests.harness.adapters.tracers import TracerAdapter
 
 LOCK_WAIT_MS: float = 1.5
 HTTP_METHOD: str = 'GET'

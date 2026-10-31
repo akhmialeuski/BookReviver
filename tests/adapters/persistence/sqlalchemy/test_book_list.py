@@ -15,19 +15,19 @@ from sqlalchemy.engine import Engine
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.book import Book
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import make_job, make_page, make_page_stage, make_record
-from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.fakes_jobs import JobFakes
-from tests.helpers.seeding import store_book
-from tests.helpers.statements import STATEMENT_EVENT, StatementCounter
+from tests.harness.adapters.statements import STATEMENT_EVENT, StatementCounter
+from tests.harness.builders.domain import make_job, make_page, make_page_stage, make_record
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.jobs import JobFakes
+from tests.harness.fakes.processing import FakeCatalogue
 
 if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, PageId
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.fake_board import FakeJobBoard
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 

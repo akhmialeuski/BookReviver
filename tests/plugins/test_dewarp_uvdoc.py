@@ -18,14 +18,15 @@ from bookreviver.app.settings import ProcessingSettings
 from bookreviver.domain.step_settings import DewarpMethod
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import Processor, ProcessorSettings
-from tests.helpers.samples import CV_MISSING, save
-from tests.plugins.runner import run_on
-from tests.plugins.synthetic import bend_columns
+from tests.harness.images.runner import run_on
+from tests.harness.images.samples import CV_MISSING, save
+from tests.harness.images.scans import SCANS_DIR
+from tests.harness.images.synthetic import bend_columns
 
 MODELS_DIR: Path = ProcessingSettings().models_dir.resolve()
 GRAPH: Path = MODELS_DIR / 'UVDoc_grid.onnx'
 MODEL_MISSING: str = f'The UVDoc model is not downloaded to {MODELS_DIR}.'
-CLEAN_PAGE: Path = Path(__file__).parent / 'data' / 'book_clean_page.jpg'
+CLEAN_PAGE: Path = SCANS_DIR / 'book_clean_page.jpg'
 # The depth of the bend the page is given, in pixels for each thousand of its width
 BEND_PX: float = 30.0
 GRID_SHAPE: tuple[int, int, int] = (45, 31, 2)

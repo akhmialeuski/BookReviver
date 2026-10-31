@@ -6,7 +6,7 @@ import pytest
 
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.versions import VersionScale
-from tests.helpers.step_executors import (
+from tests.harness.adapters.step_executors import (
     FAILING_KEY,
     FAILING_MESSAGE,
     METHOD_KEY,
@@ -20,7 +20,7 @@ from tests.helpers.step_executors import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.helpers.step_executors import StepExecutorAdapter
+    from tests.harness.adapters.step_executors import StepExecutorAdapter
 
 pytestmark = pytest.mark.anyio
 

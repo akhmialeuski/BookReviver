@@ -9,17 +9,17 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.versions import ResultMark
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     make_page,
     make_page_version,
     make_record,
 )
-from tests.helpers.seeding import store_book
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, PageId, PageVersionId
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

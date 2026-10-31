@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
+from tests.harness.fakes.jobs import FakeBoardProvider, JobFakes, JobFakesProvider
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from dishka import Provider
 
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 
 @pytest.fixture

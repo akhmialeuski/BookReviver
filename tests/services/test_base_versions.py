@@ -12,7 +12,7 @@ from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import PageSize, VersionInputs, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
-from tests.helpers.builders import EPOCH, make_page, make_scan, make_source
+from tests.harness.builders.domain import EPOCH, make_page, make_scan, make_source
 
 if TYPE_CHECKING:
     from bookreviver.domain.sources import Scan

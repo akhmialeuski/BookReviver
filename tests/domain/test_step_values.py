@@ -7,7 +7,7 @@ import pytest
 
 from bookreviver.domain.ids import BookId, PageId
 from bookreviver.domain.step_values import StepValueLayers, ValueScope, ValueTarget, pages_changing_side
-from tests.helpers.builders import make_step_values
+from tests.harness.builders.domain import make_step_values
 
 if TYPE_CHECKING:
     from bookreviver.domain.step_values import StepValues

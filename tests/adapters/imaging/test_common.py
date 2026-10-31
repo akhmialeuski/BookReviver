@@ -6,7 +6,7 @@ import pytest
 from PIL import ExifTags, Image
 
 from bookreviver.adapters.imaging.common import is_portable_jpeg
-from tests.adapters.imaging.samples import write_image
+from tests.harness.images.documents import write_image
 
 if TYPE_CHECKING:
     from pathlib import Path

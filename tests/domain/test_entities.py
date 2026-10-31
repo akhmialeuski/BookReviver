@@ -32,7 +32,7 @@ from bookreviver.domain.versions import (
     VersionOrigin,
     VersionScale,
 )
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     EPOCH,
     SPLIT_NONE,
     directory_of,

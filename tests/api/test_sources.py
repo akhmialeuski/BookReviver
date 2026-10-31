@@ -15,12 +15,12 @@ from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
 from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
-from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import make_job, make_record, make_scan, make_source
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fakes_jobs import FakeBoardProvider
-from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import store_book
+from tests.harness.builders.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
+from tests.harness.builders.domain import make_job, make_record, make_scan, make_source
+from tests.harness.builders.seeding import store_book
+from tests.harness.concurrency.scripted_runner import ScriptedRunner
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.fakes.jobs import FakeBoardProvider
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,9 +32,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.sources import Source
-    from tests.helpers.books import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.builders.books import Book
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

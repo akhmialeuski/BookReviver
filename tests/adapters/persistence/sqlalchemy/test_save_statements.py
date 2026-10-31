@@ -10,7 +10,8 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import (
+from tests.harness.adapters.statements import StatementLog
+from tests.harness.builders.domain import (
     directory_of,
     make_page,
     make_page_stage,
@@ -18,8 +19,7 @@ from tests.helpers.builders import (
     make_record,
     make_step_values,
 )
-from tests.helpers.seeding import store_book
-from tests.helpers.statements import StatementLog
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

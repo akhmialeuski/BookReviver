@@ -41,23 +41,7 @@ from bookreviver.services.book import Book
 from bookreviver.services.imports import IMPORT_ACTIVE, NO_SOURCE_IMPORTED, ImportRun
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.sources import SOURCE_IMPORTING, SourceService
-from tests.adapters.imaging.samples import (
-    ROMAN_THEN_ARABIC_LABELS,
-    ROMAN_THEN_ARABIC_RULES,
-    DjvuPage,
-    PdfPage,
-    add_page_labels,
-    add_xmp,
-    requires_djvulibre,
-    write_djvu_bundle,
-    write_djvu_indirect,
-    write_djvu_pages,
-    write_pdf,
-    xmp_packet,
-)
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import make_job, make_record, make_source, new_account_id, open_for
-from tests.helpers.fakes_imports import (
+from tests.harness.adapters.imports import (
     BOOK_WINDOW,
     DEFAULT_PARALLEL_SCANS,
     IMPORT_TIMEOUT_SECONDS,
@@ -72,10 +56,26 @@ from tests.helpers.fakes_imports import (
     pdf_upload,
     stored_book,
 )
-from tests.helpers.fakes_jobs import JobFakes
-from tests.helpers.processors import AutoSplitProcessor
-from tests.helpers.seeding import commit_record
-from tests.helpers.storage import book_directory, upload
+from tests.harness.adapters.storage import book_directory, upload
+from tests.harness.builders.domain import make_job, make_record, make_source, new_account_id, open_for
+from tests.harness.builders.seeding import commit_record
+from tests.harness.concurrency.book_hold import hold_book_in_thread
+from tests.harness.fakes.jobs import JobFakes
+from tests.harness.fakes.processors import AutoSplitProcessor
+from tests.harness.images.documents import (
+    ROMAN_THEN_ARABIC_LABELS,
+    ROMAN_THEN_ARABIC_RULES,
+    DjvuPage,
+    PdfPage,
+    add_page_labels,
+    add_xmp,
+    requires_djvulibre,
+    write_djvu_bundle,
+    write_djvu_indirect,
+    write_djvu_pages,
+    write_pdf,
+    xmp_packet,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
@@ -94,9 +94,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.adapters.database import BookDatabasesFactory, LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

@@ -15,8 +15,8 @@ from bookreviver.api.schemas.accounts import AccountRead
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.accounts import SESSION_COOKIE
 from bookreviver.app.settings import OAuthClient
-from tests.helpers.fake_oauth import FAKE_CLIENT_ID, NO_EMAIL_CODE, SIGN_IN_EMAIL, FakeOAuth2
-from tests.helpers.fakes_accounts import AUTH_PATH, CSRF_HEADER, ME_PATH
+from tests.harness.fakes.accounts import AUTH_PATH, CSRF_HEADER, ME_PATH
+from tests.harness.fakes.oauth import FAKE_CLIENT_ID, NO_EMAIL_CODE, SIGN_IN_EMAIL, FakeOAuth2
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from httpx_oauth.oauth2 import BaseOAuth2
 
     from bookreviver.app.settings import Settings
-    from tests.helpers.fakes_accounts import RecordingMailer, Visitor
+    from tests.harness.fakes.accounts import RecordingMailer, Visitor
 
 pytestmark = pytest.mark.anyio
 

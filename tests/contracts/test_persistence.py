@@ -26,7 +26,7 @@ from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import PageSize, ProcessorRef, VersionState
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     EPOCH,
     FULL_DETAILS,
     directory_of,
@@ -38,7 +38,7 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
-from tests.helpers.seeding import store_book
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.sources import Source
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

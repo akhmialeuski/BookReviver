@@ -18,8 +18,7 @@ from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_settings import BinarizationMethod, OutputMode
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import save
-from tests.plugins.cleanup_pages import (
+from tests.harness.images.cleanup_pages import (
     INK,
     PAPER,
     PICTURE_COLUMNS,
@@ -30,6 +29,7 @@ from tests.plugins.cleanup_pages import (
     text_ink,
     with_picture,
 )
+from tests.harness.images.samples import save
 
 if TYPE_CHECKING:
     from pathlib import Path

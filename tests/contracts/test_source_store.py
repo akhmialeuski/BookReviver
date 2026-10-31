@@ -10,15 +10,15 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.errors import ConflictError, NotFoundError, UploadProblem, UploadRejectedError
 from bookreviver.domain.ids import BookId, JobId, SourceId
 from bookreviver.domain.sources import SourceFile
-from tests.helpers.builders import directory_of
-from tests.helpers.storage import LARGE_CONTENT, upload
+from tests.harness.adapters.storage import LARGE_CONTENT, upload
+from tests.harness.builders.domain import directory_of
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from fastapi import UploadFile
 
-    from tests.helpers.storage import DirectoryOpener
+    from tests.harness.adapters.storage import DirectoryOpener
 
 pytestmark = pytest.mark.anyio
 

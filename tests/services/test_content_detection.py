@@ -19,10 +19,10 @@ from bookreviver.domain.pages import ContentSource, ContentType, PageKind
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.content_detection import ContentDetector
-from tests.helpers.builders import make_page, make_page_stage, open_for
-from tests.helpers.page_services import make_page_service
-from tests.helpers.processing import ProcessingKit, stored_job
-from tests.helpers.processors import FakeContentProbe
+from tests.harness.builders.domain import make_page, make_page_stage, open_for
+from tests.harness.builders.page_services import make_page_service
+from tests.harness.builders.processing import ProcessingKit, stored_job
+from tests.harness.fakes.processors import FakeContentProbe
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

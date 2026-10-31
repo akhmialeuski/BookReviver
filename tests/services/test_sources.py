@@ -18,12 +18,12 @@ from bookreviver.domain.sources import RejectionReason, SourceStatus
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.sources import SourceService
-from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import make_job, make_record, make_source
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import store_book
-from tests.helpers.storage import SharedBookDirectories, book_directory
+from tests.harness.adapters.storage import SharedBookDirectories, book_directory
+from tests.harness.builders.books import SCANS_PER_SOURCE, commit_book, on_disk
+from tests.harness.builders.domain import make_job, make_record, make_source
+from tests.harness.builders.seeding import store_book
+from tests.harness.concurrency.scripted_runner import ScriptedRunner
+from tests.harness.fakes.board import FakeJobBoard
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,10 +36,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.sources import Source
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
-    from tests.helpers.books import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.builders.books import Book
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

@@ -15,7 +15,7 @@ from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StageRun
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     directory_of,
     make_book_change,
     make_job,
@@ -23,9 +23,9 @@ from tests.helpers.builders import (
     make_record,
     new_account_id,
 )
-from tests.helpers.scripted_runner import TASKS_PER_JOB
-from tests.helpers.seeding import commit_record, store_book
-from tests.helpers.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
+from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.concurrency.scripted_runner import TASKS_PER_JOB
+from tests.harness.http.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
 
 if TYPE_CHECKING:
     import httpx
@@ -35,9 +35,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.jobs import Job
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.fakes_jobs import JobFakes
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 

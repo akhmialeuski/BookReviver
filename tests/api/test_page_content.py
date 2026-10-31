@@ -14,11 +14,11 @@ from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.jobs import ContentDetection, JobKind, JobState
 from bookreviver.domain.pages import ContentSource, ContentType, PageKind
-from tests.helpers.builders import make_job, make_page, make_record, new_account_id
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fakes_jobs import FakeBoardProvider
-from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_job, make_page, make_record, new_account_id
+from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.concurrency.scripted_runner import ScriptedRunner
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.fakes.jobs import FakeBoardProvider
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page as BookPage
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

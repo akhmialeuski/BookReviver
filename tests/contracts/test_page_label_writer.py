@@ -9,7 +9,7 @@ from defusedxml.ElementTree import parse
 from bookreviver.adapters.imaging import EpubPageList, PdfLabelWriter
 from bookreviver.adapters.imaging.pdf_labels import read_label_rules
 from bookreviver.domain.page_label_rules import BookLabeling, LabelStyle, PageLabelRule, PrintedNumber
-from tests.adapters.imaging.samples import PdfPage, ScanImage, write_pdf
+from tests.harness.images.documents import PdfPage, ScanImage, write_pdf
 
 if TYPE_CHECKING:
     from collections.abc import Callable

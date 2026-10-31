@@ -13,8 +13,8 @@ from sqlalchemy import Column, Integer, Table
 from sqlalchemy.orm import registry
 
 from bookreviver.app.main import create_app
-from tests.helpers.database import copy_schema_template, database_file
-from tests.helpers.processing import InProcessExecutorProvider
+from tests.harness.adapters.database import copy_schema_template, database_file
+from tests.harness.builders.processing import InProcessExecutorProvider
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

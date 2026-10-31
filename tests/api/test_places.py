@@ -12,8 +12,8 @@ from bookreviver.api.schemas.types import CANVAS_CENTRE_MAX, CANVAS_ZOOM_MAX
 from bookreviver.domain.pages import PageFilter
 from bookreviver.domain.places import CompareMode, PlaceMode, ViewMode
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import make_record, new_account_id
-from tests.helpers.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_record, new_account_id
+from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

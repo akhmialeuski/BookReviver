@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bookreviver.services.stage_records import StageRecords
-from tests.helpers.builders import make_page, make_page_stage, make_recipe, make_record, new_account_id
-from tests.helpers.seeding import commit_record
+from tests.harness.builders.domain import make_page, make_page_stage, make_recipe, make_record, new_account_id
+from tests.harness.builders.seeding import commit_record
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -17,8 +17,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.page_stage_writes import PageStageWrites
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.page_stage_writes import PageStageWrites
 
 pytestmark = pytest.mark.anyio
 

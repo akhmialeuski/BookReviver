@@ -23,8 +23,8 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABL
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
 from bookreviver.domain.images import ImagePolicy
 from bookreviver.ports.storage import BookDirectory
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import directory_of, make_page, make_record, new_book_id
+from tests.harness.builders.domain import directory_of, make_page, make_record, new_book_id
+from tests.harness.concurrency.book_hold import hold_book_in_thread
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import Book
-    from tests.helpers.database import BookDatabasesFactory
+    from tests.harness.adapters.database import BookDatabasesFactory
 
 pytestmark = pytest.mark.anyio
 

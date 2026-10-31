@@ -14,11 +14,11 @@ from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
-from tests.helpers.builders import open_for
-from tests.helpers.page_services import make_page_service
-from tests.helpers.processing import ProcessingKit
-from tests.helpers.processors import FakeProcessor
-from tests.helpers.spreads import run_stage
+from tests.harness.builders.domain import open_for
+from tests.harness.builders.page_services import make_page_service
+from tests.harness.builders.processing import ProcessingKit
+from tests.harness.builders.spreads import run_stage
+from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

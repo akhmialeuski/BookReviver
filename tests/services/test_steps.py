@@ -20,8 +20,9 @@ from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book import Book
 from bookreviver.services.steps import StepRun, StepRunner
-from tests.helpers.books import IMAGE
-from tests.helpers.builders import (
+from tests.harness.adapters.storage import book_directory
+from tests.harness.builders.books import IMAGE
+from tests.harness.builders.domain import (
     EPOCH,
     directory_of,
     make_page,
@@ -29,19 +30,18 @@ from tests.helpers.builders import (
     make_source,
     new_book_id,
 )
-from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
-from tests.helpers.in_process_executor import InProcessStepExecutor
-from tests.helpers.page_services import INFO_NAME, FakeTiler
-from tests.helpers.processors import FakeProcessor
-from tests.helpers.storage import book_directory
+from tests.harness.builders.page_services import INFO_NAME, FakeTiler
+from tests.harness.fakes.in_process_executor import InProcessStepExecutor
+from tests.harness.fakes.processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
+from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.sources import Scan
     from bookreviver.domain.versions import PageVersion
-    from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

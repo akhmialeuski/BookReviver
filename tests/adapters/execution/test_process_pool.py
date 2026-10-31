@@ -1,6 +1,6 @@
 """Tests for what only the process pool executor does, beyond the StepExecutor contract in ``tests/contracts``.
 
-The processors and the executor come from ``tests.helpers.step_executors``, which the contract suite uses too.
+The processors and the executor come from ``tests.harness.adapters.step_executors``, which the contract suite uses too.
 """
 
 import multiprocessing
@@ -24,8 +24,7 @@ from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.domain.processors import WorkerPool
 from bookreviver.domain.versions import VersionData, VersionScale
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import CV_MISSING, save, text_page
-from tests.helpers.step_executors import (
+from tests.harness.adapters.step_executors import (
     FOREIGN_CODE,
     FOREIGN_KEY,
     FOREIGN_MESSAGE,
@@ -42,6 +41,7 @@ from tests.helpers.step_executors import (
     make_step_input,
     open_executor_under_test,
 )
+from tests.harness.images.samples import CV_MISSING, save, text_page
 
 if TYPE_CHECKING:
     from pathlib import Path

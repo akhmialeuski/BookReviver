@@ -11,8 +11,8 @@ from bookreviver.domain.processors import OrderRuleKind
 from bookreviver.domain.recipes import OrderMode, ProfileDraft, RecipeDraft, Step
 from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_order import RecipeOrder
-from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.processors import (
+from tests.harness.fakes.processing import FakeCatalogue
+from tests.harness.fakes.processors import (
     FIRST_KEY,
     OPENING_KEY,
     OPENING_REASON,
@@ -27,8 +27,8 @@ from tests.helpers.processors import (
 )
 
 if TYPE_CHECKING:
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 UNKNOWN_KEY: str = 'geometry.gone'
 DRAFT_NAME: str = 'Ordered'

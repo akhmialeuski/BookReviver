@@ -15,8 +15,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.pages import ContentType
 from bookreviver.domain.slices import SliceRequest
-from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
-from tests.helpers.builders import make_page
+from tests.harness.builders.domain import make_page
+from tests.harness.concurrency.book_hold import HOLD_LIMIT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.tracers import AskingTracer
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.adapters.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio
 

@@ -15,10 +15,11 @@ from bookreviver.domain.recipes import OrderMode
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.recipes import DefaultRecipes
-from tests.helpers.builders import make_record
-from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.processing import DEFAULTS
-from tests.helpers.processors import (
+from tests.harness.builders.domain import make_record
+from tests.harness.builders.processing import DEFAULTS
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.processing import FakeCatalogue
+from tests.harness.fakes.processors import (
     FIRST_KEY,
     SECOND_KEY,
     SECOND_REASON,
@@ -31,7 +32,6 @@ from tests.helpers.processors import (
     SecondProcessor,
     ThirdProcessor,
 )
-from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

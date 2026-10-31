@@ -9,8 +9,8 @@ import pytest
 from dishka import AsyncContainer
 
 from bookreviver.api.auth import signed_in_user
-from tests.helpers.board_idle import JobsIdle
-from tests.helpers.storage import BookFiles
+from tests.harness.adapters.storage import BookFiles
+from tests.harness.concurrency.board_idle import JobsIdle
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

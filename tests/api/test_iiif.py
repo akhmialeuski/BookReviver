@@ -13,9 +13,9 @@ from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
 from bookreviver.domain.ids import JobId, SourceId, StorageKey
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import make_page, make_page_version, make_record
-from tests.helpers.seeding import commit_account, store_book
-from tests.helpers.storage import upload
+from tests.harness.adapters.storage import upload
+from tests.harness.builders.domain import make_page, make_page_version, make_record
+from tests.harness.builders.seeding import commit_account, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import CatalogueDatabase
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.storage import SharedBookDirectories
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

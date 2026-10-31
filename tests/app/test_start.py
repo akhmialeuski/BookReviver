@@ -9,10 +9,10 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.storage import LocalBookDirectory
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import JobId, SourceId
-from tests.helpers.builders import directory_of, make_record
-from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
-from tests.helpers.seeding import store_book
-from tests.helpers.storage import upload
+from tests.harness.adapters.storage import upload
+from tests.harness.builders.domain import directory_of, make_record
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.jobs import FakeBoardProvider, JobFakes, JobFakesProvider
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.storage import SourceStore
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

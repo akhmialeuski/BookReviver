@@ -18,11 +18,11 @@ from bookreviver.domain.recipes import Step
 from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent, StepOutcome
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionData, VersionScale
-from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
+from tests.harness.images.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
 
 if TYPE_CHECKING:
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = [pytest.mark.anyio, pytest.mark.timing]
 

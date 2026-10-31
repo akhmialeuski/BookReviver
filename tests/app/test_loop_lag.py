@@ -13,7 +13,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.tracing import LoopLagProbe
 from bookreviver.domain.spans import SpanAttribute, SpanName
-from tests.helpers.tracers import AskingTracer
+from tests.harness.adapters.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio
 

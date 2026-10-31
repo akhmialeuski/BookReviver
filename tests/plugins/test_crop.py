@@ -21,9 +21,10 @@ from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.step_settings import Binarization, CropMethod
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import CV_MISSING, LINE_PITCH_PX, PAPER, save, text_page
-from tests.plugins.runner import run_on
-from tests.plugins.synthetic import SHEET_SIZE_PX, draw_sheet
+from tests.harness.images.runner import run_on
+from tests.harness.images.samples import CV_MISSING, LINE_PITCH_PX, PAPER, save, text_page
+from tests.harness.images.scans import SCANS_DIR
+from tests.harness.images.synthetic import SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,8 +35,8 @@ if TYPE_CHECKING:
     from bookreviver.plugins.crop import FrameSearch
     from bookreviver.ports.processing import Processor
 
-SCAN_ON_BINDING: Path = Path(__file__).parent / 'data' / 'book_scan_on_binding.jpg'
-CLEAN_PAGE: Path = Path(__file__).parent / 'data' / 'book_clean_page.jpg'
+SCAN_ON_BINDING: Path = SCANS_DIR / 'book_scan_on_binding.jpg'
+CLEAN_PAGE: Path = SCANS_DIR / 'book_clean_page.jpg'
 PAGE_NAME: str = 'page.png'
 HALF_NAME: str = 'half.png'
 KEY_PATTERN: str = r'geometry\.crop'

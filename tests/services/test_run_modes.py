@@ -13,11 +13,11 @@ from bookreviver.domain.page_steps import NewPageEdit, StepLayer
 from bookreviver.domain.runs import RunMode
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.services.run_plans import RunPlan
-from tests.helpers.builders import open_for
-from tests.helpers.page_batches import PageValues, run_impact
-from tests.helpers.processing import open_book
-from tests.helpers.processors import STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import run_stage
+from tests.harness.builders.domain import open_for
+from tests.harness.builders.page_batches import PageValues, run_impact
+from tests.harness.builders.processing import open_book
+from tests.harness.builders.spreads import run_stage
+from tests.harness.fakes.processors import STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.page_steps import PageStepKey, PageStepState
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

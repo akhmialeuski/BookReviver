@@ -10,17 +10,17 @@ from bookreviver.domain.pages import PageKind, RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage
-from tests.helpers.processors import CleanupProcessor, FakeProcessor
-from tests.helpers.spreads import head_of, run_stage
-from tests.helpers.stage_heads import seed_head
-from tests.helpers.stage_reads import stage_rows
+from tests.harness.builders.spreads import head_of, run_stage
+from tests.harness.builders.stage_heads import seed_head
+from tests.harness.builders.stage_reads import stage_rows
+from tests.harness.fakes.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, PageId, PageVersionId, StepId
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import BookId
-    from tests.api.imports.watch import ImportWatch
+    from tests.harness.http.import_watch import ImportWatch
 
 pytestmark = pytest.mark.anyio
 

@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.app.settings import ImagingSettings
-from tests.adapters.imaging.samples import write_image
+from tests.harness.images.documents import write_image
 
 if TYPE_CHECKING:
     from pathlib import Path

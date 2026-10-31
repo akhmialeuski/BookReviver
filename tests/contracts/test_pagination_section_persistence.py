@@ -14,8 +14,8 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.page_label_rules import LabelStyle
 from bookreviver.domain.pages import PageKind
 from bookreviver.domain.pagination import NumberDisplay
-from tests.helpers.builders import make_page, make_record, make_section, new_account_id
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_page, make_record, make_section, new_account_id
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 

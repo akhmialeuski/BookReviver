@@ -10,7 +10,7 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.images import Renditions
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import VersionState
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     make_page,
     make_page_stage,
     make_page_version,
@@ -19,10 +19,10 @@ from tests.helpers.builders import (
     make_source,
     new_book_id,
 )
-from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
-from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.processors import FakeProcessor
-from tests.helpers.seeding import store_book
+from tests.harness.builders.processing import ProcessingFakesProvider
+from tests.harness.builders.seeding import store_book
+from tests.harness.fakes.jobs import JobFakes, JobFakesProvider
+from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

@@ -19,8 +19,8 @@ from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
 from bookreviver.services.book_measure import MEASURE_OUTDATED
-from tests.helpers.builders import make_page_stage, make_page_version, open_for
-from tests.helpers.processing import stored_job
+from tests.harness.builders.domain import make_page_stage, make_page_version, open_for
+from tests.harness.builders.processing import stored_job
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,9 +33,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

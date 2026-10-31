@@ -23,9 +23,9 @@ from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.step_settings import DewarpMethod
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import ProcessorSettings, StepInput
-from tests.helpers.samples import LINE_PITCH_PX, MARGIN_PX, WORD_HEIGHT_PX, save, text_page
-from tests.plugins.runner import run_on
-from tests.plugins.synthetic import (
+from tests.harness.images.runner import run_on
+from tests.harness.images.samples import LINE_PITCH_PX, MARGIN_PX, WORD_HEIGHT_PX, save, text_page
+from tests.harness.images.synthetic import (
     BACKGROUND_TONE,
     GUTTER_BEND_PX,
     PICTURE_BOX,

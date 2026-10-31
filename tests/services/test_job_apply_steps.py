@@ -21,7 +21,7 @@ from bookreviver.domain.versions import VersionState
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
-from tests.helpers.processing import change_versions, open_book, stored_job
+from tests.harness.builders.processing import change_versions, open_book, stored_job
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -32,9 +32,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.runs import RunOutcome
     from bookreviver.domain.versions import PageVersion
     from bookreviver.services.book import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import LocatedBookDatabases
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

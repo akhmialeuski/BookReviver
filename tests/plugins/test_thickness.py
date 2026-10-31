@@ -16,8 +16,8 @@ from bookreviver.domain.processors import ProcessorScope, VersionOutput
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import save
-from tests.plugins.cleanup_pages import INK, PAPER, read_gray, run_step
+from tests.harness.images.cleanup_pages import INK, PAPER, read_gray, run_step
+from tests.harness.images.samples import save
 
 if TYPE_CHECKING:
     from pathlib import Path

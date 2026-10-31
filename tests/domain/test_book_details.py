@@ -14,7 +14,7 @@ from bookreviver.domain.books import (
     RightsStatus,
     Script,
 )
-from tests.helpers.builders import FULL_DETAILS
+from tests.harness.builders.domain import FULL_DETAILS
 
 TITLE: str = 'Сборникъ народныхъ пѣсенъ'
 AUTHOR: Contributor = Contributor(name='И. И. Ивановъ', role=ContributorRole.AUTHOR)

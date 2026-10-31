@@ -13,7 +13,7 @@ from bookreviver.domain.books import Contributor, ContributorRole, MetadataSugge
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.images import ColorMode
 from bookreviver.domain.sources import SourceKind
-from tests.adapters.imaging.samples import (
+from tests.harness.images.documents import (
     ROMAN_THEN_ARABIC_LABELS,
     ROMAN_THEN_ARABIC_RULES,
     PdfPage,

@@ -90,7 +90,7 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.
-- Every new port gets a fake in `tests/helpers` and a contract test suite that runs against the fake and every adapter.
+- Every new port gets a fake in `tests/harness/fakes` and a contract test suite that runs against the fake and every adapter.
   `src` holds no code that only tests select. The persistence port has no fake: its tests run on the SQLAlchemy adapter
   over SQLite files in the test's directory, the catalogue and every book copied from a template of its schema built
   once per test process.

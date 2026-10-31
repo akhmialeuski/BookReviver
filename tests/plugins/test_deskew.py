@@ -20,8 +20,8 @@ from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.step_settings import DeskewMethod
 from bookreviver.domain.versions import VersionData
 from bookreviver.ports.processing import StepInput
-from tests.helpers.builders import make_page_edit
-from tests.helpers.samples import ANGLE_TOLERANCE, INK, save, spread, text_page, turned
+from tests.harness.builders.domain import make_page_edit
+from tests.harness.images.samples import ANGLE_TOLERANCE, INK, save, spread, text_page, turned
 
 if TYPE_CHECKING:
     from pathlib import Path

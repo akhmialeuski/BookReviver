@@ -16,7 +16,7 @@ from bookreviver.domain.processors import WorkerPool
 from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_order import RecipeOrder
-from tests.helpers.samples import CV_MISSING
+from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from bookreviver.domain.processors import ProcessorSpec

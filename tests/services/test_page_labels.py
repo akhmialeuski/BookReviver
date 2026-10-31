@@ -12,9 +12,9 @@ from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.pages import ContentType, PageAnchor, PageKind
 from bookreviver.domain.sides import Side
-from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
-from tests.helpers.seeding import ensure_account, store_book
+from tests.harness.builders.domain import EPOCH, make_page, make_record, new_account_id
+from tests.harness.builders.seeding import ensure_account, store_book
+from tests.harness.concurrency.book_hold import hold_book_in_thread
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -27,9 +27,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import CatalogueDatabaseFactory, LocatedBookDatabases
-    from tests.helpers.page_writes import PageWrites
+    from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.page_writes import PageWrites
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

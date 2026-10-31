@@ -10,14 +10,14 @@ from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import ProfileDraft, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
-from tests.helpers.builders import make_page_stage, make_recipe_profile
-from tests.helpers.processors import FakeProcessor
+from tests.harness.builders.domain import make_page_stage, make_recipe_profile
+from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.domain.recipes import RecipeProfile
     from bookreviver.services.book import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

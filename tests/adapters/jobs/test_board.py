@@ -12,9 +12,9 @@ from delayed_assert import expect
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.jobs import JobState
-from tests.helpers.builders import make_job
-from tests.helpers.job_boards import BoardAdapter, open_board_under_test
-from tests.helpers.scripted_runner import TASKS_PER_JOB, Phase
+from tests.harness.adapters.job_boards import BoardAdapter, open_board_under_test
+from tests.harness.builders.domain import make_job
+from tests.harness.concurrency.scripted_runner import TASKS_PER_JOB, Phase
 
 pytestmark = pytest.mark.anyio
 

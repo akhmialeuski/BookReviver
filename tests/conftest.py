@@ -18,8 +18,7 @@ from bookreviver.domain.accounts import Actor
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.ports.storage import BookDirectory
-from tests.helpers.builders import BookOpener, new_account_id
-from tests.helpers.database import (
+from tests.harness.adapters.database import (
     LocatedBookDatabases,
     SharedDatabaseProvider,
     copy_schema_template,
@@ -27,13 +26,14 @@ from tests.helpers.database import (
     database_file,
     waiting,
 )
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fakes_accounts import SignedInUser
-from tests.helpers.fakes_jobs import RecordingEventBus
-from tests.helpers.processing import InProcessExecutorProvider
-from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_account
-from tests.helpers.storage import SharedBookDirectories
+from tests.harness.adapters.storage import SharedBookDirectories
+from tests.harness.builders.domain import BookOpener, new_account_id
+from tests.harness.builders.processing import InProcessExecutorProvider
+from tests.harness.builders.seeding import commit_account
+from tests.harness.concurrency.scripted_runner import ScriptedRunner
+from tests.harness.fakes.accounts import SignedInUser
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.fakes.jobs import RecordingEventBus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Sequence
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from httpx_oauth.oauth2 import BaseOAuth2
 
     from bookreviver.ports.persistence import CatalogueDatabase
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 TEST_BASE_URL: str = 'http://testserver'
 TEST_SECRET: str = 'test-secret-that-is-long-enough-for-signing'

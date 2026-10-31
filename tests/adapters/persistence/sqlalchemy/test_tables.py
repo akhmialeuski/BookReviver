@@ -17,7 +17,7 @@ from bookreviver.domain.sources import RejectionReason, SourceStatus
 from bookreviver.domain.spans import BlockKind
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     EPOCH,
     directory_of,
     make_page,
@@ -28,7 +28,7 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
-from tests.helpers.seeding import store_book
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow, ScanRow
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import BookDatabasesFactory, BookSessions, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, BookSessions, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

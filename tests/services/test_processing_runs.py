@@ -21,13 +21,10 @@ from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ResultMark, VersionData, VersionScale, VersionState
 from bookreviver.ports.persistence import BookDatabase
-from tests.helpers.builders import make_job, make_page, open_for
-from tests.helpers.counting import CountingBookDatabase
-from tests.helpers.fake_processing import PREVIEW_TOKEN
-from tests.helpers.held_steps import steps_held
-from tests.helpers.meanwhile import change_while_writing
-from tests.helpers.page_batches import PageValues
-from tests.helpers.processing import (
+from tests.harness.adapters.counting import CountingBookDatabase
+from tests.harness.builders.domain import make_job, make_page, open_for
+from tests.harness.builders.page_batches import PageValues
+from tests.harness.builders.processing import (
     IMAGE_CONTENT,
     ProcessingKit,
     change_versions,
@@ -36,9 +33,12 @@ from tests.helpers.processing import (
     stage_versions,
     stored_job,
 )
-from tests.helpers.processors import FAILING_PARAMETER, RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import head_of, run_stage, stage_of
-from tests.helpers.stage_heads import seed_head
+from tests.harness.builders.spreads import head_of, run_stage, stage_of
+from tests.harness.builders.stage_heads import seed_head
+from tests.harness.concurrency.held_steps import steps_held
+from tests.harness.concurrency.meanwhile import change_while_writing
+from tests.harness.fakes.processing import PREVIEW_TOKEN
+from tests.harness.fakes.processors import FAILING_PARAMETER, RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.builders import BookOpener
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

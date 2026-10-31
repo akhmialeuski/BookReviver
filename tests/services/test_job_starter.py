@@ -14,10 +14,10 @@ from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview, TileCut
 from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import directory_of
-from tests.helpers.held_steps import steps_held
-from tests.helpers.processing import open_book
-from tests.helpers.processors import FakeProcessor
+from tests.harness.builders.domain import directory_of
+from tests.harness.builders.processing import open_book
+from tests.harness.concurrency.held_steps import steps_held
+from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

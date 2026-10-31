@@ -17,7 +17,7 @@ from bookreviver.domain.books import BookDetails, Contributor, ContributorRole, 
 from bookreviver.domain.images import ImagePolicy
 from bookreviver.domain.pages import PageKind
 from tests.conftest import TEST_BASE_URL
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     FULL_DETAILS,
     make_page,
     make_record,
@@ -26,7 +26,7 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
-from tests.helpers.seeding import commit_account, commit_record, store_book
+from tests.harness.builders.seeding import commit_account, commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.accounts import Actor
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.storage import BookFiles
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.storage import BookFiles
 
 pytestmark = pytest.mark.anyio
 

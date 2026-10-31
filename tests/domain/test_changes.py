@@ -17,7 +17,7 @@ from bookreviver.domain.books import (
 from bookreviver.domain.changes import KEEP, BookChanges, BookDetailsChanges, PageChanges
 from bookreviver.domain.images import ImagePolicy
 from bookreviver.domain.pages import BlankFill, PageKind
-from tests.helpers.builders import FULL_DETAILS, make_page, make_record, make_scan, make_source
+from tests.harness.builders.domain import FULL_DETAILS, make_page, make_record, make_scan, make_source
 
 if TYPE_CHECKING:
     from bookreviver.domain.pages import Page

@@ -8,7 +8,7 @@ from PIL import Image
 
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.domain.images import ColorMode, Rendition
-from tests.adapters.imaging.samples import write_image
+from tests.harness.images.documents import write_image
 
 if TYPE_CHECKING:
     from pathlib import Path

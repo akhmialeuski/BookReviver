@@ -11,13 +11,13 @@ from bookreviver.domain.recipes import OrderMode, ProfileDraft, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_profiles import COPY_NAME
-from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
+from tests.harness.fakes.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 
 if TYPE_CHECKING:
     from bookreviver.domain.recipes import RecipeProfile
     from bookreviver.services.book import Book
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

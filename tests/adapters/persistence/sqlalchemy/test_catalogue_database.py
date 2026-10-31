@@ -24,9 +24,9 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.spans import BlockKind
 from bookreviver.ports.persistence import NoChangeOpenError
-from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
-from tests.helpers.builders import make_book_place, make_page, make_page_version, make_record
-from tests.helpers.seeding import store_book
+from tests.harness.builders.domain import make_book_place, make_page, make_page_version, make_record
+from tests.harness.builders.seeding import store_book
+from tests.harness.concurrency.book_hold import HOLD_LIMIT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 

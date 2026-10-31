@@ -21,15 +21,15 @@ from bookreviver.domain.step_settings import HorizontalAlign, PaperFill, Vertica
 from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.cv_image import line_pitch
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import INK, LINE_PITCH_PX, PAPER, save, text_page
-from tests.plugins.runner import run_on
+from tests.harness.images.runner import run_on
+from tests.harness.images.samples import INK, LINE_PITCH_PX, PAPER, save, text_page
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
-    from tests.plugins.runner import StepExtras
+    from tests.harness.images.runner import StepExtras
 
 KEY_PATTERN: str = r'geometry\.normalize'
 BLOCK_NAME: str = 'block.png'

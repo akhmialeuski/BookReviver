@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from tests.helpers.fake_oauth import FAKE_PROVIDER_NAME, SIGN_IN_EMAIL, FakeOAuth2
-from tests.helpers.fakes_accounts import AUTH_PATH, CSRF_HEADER, HashStep
+from tests.harness.fakes.accounts import AUTH_PATH, CSRF_HEADER, HashStep
+from tests.harness.fakes.oauth import FAKE_PROVIDER_NAME, SIGN_IN_EMAIL, FakeOAuth2
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     import httpx
     from httpx_oauth.oauth2 import BaseOAuth2
 
-    from tests.helpers.fakes_accounts import HashCalls, Visitor
+    from tests.harness.fakes.accounts import HashCalls, Visitor
 
 pytestmark = pytest.mark.anyio
 

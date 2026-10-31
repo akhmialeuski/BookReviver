@@ -21,7 +21,8 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.app.providers.accounts import AccountMail
 from bookreviver.app.tracing import LoopLagProbe
 from bookreviver.domain.spans import SpanAttribute, SpanName
-from tests.helpers.fakes_accounts import (
+from tests.harness.adapters.tracers import AskingTracer
+from tests.harness.fakes.accounts import (
     EMAIL_FIELD,
     FORGOT_PATH,
     LOGOUT_PATH,
@@ -30,14 +31,13 @@ from tests.helpers.fakes_accounts import (
     RESET_PATH,
     TOKEN_PARAMETER,
 )
-from tests.helpers.tracers import AskingTracer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     import httpx
 
-    from tests.helpers.fakes_accounts import RecordingMailer, Visitor
+    from tests.harness.fakes.accounts import RecordingMailer, Visitor
 
 pytestmark = [pytest.mark.anyio, pytest.mark.timing]
 

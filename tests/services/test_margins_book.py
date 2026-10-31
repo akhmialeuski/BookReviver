@@ -20,18 +20,18 @@ from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.spans import SpanName
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionData
-from tests.helpers.page_batches import PageValues
-from tests.helpers.processing import stored_job
-from tests.helpers.samples import PAPER, png_bytes, text_page
-from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
+from tests.harness.builders.page_batches import PageValues
+from tests.harness.builders.processing import stored_job
+from tests.harness.builders.spreads import book_of, head_of, run_stage, use_recipe
+from tests.harness.images.samples import PAPER, png_bytes, text_page
 
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.processing import ProcessingKit
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 

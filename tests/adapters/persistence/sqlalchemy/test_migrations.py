@@ -45,7 +45,7 @@ from bookreviver.domain.ids import BookId, ChangeBatchId, PageHistoryEntryId, Pa
 from bookreviver.domain.spans import BlockKind
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     EPOCH,
     directory_of,
     make_book_place,
@@ -59,7 +59,7 @@ from tests.helpers.builders import (
     new_account_id,
     new_book_id,
 )
-from tests.helpers.seeding import commit_account
+from tests.harness.builders.seeding import commit_account
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator

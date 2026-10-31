@@ -13,7 +13,7 @@ from starlette.responses import PlainTextResponse
 
 from bookreviver.app.providers.accounts import SESSION_COOKIE
 from bookreviver.app.security import CSRF_FAILED, PROBLEM_MEDIA_TYPE, SIGN_IN_ATTEMPTS, CSRFMiddleware
-from tests.helpers.fakes_accounts import (
+from tests.harness.fakes.accounts import (
     CSRF_COOKIE,
     CSRF_HEADER,
     DETAIL_FIELD,

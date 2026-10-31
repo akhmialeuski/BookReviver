@@ -18,10 +18,10 @@ from sqlalchemy.pool import QueuePool
 from bookreviver.domain.accounts import Actor
 from bookreviver.domain.jobs import JobState
 from bookreviver.domain.slices import SliceRequest
-from tests.helpers.builders import directory_of, make_record, open_for
-from tests.helpers.connections import checked_out_connections
-from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
-from tests.helpers.seeding import store_book
+from tests.harness.adapters.connections import checked_out_connections
+from tests.harness.adapters.imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
+from tests.harness.builders.domain import directory_of, make_record, open_for
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.fakes_imports import ImportRig
+    from tests.harness.adapters.imports import ImportRig
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

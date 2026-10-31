@@ -6,13 +6,13 @@ import pytest
 
 from bookreviver.domain.accounts import Actor
 from bookreviver.services.places import PlaceService
-from tests.helpers.builders import make_record, new_account_id
-from tests.helpers.seeding import commit_record
+from tests.harness.builders.domain import make_record, new_account_id
+from tests.harness.builders.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from tests.helpers.builders import BookOpener
-    from tests.helpers.database import CatalogueDatabaseFactory
+    from tests.harness.adapters.database import CatalogueDatabaseFactory
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

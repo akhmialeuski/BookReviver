@@ -5,7 +5,7 @@ import pytest
 
 from bookreviver.adapters.events.broadcast import EventChannels
 from bookreviver.domain.ids import BookDirectoryName
-from tests.helpers.builders import make_book_change
+from tests.harness.builders.domain import make_book_change
 
 pytestmark = pytest.mark.anyio
 

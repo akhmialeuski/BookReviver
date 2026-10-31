@@ -17,7 +17,7 @@ from bookreviver.domain.pages import PageKind
 from bookreviver.domain.sources import FileType, RejectionReason, ScanFacts, SourceFile, SourceKind, SourceStatus
 from bookreviver.domain.stages import ReviewReason
 from bookreviver.domain.versions import ProcessorRef, VersionState
-from tests.helpers.builders import (
+from tests.harness.builders.domain import (
     EPOCH,
     FULL_DETAILS,
     make_page,
@@ -26,11 +26,11 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
 )
-from tests.helpers.seeding import store_book
+from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 

@@ -23,15 +23,15 @@ from bookreviver.domain.jobs import (
 )
 from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
-from tests.helpers.builders import EPOCH, new_account_id, open_for
-from tests.helpers.processing import ProcessingKit, stored_job
-from tests.helpers.processors import FakeContentProbe, FakeProcessor
+from tests.harness.builders.domain import EPOCH, new_account_id, open_for
+from tests.harness.builders.processing import ProcessingKit, stored_job
+from tests.harness.fakes.processors import FakeContentProbe, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.services.book import Book
-    from tests.helpers.builders import BookOpener
+    from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 

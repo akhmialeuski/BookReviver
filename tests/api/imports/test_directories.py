@@ -14,8 +14,8 @@ from PIL import Image
 from bookreviver.domain.errors import UploadProblem
 from bookreviver.domain.jobs import JobState
 from bookreviver.domain.sources import RejectionReason
-from tests.adapters.imaging.samples import TiffFrame, write_tiff
-from tests.helpers.fakes_imports import image_upload, pdf_upload, stored_book
+from tests.harness.adapters.imports import image_upload, pdf_upload, stored_book
+from tests.harness.images.documents import TiffFrame, write_tiff
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.domain.ids import BookId
-    from tests.api.imports.watch import ImportWatch
-    from tests.helpers.database import BookDatabasesFactory
+    from tests.harness.adapters.database import BookDatabasesFactory
+    from tests.harness.http.import_watch import ImportWatch
 
 pytestmark = pytest.mark.anyio
 

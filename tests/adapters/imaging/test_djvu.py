@@ -21,7 +21,7 @@ from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.images import ColorMode, Rendition
 from bookreviver.domain.sources import DjvuDocumentKind, FileType, ScanFacts, SourceKind, UploadedSource
 from bookreviver.ports.imaging import SourceInspector
-from tests.adapters.imaging.samples import (
+from tests.harness.images.documents import (
     DjvuPage,
     edit_djvu,
     requires_djvulibre,
