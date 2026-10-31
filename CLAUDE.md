@@ -18,6 +18,7 @@ uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes ta
 uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
 uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
 uv run bookreviver-migrate move-book-directories  # once: data/storage/projects/ to data/storage/books/
+uv run pytest -m unit                    # the unit tests alone, which run in memory
 uv run pytest tests/contract             # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
@@ -121,6 +122,13 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   a book of a newer release is refused with `BookTooNewError`. ty's `unsound-assignment` is disabled only for the table
   modules, because `Mapped[...] = mapped_column()` trips it.
 - Async tests use the anyio plugin (`@pytest.mark.anyio`).
+- A test sits under the directory of its level: `tests/unit` runs in memory, `tests/integration` uses one real
+  technology in the process, `tests/contract` runs the suite of a port on its fake and every adapter, and
+  `tests/component` runs the whole backend through httpx. `unit` and `integration` mirror `src/bookreviver`, and
+  `component` is grouped by feature of the API. `tests/harness/plugin.py` marks every test with its level and fails
+  one whose fixtures its level refuses, such as a unit test taking `tmp_path`. Code the tests share lives in
+  `tests/harness`, and a fixture lives in the `conftest.py` of the lowest directory covering its users, or in
+  `tests/harness/fixtures` when tests of several levels take it.
 - The frontend client in `frontend/src/api/` is generated from the committed OpenAPI schema and never edited by hand.
   Every text the interface shows is in `frontend/src/shared/messages.ts`, and TypeScript runs without `any` or
   suppressions.
