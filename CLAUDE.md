@@ -18,7 +18,7 @@ uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes ta
 uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
 uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
 uv run bookreviver-migrate move-book-directories  # once: data/storage/projects/ to data/storage/books/
-uv run pytest tests/contracts            # port contracts, run against every adapter of the port
+uv run pytest tests/contract             # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
 uv run bookreviver-trace-report spans.jsonl --check  # summarise a file of spans and check the time budgets
@@ -114,8 +114,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   two files by a key.
 - A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/catalogue/versions/`
   or `.../book/versions/`, generated with `make-migrations --autogenerate` (`--bind-key book` for a book), read by eye
-  for every key and index, and formatted by the gate. `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails
-  until the revisions match the tables. The application never migrates the catalogue itself: it refuses to start until
+  for every key and index, and formatted by the gate.
+  `tests/integration/adapters/persistence/sqlalchemy/test_migrations.py` fails until the revisions match the tables.
+  The application never migrates the catalogue itself: it refuses to start until
   `bookreviver-migrate upgrade head` has run. A book is brought to the head revision of its schema when it is opened, and
   a book of a newer release is refused with `BookTooNewError`. ty's `unsound-assignment` is disabled only for the table
   modules, because `Mapped[...] = mapped_column()` trips it.
