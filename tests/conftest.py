@@ -1,7 +1,3 @@
-"""Load the fixtures that tests of several levels share, which live in tests/harness/fixtures."""
+"""Load the plugin of the suite, which marks every test with its level and loads the fixtures the levels share."""
 
-pytest_plugins = (
-    'tests.harness.fixtures.anyio_backend',
-    'tests.harness.fixtures.settings',
-    'tests.harness.fixtures.databases',
-)
+pytest_plugins = ('tests.harness.plugin',)
