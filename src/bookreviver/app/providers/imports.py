@@ -1,7 +1,7 @@
 """Provider of the import feature: the job board, and the job and import services.
 
 The board is an application-scoped generator, so it is built when first needed and its tasks are cancelled when the
-container closes. It is built with the runner of ``app/jobs.py``, which knows the container the jobs resolve their
+container closes. It is built with the runner ``job_runner`` makes, which knows the container the jobs resolve their
 services from, so the provider is the one place where the board and its runner meet. The board is also where a book
 opens its job queue, so ``prepare_start`` registers its ``open`` as the opener of ``BookJobs``.
 
@@ -9,7 +9,7 @@ The job service keeps no state and is built once per application. The import ser
 from three parts that keep no state of their own and so live as long as the application: the stores, the imaging ports,
 and the order keys and limits. The limits
 come from the settings, and the IIIF root from the mount point of the IIIF routes, which only ``api`` knows. The
-import entry in ``app/jobs.py`` and the upload route resolve the same service.
+import entry ``import_source`` and the upload route resolve the same service.
 """
 
 from collections.abc import AsyncIterator

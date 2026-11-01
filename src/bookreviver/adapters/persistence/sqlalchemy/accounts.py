@@ -251,10 +251,10 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         """
         await self.catalogue.change_session(lambda session: session.delete(user))
 
-    # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases
-    # (fastapi_users/models.py:33), so by PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its
-    # subclasses. ``AccountTable`` has every member it asks for but does not inherit it, so ty refuses these overrides
-    # of the two methods bound to ``UOAP``. Once fastapi-users declares it a protocol, ty reports the ignores as unused.
+    # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases, so by
+    # PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its subclasses. ``AccountTable`` has
+    # every member it asks for but does not inherit it, so ty refuses these overrides of the two methods bound to
+    # ``UOAP``. Once fastapi-users declares it a protocol, ty reports the ignores as unused.
     @override
     async def add_oauth_account(self, user: AccountTable, create_dict: dict[str, Any]) -> AccountTable:  # ty: ignore[invalid-method-override]
         """Link a provider account to a user.

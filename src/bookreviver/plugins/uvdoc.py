@@ -83,7 +83,7 @@ class UvDocModel:
 
     @property
     def graph(self) -> Path:
-        """The path of the graph of the network, which is where a test looks to tell whether the model is there."""
+        """The path of the graph of the network."""
         return self._directory / GRAPH_NAME
 
     def grid(self, image: Samples) -> Floats:

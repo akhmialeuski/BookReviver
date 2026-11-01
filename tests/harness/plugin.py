@@ -1,6 +1,6 @@
 """The pytest plugin of the suite, which marks every test with the level of its directory and holds it to that level.
 
-The levels are the directories right under ``tests``, so ``-m unit`` selects the tests of ``tests/unit`` and nothing
+The levels are the directories right under ``tests``, so ``-m unit`` selects the unit tests and nothing
 else. A test anywhere else has no level, so its collection stops the run instead of leaving it unmarked. A test that
 takes a fixture its level refuses, such as a unit test taking ``tmp_path``, fails at setup before any fixture runs.
 The plugin sees only fixtures, so a test that opens a file or starts a process by itself is left to review. It also

@@ -1,6 +1,6 @@
 """Tests of what is particular to the in-memory job board: its announcements, its restart of a book and its shutdown.
 
-What every board does is the contract in ``tests/contract/test_job_board.py``.
+What every board does is the contract of ``BookJobs``.
 """
 
 from uuid import UUID

@@ -92,10 +92,9 @@ def create_app(
 
     :param settings: Configuration, read from the environment when omitted.
     :type settings: Settings | None
-    :param extra_providers: Providers added last, overriding earlier ones; tests use them to inject fakes.
+    :param extra_providers: Providers added last, overriding earlier ones.
     :type extra_providers: Sequence[Provider]
-    :param social_clients: Social sign-in clients to offer instead of those the credentials in ``settings`` enable; the
-                           tests and the end-to-end server use it to offer a fake provider.
+    :param social_clients: Social sign-in clients to offer instead of those the credentials in ``settings`` enable.
     :type social_clients: Sequence[BaseOAuth2[Any]] | None
     :returns: The application with its routers, exception handler, pagination, security and container installed, and
               the built frontend when ``settings.frontend_dir`` exists.

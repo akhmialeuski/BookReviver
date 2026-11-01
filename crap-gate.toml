@@ -1,5 +1,5 @@
 # Opts this project into the crap-gate-edit hook and sets the limits it enforces after every agent edit.
-# The same numbers belong in ruff.toml and tools/crap-gate.sh, so the hook and the gate agree.
+# The same numbers belong in the ruff configuration and the crap-gate script, so the hook and the gate agree.
 [limits]
 complexity = 8
 max_args = 5

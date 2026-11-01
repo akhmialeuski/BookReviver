@@ -4,7 +4,7 @@ import { isEditableTarget, type KeyPress } from '@/features/viewer/keys';
 
 /**
  * The keys of a book screen that are not page turns: the digits that go to a stage, the key of the book description
- * and the question mark that opens the shortcuts. The page turns are the keys of `features/viewer/keys.ts`.
+ * and the question mark that opens the shortcuts. The page turns are the keys of `viewerKeyAction`.
  *
  * A digit is read from the physical key (`code`), since with `Alt` held the character it types depends on the
  * keyboard layout. A key pressed inside a form field or while a dialog is open belongs to that field or dialog.

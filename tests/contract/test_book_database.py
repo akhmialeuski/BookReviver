@@ -5,9 +5,9 @@ it, and ``read`` runs its work on one committed state. ``version`` and ``snapsho
 store of the book. A book that is not stored is found on the first call. ``create`` makes the database of a new book and
 stores its first record, ``close`` ends the use of a book for good, and ``adopt`` takes the file of an imported book in.
 Changes of one book that queue behind a held book keep the writes of each. That every kind of change commits, rolls
-back, waits and gives up, and that no read writes, is in ``test_catalogue_database.py``, where the book is run beside
-the catalogue. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held book, by events and by
-``anyio.wait_all_tasks_blocked`` and never by a sleep.
+back, waits and gives up, and that no read writes, is in the contract of the catalogue database, where the book is
+run beside the catalogue. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held book, by events
+and by ``anyio.wait_all_tasks_blocked`` and never by a sleep.
 """
 
 import sqlite3

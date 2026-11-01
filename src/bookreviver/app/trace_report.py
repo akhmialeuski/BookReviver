@@ -89,7 +89,7 @@ class Budget:
     limit_ms: float
 
 
-# What a preview job on the visible page may take: the budget NFR-PERF-3, which the test of the preview reads too
+# What a preview job on the visible page may take: the budget NFR-PERF-3
 PREVIEW_BUDGET: Budget = Budget(name='Preview job on the visible page, max, ms', limit_ms=1_000.0)
 LOCK_WAIT_BUDGET: Budget = Budget(name=f'Wait for the write lock, p{LOCK_WAIT_PERCENT}, ms', limit_ms=100.0)
 

@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 
 # Where FastAPI keeps, in the ASGI scope, the route a request matched with the prefixes of the routers it was included
 # by. The ``route`` of Starlette's scope is the route as its own router declared it, without them. These are private
-# keys of FastAPI 0.141 (``_FASTAPI_SCOPE_KEY`` and ``_FASTAPI_EFFECTIVE_ROUTE_CONTEXT_KEY`` in fastapi/routing.py), and
-# FastAPI has no public way to get the template with the prefixes
+# keys of FastAPI 0.141 (``_FASTAPI_SCOPE_KEY`` and ``_FASTAPI_EFFECTIVE_ROUTE_CONTEXT_KEY`` of ``fastapi.routing``),
+# and FastAPI has no public way to get the template with the prefixes
 FASTAPI_SCOPE_KEY: str = 'fastapi'
 EFFECTIVE_ROUTE_KEY: str = 'effective_route_context'
 # The key of the type of an ASGI scope or message, and the attribute of a route that holds its path template

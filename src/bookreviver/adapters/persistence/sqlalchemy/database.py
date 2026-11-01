@@ -37,8 +37,8 @@ another process, such as a migration run by hand, because within the process the
 write-ahead log appends a commit to the log without the ``fsync`` of the database file, which SQLite documents as the
 setting for it. A power loss may lose the last commits but never corrupts the file. The mode is stored in the file, so
 the first connection switches it and the others find it set. It needs every process that opens the file to share its
-memory, which holds for one machine and not for a network file system. ``migrations/env.py`` turns the foreign keys
-off for the length of a migration.
+memory, which holds for one machine and not for a network file system. The environment of the migrations turns the
+foreign keys off for the length of a migration.
 
 The write queue is the ``anyio.Semaphore`` of one that :meth:`SqlDatabase.write` takes before it starts the thread, one
 for each file, so a write of one book never waits for a write of another book or of the catalogue.
@@ -64,7 +64,8 @@ The configuration differs from advanced-alchemy's defaults in two places: sessio
 commit, because a route maps them to a response after the transaction committed, and the listener that touches
 ``updated_at`` on every flush is off, because the domain sets ``updated_at`` itself and the listener
 would overwrite it with the current time. The options of autogenerate, such as comparing column types, are set in
-``migrations/env.py``, because advanced-alchemy 1.11.0 does not hand those of ``AlembicSyncConfig`` to Alembic.
+the environment of the migrations, because advanced-alchemy 1.11.0 does not hand those of ``AlembicSyncConfig`` to
+Alembic.
 
 The schema of each kind of file is created and changed only by the revisions in its directory under ``migrations/``.
 Those of the catalogue are applied by hand, and the application reads :meth:`SqlDatabase.schema_revisions` at start
@@ -286,10 +287,10 @@ def _refuse_statement(state: ORMExecuteState) -> None:
 async def hold_in_turn(lock: anyio.Semaphore, *, wait_seconds: float) -> AsyncIterator[None]:
     """Wait for a single-holder lock in the order asked, and hold it until the block ends.
 
-    ``anyio.Semaphore`` wakes its waiters first in, first out, because it keeps them in a deque, which anyio 4.15 shows
-    in ``anyio/_backends/_asyncio.py``. An ``anyio.Lock`` is no choice here: a lock belongs to the task that took it and
-    refuses that task a second time at once, while the holder of the semaphore is the change itself, as a database holds
-    its lock for a connection. Only the wait is limited, never the holding.
+    ``anyio.Semaphore`` wakes its waiters first in, first out, because anyio 4.15 keeps them in a deque. An
+    ``anyio.Lock`` is no choice here: a lock belongs to the task that took it and refuses that task a second time at
+    once, while the holder of the semaphore is the change itself, as a database holds its lock for a connection. Only
+    the wait is limited, never the holding.
 
     :param lock: Semaphore of one token, which the block takes.
     :type lock: anyio.Semaphore

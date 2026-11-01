@@ -63,7 +63,7 @@ class TestAccountSchemas:
 
 
 class TestCommittedSchema:
-    """Tests for docs/openapi.json, the schema the frontend client is generated from."""
+    """Tests for the committed OpenAPI schema, which the frontend client is generated from."""
 
     async def test_file_equals_the_schema_the_application_publishes(self, fx_app: FastAPI) -> None:
         """Verify the committed file is what ``app.openapi()`` returns, so a route cannot change without it.

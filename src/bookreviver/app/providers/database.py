@@ -29,7 +29,7 @@ from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase, ChangeWaitSeconds
 from bookreviver.ports.tracing import Tracer
 
-# The command applying the migrations to the database the settings name, a script of pyproject.toml
+# The command applying the migrations to the database the settings name, a console script of the project
 MIGRATE_COMMAND: str = 'uv run bookreviver-migrate upgrade head'
 # The command returning a database to a revision of this code, run with the code that ships the database's revision
 MIGRATE_DOWNGRADE_COMMAND: str = 'uv run bookreviver-migrate downgrade'

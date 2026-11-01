@@ -8,8 +8,8 @@ import type { FileType } from '@/api';
  * end of the book in that order, and sorts nothing itself. So the order is decided here, in natural order by default
  * (`2.tif` before `10.tif`), and the person can still remove a file or move a file or a whole folder.
  *
- * The tests of what is a system file and what is a supported type mirror the backend (`SystemFile` and `FileType`
- * in `domain/sources.py`), which stays the authority and rejects by the same rules. Showing them first lets the person
+ * The tests of what is a system file and what is a supported type mirror `SystemFile` and `FileType` of the backend,
+ * which stays the authority and rejects by the same rules. Showing them first lets the person
  * see what will not be sent.
  */
 

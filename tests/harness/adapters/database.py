@@ -5,8 +5,8 @@ test cannot start from an empty file without paying for the revisions. Creating 
 recording the head revision, as ``alembic stamp head`` does, takes about a second, and copying a file that already holds
 them takes a couple of milliseconds. So ``create_schema_template`` builds the template of a schema once for each test
 process, ``copy_schema_template`` puts a copy of the catalogue where the settings of a test name it, the registry of the
-books of a test copies the template of a book for every new book, and ``test_migrations.py`` proves once that the
-migrations build the same schemas as the models.
+books of a test copies the template of a book for every new book, and the tests of the migrations prove once that
+the migrations build the same schemas as the models.
 """
 
 from contextlib import asynccontextmanager

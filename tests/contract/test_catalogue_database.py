@@ -4,8 +4,7 @@ A change of the catalogue by the catalogue database and a change of a book by it
 of one store, commit it when the work returns, roll it back when the work raises, and wait for any other change of the
 same store: the same book, or the catalogue. A change of one book never waits for a change of another book or of the
 catalogue. A read of either runs its work on one committed state and refuses every write. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held
-store, by events and by ``anyio.wait_all_tasks_blocked`` and never by a sleep. The contract of the book database alone
-is in ``test_book_database.py``.
+store, by events and by ``anyio.wait_all_tasks_blocked`` and never by a sleep.
 """
 
 from datetime import timedelta

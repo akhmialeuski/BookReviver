@@ -20,8 +20,8 @@ const SERVER_COMMAND = [
   `uv run uvicorn tests.harness.apps.e2e:app --port ${SERVER_PORT} --timeout-keep-alive ${SERVER_KEEP_ALIVE_S} 2>&1 | tee ${SERVER_LOG}`,
 ].join(' && ');
 
-// Every worker, and every scenario about accounts or about their profiles, has an account of its own (see
-// e2e/support/fixtures.ts), so scenarios can share the one server and its database
+// Every worker, and every scenario about accounts or about their profiles, has an account of its own, so scenarios can
+// share the one server and its database
 const DEFAULT_WORKERS = 3;
 const TEST_TIMEOUT_MS = 90_000;
 const EXPECT_TIMEOUT_MS = 15_000;

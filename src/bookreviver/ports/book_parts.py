@@ -3,8 +3,7 @@
 A part of a book, such as its event channel or its job queue, is opened from the name of the directory of the book, and
 whoever holds that name opens the part itself. A port of such a part inherits :class:`BookPart`, so it is opened by
 ``Port.open(dir_name)`` with no object that carries the implementation to the caller. ``app`` calls
-``Port.register(opener)`` once when the application starts, and a test registers a fake the same way. A second
-registration of a port replaces the first.
+``Port.register(opener)`` once when the application starts. A second registration of a port replaces the first.
 """
 
 from typing import TYPE_CHECKING, Any, Self, cast

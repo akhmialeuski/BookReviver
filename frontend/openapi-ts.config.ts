@@ -1,10 +1,10 @@
 import { defineConfig } from '@hey-api/openapi-ts';
 
 /**
- * Configuration of `@hey-api/openapi-ts`, the generator of `src/api/`.
+ * Configuration of `@hey-api/openapi-ts`, the generator of the API client.
  *
- * The client is built from the committed schema `docs/openapi.json`, never from a running server, so the same
- * schema always gives the same files. Run it with `npm run generate`; the files are committed and never edited.
+ * The client is built from the committed OpenAPI schema, never from a running server, so the same schema always
+ * gives the same files. Run it with `npm run generate`; the files are committed and never edited.
  */
 
 export default defineConfig({

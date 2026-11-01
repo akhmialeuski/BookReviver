@@ -93,8 +93,8 @@ export async function signIn(page: Page, email: string): Promise<void> {
 /**
  * Open the list of the books of the signed-in reader, where `registerAndSignIn` leaves the page.
  *
- * A scenario that runs with the account of its worker (see `fixtures.ts`) starts here, since the context is signed in
- * already and no registration has taken the page to the list.
+ * A scenario that runs with the account of its worker starts here, since the context is signed in already and no
+ * registration has taken the page to the list.
  */
 export async function openLibrary(page: Page): Promise<void> {
   await page.goto(DEFAULT_LANDING);
@@ -104,7 +104,7 @@ export async function openLibrary(page: Page): Promise<void> {
 /**
  * Make a title that no other scenario of the run produces, by appending a random suffix to the given words.
  *
- * The scenarios of a worker share the library of its account (see `fixtures.ts`), and Playwright matches a role name
+ * The scenarios of a worker share the library of its account, and Playwright matches a role name
  * or a text as a substring unless it is exact, so two books titled "A long book" and "A long book to resume" would
  * answer to one locator. A scenario that needs a second title of its own, such as the one a book is renamed to, takes
  * it from here.
@@ -474,7 +474,7 @@ export async function addPlaceholderPages(page: Page, count: number, stage: stri
 
 /**
  * Capture a key state of a scenario for the task report: the visible part of the page, saved as `<name>.png` in the
- * output folder of the running test, under `frontend/test-results/`.
+ * output folder of the running test.
  *
  * @param name What the picture shows, in kebab-case, such as `strip-first-page`.
  */

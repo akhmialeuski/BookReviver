@@ -1,6 +1,6 @@
 """Fixtures of the component tests: the running application, a client talking to it, its container and its files.
 
-The database is ``fx_database`` of ``tests/harness/fixtures``, which the application runs on as well.
+The database is the shared ``fx_database``, which the application runs on as well.
 """
 
 from typing import TYPE_CHECKING

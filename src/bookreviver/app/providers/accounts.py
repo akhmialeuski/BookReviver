@@ -185,8 +185,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     The methods that hash or verify a password (``create``, ``oauth_callback``, ``forgot_password``,
     ``reset_password``, ``authenticate`` and ``_update``) are therefore overridden to mirror ``BaseUserManager`` of
     fastapi-users 15.0.5, step by step, with only the hashing moved to the worker threads of ``PasswordHasher``.
-    ``tests/integration/app/providers/test_mirrored_methods.py`` holds a hash of the source of each upstream method and
-    fails, naming the method, when an upgrade of fastapi-users changes one, so that the two are compared again.
 
     :ivar password_min_length: Fewest characters a password may have.
     """
@@ -258,12 +256,11 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         await self.on_after_register(created_user, request)
         return created_user
 
-    # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases
-    # (fastapi_users/models.py:33), so by PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its
-    # subclasses. ``AccountTable`` has every member it asks for but does not inherit it, so ty and pyrefly refuse this
-    # override of a method bound to ``UOAP``, the calls of the OAuth methods of ``user_db`` and the user they return.
-    # Once fastapi-users declares it a protocol, ty reports these ignores as unused: remove them then, together with the
-    # pyrefly ones on the same calls.
+    # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases, so by
+    # PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its subclasses. ``AccountTable`` has
+    # every member it asks for but does not inherit it, so ty and pyrefly refuse this override of a method bound to
+    # ``UOAP``, the calls of the OAuth methods of ``user_db`` and the user they return. Once fastapi-users declares it a
+    # protocol, ty reports these ignores as unused: remove them then, together with the pyrefly ones on the same calls.
     @override
     async def oauth_callback(  # ty: ignore[invalid-method-override]
         self,

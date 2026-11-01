@@ -1,8 +1,7 @@
 """A record of how the page stage repository is written, for the tests that prove records go in one batch.
 
-The record wraps the methods by hand instead of with ``unittest.mock.patch.object(..., autospec=True)``, for the reason
-``tests/harness/adapters/page_writes.py`` gives: the autospec of Python 3.14.3 fails on annotations imported only for type
-checking.
+The record wraps the methods by hand instead of with ``unittest.mock.patch.object(..., autospec=True)``, because the
+autospec of Python 3.14.3 fails on annotations imported only for type checking.
 """
 
 from typing import TYPE_CHECKING

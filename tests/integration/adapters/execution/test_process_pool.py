@@ -1,4 +1,4 @@
-"""Tests for what only the process pool executor does, beyond the StepExecutor contract in ``tests/contract``.
+"""Tests for what only the process pool executor does, beyond the contract of ``StepExecutor``.
 
 The processors and the executor come from ``tests.harness.adapters.step_executors``, which the contract suite uses too.
 """

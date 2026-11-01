@@ -1,11 +1,9 @@
-"""The ``bookreviver-openapi`` command: write the OpenAPI schema of the application to ``docs/openapi.json``.
+"""The ``bookreviver-openapi`` command: write the OpenAPI schema of the application to the committed schema file.
 
-The frontend client is generated from the committed schema, and a test compares the file with the schema the
-application publishes, so a route that changes without the file failing the test cannot happen. The command builds
-the application the way the tests do, with a placeholder signing secret and no social sign-in provider, because a
-provider's routes exist only where its client is configured, and the committed schema describes the application with
-none. It writes the file in the layout the ``pretty-format-json`` hook of the gate expects, so the hook leaves it as
-it is.
+The frontend client is generated from the committed schema. The command builds the application with a placeholder
+signing secret and no social sign-in provider, because a provider's routes exist only where its client is configured,
+and the committed schema describes the application with none. It writes the file in the layout the
+``pretty-format-json`` hook of the gate expects, so the hook leaves it as it is.
 """
 
 import argparse

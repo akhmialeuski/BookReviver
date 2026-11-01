@@ -24,8 +24,7 @@ logging.basicConfig()
 logging.getLogger(bookreviver.__name__).setLevel(logging.INFO)
 
 # Parallel scenarios register, confirm and sign in from one address far faster than the production limit of ten a minute
-# allows. The limit itself is tested in tests/component/accounts/test_security.py, and it is read when the application is built,
-# so it is raised here, before that, for this server alone
+# allows. The limit is read when the application is built, so it is raised here, before that, for this server alone
 security.SIGN_IN_ATTEMPTS = E2E_SIGN_IN_ATTEMPTS
 
 settings = Settings()

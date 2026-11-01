@@ -2,8 +2,7 @@
 
 Routers are imported before the application has read its settings, and fastapi-users builds its current-user
 dependency only after that. So ``access`` depends on the placeholder ``signed_in_user``, which the application factory
-binds to fastapi-users' current active verified user. Tests override ``signed_in_user`` through
-``app.dependency_overrides`` to sign a stub user in.
+binds to fastapi-users' current active verified user.
 """
 
 from typing import TYPE_CHECKING

@@ -8,7 +8,7 @@ import { mailedLink } from './support/account';
 
 const PASSWORD = 'correct horse battery staple';
 const NEW_PASSWORD = 'a completely different phrase';
-// The authorization code of the fake provider is the address it vouches for; see tests/harness/fakes/oauth.py
+// The authorization code of the fake provider is the address it vouches for
 const PROVIDER_CODE = 'reader@example.org';
 
 /** Wait for the mail to the address in the server log and return the path and query of its link to the page. */

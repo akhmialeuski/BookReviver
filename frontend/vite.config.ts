@@ -7,7 +7,7 @@ import { defineConfig } from 'vitest/config';
 /**
  * Vite and Vitest configuration of the frontend.
  *
- * The router plugin turns the files of `src/routes/` into `src/routeTree.gen.ts`, and `/api` is proxied to the
+ * The router plugin generates the route tree from the route files, and `/api` is proxied to the
  * backend, so the browser sees one origin and the session and CSRF cookies work as they do in production.
  */
 

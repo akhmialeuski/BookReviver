@@ -17,8 +17,8 @@ import {
 /**
  * The queries behind the workspace: the summary of the stages, the rows of one stage, and the jobs of the book.
  *
- * Their keys are the generated ones, so the invalidations of `features/books/queries.ts` that the event stream
- * calls reach them. The rows are read like the manifest, whole and as one list, since the strip is virtual and the
+ * Their keys are the generated ones, so the invalidations that the event stream calls, such as `invalidateStageRows`,
+ * reach them. The rows are read like the manifest, whole and as one list, since the strip is virtual and the
  * book of a thousand pages fits in one request.
  */
 
