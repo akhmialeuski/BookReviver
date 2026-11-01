@@ -27,8 +27,9 @@ import { HttpStatus } from '@/shared/http/status';
  *
  * While the preview is on, every change of the form, and every turn to another page, asks the server for a preview
  * once the change has stood for 400 ms, so a slider dragged across its range asks once. The server makes the preview
- * in the background and announces the version it made with the `page-version-ready` event, which `events.ts` leaves in
- * the cache; the version is read and shown if it answers the ask. An ask for what is shown already starts nothing.
+ * in the background and announces the version it made with the `page-version-ready` event, which `applyBookEvent`
+ * leaves in the cache; the version is read and shown if it answers the ask. An ask for what is shown already starts
+ * nothing.
  *
  * A book runs one job at a time, so an ask that is made while another is under way waits for it, and one that
  * changes while its predecessor is still being made is made when that has ended, with the newest form. A job that

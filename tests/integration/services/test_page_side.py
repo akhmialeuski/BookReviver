@@ -1,0 +1,144 @@
+"""Tests for the side of the book a step reads: the processor gets it, and a page that changes sides is made again."""
+
+from typing import TYPE_CHECKING, override
+
+import pytest
+from attrs import evolve
+from delayed_assert import assert_expectations, expect
+
+from bookreviver.domain.jobs import StageRun
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.stages import PageStageKey, Stage
+from bookreviver.plugins.split_none import SplitNone
+from bookreviver.ports.processing import StepResult
+from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
+from tests.harness.builders.domain import SPLIT_NONE
+from tests.harness.builders.processing import ProcessingKit
+from tests.harness.builders.spreads import run_stage
+from tests.harness.fakes.processors import FakeProcessor
+
+if TYPE_CHECKING:
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.versions import PageVersion
+    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.processing import StepInput
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+
+pytestmark = pytest.mark.anyio
+
+SIDE_KEY: str = 'side'
+SIDED_KEY: str = 'geometry.sided'
+
+
+class SidedProcessor(FakeProcessor):
+    """A geometry processor that depends on the side of the page and records the side it was given."""
+
+    spec = evolve(FakeProcessor.spec, key=SIDED_KEY, by_page_side=True)
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Copy the input and record the side of the page.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: One output holding the input image, whose data names the side.
+        :rtype: StepResult
+        """
+        [output] = super().run(step_input).outputs
+        side = None if step_input.side is None else step_input.side.value
+        return StepResult(outputs=[evolve(output, data={SIDE_KEY: side})])
+
+
+@pytest.fixture
+def fx_sided_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+) -> ProcessingKit:
+    """Build a processing kit whose Geometry recipe is the one step that reads the side of the page.
+
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: The kit.
+    :rtype: ProcessingKit
+    """
+    defaults = DefaultRecipes(
+        {
+            Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SPLIT_NONE.key,))),
+            Stage.GEOMETRY: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SIDED_KEY,))),
+        }
+    )
+    return ProcessingKit(
+        fx_database,
+        fx_open_book,
+        processors=[SplitNone(), SidedProcessor()],
+        defaults=defaults,
+    )
+
+
+async def head_of(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> PageVersion:
+    """Read the current version of the Geometry stage of a page.
+
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :param page: The page.
+    :type page: Page
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :returns: The version the stage record names.
+    :rtype: PageVersion
+    """
+
+    def read_head(repos: BookRepositories) -> PageVersion:
+        """Read the record of the stage and the version it names, in one snapshot.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :returns: The version the stage record names.
+        :rtype: PageVersion
+        """
+        record = repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        assert record.head_version_id is not None
+        return repos.page_versions.get(record.head_version_id)
+
+    return await databases.open(book_id).read(read_head)
+
+
+class TestPageSide:
+    """Tests for the side of the page a step reads."""
+
+    async def test_an_odd_place_is_a_right_page_and_a_page_that_changes_sides_is_made_again(
+        self, fx_sided_kit: ProcessingKit
+    ) -> None:
+        """Verify a page that changes sides has its step run again with the other side.
+
+        The first page of the book is a right page, a page put before it moves it to the left, and a version of the same
+        inputs would not be made again.
+
+        :param fx_sided_kit: The processing kit with the step that reads the side.
+        :type fx_sided_kit: ProcessingKit
+        """
+        actor, book_id = await fx_sided_kit.seed_book()
+        pages = []
+        for order_key in ('b0', 'b1'):
+            page, _ = await fx_sided_kit.seed_scan_page(book_id, order_key=order_key)
+            await fx_sided_kit.seed_base_version(book_id, page)
+            pages.append(page)
+        await run_stage(fx_sided_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
+        before = [await head_of(book_id, page, databases=fx_sided_kit.databases) for page in pages]
+        newcomer, _ = await fx_sided_kit.seed_scan_page(book_id, order_key='a0')
+        await fx_sided_kit.seed_base_version(book_id, newcomer)
+        # The second run names the pages, since a run of the whole book leaves out those whose result is fresh, and the
+        # newcomer was added with no change of the stage of the others
+        again = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
+        await run_stage(fx_sided_kit, actor, book_id, again)
+        after = [await head_of(book_id, page, databases=fx_sided_kit.databases) for page in pages]
+        expect([version.data[SIDE_KEY] for version in before] == [PageSide.RIGHT.value, PageSide.LEFT.value])
+        expect([version.data[SIDE_KEY] for version in after] == [PageSide.LEFT.value, PageSide.RIGHT.value])
+        expect(all(old.id != new.id for old, new in zip(before, after, strict=True)))
+        assert_expectations()

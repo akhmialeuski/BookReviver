@@ -1,0 +1,664 @@
+"""Tests for the domain entities and values."""
+
+import hashlib
+import json
+import re
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+import pytest
+from attrs import evolve, fields
+from delayed_assert import assert_expectations, expect
+
+from bookreviver.domain.books import BookDetails
+from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.geometry import Line, Point, Rotation
+from bookreviver.domain.history import ChangeSource, PageHistoryEntry, StepHistory
+from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, ScanId, StorageKey
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobKind, Progress, StageRun
+from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.page_steps import PageEdit, StepLayer
+from bookreviver.domain.pages import BlankFill, ContentSource, ContentType, PageKind, PageOrigin, RecipeKind
+from bookreviver.domain.recipes import Step, StepField
+from bookreviver.domain.sides import PageSide
+from bookreviver.domain.stages import Stage
+from bookreviver.domain.versions import (
+    VERSION_ID_PATTERN,
+    ProcessorRef,
+    ResultMark,
+    VersionInputs,
+    VersionOrigin,
+    VersionScale,
+)
+from tests.harness.builders.domain import (
+    EPOCH,
+    SPLIT_NONE,
+    directory_of,
+    make_job,
+    make_page,
+    make_page_edit,
+    make_page_history_entry,
+    make_page_step_state,
+    make_page_version,
+    make_recipe,
+    make_scan,
+    make_source,
+    new_account_id,
+    new_book_id,
+)
+
+if TYPE_CHECKING:
+    from bookreviver.domain.recipes import Recipe
+
+PAGE_ID: PageId = PageId(uuid4())
+DESKEW_KEY: str = 'geometry.deskew'
+
+
+class TestLibraryEntry:
+    """Tests for LibraryEntry, which says whose book a book is."""
+
+    def test_the_entry_is_stored_under_the_identifier_of_its_book(self) -> None:
+        """Verify a book is in one library, so the identifier of the entry is the identifier of the book."""
+        entry = LibraryEntry(
+            book_id=new_book_id(), owner_id=new_account_id(), directory=directory_of(new_book_id()), added_at=EPOCH
+        )
+        assert entry.id == entry.book_id
+
+
+class TestJobStage:
+    """Tests for Job.stage."""
+
+    def test_a_run_stage_job_names_the_stage_of_its_parameters(self) -> None:
+        """Verify the stage comes out of the parameters the job stores."""
+        job = make_job(kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.CLEANUP).to_map())
+        assert job.stage is Stage.CLEANUP
+
+    def test_a_job_of_another_kind_has_no_stage(self) -> None:
+        """Verify an import job has no stage, whatever its parameters hold."""
+        job = make_job(params=StageRun(stage=Stage.CLEANUP).to_map())
+        assert job.stage is None
+
+    def test_a_run_stage_job_with_unreadable_parameters_has_no_stage(self) -> None:
+        """Verify parameters that are not those of a stage run give no stage and no error."""
+        job = make_job(kind=JobKind.RUN_STAGE)
+        assert job.stage is None
+
+
+class TestPage:
+    """Tests for Page invariants."""
+
+    @pytest.mark.parametrize('origin', [PageOrigin.BLANK, PageOrigin.PLACEHOLDER])
+    def test_page_not_cut_from_a_scan_names_no_scan(self, origin: PageOrigin) -> None:
+        """Reject a blank leaf or a placeholder that names a scan, which only a page cut from one may.
+
+        :param origin: Origin of a page that has no scan.
+        :type origin: PageOrigin
+        """
+        page = make_page()
+        with pytest.raises(ValueError, match='has no scan'):
+            evolve(page, origin=origin, scan_id=ScanId(uuid4()))
+
+    @pytest.mark.parametrize('fill', [BlankFill.WHITE, BlankFill.PAPER])
+    def test_a_leaf_stands_in_place_of_the_scan_of_a_blank_page_cut_from_a_scan(self, fill: BlankFill) -> None:
+        """Verify a blank page cut from a scan may show either leaf, and then is a leaf for the stages.
+
+        :param fill: The leaf the page shows.
+        :type fill: BlankFill
+        """
+        scan = make_scan(source=make_source(), number=0)
+        page = make_page(scan=scan, kind=PageKind.BLANK)
+
+        assert evolve(page, blank_fill=fill).is_leaf
+
+    def test_a_page_that_keeps_its_scan_is_no_leaf_and_a_generated_page_is_one(self) -> None:
+        """Verify the scan is no leaf, and a page generated as a white leaf is one without choosing anything."""
+        scan = make_scan(source=make_source(), number=0)
+        scanned = make_page(scan=scan, kind=PageKind.BLANK)
+
+        assert not scanned.is_leaf
+        assert evolve(make_page(), origin=PageOrigin.BLANK).is_leaf
+
+    @pytest.mark.parametrize(
+        ('kind', 'origin'),
+        [
+            (PageKind.TEXT, PageOrigin.SCAN),
+            (PageKind.BLANK, PageOrigin.PLACEHOLDER),
+            (PageKind.BLANK, PageOrigin.BLANK),
+        ],
+        ids=['text-page', 'placeholder', 'generated-leaf'],
+    )
+    def test_a_leaf_is_refused_where_there_is_no_blank_scan_to_replace(
+        self, kind: PageKind, origin: PageOrigin
+    ) -> None:
+        """Reject a leaf on a page that is not blank, and on a page that is cut from no scan.
+
+        :param kind: Kind of the page.
+        :type kind: PageKind
+        :param origin: Where the image of the page comes from.
+        :type origin: PageOrigin
+        """
+        scan = make_scan(source=make_source(), number=0) if origin is PageOrigin.SCAN else None
+        page = evolve(make_page(scan=scan, kind=kind), origin=origin)
+
+        with pytest.raises(ValueError, match='blank page cut from a scan'):
+            evolve(page, blank_fill=BlankFill.WHITE)
+
+    def test_page_whose_source_was_deleted_keeps_its_origin(self) -> None:
+        """Verify a page cut from a scan stays one when its scan is gone, since it keeps its own copy of the image."""
+        page = evolve(make_page(), origin=PageOrigin.SCAN)
+        assert (page.origin, page.scan_id) == (PageOrigin.SCAN, None)
+
+    def test_an_empty_manual_label_is_refused(self) -> None:
+        """Verify a manual label is never empty, since None is what leaves the number to the sections."""
+        page = make_page()
+        with pytest.raises(ValueError, match='manual_label'):
+            evolve(page, manual_label='')
+
+
+class TestPageVersion:
+    """Tests for PageVersion invariants."""
+
+    def test_renditions_past_their_first_version_are_rejected(self) -> None:
+        """Verify a version's files are written once into its own directory, so they never get a second version."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        with pytest.raises(ValueError, match='written once'):
+            evolve(version, renditions=Renditions(version=Renditions.FIRST_VERSION + 1))
+
+    def test_step_without_an_image_has_no_renditions(self) -> None:
+        """Verify a version of a step without an image, such as recognition, carries no renditions."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        assert evolve(version, renditions=None).renditions is None
+
+    @pytest.mark.parametrize('version_id', ['8c21f0d7e4a6', '8C21F0D7E4A6B913', '../../../../etc/x'])
+    def test_identifier_that_is_no_short_hash_is_rejected(self, version_id: str) -> None:
+        """Reject an identifier that is not 16 lower-case hexadecimal digits, since it names a storage directory.
+
+        :param version_id: Identifier that is no hash cut to 16 hexadecimal digits.
+        :type version_id: str
+        """
+        with pytest.raises(ValueError, match='page version id'):
+            evolve(make_page_version(page_id=PageId(uuid4())), id=PageVersionId(version_id))
+
+    def test_a_version_is_not_marked_until_the_user_marks_it(self) -> None:
+        """Verify a new version carries no mark and no comment, which the user's notes then fill in."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        assert (version.mark, version.comment) == (None, '')
+
+    def test_mark_and_comment_are_no_input_of_the_step(self) -> None:
+        """Verify the inputs of the step, which the identifier hashes, have no place for a mark or a comment."""
+        inputs = {field.name for field in fields(VersionInputs)}
+        assert not inputs & {'mark', 'comment'}
+
+    def test_a_version_is_set_by_hand_only_when_its_step_read_a_manual_edit(self) -> None:
+        """Verify the origin follows the hash of the manual edit and nothing else."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        expect(version.origin is VersionOrigin.AUTO)
+        expect(evolve(version, edit_hash='0123456789abcdef').origin is VersionOrigin.HAND)
+        expect(
+            [(origin.value, origin.label) for origin in VersionOrigin]
+            == [('auto', 'Made by the step'), ('hand', 'Set by hand')]
+        )
+        assert_expectations()
+
+    def test_mark_has_a_value_and_a_label_for_each_judgement(self) -> None:
+        """Verify the values stored and sent over the API, and the labels the interface can show."""
+        assert [(mark.value, mark.label) for mark in ResultMark] == [('good', 'Good'), ('bad', 'Bad')]
+
+
+class TestStep:
+    """Tests for Step, which a recipe and the parameters of a job store as JSON."""
+
+    @pytest.mark.parametrize('enabled', [True, False], ids=['on', 'off'])
+    def test_step_reads_back_from_its_json(self, *, enabled: bool) -> None:
+        """Verify a step, with its parameters and whether it is switched on, survives a round trip through JSON.
+
+        :param enabled: Whether the step is on.
+        :type enabled: bool
+        """
+        step = Step(processor_key=DESKEW_KEY, params={'max_angle': 5.0}, enabled=enabled)
+        assert Step.from_map(json.loads(json.dumps(step.to_map()))) == step
+
+    def test_step_stored_before_the_switch_existed_is_on(self) -> None:
+        """Verify a recipe saved without the ``enabled`` key still runs every step, as it did when it was saved."""
+        stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
+        assert Step.from_map(stored).enabled is True
+
+    def test_step_stored_before_the_identifier_existed_gets_one(self) -> None:
+        """Verify an old object gets a new identifier."""
+        stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
+        first, second = Step.from_map(stored), Step.from_map(stored)
+        assert first.step_id != second.step_id
+
+    def test_a_step_has_no_condition(self) -> None:
+        """Verify a step is stored without a condition, and one stored with a condition before is read without it."""
+        step = Step(processor_key=DESKEW_KEY)
+        legacy: dict[str, Any] = {**step.to_map(), 'applies_to': 'pictures'}
+        expect(set(step.to_map()) == {StepField.PROCESSOR_KEY, StepField.PARAMS, StepField.ENABLED, StepField.STEP_ID})
+        expect(Step.from_map(legacy) == step)
+        assert_expectations()
+
+    def test_identifier_survives_a_copy_of_the_step(self) -> None:
+        """Verify a step moved or copied with ``evolve`` keeps its identifier, and a new step gets its own."""
+        step = Step(processor_key=DESKEW_KEY)
+        expect(evolve(step, enabled=False).step_id == step.step_id)
+        expect(Step(processor_key=DESKEW_KEY).step_id != step.step_id)
+        assert_expectations()
+
+    def test_object_without_a_processor_key_is_refused(self) -> None:
+        """Reject an object that names no processor, which the callers that read job parameters turn into an error."""
+        with pytest.raises(KeyError):
+            Step.from_map({StepField.PARAMS: {}})
+
+
+class TestPageContent:
+    """Tests for what a page shows, which comes from the user, from the detection, or from the kind of the page."""
+
+    @pytest.mark.parametrize(
+        ('kind', 'expected'),
+        [
+            (PageKind.TEXT, ContentType.TEXT),
+            (PageKind.COVER, ContentType.TEXT),
+            (PageKind.PLATE, ContentType.COLOR_PICTURE),
+            (PageKind.FRONTISPIECE, ContentType.COLOR_PICTURE),
+        ],
+        ids=['text', 'cover', 'plate', 'frontispiece'],
+    )
+    def test_a_page_not_detected_is_what_its_kind_says(self, kind: PageKind, expected: ContentType) -> None:
+        """Verify plates and frontispieces are pictures in colour, since nobody found their colour, and others text.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param expected: What the page shows.
+        :type expected: ContentType
+        """
+        page = make_page(kind=kind)
+        expect(page.content is expected)
+        expect(page.content_source is ContentSource.KIND)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('kind', 'detected', 'expected'),
+        [
+            (PageKind.TEXT, ContentType.COLOR_PICTURE, ContentType.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.BW_PICTURE, ContentType.BW_PICTURE),
+            (PageKind.TEXT, ContentType.TEXT, ContentType.TEXT),
+            (PageKind.PLATE, ContentType.TEXT, ContentType.COLOR_PICTURE),
+            (PageKind.PLATE, ContentType.BW_PICTURE, ContentType.BW_PICTURE),
+        ],
+        ids=['picture-on-a-text-page', 'bw-picture', 'text', 'plate-found-as-text', 'bw-plate'],
+    )
+    def test_what_the_detection_found_decides_unless_the_kind_makes_the_page_a_picture(
+        self, kind: PageKind, detected: ContentType, expected: ContentType
+    ) -> None:
+        """Verify a picture the detection found is one on any kind, and a plate it found no picture on stays one.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param detected: What the detection found.
+        :type detected: ContentType
+        :param expected: What the page shows.
+        :type expected: ContentType
+        """
+        page = evolve(make_page(kind=kind), content_type=detected)
+        assert page.content is expected
+
+    @pytest.mark.parametrize('kind', [PageKind.TEXT, PageKind.PLATE])
+    @pytest.mark.parametrize('chosen', list(ContentType))
+    def test_what_the_user_set_decides_over_the_kind_and_the_detection(
+        self, kind: PageKind, chosen: ContentType
+    ) -> None:
+        """Verify a page the user set shows what they chose on any kind, and says it was set by hand.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param chosen: What the user chose.
+        :type chosen: ContentType
+        """
+        page = evolve(
+            make_page(kind=kind),
+            content_type=chosen,
+            content_by_hand=True,
+        )
+        expect(page.content is chosen)
+        expect(page.content_source is ContentSource.HAND)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('kind', 'content_type', 'by_hand', 'expected'),
+        [
+            (PageKind.TEXT, None, False, RecipeKind.TEXT),
+            (PageKind.COVER, ContentType.TEXT, False, RecipeKind.TEXT),
+            (PageKind.PLATE, None, False, RecipeKind.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.BW_PICTURE, False, RecipeKind.BW_PICTURE),
+            (PageKind.TEXT, ContentType.COLOR_PICTURE, True, RecipeKind.COLOR_PICTURE),
+            (PageKind.PLATE, ContentType.TEXT, True, RecipeKind.TEXT),
+            (PageKind.BLANK, None, False, RecipeKind.BLANK),
+            (PageKind.BLANK, ContentType.BW_PICTURE, True, RecipeKind.BLANK),
+        ],
+        ids=['text', 'cover', 'plate', 'found-bw', 'set-colour', 'plate-set-text', 'blank', 'blank-beats-content'],
+    )
+    def test_the_kind_of_a_page_is_blank_for_a_blank_page_and_otherwise_what_it_shows(
+        self, kind: PageKind, content_type: ContentType | None, expected: RecipeKind, *, by_hand: bool
+    ) -> None:
+        """Verify the recipe kind of a page that is blank, a picture in either colour, or text.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param content_type: The content type the page has, or None.
+        :type content_type: ContentType | None
+        :param by_hand: Whether the user set the content type.
+        :type by_hand: bool
+        :param expected: The kind of the page.
+        :type expected: RecipeKind
+        """
+        page = evolve(
+            make_page(kind=kind),
+            content_type=content_type,
+            content_by_hand=by_hand,
+        )
+        assert page.recipe_kind is expected
+
+    def test_every_kind_of_recipe_has_a_label(self) -> None:
+        """Verify no kind is left without the name the interface shows, which is also the name of its recipe."""
+        assert all(kind.label for kind in RecipeKind)
+
+    def test_a_detected_page_says_it_was_found(self) -> None:
+        """Verify the source of a detected type on a page that is no plate is the detection."""
+        page = evolve(make_page(), content_type=ContentType.BW_PICTURE)
+        assert page.content_source is ContentSource.DETECTED
+
+    def test_a_content_type_set_by_hand_has_to_be_given(self) -> None:
+        """Reject a page that is said to have its type set by hand and has none."""
+        with pytest.raises(ValueError, match='set by hand has to be given'):
+            evolve(make_page(), content_by_hand=True)
+
+
+class TestRecipe:
+    """Tests for Recipe.
+
+    :ivar ON: A step that is enabled.
+    :ivar OFF: A step that is disabled.
+    """
+
+    ON: Step = Step(processor_key='geometry.on')
+    OFF: Step = Step(processor_key='geometry.off', enabled=False)
+
+    @staticmethod
+    def recipe_of(*steps: Step) -> Recipe:
+        """Build a recipe of the given steps.
+
+        :param steps: The steps in the order they run.
+        :type steps: Step
+        :returns: The recipe.
+        :rtype: Recipe
+        """
+        return evolve(make_recipe(), steps=steps)
+
+    def test_enabled_steps_are_the_steps_that_are_on_in_their_order(self) -> None:
+        """Verify the steps a run takes are the ones switched on, in the order of the recipe."""
+        later = Step(processor_key='geometry.later')
+        assert self.recipe_of(self.ON, self.OFF, later).enabled_steps == (self.ON, later)
+
+    def test_steps_through_one_keep_their_index_in_the_recipe_and_leave_out_the_ones_that_are_off(self) -> None:
+        """Verify the pairs of a run through a step skip a step that is off, and name the index of each in the recipe."""
+        recipe = self.recipe_of(self.ON, self.OFF, self.ON)
+        expect(recipe.indexed_steps_through(None) == ((0, self.ON), (2, self.ON)))
+        expect(recipe.indexed_steps_through(1) == ((0, self.ON),))
+        expect(recipe.indexed_steps_through(9) == ((0, self.ON), (2, self.ON)))
+        expect(self.recipe_of(self.OFF, self.ON).indexed_steps_through(0) == ())
+        assert_expectations()
+
+    def test_the_place_of_a_step_counts_the_steps_that_are_on_before_it(self) -> None:
+        """Verify a step that is off, and a step the recipe does not have, have no place."""
+        later = Step(processor_key='geometry.later')
+        recipe = self.recipe_of(self.OFF, self.ON, later)
+        expect([recipe.place_of(step.step_id) for step in recipe.steps] == [None, 0, 1])
+        expect(recipe.place_of(Step(processor_key='geometry.other').step_id) is None)
+        assert_expectations()
+
+    def test_a_run_stops_short_only_when_a_step_that_is_on_is_left(self) -> None:
+        """Verify a run through the last step that is on, or past it, stops nowhere, and one making no step too."""
+        recipe = self.recipe_of(self.OFF, self.ON, self.OFF, self.ON, self.OFF)
+        expect([recipe.stopped_at(through) for through in (None, 0, 1, 2, 3, 4)] == [None, None, 1, 1, None, None])
+        assert_expectations()
+
+
+class TestVersionInputsIdentify:
+    """Tests for VersionInputs.identify()."""
+
+    def test_equal_work_gets_the_same_identifier_of_16_hexadecimal_digits(self) -> None:
+        """Verify a repeated step gets the identifier of its first run, which is the cache key of its result."""
+        page_id = PageId(uuid4())
+        first = VersionInputs(page_id=page_id, processor=SPLIT_NONE).identify()
+        again = VersionInputs(page_id=page_id, processor=SPLIT_NONE, params={}).identify()
+        assert (first == again, re.fullmatch(VERSION_ID_PATTERN, first) is not None) == (True, True)
+
+    @pytest.mark.parametrize(
+        'changed',
+        [
+            {'page_id': PageId(uuid4())},
+            {'processor': ProcessorRef(key='split.none', version='2')},
+            {'processor': ProcessorRef(key='split.spread', version='1')},
+            {'params': {'angle': 0.8}},
+            {'input_id': PageVersionId('0123456789abcdef')},
+            {'edit_hash': '0123456789abcdef'},
+            {'scale': VersionScale.PREVIEW},
+            {'side': PageSide.RIGHT},
+            {'skipped': True},
+        ],
+        ids=['page', 'processor-version', 'processor-key', 'params', 'input', 'edit', 'scale', 'side', 'skipped'],
+    )
+    def test_any_change_of_what_produced_the_version_changes_its_identifier(self, changed: dict[str, Any]) -> None:
+        """Verify each ingredient of the hash moves the identifier, so different work never shares a directory.
+
+        :param changed: Keyword arguments that replace one ingredient of the reference call.
+        :type changed: dict[str, Any]
+        """
+        reference: dict[str, Any] = {'page_id': PAGE_ID, 'processor': SPLIT_NONE}
+        assert VersionInputs(**reference).identify() != VersionInputs(**{**reference, **changed}).identify()
+
+    def test_the_two_sides_of_the_book_are_different_work(self) -> None:
+        """Verify a page of a step that reads its side gets another identifier on the other side of the book."""
+        left = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, side=PageSide.LEFT).identify()
+        right = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, side=PageSide.RIGHT).identify()
+        assert left != right
+
+    def test_order_of_parameters_does_not_matter(self) -> None:
+        """Verify the same parameters written in another order are the same work."""
+        first = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, params={'a': 1, 'b': 2}).identify()
+        second = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, params={'b': 2, 'a': 1}).identify()
+        assert first == second
+
+    def test_full_run_without_an_edit_keeps_the_identifier_it_had_before_edits_existed(self) -> None:
+        """Verify the identifier of a base version stays the hash of the four older ingredients."""
+        digest = hashlib.sha256(
+            json.dumps([str(PAGE_ID), 'split.none', '1', {}, None], sort_keys=True, separators=(',', ':')).encode()
+        )
+        assert VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE).identify() == digest.hexdigest()[:16]
+
+
+class TestPageEditHashOf:
+    """Tests for PageEdit.hash_of()."""
+
+    def test_equal_edits_have_equal_hashes_of_16_digits(self) -> None:
+        """Verify the same line and the same mask hash alike, so an old edit finds its old version again."""
+        line = Line(start=Point(x=1100, y=0), end=Point(x=1104, y=1561))
+        first = PageEdit.hash_of(line, 'a' * 64)
+        again = PageEdit.hash_of(Line(start=Point(x=1100, y=0), end=Point(x=1104, y=1561)), 'a' * 64)
+        assert (first == again, re.fullmatch(VERSION_ID_PATTERN, first) is not None) == (True, True)
+
+    @pytest.mark.parametrize(
+        ('geometry', 'mask_sha256'),
+        [(Rotation(degrees=1.5), None), (None, 'b' * 64), (Rotation(degrees=1.0), 'b' * 64)],
+        ids=['other-angle', 'mask-only', 'angle-and-mask'],
+    )
+    def test_any_change_of_the_edit_changes_its_hash(self, geometry: Rotation | None, mask_sha256: str | None) -> None:
+        """Verify the shape and the mask each move the hash.
+
+        :param geometry: Shape of the edit under test.
+        :type geometry: Rotation | None
+        :param mask_sha256: Digest of the mask of the edit under test.
+        :type mask_sha256: str | None
+        """
+        assert PageEdit.hash_of(geometry, mask_sha256) != PageEdit.hash_of(Rotation(degrees=1.0), None)
+
+
+class TestPageStepState:
+    """Tests for the settings and the edit a page keeps for a step."""
+
+    def test_a_state_with_no_setting_and_no_edit_is_empty(self) -> None:
+        """Verify a state is empty only while it holds neither of its two layers."""
+        edit = make_page_edit(page_id=PAGE_ID)
+        states = [
+            make_page_step_state(page_id=PAGE_ID),
+            make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3}),
+            make_page_step_state(page_id=PAGE_ID, edit=edit),
+        ]
+        assert [state.is_empty for state in states] == [True, False, False]
+
+    def test_key_names_the_page_the_stage_and_the_step(self) -> None:
+        """Verify the key a repository stores the state under is the one of its page, stage and step."""
+        state = make_page_step_state(page_id=PAGE_ID)
+        assert (state.key.page_id, state.key.stage, state.key.step_id) == (PAGE_ID, state.stage, state.step_id)
+
+    def test_a_layer_reads_back_what_it_was_written_from(self) -> None:
+        """Verify the settings and the edit survive ``layer`` and ``with_layer``, and an empty layer is None."""
+        edit = make_page_edit(page_id=PAGE_ID)
+        state = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3}, edit=edit)
+        empty = make_page_step_state(page_id=PAGE_ID)
+        rebuilt = empty.with_layer(StepLayer.SETTINGS, state.layer(StepLayer.SETTINGS), EPOCH)
+        rebuilt = rebuilt.with_layer(StepLayer.HAND, state.layer(StepLayer.HAND), EPOCH)
+        expect(rebuilt == state)
+        expect((empty.layer(StepLayer.SETTINGS), empty.layer(StepLayer.HAND)) == (None, None))
+        expect(state.with_layer(StepLayer.SETTINGS, None, EPOCH).params == {})
+        expect(state.with_layer(StepLayer.HAND, None, EPOCH).edit is None)
+        assert_expectations()
+
+    def test_the_layer_of_what_the_run_found_is_not_kept(self) -> None:
+        """Verify reading or writing the found layer is a conflict, since no state keeps it yet."""
+        state = make_page_step_state(page_id=PAGE_ID)
+        with pytest.raises(ConflictError):
+            state.layer(StepLayer.FOUND)
+        with pytest.raises(ConflictError):
+            state.with_layer(StepLayer.FOUND, None, EPOCH)
+
+
+class TestPageEditSnapshot:
+    """Tests for the snapshot of an edit that the history keeps."""
+
+    def test_snapshot_is_json_and_rebuilds_the_edit(self) -> None:
+        """Verify the snapshot holds JSON types only, and the edit it rebuilds has the shape, the hash and the mask."""
+        edit = evolve(make_page_edit(page_id=PAGE_ID), mask_key=StorageKey('edits/mask.png'))
+        snapshot = edit.to_snapshot()
+        rebuilt = PageEdit.from_snapshot(edit.key, snapshot, edit.updated_at)
+        expect(snapshot == json.loads(json.dumps(snapshot)))
+        expect(rebuilt == edit)
+        assert_expectations()
+
+    def test_the_time_of_the_save_is_not_part_of_the_snapshot(self) -> None:
+        """Verify two saves of one shape at different times give the same snapshot."""
+        edit = make_page_edit(page_id=PAGE_ID)
+        assert edit.to_snapshot() == evolve(edit, updated_at=EPOCH + timedelta(days=1)).to_snapshot()
+
+
+class TestPageHistoryEntryBetween:
+    """Tests for PageHistoryEntry.between."""
+
+    def test_the_change_holds_the_layer_before_and_after_and_the_time_of_the_new_state(self) -> None:
+        """Verify the change names the page, the step and the layer, and carries the content on both sides."""
+        before = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3})
+        after = evolve(make_page_step_state(page_id=PAGE_ID), updated_at=EPOCH + timedelta(days=1))
+        change = PageHistoryEntry.between(before, after, StepLayer.SETTINGS, ChangeSource.USER)
+        expect((change.page_id, change.step_id, change.key) == (PAGE_ID, after.step_id, after.key))
+        expect((change.before, change.after) == ({'max_angle': 3}, None))
+        expect((change.source, change.batch_id, change.undoes) == (ChangeSource.USER, None, None))
+        expect(change.created_at == after.updated_at)
+        assert_expectations()
+
+
+class TestStepHistory:
+    """Tests for the stack of changes that can be taken back."""
+
+    @staticmethod
+    def _change(source: ChangeSource = ChangeSource.USER, undoes: PageHistoryEntry | None = None) -> PageHistoryEntry:
+        """Build a change of the settings of the deskew step.
+
+        :param source: What made the change.
+        :type source: ChangeSource
+        :param undoes: The change it takes back, or None.
+        :type undoes: PageHistoryEntry | None
+        :returns: The change.
+        :rtype: PageHistoryEntry
+        """
+        return evolve(
+            make_page_history_entry(page_id=PAGE_ID), source=source, undoes=None if undoes is None else undoes.id
+        )
+
+    def test_the_changes_an_undo_names_and_the_undos_do_not_stand(self) -> None:
+        """Verify only a change that is no undo and that no undo names stands, oldest first."""
+        first, second, third = (self._change() for _ in range(3))
+        undo = self._change(ChangeSource.UNDO, second)
+        history = StepHistory((first, second, undo, third))
+        expect(history.standing == (first, third))
+        expect(history.undone == {second.id})
+        assert_expectations()
+
+    def test_back_to_lists_the_change_and_the_later_ones_newest_first(self) -> None:
+        """Verify an undo back to a change takes it and every standing change after it."""
+        first, second, third = (self._change() for _ in range(3))
+        assert StepHistory((first, second, third)).back_to(second.id) == (third, second)
+
+    def test_back_to_a_change_that_does_not_stand_is_not_found(self) -> None:
+        """Verify a change that was taken back, an undo and an unknown change cannot be taken back."""
+        taken = self._change()
+        undo = self._change(ChangeSource.UNDO, taken)
+        history = StepHistory((taken, undo))
+        for gone in (taken.id, undo.id, PageHistoryEntryId(uuid4())):
+            with pytest.raises(NotFoundError):
+                history.back_to(gone)
+
+
+class TestBookDetails:
+    """Tests for BookDetails invariants."""
+
+    def test_empty_title_is_rejected(self) -> None:
+        """Verify a book cannot exist without a title."""
+        with pytest.raises(ValueError, match='title'):
+            BookDetails(title='')
+
+
+class TestProgress:
+    """Tests for Progress.fraction."""
+
+    @pytest.mark.parametrize(('done', 'total', 'fraction'), [(0, 0, 0.0), (1, 4, 0.25), (4, 4, 1.0)])
+    def test_fraction(self, done: int, total: int, fraction: float) -> None:
+        """Verify the fraction is done over total, and zero while the total is unknown.
+
+        :param done: Steps completed.
+        :type done: int
+        :param total: Steps in all, zero while unknown.
+        :type total: int
+        :param fraction: Fraction the progress must report.
+        :type fraction: float
+        """
+        assert Progress(done=done, total=total).fraction == fraction
+
+
+class TestRenditions:
+    """Tests for the format of the ``full`` image that Renditions records."""
+
+    def test_full_defaults_to_jpeg(self) -> None:
+        """Verify renditions written before the format was recorded read as JPEG."""
+        assert Renditions().full is Rendition.FULL_JPEG
+
+    @pytest.mark.parametrize('full', [Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES])
+    def test_full_that_is_not_a_full_format_is_rejected(self, full: Rendition) -> None:
+        """Reject a ``full`` that names a preview, a thumbnail or a pyramid, which no image of full size can be.
+
+        :param full: Rendition that is not a format of the ``full`` image.
+        :type full: Rendition
+        """
+        with pytest.raises(ValueError, match='full'):
+            Renditions(full=full)

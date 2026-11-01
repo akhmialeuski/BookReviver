@@ -50,7 +50,7 @@ dependencies = [
 [project.scripts]
 # advanced-alchemy's migration commands on the database the settings name, such as `bookreviver-migrate upgrade head`
 bookreviver-migrate = "bookreviver.app.migrate:migrate"
-# Writes the OpenAPI schema the frontend client is generated from to docs/openapi.json
+# Writes the OpenAPI schema the frontend client is generated from
 bookreviver-openapi = "bookreviver.app.openapi:main"
 # Summarises the spans of a measured run, and with --check compares it with the time budgets
 bookreviver-trace-report = "bookreviver.app.trace_report:main"
@@ -95,7 +95,7 @@ packages = ["src/bookreviver"]
 [tool.coverage.run]
 branch = true
 # Every module under src counts, so one that no test imports reports 0% instead of dropping out of the total. The floor
-# and its baseline live in tools/crap_gate.py, so coverage.py sets no fail_under of its own
+# and its baseline belong to the crap gate, so coverage.py sets no fail_under of its own
 source = ["src"]
 
 [tool.pytest.ini_options]

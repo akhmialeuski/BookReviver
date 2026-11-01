@@ -1,0 +1,508 @@
+"""Contract of the AssetStore port, run against every storage backend the application registers."""
+
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
+
+import pytest
+from delayed_assert import assert_expectations, expect
+
+from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
+from bookreviver.domain.images import Rendition
+from bookreviver.domain.keys import BookKeys
+from tests.harness.adapters.storage import WriterFailedError, abandon_write
+from tests.harness.builders.domain import directory_of, make_page_version
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from bookreviver.ports.storage import AssetStore
+    from tests.harness.adapters.storage import DirectoryOpener
+
+pytestmark = pytest.mark.anyio
+
+# The book whose asset store most of the contract writes to
+BOOK_ID: BookId = BookId(uuid4())
+PAGE_ID: PageId = PageId(uuid4())
+PAGE_PREFIX: StorageKey = BookKeys.page(PAGE_ID)
+FILE_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.FULL_JPEG)
+DIRECTORY_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES)
+# Shares the prefix as a string but not as a path segment, so it must survive deleting the prefix
+SIBLING_KEY: StorageKey = StorageKey(f'{PAGE_PREFIX}0/{Rendition.FULL_JPEG}')
+# A key beside the file and the directory, in a directory of its own so deleting their prefix leaves it
+COPY_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
+TILE_NAME: str = 'info.json'
+CASE_ARG: str = 'case'
+KEY_ARG: str = 'key'
+OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of book'
+SOURCE_FILE_KEY: StorageKey = StorageKey(f'{BookKeys.source(SourceId(uuid4()))}/book.pdf')
+# Keys that are not under the assets of a book, by the name of their case; the names are fixed so that every worker
+# of a parallel run collects the same tests, while some keys hold a new identifier on each import
+OUTSIDE_ASSETS_KEYS: dict[str, str] = {
+    'empty': '',
+    'absolute': '/etc/passwd',
+    'climbing': '../outside',
+    'root': 'books',
+    'book-directory': f'books/{BOOK_ID}',
+    'incoming-area': BookKeys.INCOMING_AREA,
+    'upload': BookKeys.incoming(JobId(uuid4())),
+    'sources-area': BookKeys.SOURCES_AREA,
+    'source-file': SOURCE_FILE_KEY,
+    # The whole area goes only with the directory of its book
+    'assets-area': BookKeys.ASSETS_AREA,
+    'climbing-out-of-assets': f'{BookKeys.ASSETS_AREA}/../sources',
+    'empty-segment': f'{PAGE_PREFIX}//full.jpg',
+    'not-a-book': f'books/book/assets/{Rendition.FULL_JPEG}',
+    # A key that names the directory of its book, as the keys of a book did before they named it from there
+    'with-the-book-directory': f'books/{BOOK_ID}/assets/book/typesetting',
+}
+OLD_CONTENT: bytes = b'old image'
+NEW_CONTENT: bytes = b'new image'
+# Longer than the other two, so a size that adds the wrong files up does not come out right by chance
+TILE_CONTENT: bytes = b'a tile of the pyramid of the image'
+
+
+@pytest.fixture
+def fx_asset_store(fx_stores: DirectoryOpener) -> AssetStore:
+    """Return the asset store of the book ``BOOK_ID`` in the storage backend under test.
+
+    :param fx_stores: Opens the stores of a book of the storage backend under test.
+    :type fx_stores: DirectoryOpener
+    :returns: The asset store of the book.
+    :rtype: AssetStore
+    """
+    return fx_stores(directory_of(BOOK_ID)).assets
+
+
+def _fill_file(path: Path, content: bytes) -> None:
+    """Make ``path`` a file with ``content``.
+
+    :param path: Path a writer was given, which does not exist yet.
+    :type path: Path
+    :param content: Bytes of the file.
+    :type content: bytes
+    """
+    path.write_bytes(content)
+
+
+def _fill_directory(path: Path, content: bytes) -> None:
+    """Make ``path`` a directory holding one tile file with ``content``.
+
+    :param path: Path a writer was given, which does not exist yet.
+    :type path: Path
+    :param content: Bytes of the tile file.
+    :type content: bytes
+    """
+    path.mkdir()
+    (path / TILE_NAME).write_bytes(content)
+
+
+async def _store_file(store: AssetStore, *, key: StorageKey, content: bytes) -> None:
+    """Write one file at ``key``.
+
+    :param store: Asset store to write into.
+    :type store: AssetStore
+    :param key: Key to store the file at.
+    :type key: StorageKey
+    :param content: Bytes of the file.
+    :type content: bytes
+    """
+    async with store.writable(key) as path:
+        path.write_bytes(content)
+
+
+async def _store_directory(store: AssetStore, *, key: StorageKey, content: bytes) -> None:
+    """Write a directory holding one tile file at ``key``.
+
+    :param store: Asset store to write into.
+    :type store: AssetStore
+    :param key: Key to store the directory at.
+    :type key: StorageKey
+    :param content: Bytes of the tile file.
+    :type content: bytes
+    """
+    async with store.writable(key) as path:
+        _fill_directory(path, content)
+
+
+async def _read_file(store: AssetStore, key: StorageKey) -> bytes:
+    """Return the content of the file stored at ``key``.
+
+    :param store: Asset store to read from.
+    :type store: AssetStore
+    :param key: Key the file is stored at.
+    :type key: StorageKey
+    :returns: Bytes of the stored file.
+    :rtype: bytes
+    """
+    async with store.readable(key) as path:
+        return path.read_bytes()
+
+
+async def _list_directory(store: AssetStore, key: StorageKey) -> dict[str, bytes]:
+    """Return the files of the directory stored at ``key`` by name.
+
+    :param store: Asset store to read from.
+    :type store: AssetStore
+    :param key: Key the directory is stored at.
+    :type key: StorageKey
+    :returns: Content of every file in the directory, by file name.
+    :rtype: dict[str, bytes]
+    """
+    async with store.readable(key) as path:
+        return {child.name: child.read_bytes() for child in path.iterdir()}
+
+
+async def _read_tile(store: AssetStore, key: StorageKey) -> bytes:
+    """Return the content of the tile file in the directory stored at ``key``.
+
+    :param store: Asset store to read from.
+    :type store: AssetStore
+    :param key: Key the directory is stored at.
+    :type key: StorageKey
+    :returns: Bytes of the tile file.
+    :rtype: bytes
+    """
+    async with store.readable(key) as path:
+        return (path / TILE_NAME).read_bytes()
+
+
+async def _is_stored(store: AssetStore, key: StorageKey) -> bool:
+    """Return whether anything is stored at ``key``.
+
+    :param store: Asset store to look into.
+    :type store: AssetStore
+    :param key: Key to look up.
+    :type key: StorageKey
+    :returns: True when a file or directory is stored at the key.
+    :rtype: bool
+    """
+    try:
+        async with store.readable(key):
+            return True
+    except NotFoundError:
+        return False
+
+
+class StoredKeyCase(NamedTuple):
+    """A key holding a file or a directory, with how to store content there and read it back.
+
+    :ivar key: Key of the file or directory.
+    :ivar fill: Function making a writer's path the file or directory with given content.
+    :ivar store: Coroutine function storing content at a key through a complete write.
+    :ivar read: Coroutine function reading back the content stored at a key.
+    """
+
+    key: StorageKey
+    fill: Callable[[Path, bytes], None]
+    store: Callable[..., Awaitable[None]]
+    read: Callable[[AssetStore, StorageKey], Awaitable[bytes]]
+
+
+STORED_KEY_CASES: list[StoredKeyCase] = [
+    StoredKeyCase(key=FILE_KEY, fill=_fill_file, store=_store_file, read=_read_file),
+    StoredKeyCase(key=DIRECTORY_KEY, fill=_fill_directory, store=_store_directory, read=_read_tile),
+]
+STORED_KEY_IDS: list[str] = ['file', 'directory']
+
+
+async def _start_write(store: AssetStore, *, key: StorageKey, started: list[Path]) -> None:
+    """Open a write at ``key`` and record the path it was given, which a refused write never gets.
+
+    :param store: Asset store to write into.
+    :type store: AssetStore
+    :param key: Key to open the write at.
+    :type key: StorageKey
+    :param started: List receiving the path when the write opens.
+    :type started: list[Path]
+    """
+    async with store.writable(key) as path:
+        started.append(path)
+
+
+async def _write_while_another_finishes(store: AssetStore, case: StoredKeyCase) -> None:
+    """Write NEW_CONTENT at the case's key while another writer stores OLD_CONTENT there and finishes first.
+
+    :param store: Asset store both writers write into.
+    :type store: AssetStore
+    :param case: Key, and how to write and store a file or a directory there.
+    :type case: StoredKeyCase
+    """
+    async with store.writable(case.key) as path:
+        case.fill(path, NEW_CONTENT)
+        await case.store(store, key=case.key, content=OLD_CONTENT)
+
+
+class TestWritable:
+    """Contract of AssetStore.writable()."""
+
+    async def test_publishes_file_only_on_exit(self, fx_asset_store: AssetStore) -> None:
+        """Verify a file being written is invisible to readers until the writer finishes.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        async with fx_asset_store.writable(FILE_KEY) as path:
+            path.write_bytes(NEW_CONTENT)
+            expect(not await _is_stored(fx_asset_store, FILE_KEY))
+
+        expect(await _read_file(fx_asset_store, FILE_KEY) == NEW_CONTENT)
+        assert_expectations()
+
+    async def test_publishes_directory_only_on_exit(self, fx_asset_store: AssetStore) -> None:
+        """Verify a pyramid being cut is invisible to readers until the writer finishes.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        async with fx_asset_store.writable(DIRECTORY_KEY) as path:
+            path.mkdir()
+            (path / TILE_NAME).write_bytes(NEW_CONTENT)
+            expect(not await _is_stored(fx_asset_store, DIRECTORY_KEY))
+
+        expect(await _list_directory(fx_asset_store, DIRECTORY_KEY) == {TILE_NAME: NEW_CONTENT})
+        assert_expectations()
+
+    @pytest.mark.parametrize(CASE_ARG, STORED_KEY_CASES, ids=STORED_KEY_IDS)
+    async def test_refuses_stored_key_before_writing(self, fx_asset_store: AssetStore, case: StoredKeyCase) -> None:
+        """Verify a stored file or pyramid is never replaced, and the writer is stopped before it starts.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param case: A key holding a file or a directory, with how to store content there and read it back.
+        :type case: StoredKeyCase
+        """
+        await case.store(fx_asset_store, key=case.key, content=OLD_CONTENT)
+        started: list[Path] = []
+
+        with pytest.raises(ConflictError):
+            await _start_write(fx_asset_store, key=case.key, started=started)
+
+        expect(started == [])
+        expect(await case.read(fx_asset_store, case.key) == OLD_CONTENT)
+        assert_expectations()
+
+    @pytest.mark.parametrize(CASE_ARG, STORED_KEY_CASES, ids=STORED_KEY_IDS)
+    async def test_refuses_key_stored_while_writing(self, fx_asset_store: AssetStore, case: StoredKeyCase) -> None:
+        """Verify a writer that finishes second is refused and the first writer's content stays.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param case: A key holding a file or a directory, with how to store content there and read it back.
+        :type case: StoredKeyCase
+        """
+        with pytest.raises(ConflictError):
+            await _write_while_another_finishes(fx_asset_store, case)
+
+        assert await case.read(fx_asset_store, case.key) == OLD_CONTENT
+
+    async def test_failed_write_publishes_nothing(self, fx_asset_store: AssetStore) -> None:
+        """Verify a writer that fails leaves the key free.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        with pytest.raises(WriterFailedError):
+            await abandon_write(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+
+        assert not await _is_stored(fx_asset_store, FILE_KEY)
+
+
+class TestReadable:
+    """Contract of AssetStore.readable()."""
+
+    async def test_missing_key_raises_not_found(self, fx_asset_store: AssetStore) -> None:
+        """Verify reading a key nothing was written to raises NotFoundError.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        with pytest.raises(NotFoundError):
+            await _read_file(fx_asset_store, FILE_KEY)
+
+
+class TestCopy:
+    """Contract of AssetStore.copy()."""
+
+    @pytest.mark.parametrize(CASE_ARG, STORED_KEY_CASES, ids=STORED_KEY_IDS)
+    async def test_copies_a_file_or_directory_and_keeps_the_original(
+        self, fx_asset_store: AssetStore, case: StoredKeyCase
+    ) -> None:
+        """Verify the copy has the content of the original and the original stays where it was.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param case: A key holding a file or a directory, with how to store content there and read it back.
+        :type case: StoredKeyCase
+        """
+        await case.store(fx_asset_store, key=case.key, content=NEW_CONTENT)
+
+        await fx_asset_store.copy(case.key, COPY_KEY)
+
+        expect(await case.read(fx_asset_store, COPY_KEY) == NEW_CONTENT)
+        expect(await case.read(fx_asset_store, case.key) == NEW_CONTENT)
+        assert_expectations()
+
+    async def test_copy_survives_the_deletion_of_the_original(self, fx_asset_store: AssetStore) -> None:
+        """Verify deleting the original leaves the copy, which is how a page outlives the scan it was cut from.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await fx_asset_store.copy(FILE_KEY, COPY_KEY)
+
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        expect(not await _is_stored(fx_asset_store, FILE_KEY))
+        expect(await _read_file(fx_asset_store, COPY_KEY) == NEW_CONTENT)
+        assert_expectations()
+
+    async def test_missing_source_raises_not_found_and_stores_nothing(self, fx_asset_store: AssetStore) -> None:
+        """Verify copying a key nothing was written to raises NotFoundError and leaves the target free.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        with pytest.raises(NotFoundError):
+            await fx_asset_store.copy(FILE_KEY, COPY_KEY)
+
+        assert not await _is_stored(fx_asset_store, COPY_KEY)
+
+    async def test_stored_target_raises_conflict_and_keeps_its_content(self, fx_asset_store: AssetStore) -> None:
+        """Verify a copy never replaces what is stored at its target.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await _store_file(fx_asset_store, key=COPY_KEY, content=OLD_CONTENT)
+
+        with pytest.raises(ConflictError):
+            await fx_asset_store.copy(FILE_KEY, COPY_KEY)
+
+        assert await _read_file(fx_asset_store, COPY_KEY) == OLD_CONTENT
+
+    async def test_refuses_a_target_outside_assets(self, fx_asset_store: AssetStore) -> None:
+        """Verify a copy cannot land among the sources of a book.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await fx_asset_store.copy(FILE_KEY, SOURCE_FILE_KEY)
+
+
+class TestDeletePrefix:
+    """Contract of AssetStore.delete_prefix()."""
+
+    async def test_removes_everything_under_prefix_only(self, fx_asset_store: AssetStore) -> None:
+        """Verify files and directories under the prefix are gone and a key outside it stays.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await _store_directory(fx_asset_store, key=DIRECTORY_KEY, content=NEW_CONTENT)
+        await _store_file(fx_asset_store, key=SIBLING_KEY, content=NEW_CONTENT)
+
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        expect(not await _is_stored(fx_asset_store, FILE_KEY))
+        expect(not await _is_stored(fx_asset_store, DIRECTORY_KEY))
+        expect(await _is_stored(fx_asset_store, SIBLING_KEY))
+        assert_expectations()
+
+    async def test_missing_prefix_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
+        """Verify deleting a prefix with nothing under it succeeds, so cleanup can always run.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        assert not await _is_stored(fx_asset_store, FILE_KEY)
+
+    async def test_frees_keys_for_writing_again(self, fx_asset_store: AssetStore) -> None:
+        """Verify deleting a prefix is the way to write its keys again, as a retried import does.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=OLD_CONTENT)
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+
+        assert await _read_file(fx_asset_store, FILE_KEY) == NEW_CONTENT
+
+    @pytest.mark.parametrize(KEY_ARG, OUTSIDE_ASSETS_KEYS.values(), ids=OUTSIDE_ASSETS_KEYS.keys())
+    async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
+        """Verify only keys under a book's ``assets/`` are accepted, so a wrong key cannot erase a source.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param key: Storage key under test.
+        :type key: str
+        """
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await fx_asset_store.delete_prefix(StorageKey(key))
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await _store_file(fx_asset_store, key=StorageKey(key), content=NEW_CONTENT)
+
+
+class TestSizeOf:
+    """Contract of AssetStore.size_of()."""
+
+    async def test_adds_up_the_files_under_the_prefix_only(self, fx_asset_store: AssetStore) -> None:
+        """Verify a file, a directory and a prefix over both are measured, and a key that only shares the string is not.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await _store_directory(fx_asset_store, key=DIRECTORY_KEY, content=TILE_CONTENT)
+        await _store_file(fx_asset_store, key=SIBLING_KEY, content=NEW_CONTENT)
+
+        expect(await fx_asset_store.size_of(FILE_KEY) == len(NEW_CONTENT))
+        expect(await fx_asset_store.size_of(DIRECTORY_KEY) == len(TILE_CONTENT))
+        expect(await fx_asset_store.size_of(PAGE_PREFIX) == len(NEW_CONTENT) + len(TILE_CONTENT))
+        assert_expectations()
+
+    async def test_matches_what_deleting_the_prefix_frees(self, fx_asset_store: AssetStore) -> None:
+        """Verify a prefix that was measured is empty once it is deleted, and measures nothing then.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_directory(fx_asset_store, key=DIRECTORY_KEY, content=TILE_CONTENT)
+        measured = await fx_asset_store.size_of(PAGE_PREFIX)
+
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        expect(measured == len(TILE_CONTENT))
+        expect(await fx_asset_store.size_of(PAGE_PREFIX) == 0)
+        assert_expectations()
+
+    async def test_missing_prefix_takes_no_space(self, fx_asset_store: AssetStore) -> None:
+        """Verify a prefix with nothing under it measures 0 bytes, which is no error.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        assert await fx_asset_store.size_of(PAGE_PREFIX) == 0
+
+    @pytest.mark.parametrize(KEY_ARG, OUTSIDE_ASSETS_KEYS.values(), ids=OUTSIDE_ASSETS_KEYS.keys())
+    async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
+        """Verify only keys under a book's ``assets/`` are measured, as only they are deleted.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param key: Storage key under test.
+        :type key: str
+        """
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await fx_asset_store.size_of(StorageKey(key))

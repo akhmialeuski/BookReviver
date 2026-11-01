@@ -4,7 +4,7 @@ import type { PageStageStatus, Stage, StageStatus } from '@/api';
  * The stages of a book as the interface groups and draws them, shared by the stage bar, the strip and the library.
  *
  * The order and the phase of every stage live here once, so a stage bar and a book card never disagree. A state has
- * one colour, the `status-*` token of `index.css`, wherever it is drawn, which is principle 6 of the stage epic. The
+ * one colour, its `status-*` token, wherever it is drawn, which is principle 6 of the stage epic. The
  * texts are in `MESSAGES.stages`.
  */
 

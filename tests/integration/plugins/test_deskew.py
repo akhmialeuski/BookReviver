@@ -1,0 +1,508 @@
+"""Tests for the geometry.deskew processor, on pages generated for the tests.
+
+The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
+"""
+
+from typing import TYPE_CHECKING
+from uuid import uuid4
+
+import numpy as np
+import pytest
+from delayed_assert import assert_expectations, expect
+from PIL import Image, ImageDraw
+
+from bookreviver.domain.errors import ConflictError, InvalidParametersError
+from bookreviver.domain.geometry import EditorKind, Point, TransformKind
+from bookreviver.domain.ids import PageId
+from bookreviver.domain.images import ColorMode
+from bookreviver.domain.processors import ProcessorScope
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_settings import DeskewMethod
+from bookreviver.domain.versions import VersionData
+from bookreviver.ports.processing import StepInput
+from tests.harness.builders.domain import make_page_edit
+from tests.harness.images.samples import ANGLE_TOLERANCE, INK, save, spread, text_page, turned
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.ports.processing import Processor
+
+HOUGH_TOLERANCE: float = 0.2
+BASELINE_TOLERANCE: float = 0.15
+# The confidence a page of clear lines has at least
+SURE: float = 0.9
+METHOD: str = 'method'
+# The titles of the methods in the form, in the order they are offered
+METHOD_TITLES: list[str] = ['Projection of the ink', 'Long straight lines', 'Baselines of the text']
+# The frame, the rule and their width on the page of the method of the long lines
+FRAME_BOX: tuple[int, int, int, int] = (30, 30, 870, 1_170)
+# The rules run in the gap between two lines of words, where nothing else lies along them
+RULE_LINE: tuple[int, int, int, int] = (30, 416, 870, 416)
+SHORT_RULE_LINE: tuple[int, int, int, int] = (150, 416, 750, 416)
+RULE_WIDTH_PX: int = 3
+# The picture across the middle of a page: its rows and its columns, the tones it is drawn in, and its seed
+PICTURE_ROWS: tuple[int, int] = (300, 700)
+PICTURE_COLUMNS: tuple[int, int] = (100, 800)
+PICTURE_TONES: tuple[int, int] = (20, 200)
+PICTURE_SEED: int = 1
+# The angle of the rotation edit of a test, in degrees
+EDIT_DEGREES: float = 2.5
+# The grain of a cover or a blank leaf: its seed, mean tone and spread
+GRAIN_SEED: int = 4
+GRAIN_TONE: int = 90
+GRAIN_SPREAD: float = 9.0
+
+
+def run_on(processor: Processor, image: Path, workdir: Path, **params: object) -> MetadataMap:
+    """Run the step on an image and return the data of its one output.
+
+    :param processor: The processor under test.
+    :type processor: Processor
+    :param image: Image to read.
+    :type image: Path
+    :param workdir: Directory the step writes into.
+    :type workdir: Path
+    :param params: Parameters of the step.
+    :type params: object
+    :returns: The data of the output.
+    :rtype: MetadataMap
+    """
+    checked = processor.validate_params(params)
+    [output] = processor.run(StepInput(image=image, params=checked, workdir=workdir)).outputs
+    return output.data
+
+
+def framed_page() -> Image.Image:
+    """Draw a page of lines of words inside a frame with a rule across it, the long straight lines of a plate or a table.
+
+    :returns: The page, in gray.
+    :rtype: Image.Image
+    """
+    page = text_page(900, 1200)
+    draw = ImageDraw.Draw(page)
+    draw.rectangle(FRAME_BOX, outline=INK, width=RULE_WIDTH_PX)
+    draw.line(RULE_LINE, fill=INK, width=RULE_WIDTH_PX)
+    return page
+
+
+def page_with_picture() -> Image.Image:
+    """Draw a page of lines of words with a dark picture across the middle of it.
+
+    :returns: The page, in gray.
+    :rtype: Image.Image
+    """
+    page = np.asarray(text_page(900, 1200), dtype=np.uint8).copy()
+    page[PICTURE_ROWS[0] : PICTURE_ROWS[1], PICTURE_COLUMNS[0] : PICTURE_COLUMNS[1]] = np.random.default_rng(
+        PICTURE_SEED
+    ).integers(*PICTURE_TONES, size=(PICTURE_ROWS[1] - PICTURE_ROWS[0], PICTURE_COLUMNS[1] - PICTURE_COLUMNS[0]))
+    return Image.fromarray(page)
+
+
+class TestDeskew:
+    """Tests for Deskew."""
+
+    @pytest.mark.parametrize('skew', [1.7, -3.2, 4.5], ids=['small', 'clockwise', 'large'])
+    def test_finds_the_angle_a_page_was_turned_by_and_turns_it_back(
+        self, fx_deskew: Processor, tmp_path: Path, skew: float
+    ) -> None:
+        """Verify the angle found is the opposite of the skew, with the confidence of a page of clear lines.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param skew: Angle in degrees, counter-clockwise, the generated page is turned by.
+        :type skew: float
+        """
+        image = save(turned(text_page(900, 1200), skew), tmp_path / 'page.png')
+        params = fx_deskew.validate_params({})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        expect(abs(output.data[VersionData.ANGLE] + skew) < ANGLE_TOLERANCE)
+        expect(output.data[VersionData.CONFIDENCE] > params['min_confidence'])
+        expect(output.data[VersionData.SKIPPED] is False)
+        expect(output.review is None)
+        expect(output.transform.kind is TransformKind.ROTATE)
+        expect(output.transform.angle == output.data[VersionData.ANGLE])
+        assert_expectations()
+
+    def test_the_page_that_is_turned_back_is_level_when_it_is_deskewed_again(
+        self, fx_deskew: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the output is straight: a second pass finds no angle worth turning by.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        source = save(turned(text_page(900, 1200), 3.0), tmp_path / 'page.png')
+        params = fx_deskew.validate_params({})
+        [first] = fx_deskew.run(StepInput(image=source, params=params, workdir=tmp_path)).outputs
+        assert first.image is not None
+        second = tmp_path / 'second'
+        second.mkdir()
+        again = run_on(fx_deskew, first.image, second, max_angle=5)
+        assert abs(again[VersionData.ANGLE]) < ANGLE_TOLERANCE
+
+    def test_a_blank_page_is_left_as_it_is_and_says_it_was_skipped(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify a page with no lines to follow gives its own image, an identity transform, no angle and a review mark.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(Image.new('L', (400, 500), 255), tmp_path / 'blank.png')
+        params = fx_deskew.validate_params({})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        expect(output.image == image)
+        expect(output.transform.kind is TransformKind.IDENTITY)
+        expect((output.data[VersionData.ANGLE], output.data[VersionData.SKIPPED]) == (0.0, True))
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        assert_expectations()
+
+    def test_grain_with_no_ink_in_it_is_left_as_it_is(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the grain of a cover is not taken for lines of text: the step gives the confidence 0 and skips the page.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        grain = np.random.default_rng(GRAIN_SEED).normal(GRAIN_TONE, GRAIN_SPREAD, (900, 700))
+        image = save(Image.fromarray(grain.clip(0, 255).astype(np.uint8)), tmp_path / 'grain.png')
+        params = fx_deskew.validate_params({})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(0.0))
+        expect(output.data[VersionData.SKIPPED] is True)
+        expect(output.image == image)
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        assert_expectations()
+
+    def test_confidence_below_the_minimum_skips_the_page(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify a minimum of 1 skips even a page of clear lines, which is what the parameter is for.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(text_page(900, 1200), 2.0), tmp_path / 'page.png')
+        params = fx_deskew.validate_params({'min_confidence': 1})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        expect(output.data[VersionData.SKIPPED] is True)
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        assert_expectations()
+
+    def test_rotation_edit_replaces_the_search(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the angle of the user is used as it is, with full confidence, even on a page with no lines.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(Image.new('L', (400, 500), 255), tmp_path / 'blank.png')
+        edit = make_page_edit(page_id=PageId(uuid4()), degrees=EDIT_DEGREES)
+        params = fx_deskew.validate_params({})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, edit=edit, workdir=tmp_path)).outputs
+        centre = Point(x=200, y=250)
+        expect(output.data[VersionData.ANGLE] == EDIT_DEGREES)
+        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(1.0))
+        expect(output.data[VersionData.SKIPPED] is False)
+        expect(output.review is None)
+        expect(abs(output.transform.to_output(centre).x - centre.x) < 1)
+        assert_expectations()
+
+    def test_transform_maps_a_point_of_the_output_back_to_the_input(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the transform is the turn of the image: a point goes out and comes back to where it was.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(text_page(900, 1200), 3.0), tmp_path / 'page.png')
+        params = fx_deskew.validate_params({})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        point = Point(x=120, y=840)
+        back = output.transform.to_input(output.transform.to_output(point))
+        expect(abs(back.x - point.x) < 1e-6)
+        expect(abs(back.y - point.y) < 1e-6)
+        assert_expectations()
+
+    def test_a_bilevel_page_stays_bilevel_and_keeps_its_size(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify turning a black-and-white page makes no gray at the edges of the ink, and the size is not changed.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(text_page(900, 1200).convert('1'), 2.0).convert('L'), tmp_path / 'page.png')
+        params = fx_deskew.validate_params({'min_confidence': 0})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        assert output.image is not None
+        with Image.open(output.image) as result:
+            colours = {value for _count, value in result.convert('L').getcolors() or []}
+            expect(colours <= {0, 255})
+            expect(result.size == (900, 1200))
+        expect(output.color_mode is ColorMode.BILEVEL)
+        assert_expectations()
+
+    def test_a_colour_page_stays_colour(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the three planes of a colour page are kept.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(spread(450, 600, tilt=2.0), tmp_path / 'scan.png')
+        params = fx_deskew.validate_params({'min_confidence': 0})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        assert output.image is not None
+        with Image.open(output.image) as result:
+            expect(result.mode == 'RGB')
+        expect(output.color_mode is ColorMode.COLOR)
+        assert_expectations()
+
+    def test_a_missing_image_is_refused(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify a step with no image says so.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        with pytest.raises(ConflictError, match=r'geometry\.deskew'):
+            fx_deskew.run(StepInput(image=None, params=fx_deskew.validate_params({}), workdir=tmp_path))
+
+    def test_a_file_that_is_no_image_is_refused(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify a file OpenCV cannot read fails the step with a message, not with a crash.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        broken = tmp_path / 'broken.png'
+        broken.write_bytes(b'not an image')
+        with pytest.raises(ConflictError, match='cannot be read'):
+            fx_deskew.run(StepInput(image=broken, params=fx_deskew.validate_params({}), workdir=tmp_path))
+
+    @pytest.mark.parametrize(
+        'raw',
+        [{'max_angle': 0}, {'max_angle': 60}, {'min_confidence': 2}, {'min_confidence': -1}, {'angle': 1}],
+        ids=['no-range', 'range-too-wide', 'confidence-over-one', 'negative-confidence', 'unknown'],
+    )
+    def test_parameters_that_do_not_fit_the_schema_are_rejected(self, fx_deskew: Processor, raw: MetadataMap) -> None:
+        """Reject a range that is empty or beyond reason, a confidence outside 0 to 1, and a parameter it lacks.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param raw: Parameters under test.
+        :type raw: MetadataMap
+        """
+        with pytest.raises(InvalidParametersError, match=r'geometry\.deskew'):
+            fx_deskew.validate_params(raw)
+
+    def test_defaults_are_filled_in_and_the_spec_names_the_stage_and_the_editor(self, fx_deskew: Processor) -> None:
+        """Verify what the interface reads: the defaults of the parameters, the stage, the scope and the editor.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        """
+        spec = fx_deskew.spec
+        expect(
+            fx_deskew.validate_params({}) == {METHOD: DeskewMethod.PROJECTION, 'max_angle': 5.0, 'min_confidence': 0.3}
+        )
+        expect((spec.key, spec.stage, spec.scope) == ('geometry.deskew', Stage.GEOMETRY, ProcessorScope.PAGE))
+        expect(spec.editor is EditorKind.ROTATION)
+        assert_expectations()
+
+    def test_parameters_stored_before_the_methods_existed_keep_the_projection(self, fx_deskew: Processor) -> None:
+        """Verify parameters that name no method are read as the projection, so an old recipe behaves as it did.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        """
+        checked = fx_deskew.validate_params({'max_angle': 3.0, 'min_confidence': 0.5})
+        assert checked == {METHOD: DeskewMethod.PROJECTION, 'max_angle': 3.0, 'min_confidence': 0.5}
+
+    def test_the_schema_offers_the_three_methods_as_a_one_of_with_the_fields_of_each(
+        self, fx_deskew: Processor
+    ) -> None:
+        """Verify the form can show only the fields of the chosen method.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        """
+        schema = fx_deskew.spec.parameters
+        offered = [schema['$defs'][option['$ref'].rsplit('/', 1)[-1]] for option in schema['oneOf']]
+        expect(
+            [option['properties'][METHOD]['const'] for option in offered]
+            == [DeskewMethod.PROJECTION, DeskewMethod.HOUGH, DeskewMethod.BASELINES]
+        )
+        expect('min_line_share' in offered[1]['properties'])
+        expect('min_line_share' not in offered[0]['properties'])
+        expect('min_lines' in offered[2]['properties'])
+        expect([option['title'] for option in offered] == METHOD_TITLES)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'raw',
+        [
+            {METHOD: 'sharp'},
+            {METHOD: DeskewMethod.PROJECTION, 'min_lines': 3},
+            {METHOD: DeskewMethod.HOUGH, 'min_lines': 3},
+        ],
+        ids=['unknown-method', 'field-of-baselines-on-projection', 'field-of-baselines-on-hough'],
+    )
+    def test_a_method_that_is_unknown_or_a_field_of_another_method_is_rejected(
+        self, fx_deskew: Processor, raw: MetadataMap
+    ) -> None:
+        """Reject a method that does not exist and a parameter that belongs to another method.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param raw: Parameters under test.
+        :type raw: MetadataMap
+        """
+        with pytest.raises(InvalidParametersError, match=r'geometry\.deskew'):
+            fx_deskew.validate_params(raw)
+
+
+class TestDeskewHough:
+    """Tests for Deskew with the method of the long straight lines."""
+
+    @pytest.mark.parametrize('skew', [1.7, -3.2, 4.0], ids=['small', 'clockwise', 'large'])
+    def test_finds_the_angle_by_the_rules_and_the_frame_of_a_page(
+        self, fx_deskew: Processor, tmp_path: Path, skew: float
+    ) -> None:
+        """Verify the angle is the opposite of the skew, found by the frame and the rule, with full confidence.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param skew: Angle in degrees, counter-clockwise, the generated page is turned by.
+        :type skew: float
+        """
+        image = save(turned(framed_page(), skew), tmp_path / 'page.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.HOUGH)
+        expect(abs(data[VersionData.ANGLE] + skew) < HOUGH_TOLERANCE)
+        expect(data[VersionData.CONFIDENCE] > SURE)
+        expect(data[VersionData.SKIPPED] is False)
+        assert_expectations()
+
+    def test_a_page_with_no_long_straight_line_is_left_as_it_is(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify words are not lines: a page of text alone has nothing for the method and is skipped.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(text_page(900, 1200), 3.0), tmp_path / 'page.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.HOUGH)
+        expect(data[VersionData.CONFIDENCE] == pytest.approx(0.0))
+        expect(data[VersionData.SKIPPED] is True)
+        assert_expectations()
+
+    def test_a_shortest_line_longer_than_the_rules_leaves_the_page_as_it_is(
+        self, fx_deskew: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the parameter ``min_line_share`` decides which lines count: a rule of two thirds is no line at 90 percent.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = text_page(900, 1200)
+        ImageDraw.Draw(page).line(SHORT_RULE_LINE, fill=INK, width=RULE_WIDTH_PX)
+        image = save(turned(page, 2.0), tmp_path / 'page.png')
+        counted = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.HOUGH, min_line_share=0.5)
+        left = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.HOUGH, min_line_share=0.9)
+        expect(abs(counted[VersionData.ANGLE] + 2.0) < HOUGH_TOLERANCE)
+        expect(left[VersionData.SKIPPED] is True)
+        assert_expectations()
+
+    def test_a_slant_beyond_the_range_is_not_followed(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the parameter ``max_angle`` limits the lines taken, so a frame turned by 4 degrees is left at 2.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(framed_page(), 4.0), tmp_path / 'page.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.HOUGH, max_angle=2)
+        expect(data[VersionData.SKIPPED] is True)
+        assert_expectations()
+
+
+class TestDeskewBaselines:
+    """Tests for Deskew with the method of the baselines of the text."""
+
+    @pytest.mark.parametrize('skew', [1.7, -3.2, 4.0], ids=['small', 'clockwise', 'large'])
+    def test_finds_the_angle_by_the_slope_of_the_lines_of_text(
+        self, fx_deskew: Processor, tmp_path: Path, skew: float
+    ) -> None:
+        """Verify the angle is the opposite of the skew within a tenth of a degree, with full confidence.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param skew: Angle in degrees, counter-clockwise, the generated page is turned by.
+        :type skew: float
+        """
+        image = save(turned(text_page(900, 1200), skew), tmp_path / 'page.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.BASELINES)
+        expect(abs(data[VersionData.ANGLE] + skew) < BASELINE_TOLERANCE)
+        expect(data[VersionData.CONFIDENCE] > SURE)
+        assert_expectations()
+
+    def test_finds_the_angle_of_a_page_with_a_picture_across_it(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify a picture among the lines does not turn the page: the lines above and below it give the slope.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(page_with_picture(), 2.5), tmp_path / 'page.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.BASELINES)
+        expect(abs(data[VersionData.ANGLE] + 2.5) < BASELINE_TOLERANCE)
+        assert_expectations()
+
+    def test_fewer_lines_than_the_least_leave_the_page_as_it_is(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the parameter ``min_lines`` asks for lines, and a page of fewer is not turned by a guess.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(turned(text_page(900, 1200), 2.0), tmp_path / 'page.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.BASELINES, min_lines=100)
+        expect(data[VersionData.SKIPPED] is True)
+        expect(data[VersionData.CONFIDENCE] == pytest.approx(0.0))
+        assert_expectations()
+
+    def test_a_blank_page_has_no_baselines(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify a page with no ink has no lines and is left as it is.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(Image.new('L', (400, 500), 255), tmp_path / 'blank.png')
+        data = run_on(fx_deskew, image, tmp_path, method=DeskewMethod.BASELINES)
+        expect(data[VersionData.SKIPPED] is True)
+        assert_expectations()

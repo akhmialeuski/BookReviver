@@ -5,7 +5,7 @@ to, and a book imported under a new identifier had its row renamed. The library 
 so the row is keyed by ``id``, always 1, which a check holds, as the one row of ``book_places`` is.
 
 The downgrade takes the identifier back from the name of the directory the file lies in, which is how the stores of the
-books lay them out. A file outside the directory of a book, such as a copy made for a test, gets a new identifier.
+books lay them out. A file outside the directory of a book gets a new identifier.
 
 Revision ID: ce9ca1fea835
 Revises: 54f16295b19a

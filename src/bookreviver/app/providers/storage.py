@@ -1,9 +1,9 @@
 """Providers of the storage adapter of the directories of the books, one class per backend selectable in the settings.
 
 ``STORAGE_PROVIDERS`` maps each ``StorageBackend`` to its provider, so ``build_container`` selects the backend from
-``Settings.storage`` and the port contract tests run against every registered backend. A provider provides the opener
-of its backend, the function from the directory name of a book to its ``BookDirectory``, which ``prepare_start`` and the
-``bookreviver-migrate`` command register with ``BookDirectory.register``.
+``Settings.storage``. A provider provides the opener of its backend, the function from the directory name of a book to
+its ``BookDirectory``, which ``prepare_start`` and the ``bookreviver-migrate`` command register with
+``BookDirectory.register``.
 """
 
 from collections.abc import Callable

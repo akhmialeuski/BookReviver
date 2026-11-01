@@ -1,1 +1,0 @@
-"""Tests: adapters/storage."""

@@ -27,7 +27,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
 
     :param settings: Application settings, which select the storage backend and the rest of the configuration.
     :type settings: Settings
-    :param extra_providers: Providers added after the application's own, such as test fakes replacing an adapter.
+    :param extra_providers: Providers added after the application's own, which override them.
     :type extra_providers: Sequence[Provider]
     :returns: The async container, which the caller closes.
     :rtype: AsyncContainer

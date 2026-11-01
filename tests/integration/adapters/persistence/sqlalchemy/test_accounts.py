@@ -1,0 +1,813 @@
+"""Tests for the account tables and the two classes that implement the fastapi-users database protocols over them.
+
+The two databases run over the catalogue database and nothing else, so the rows they return belong to no session: each test
+reads them back after the transaction ended, as fastapi-users does.
+"""
+
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, override
+from uuid import UUID, uuid4
+
+import pytest
+from delayed_assert import assert_expectations, expect
+from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import IntegrityError
+
+from bookreviver.adapters.persistence.sqlalchemy.accounts import (
+    AccessTokenDatabase,
+    AccessTokenTable,
+    AccountDatabase,
+    AccountTable,
+    OAuthAccountTable,
+)
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
+from bookreviver.app.container import build_container
+from bookreviver.ports.persistence import CatalogueDatabase, NoChangeOpenError
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
+
+    from dishka import AsyncContainer
+    from sqlalchemy.orm import Session
+
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.app.settings import Settings
+    from tests.harness.adapters.database import SharedDatabaseProvider
+
+pytestmark = pytest.mark.anyio
+
+EMAIL: str = 'Reader@Example.org'
+OTHER_EMAIL: str = 'neighbour@example.org'
+PASSWORD_HASH: str = 'hash-of-a-password'
+NEW_HASH: str = 'new-hash'
+PROVIDER: str = 'google'
+PROVIDER_ACCOUNT: str = 'provider-account-1'
+PROVIDER_EMAIL: str = 'reader@gmail.example'
+RENEWED_EMAIL: str = 'renewed@gmail.example'
+SESSION_TOKEN: str = 't' * 43
+OTHER_TOKEN: str = 'u' * 43
+NEWER_TOKEN: str = 'v' * 43
+# The time a stored session token was created, and the step the tests move a limit away from it
+CREATED_AT: datetime = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+STEP: timedelta = timedelta(seconds=1)
+# How many of the three tokens of the test of the cutoff stay
+EXPECTED_KEPT: int = 2
+# How many times a write opens a transaction that writes
+ONE_BLOCK: int = 1
+# The columns a test gives a new user and a linked provider account, and the new values of an update of each
+NEW_USER: dict[str, Any] = {'email': EMAIL, 'hashed_password': PASSWORD_HASH}
+LINK: dict[str, Any] = {
+    'oauth_name': PROVIDER,
+    'account_id': PROVIDER_ACCOUNT,
+    'account_email': PROVIDER_EMAIL,
+}
+VERIFIED: dict[str, Any] = {'is_verified': True, 'hashed_password': NEW_HASH}
+DEACTIVATED: dict[str, Any] = {'is_active': False}
+RENEWED_LINK: dict[str, Any] = {'account_email': RENEWED_EMAIL}
+LATER: dict[str, Any] = {'created_at': CREATED_AT + STEP}
+
+
+class CountingCatalogueDatabase(SqlAlchemyCatalogueDatabase):
+    """A catalogue database that counts how many transactions that write are opened on it through ``change_session``.
+
+    :ivar blocks: Number of such transactions opened so far.
+    """
+
+    def __init__(self, database: SqlDatabase) -> None:
+        """Run the transactions of ``database`` and start counting.
+
+        :param database: Catalogue of the test.
+        :type database: SqlDatabase
+        """
+        super().__init__(database)
+        self.blocks = 0
+
+    @override
+    async def change_session[T](self, work: Callable[[Session], T]) -> T:
+        """Count the transaction, then run it as the catalogue database does.
+
+        :param work: Function over the session of the transaction.
+        :type work: Callable[[Session], T]
+        :returns: What the work returns.
+        :rtype: T
+        """
+        self.blocks += 1
+        return await super().change_session(work)
+
+
+@pytest.fixture
+async def fx_container(
+    fx_settings: Settings, fx_shared_database: SharedDatabaseProvider
+) -> AsyncIterator[AsyncContainer]:
+    """Yield the application's container, on the catalogue and the books of the test.
+
+    :param fx_settings: Settings pointing at a fresh data directory of the test.
+    :type fx_settings: Settings
+    :param fx_shared_database: The catalogue and the books of the test, which the container is given in place of its
+                               own.
+    :type fx_shared_database: SharedDatabaseProvider
+    :returns: Iterator yielding the container and closing it afterwards.
+    :rtype: AsyncIterator[AsyncContainer]
+    """
+    container = build_container(fx_settings, [fx_shared_database])
+    yield container
+    await container.close()
+
+
+@pytest.fixture
+def fx_counting_catalogue(fx_database: SqlDatabase) -> CountingCatalogueDatabase:
+    """Build the catalogue database of the request.
+
+    :param fx_database: Catalogue with every table created.
+    :type fx_database: SqlDatabase
+    :returns: The catalogue database, counting the transactions that write.
+    :rtype: CountingCatalogueDatabase
+    """
+    return CountingCatalogueDatabase(fx_database)
+
+
+@pytest.fixture
+def fx_users(fx_counting_catalogue: CountingCatalogueDatabase) -> AccountDatabase:
+    """Build the user database of the request.
+
+    :param fx_counting_catalogue: Catalogue database of the request.
+    :type fx_counting_catalogue: CountingCatalogueDatabase
+    :returns: The user database over the catalogue database.
+    :rtype: AccountDatabase
+    """
+    return AccountDatabase(fx_counting_catalogue)
+
+
+@pytest.fixture
+def fx_tokens(fx_counting_catalogue: CountingCatalogueDatabase) -> AccessTokenDatabase:
+    """Build the session token database of the request.
+
+    :param fx_counting_catalogue: Catalogue database of the request.
+    :type fx_counting_catalogue: CountingCatalogueDatabase
+    :returns: The token database over the catalogue database.
+    :rtype: AccessTokenDatabase
+    """
+    return AccessTokenDatabase(fx_counting_catalogue)
+
+
+@pytest.fixture
+async def fx_user(fx_users: AccountDatabase, fx_counting_catalogue: CountingCatalogueDatabase) -> AccountTable:
+    """Store a user and forget the transactions that stored it.
+
+    :param fx_users: The user database of the request.
+    :type fx_users: AccountDatabase
+    :param fx_counting_catalogue: Catalogue database of the request, whose count of transactions is reset.
+    :type fx_counting_catalogue: CountingCatalogueDatabase
+    :returns: The stored user.
+    :rtype: AccountTable
+    """
+    user = await fx_users.create(dict(NEW_USER))
+    fx_counting_catalogue.blocks = 0
+    return user
+
+
+@pytest.fixture
+async def fx_linked_user(
+    fx_users: AccountDatabase, fx_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+) -> AccountTable:
+    """Link a provider account to the stored user and forget the transactions that did it.
+
+    :param fx_users: The user database of the request.
+    :type fx_users: AccountDatabase
+    :param fx_user: The stored user.
+    :type fx_user: AccountTable
+    :param fx_counting_catalogue: Catalogue database of the request, whose count of transactions is reset.
+    :type fx_counting_catalogue: CountingCatalogueDatabase
+    :returns: The user, with the provider account in ``oauth_accounts``.
+    :rtype: AccountTable
+    """
+    linked = await fx_users.add_oauth_account(fx_user, dict(LINK))
+    fx_counting_catalogue.blocks = 0
+    return linked
+
+
+async def _count(catalogue: SqlAlchemyCatalogueDatabase, table: type[OAuthAccountTable | AccessTokenTable]) -> int:
+    """Count the rows of a table in a transaction of its own, which sees only what was committed.
+
+    :param catalogue: Catalogue database over the catalogue to read.
+    :type catalogue: SqlAlchemyCatalogueDatabase
+    :param table: Table to count.
+    :type table: type[OAuthAccountTable] | type[AccessTokenTable]
+    :returns: Number of committed rows.
+    :rtype: int
+    """
+    return await catalogue.read_session(lambda session: session.scalar(select(func.count()).select_from(table)) or 0)
+
+
+async def _committed_user(catalogue: SqlAlchemyCatalogueDatabase, user_id: UUID) -> AccountTable | None:
+    """Read a user in a transaction of its own, which sees only what was committed.
+
+    :param catalogue: Catalogue database over the catalogue to read.
+    :type catalogue: SqlAlchemyCatalogueDatabase
+    :param user_id: Identifier of the user.
+    :type user_id: UUID
+    :returns: The user with its provider accounts, or None when none is committed.
+    :rtype: AccountTable | None
+    """
+    return await AccountDatabase(catalogue).get(user_id)
+
+
+async def _committed_token(catalogue: SqlAlchemyCatalogueDatabase) -> AccessTokenTable | None:
+    """Read the session token of the tests in a transaction of its own, which sees only what was committed.
+
+    :param catalogue: Catalogue database over the catalogue to read.
+    :type catalogue: SqlAlchemyCatalogueDatabase
+    :returns: The token, or None when none is committed.
+    :rtype: AccessTokenTable | None
+    """
+    return await AccessTokenDatabase(catalogue).get_by_token(SESSION_TOKEN)
+
+
+def _token(user: AccountTable, **columns: Any) -> dict[str, Any]:
+    """Build the columns of a session token of ``user``.
+
+    :param user: The user the token is for.
+    :type user: AccountTable
+    :param columns: Columns that replace or extend the defaults, such as the time the token was created.
+    :type columns: Any
+    :returns: The token's columns, with ``SESSION_TOKEN`` as its value unless ``columns`` gives another.
+    :rtype: dict[str, Any]
+    """
+    return {'token': SESSION_TOKEN, 'user_id': user.id, **columns}
+
+
+class TestAccountDatabase:
+    """Tests for the user database: its reads, its writes, and the transaction every write runs in."""
+
+    async def test_create_stores_the_user_with_its_defaults(
+        self, fx_users: AccountDatabase, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify a created user has an identifier, the defaults of a new account and no provider account, committed.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        user = await fx_users.create(dict(NEW_USER))
+        stored = await _committed_user(fx_counting_catalogue, user.id)
+        expect(isinstance(user.id, UUID))
+        expect((user.is_active, user.is_superuser, user.is_verified) == (True, False, False))
+        expect(user.oauth_accounts == [])
+        expect(stored is not None and stored.email == EMAIL)
+        assert_expectations()
+
+    async def test_rows_are_returned_detached_and_fully_loaded(
+        self, fx_users: AccountDatabase, fx_linked_user: AccountTable
+    ) -> None:
+        """Verify a user read back belongs to no session, with every column and its provider accounts loaded.
+
+        The session of the transaction is closed when the read returns, so an attribute that was left to load later
+        could never be read, which fastapi-users does with the user after the route has run.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_linked_user: The stored user with a Google account linked.
+        :type fx_linked_user: AccountTable
+        """
+        looked_up = await fx_users.get(fx_linked_user.id)
+        assert looked_up is not None
+        state = inspect(looked_up)
+        expect(state.detached)
+        expect(state.unloaded == set(), f'{state.unloaded} left to load')
+        expect([link.account_id for link in looked_up.oauth_accounts] == [PROVIDER_ACCOUNT])
+        assert_expectations()
+
+    @pytest.mark.parametrize('is_stored', [True, False], ids=['stored-identifier', 'unknown-identifier'])
+    async def test_get_finds_a_user_by_its_identifier(
+        self, fx_users: AccountDatabase, fx_user: AccountTable, *, is_stored: bool
+    ) -> None:
+        """Verify ``get`` returns the stored user for its identifier and None for another.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user.
+        :type fx_user: AccountTable
+        :param is_stored: Whether to look for the stored user or for an identifier that nobody has.
+        :type is_stored: bool
+        """
+        looked_up = await fx_users.get(fx_user.id if is_stored else uuid4())
+        assert (looked_up is not None and looked_up.id == fx_user.id) if is_stored else looked_up is None
+
+    @pytest.mark.parametrize(
+        ('spelling', 'is_matched'),
+        [
+            pytest.param(EMAIL, True, id='as-stored'),
+            pytest.param(EMAIL.lower(), True, id='lower-case'),
+            pytest.param(EMAIL.upper(), True, id='upper-case'),
+            pytest.param('other@example.org', False, id='another-address'),
+        ],
+    )
+    async def test_get_by_email_ignores_the_case_of_the_address(
+        self, fx_users: AccountDatabase, fx_user: AccountTable, spelling: str, *, is_matched: bool
+    ) -> None:
+        """Verify an address matches whatever the case of the stored address and of the one asked for.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user, registered as ``Reader@Example.org``.
+        :type fx_user: AccountTable
+        :param spelling: The address to look for.
+        :type spelling: str
+        :param is_matched: Whether the stored user is expected.
+        :type is_matched: bool
+        """
+        looked_up = await fx_users.get_by_email(spelling)
+        assert (looked_up is not None and looked_up.id == fx_user.id) if is_matched else looked_up is None
+
+    @pytest.mark.parametrize('spelling', [EMAIL.lower(), EMAIL.upper()], ids=['lower-case', 'upper-case'])
+    async def test_create_refuses_an_address_that_differs_only_in_case(
+        self,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        spelling: str,
+    ) -> None:
+        """Verify the catalogue refuses a second user whose address differs from a stored one only in case.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user, registered as ``Reader@Example.org``.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param spelling: The address of the second user.
+        :type spelling: str
+        """
+        with pytest.raises(IntegrityError):
+            await fx_users.create({**NEW_USER, 'email': spelling})
+
+        stored = await _committed_user(fx_counting_catalogue, fx_user.id)
+        expect(stored is not None and stored.email == EMAIL)
+        expect(await fx_users.get_by_email(spelling) is not None)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('provider', 'account', 'is_linked'),
+        [
+            pytest.param(PROVIDER, PROVIDER_ACCOUNT, True, id='linked'),
+            pytest.param('facebook', PROVIDER_ACCOUNT, False, id='another-provider'),
+            pytest.param(PROVIDER, 'provider-account-2', False, id='another-account'),
+        ],
+    )
+    async def test_get_by_oauth_account_finds_the_linked_user(
+        self,
+        fx_users: AccountDatabase,
+        fx_linked_user: AccountTable,
+        provider: str,
+        account: str,
+        *,
+        is_linked: bool,
+    ) -> None:
+        """Verify a user is found by the provider and the account the provider knows it by, and by nothing else.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_linked_user: The stored user with a Google account linked.
+        :type fx_linked_user: AccountTable
+        :param provider: Name of the provider to look under.
+        :type provider: str
+        :param account: Identifier of the account at the provider.
+        :type account: str
+        :param is_linked: Whether the linked user is expected.
+        :type is_linked: bool
+        """
+        looked_up = await fx_users.get_by_oauth_account(provider, account)
+        assert (looked_up is not None and looked_up.id == fx_linked_user.id) if is_linked else looked_up is None
+
+    async def test_update_changes_the_columns_and_commits_them(
+        self, fx_users: AccountDatabase, fx_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify an update returns the user with the new values, and another transaction reads them.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        updated = await fx_users.update(fx_user, dict(VERIFIED))
+        stored = await _committed_user(fx_counting_catalogue, fx_user.id)
+        expect(updated.is_verified is True)
+        expect(stored is not None and (stored.is_verified, stored.hashed_password) == (True, NEW_HASH))
+        assert_expectations()
+
+    async def test_update_writes_only_the_columns_it_changes(
+        self, fx_users: AccountDatabase, fx_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify an update of one column leaves a column another transaction changed since the user was read.
+
+        The user the update is given is the copy the first read returned, which holds the old password hash. Writing
+        every column of that copy would put the old hash back.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user, as it was read before the other update.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        other = await fx_users.get(fx_user.id)
+        assert other is not None
+        await fx_users.update(other, {'hashed_password': NEW_HASH})
+
+        await fx_users.update(fx_user, dict(DEACTIVATED))
+
+        stored = await _committed_user(fx_counting_catalogue, fx_user.id)
+        assert stored is not None
+        assert (stored.hashed_password, stored.is_active) == (NEW_HASH, False)
+
+    async def test_add_oauth_account_links_the_provider_account(
+        self, fx_linked_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify linking returns the user with the account in ``oauth_accounts``, and the account is committed.
+
+        :param fx_linked_user: The stored user with a Google account linked.
+        :type fx_linked_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        stored = await _committed_user(fx_counting_catalogue, fx_linked_user.id)
+        [link] = fx_linked_user.oauth_accounts
+        expect((link.oauth_name, link.account_id, link.account_email) == (PROVIDER, PROVIDER_ACCOUNT, PROVIDER_EMAIL))
+        expect(link.user_id == fx_linked_user.id)
+        expect(stored is not None and [account.id for account in stored.oauth_accounts] == [link.id])
+        assert_expectations()
+
+    async def test_update_oauth_account_changes_the_linked_account(
+        self, fx_users: AccountDatabase, fx_linked_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify an update of the linked account returns the user and commits the new address of the account at the provider.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_linked_user: The stored user with a Google account linked.
+        :type fx_linked_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        [link] = fx_linked_user.oauth_accounts
+        returned = await fx_users.update_oauth_account(fx_linked_user, link, dict(RENEWED_LINK))
+        stored = await _committed_user(fx_counting_catalogue, fx_linked_user.id)
+        expect(returned is fx_linked_user)
+        expect(stored is not None and stored.oauth_accounts[0].account_email == RENEWED_EMAIL)
+        assert_expectations()
+
+    async def test_delete_removes_the_user_with_its_provider_accounts_and_tokens(
+        self,
+        fx_users: AccountDatabase,
+        fx_tokens: AccessTokenDatabase,
+        fx_linked_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+    ) -> None:
+        """Verify deleting a user takes its provider accounts and session tokens with it, as the keys cascade.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_linked_user: The stored user with a Google account linked.
+        :type fx_linked_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        await fx_tokens.create(_token(fx_linked_user))
+        user_id = fx_linked_user.id
+        await fx_users.delete(fx_linked_user)
+        expect(await _committed_user(fx_counting_catalogue, user_id) is None)
+        expect(await _count(fx_counting_catalogue, OAuthAccountTable) == 0)
+        expect(await _count(fx_counting_catalogue, AccessTokenTable) == 0)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'write',
+        [
+            pytest.param(lambda users, _user: users.create(dict(NEW_USER, email='new@example.org')), id='create-user'),
+            pytest.param(lambda users, user: users.update(user, dict(DEACTIVATED)), id='update-user'),
+            pytest.param(lambda users, user: users.delete(user), id='delete-user'),
+            pytest.param(lambda users, user: users.add_oauth_account(user, dict(LINK)), id='add-oauth-account'),
+        ],
+    )
+    async def test_every_write_runs_in_one_transaction_that_writes(
+        self,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        write: Callable[[AccountDatabase, AccountTable], Awaitable[Any]],
+    ) -> None:
+        """Verify each write opens exactly one transaction that writes, so it takes the writer and the write lock.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user, with the count reset after it was stored.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param write: The write to run, given the user database and the stored user.
+        :type write: Callable[[AccountDatabase, AccountTable], Awaitable[Any]]
+        """
+        await write(fx_users, fx_user)
+        assert fx_counting_catalogue.blocks == ONE_BLOCK
+
+    async def test_update_of_the_linked_account_runs_in_one_transaction_that_writes(
+        self, fx_users: AccountDatabase, fx_linked_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify updating the provider account opens exactly one transaction that writes.
+
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_linked_user: The stored user with a Google account linked.
+        :type fx_linked_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        [link] = fx_linked_user.oauth_accounts
+        await fx_users.update_oauth_account(fx_linked_user, link, dict(RENEWED_LINK))
+        assert fx_counting_catalogue.blocks == ONE_BLOCK
+
+    async def test_write_in_a_read_is_refused(self, fx_counting_catalogue: CountingCatalogueDatabase) -> None:
+        """Verify a user added in a ``read_session`` cannot be flushed, as the guard of the readers says.
+
+        :param fx_counting_catalogue: Catalogue database of the request.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+
+        def add_and_flush(session: Session) -> None:
+            """Add a user to the session of the read and flush it.
+
+            :param session: Session of a transaction that only reads.
+            :type session: Session
+            """
+            session.add(AccountTable(email='stray@example.org', hashed_password=''))
+            session.flush()
+
+        with pytest.raises(NoChangeOpenError):
+            await fx_counting_catalogue.read_session(add_and_flush)
+        assert fx_counting_catalogue.blocks == 0
+
+
+class TestAccessTokenDatabase:
+    """Tests for the session token database: its reads, its writes, and the transaction every write runs in."""
+
+    @staticmethod
+    async def _store(
+        tokens: AccessTokenDatabase, user: AccountTable, catalogue: CountingCatalogueDatabase
+    ) -> AccessTokenTable:
+        """Store a token created at ``CREATED_AT`` and forget the transactions that stored it.
+
+        :param tokens: The session token database of the request.
+        :type tokens: AccessTokenDatabase
+        :param user: The user the token is for.
+        :type user: AccountTable
+        :param catalogue: Catalogue database of the request, whose count of transactions is reset.
+        :type catalogue: CountingCatalogueDatabase
+        :returns: The stored token.
+        :rtype: AccessTokenTable
+        """
+        stored = await tokens.create(_token(user, created_at=CREATED_AT))
+        catalogue.blocks = 0
+        return stored
+
+    async def test_create_stores_a_token_created_now_in_utc(
+        self, fx_tokens: AccessTokenDatabase, fx_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+    ) -> None:
+        """Verify a token created without a time gets the current time with its time zone, and is committed.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the token is for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        before = datetime.now(UTC)
+        token = await fx_tokens.create(_token(fx_user))
+        stored = await _committed_token(fx_counting_catalogue)
+        expect(before <= token.created_at <= datetime.now(UTC))
+        expect(token.created_at.utcoffset() == timedelta(0))
+        expect(stored is not None and stored.created_at == token.created_at)
+        assert_expectations()
+
+    @pytest.mark.parametrize('value', [SESSION_TOKEN, OTHER_TOKEN], ids=['stored-token', 'unknown-token'])
+    async def test_get_by_token_finds_only_the_stored_token(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        value: str,
+    ) -> None:
+        """Verify the stored token is found by its value and another value is not.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the token is for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param value: The value to look up.
+        :type value: str
+        """
+        await self._store(fx_tokens, fx_user, fx_counting_catalogue)
+        looked_up = await fx_tokens.get_by_token(value)
+        assert (looked_up is not None) == (value == SESSION_TOKEN)
+
+    @pytest.mark.parametrize(
+        ('max_age', 'is_within_age'),
+        [
+            pytest.param(None, True, id='no-limit'),
+            pytest.param(CREATED_AT - STEP, True, id='limit-before-creation'),
+            pytest.param(CREATED_AT, True, id='limit-at-creation'),
+            pytest.param(CREATED_AT + STEP, False, id='limit-after-creation'),
+        ],
+    )
+    async def test_get_by_token_does_not_find_a_token_older_than_max_age(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        max_age: datetime | None,
+        *,
+        is_within_age: bool,
+    ) -> None:
+        """Verify a token created before ``max_age`` is not found, and one created at or after it is.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the token is for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param max_age: Earliest creation time the token may have, or None for no limit.
+        :type max_age: datetime | None
+        :param is_within_age: Whether the token is expected.
+        :type is_within_age: bool
+        """
+        await self._store(fx_tokens, fx_user, fx_counting_catalogue)
+        assert (await fx_tokens.get_by_token(SESSION_TOKEN, max_age) is not None) == is_within_age
+
+    async def test_update_changes_the_columns_and_commits_them(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+    ) -> None:
+        """Verify an update returns the token with the new time, and another transaction reads it.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the token is for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        token = await self._store(fx_tokens, fx_user, fx_counting_catalogue)
+        updated = await fx_tokens.update(token, dict(LATER))
+        stored = await _committed_token(fx_counting_catalogue)
+        expect(updated.created_at == CREATED_AT + STEP)
+        expect(stored is not None and stored.created_at == CREATED_AT + STEP)
+        assert_expectations()
+
+    async def test_delete_removes_the_token(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+    ) -> None:
+        """Verify a deleted token is no longer found, which is how signing out revokes a session.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the token is for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        token = await self._store(fx_tokens, fx_user, fx_counting_catalogue)
+        await fx_tokens.delete(token)
+        expect(await fx_tokens.get_by_token(SESSION_TOKEN) is None)
+        expect(await _count(fx_counting_catalogue, AccessTokenTable) == 0)
+        assert_expectations()
+
+    async def test_delete_created_before_removes_only_the_tokens_older_than_the_cutoff(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+    ) -> None:
+        """Verify a token created before the cutoff goes, and one created at the cutoff or after it stays.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the tokens are for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        """
+        for value, created_at in (
+            (SESSION_TOKEN, CREATED_AT),
+            (OTHER_TOKEN, CREATED_AT + STEP),
+            (NEWER_TOKEN, CREATED_AT + 2 * STEP),
+        ):
+            await fx_tokens.create(_token(fx_user, token=value, created_at=created_at))
+
+        await fx_tokens.delete_created_before(CREATED_AT + STEP)
+
+        expect(await fx_tokens.get_by_token(SESSION_TOKEN) is None)
+        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is not None)
+        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(await _count(fx_counting_catalogue, AccessTokenTable) == EXPECTED_KEPT)
+        assert_expectations()
+
+    @pytest.mark.parametrize('keep', [None, SESSION_TOKEN], ids=['all', 'all-but-one'])
+    async def test_delete_of_user_removes_the_tokens_of_that_user_only(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_users: AccountDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        keep: str | None,
+    ) -> None:
+        """Verify the tokens of the user go, but for the one to keep, and the token of another user stays.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_users: The user database of the request.
+        :type fx_users: AccountDatabase
+        :param fx_user: The stored user the first two tokens are for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param keep: Value of the token to keep, or None to remove them all.
+        :type keep: str | None
+        """
+        neighbour = await fx_users.create({**NEW_USER, 'email': OTHER_EMAIL})
+        await fx_tokens.create(_token(fx_user))
+        await fx_tokens.create(_token(fx_user, token=OTHER_TOKEN))
+        await fx_tokens.create(_token(neighbour, token=NEWER_TOKEN))
+        fx_counting_catalogue.blocks = 0
+
+        await fx_tokens.delete_of_user(fx_user.id, keep=keep)
+
+        expect((await fx_tokens.get_by_token(SESSION_TOKEN) is not None) == (keep == SESSION_TOKEN))
+        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is None)
+        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(fx_counting_catalogue.blocks == ONE_BLOCK)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'operation',
+        [
+            pytest.param(
+                lambda tokens, _stored, user: tokens.create(_token(user, token=OTHER_TOKEN)), id='create-token'
+            ),
+            pytest.param(
+                lambda tokens, _stored, _user: tokens.delete_created_before(CREATED_AT), id='delete-created-before'
+            ),
+            pytest.param(lambda tokens, stored, _user: tokens.update(stored, dict(LATER)), id='update-token'),
+            pytest.param(lambda tokens, stored, _user: tokens.delete(stored), id='delete-token'),
+        ],
+    )
+    async def test_every_write_runs_in_one_transaction_that_writes(
+        self,
+        fx_tokens: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
+        operation: Callable[[AccessTokenDatabase, AccessTokenTable, AccountTable], Awaitable[Any]],
+    ) -> None:
+        """Verify each write opens exactly one transaction that writes, so it takes the writer and the write lock.
+
+        :param fx_tokens: The session token database of the request.
+        :type fx_tokens: AccessTokenDatabase
+        :param fx_user: The stored user the token is for.
+        :type fx_user: AccountTable
+        :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
+        :type fx_counting_catalogue: CountingCatalogueDatabase
+        :param operation: The write to run, given the token database, a stored token and the user.
+        :type operation: Callable[[AccessTokenDatabase, AccessTokenTable, AccountTable], Awaitable[Any]]
+        """
+        token = await self._store(fx_tokens, fx_user, fx_counting_catalogue)
+        await operation(fx_tokens, token, fx_user)
+        assert fx_counting_catalogue.blocks == ONE_BLOCK
+
+
+class TestWiring:
+    """Tests for the providers that hand the account classes the catalogue database of the request."""
+
+    async def test_the_books_and_the_accounts_share_one_catalogue_database_per_request(
+        self, fx_container: AsyncContainer
+    ) -> None:
+        """Verify a request has one catalogue database, whichever of its two names asks.
+
+        :param fx_container: The application's container.
+        :type fx_container: AsyncContainer
+        """
+        async with fx_container() as scope:
+            port = await scope.get(CatalogueDatabase)
+            adapter = await scope.get(SqlAlchemyCatalogueDatabase)
+        assert port is adapter

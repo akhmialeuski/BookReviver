@@ -6,7 +6,7 @@ import { nextViewStart, viewIndexes } from '@/features/viewer/spread';
  * What the grid of the Order stage draws, in order: the pages, alone or in the spreads the viewer shows, and the card
  * of a gap in the printed numbers wherever the missing pages would stand.
  *
- * A spread follows the rule of the viewer (`features/viewer/spread.ts`), so the cover lies alone on the right and the
+ * A spread follows the rule of the viewer (`viewIndexes`), so the cover lies alone on the right and the
  * pairs after it are an odd page with the even page that follows. A page that lies alone has an empty slot on the side
  * where the book has no page, which is how a spread of the grid shows which side a page falls on.
  */

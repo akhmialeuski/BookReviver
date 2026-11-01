@@ -1,0 +1,87 @@
+"""Tests of what a failed import leaves in the file of the book, whose foreign keys refuse a row without its parent."""
+
+from typing import TYPE_CHECKING
+
+import pytest
+from delayed_assert import assert_expectations, expect
+
+from bookreviver.domain.accounts import Actor
+from bookreviver.domain.jobs import JobEnd, JobState
+from bookreviver.domain.slices import SliceRequest
+from tests.harness.adapters.imports import pdf_upload
+from tests.harness.builders.domain import make_record, open_for
+from tests.harness.builders.seeding import store_book
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from bookreviver.domain.ids import AccountId
+    from tests.harness.adapters.database import CatalogueDatabaseFactory
+    from tests.harness.adapters.imports import ImportRig
+    from tests.harness.builders.domain import BookOpener
+
+pytestmark = pytest.mark.anyio
+
+PAGES: int = 3
+EVERY_SLICE: SliceRequest = SliceRequest(limit=100)
+
+
+class TestFailedImportOnSqlAlchemy:
+    """Tests for ImportService.run_import() against the database, when a source's files cannot be promoted."""
+
+    async def test_source_whose_files_cannot_be_promoted_leaves_no_row_of_it(
+        self,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_owner_id: AccountId,
+        fx_import_rig: Callable[..., ImportRig],
+        tmp_path: Path,
+        fx_open_book: BookOpener,
+    ) -> None:
+        """Verify the withdrawal removes the source, its scans and its pages, and the failed job counts none of them.
+
+        The pages hold a foreign key to their scan and the scans to their source, so deleting the source alone would
+        leave the pages of the book without a scan, and a source that was committed without its files. The withdrawn
+        source is no rejected one either, since the job failed and nobody reads a report of it.
+
+        :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_owner_id: Committed account owning the book.
+        :type fx_owner_id: AccountId
+        :param fx_import_rig: Function building the import rig whose board runs an import on the database.
+        :type fx_import_rig: Callable[..., ImportRig]
+        :param tmp_path: Temporary directory of the test, holding the storage root.
+        :type tmp_path: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        rig = fx_import_rig()
+        samples = tmp_path / 'samples'
+        samples.mkdir()
+        catalogue = fx_catalogue()
+        book_id = await store_book(catalogue, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
+        job = await rig.service(catalogue=catalogue).start_import(
+            open_for(Actor(account_id=fx_owner_id), book_id),
+            [pdf_upload(samples, 'a.pdf', pages=PAGES)],
+        )
+        rig.files.fail_on_promote = OSError('disk full')
+
+        await rig.fakes.board.run_queued()
+
+        sources, unimported, scans, pages = await fx_open_book.databases.open(book_id).read(
+            lambda repos: (
+                repos.sources.list_all(),
+                repos.sources.list_unimported(),
+                repos.scans.list_window(EVERY_SLICE),
+                repos.pages.list_window(EVERY_SLICE),
+            ),
+        )
+        stored = rig.stored_job(job)
+        expect(sources == [])
+        expect(unimported == [])
+        expect(scans.total == 0)
+        expect(pages.total == 0)
+        expect((stored.state, stored.error) == (JobState.FAILED, JobEnd.UNEXPECTED_FAILURE))
+        # The progress counts the one file of the upload, and none of its scans
+        expect((stored.progress.done, stored.progress.total) == (0, 1))
+        assert_expectations()

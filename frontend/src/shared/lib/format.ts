@@ -1,7 +1,7 @@
 /**
  * Numbers and dates as the interface writes them.
  *
- * The wording around them lives in `messages.ts`, so these helpers only turn a value into the short text a sentence
+ * The wording around them lives in `MESSAGES`, so these helpers only turn a value into the short text a sentence
  * needs. They never throw on a value they cannot format, because a label must not take a screen down.
  */
 

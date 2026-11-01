@@ -1,0 +1,931 @@
+"""Tests for the book endpoints, on the SQLite file and the local stores under the test's data directory."""
+
+import json
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import quote
+
+import attrs
+import pytest
+from delayed_assert import assert_expectations, expect
+from fastapi import status
+from fastapi_pagination import Page
+
+from bookreviver.api.schemas.books import BookCreate, BookDetailsSchema, BookSchema, BookUpdate
+from bookreviver.api.schemas.types import CONTRIBUTORS_MAX_LENGTH, HEIGHT_CM_MAX, TITLE_MAX_LENGTH
+from bookreviver.domain.books import BookDetails, Contributor, ContributorRole, IdentifierScheme, Orthography
+from bookreviver.domain.images import ImagePolicy
+from bookreviver.domain.pages import PageKind
+from tests.component.conftest import TEST_BASE_URL
+from tests.harness.builders.domain import (
+    FULL_DETAILS,
+    make_page,
+    make_record,
+    make_scan,
+    make_source,
+    new_account_id,
+    new_book_id,
+)
+from tests.harness.builders.seeding import commit_account, commit_record, store_book
+
+if TYPE_CHECKING:
+    import httpx
+    from pydantic import BaseModel
+
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.domain.accounts import Actor
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.adapters.storage import BookFiles
+
+pytestmark = pytest.mark.anyio
+
+BOOKS_PATH: str = '/api/v1/books'
+PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
+MERGE_PATCH_MEDIA_TYPE: str = 'application/merge-patch+json'
+CONTENT_TYPE_HEADER: str = 'content-type'
+LOCATION_HEADER: str = 'location'
+TITLE_FIELD: str = 'title'
+CONTRIBUTORS_FIELD: str = 'contributors'
+IDENTIFIERS_FIELD: str = 'identifiers'
+LANGUAGES_FIELD: str = 'languages'
+HEIGHT_FIELD: str = 'height_cm'
+SUBJECTS_FIELD: str = 'subjects'
+PUBLISHER_FIELD: str = 'publisher'
+SCRIPT_FIELD: str = 'script'
+NOTES_FIELD: str = 'notes'
+COVER_FIELD: str = 'cover_page_id'
+IMAGE_POLICY_FIELD: str = 'image_policy'
+ORTHOGRAPHY_FIELD: str = 'orthography'
+UNKNOWN_FIELD: str = 'owner_id'
+PAGE_SIZE_PARAM: str = 'size'
+PAGE_NUMBER_PARAM: str = 'page'
+ARCHIVE_SUFFIX: str = '/archive'
+ARCHIVE_FIELD: str = 'archive'
+ARCHIVE_NAME: str = 'book.zip'
+ZIP_MEDIA_TYPE: str = 'application/zip'
+DISPOSITION_HEADER: str = 'content-disposition'
+# A title outside ASCII, which the name of the archive carries in UTF-8
+ARCHIVED_TITLE: str = 'Буквар'
+SCHEMA_ARG: str = 'schema'
+EXTRAS_ARG: str = 'extras'
+CASE_ARG: str = 'case'
+BOOK_COUNT: int = 3
+PAGE_SIZE: int = 2
+TITLE: str = 'Slovo o polku'
+AUTHOR: dict[str, str] = {'name': 'Anonymous', 'role': 'aut'}
+EDITOR: dict[str, str] = {'name': 'N. N. Ivanov', 'role': 'edt'}
+NOTES: str = 'Bought in Vilnia'
+VALID_ISBN: str = '0-306-40615-2'
+NORMALIZED_ISBN: str = '0306406152'
+WRONG_ISBN: str = '0-306-40615-3'
+
+
+class InvalidBody(NamedTuple):
+    """A request body that breaks one declared constraint, and the field it breaks.
+
+    :ivar body: JSON body of the request.
+    :ivar field: Name of the field the problem must mention.
+    """
+
+    body: dict[str, Any]
+    field: str
+
+
+INVALID_FIELD_BODIES: list[dict[str, Any]] = [
+    {IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': WRONG_ISBN}]},
+    {IDENTIFIERS_FIELD: [{'scheme': 'url', 'value': 'ftp://example.org'}]},
+    {CONTRIBUTORS_FIELD: [{'name': 'Anonymous', 'role': 'xyz'}]},
+    {CONTRIBUTORS_FIELD: [{'name': ' ', 'role': 'aut'}]},
+    {CONTRIBUTORS_FIELD: [AUTHOR] * (CONTRIBUTORS_MAX_LENGTH + 1)},
+    {LANGUAGES_FIELD: ['ru']},
+    {LANGUAGES_FIELD: ['rus', 'rus']},
+    {HEIGHT_FIELD: 0},
+    {HEIGHT_FIELD: HEIGHT_CM_MAX + 1},
+    {SCRIPT_FIELD: 'runic'},
+]
+INVALID_CREATE_CASES: list[InvalidBody] = [
+    InvalidBody({PUBLISHER_FIELD: 'Publisher'}, TITLE_FIELD),
+    InvalidBody({TITLE_FIELD: '   '}, TITLE_FIELD),
+    InvalidBody({TITLE_FIELD: 'x' * (TITLE_MAX_LENGTH + 1)}, TITLE_FIELD),
+    InvalidBody({TITLE_FIELD: TITLE, ORTHOGRAPHY_FIELD: 'phonetic'}, ORTHOGRAPHY_FIELD),
+    InvalidBody({TITLE_FIELD: TITLE, UNKNOWN_FIELD: str(new_account_id())}, UNKNOWN_FIELD),
+    *(InvalidBody({TITLE_FIELD: TITLE, **body}, next(iter(body))) for body in INVALID_FIELD_BODIES),
+]
+INVALID_CREATE_IDS: list[str] = [
+    'no-title',
+    'blank-title',
+    'long-title',
+    'unknown-orthography',
+    'unknown-field',
+    'wrong-isbn',
+    'non-web-url',
+    'unknown-role',
+    'blank-name',
+    'too-many-contributors',
+    'two-letter-language',
+    'repeated-language',
+    'zero-height',
+    'too-high',
+    'unknown-script',
+]
+INVALID_UPDATE_CASES: list[InvalidBody] = [
+    InvalidBody({TITLE_FIELD: ' '}, TITLE_FIELD),
+    InvalidBody({TITLE_FIELD: None}, TITLE_FIELD),
+    InvalidBody({UNKNOWN_FIELD: str(new_account_id())}, UNKNOWN_FIELD),
+    InvalidBody({IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': WRONG_ISBN}]}, IDENTIFIERS_FIELD),
+    InvalidBody({HEIGHT_FIELD: -3}, HEIGHT_FIELD),
+]
+INVALID_UPDATE_IDS: list[str] = ['blank-title', 'null-title', 'unknown-field', 'wrong-isbn', 'negative-height']
+
+
+def _book_path(book_id: object) -> str:
+    """Return the path of one book.
+
+    :param book_id: Identifier of the book, or any text standing in for one.
+    :type book_id: object
+    :returns: Path of the book resource.
+    :rtype: str
+    """
+    return f'{BOOKS_PATH}/{book_id}'
+
+
+async def _get_book(client: httpx.AsyncClient, book_id: object) -> BookSchema:
+    """Read one book through the API.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book_id: Identifier of the book.
+    :type book_id: object
+    :returns: The book resource.
+    :rtype: BookSchema
+    """
+    return BookSchema.model_validate_json((await client.get(_book_path(book_id))).content)
+
+
+async def _list_books(client: httpx.AsyncClient, params: dict[str, int]) -> Page[BookSchema]:
+    """Read one page of the book list through the API.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param params: Page number and size to ask for.
+    :type params: dict[str, int]
+    :returns: The page of books.
+    :rtype: Page[BookSchema]
+    """
+    return Page[BookSchema].model_validate_json((await client.get(BOOKS_PATH, params=params)).content)
+
+
+class TestSchemas:
+    """Tests for the book schemas against the domain description."""
+
+    @pytest.mark.parametrize(
+        (SCHEMA_ARG, EXTRAS_ARG),
+        [
+            (BookCreate, frozenset[str]()),
+            (BookUpdate, frozenset({IMAGE_POLICY_FIELD})),
+            (BookDetailsSchema, frozenset({'primary_author'})),
+        ],
+        ids=['create', 'update', 'details'],
+    )
+    def test_schema_covers_every_description_field(self, schema: type[BaseModel], extras: frozenset[str]) -> None:
+        """Verify each schema carries exactly the fields of a book description and its own, so they never drift apart.
+
+        :param schema: Schema of a description in a request or a response.
+        :type schema: type[BaseModel]
+        :param extras: Fields of the schema beyond the description, such as the book settings a patch changes.
+        :type extras: frozenset[str]
+        """
+        assert schema.model_fields.keys() == attrs.fields_dict(BookDetails).keys() | extras
+
+
+class TestListBooks:
+    """Tests for GET /books."""
+
+    async def test_pages_through_own_books_newest_first(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the list is paged, the latest added first, and limited to the signed-in account.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        books = [
+            await store_book(
+                fx_catalogue(), make_record(minutes=minutes), owner=fx_actor.account_id, databases=fx_databases()
+            )
+            for minutes in range(BOOK_COUNT)
+        ]
+        await commit_record(
+            fx_database,
+            fx_catalogue(),
+            make_record(minutes=BOOK_COUNT),
+            owner=new_account_id(),
+            databases=fx_databases(),
+        )
+
+        first = await _list_books(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE})
+        second = await _list_books(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE, PAGE_NUMBER_PARAM: 2})
+
+        newest_first = list(reversed(books))
+        expect([item.id for item in first.items] == newest_first[:PAGE_SIZE])
+        expect([item.id for item in second.items] == newest_first[PAGE_SIZE:])
+        expect((first.total, first.pages) == (BOOK_COUNT, 2))
+        assert_expectations()
+
+    async def test_counts_the_book_of_each_book(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify every listed book carries the numbers of its pages, sources and scans.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        source = make_source()
+        scans = [make_scan(source=source, number=number) for number in range(2)]
+        # The second scan is a spread whose page has not been made yet, so the book has one page
+        page = make_page(scan=scans[0])
+        await store_book(
+            fx_catalogue(),
+            make_record(),
+            page,
+            owner=fx_actor.account_id,
+            sources=[source],
+            scans=scans,
+            databases=fx_databases(),
+        )
+
+        listed = await _list_books(fx_client, {})
+
+        assert [(item.page_count, item.source_count, item.scan_count) for item in listed.items] == [(1, 1, 2)]
+
+
+class TestCreateBook:
+    """Tests for POST /books."""
+
+    async def test_creates_and_points_to_the_new_book(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify the answer is 201 with the identifier of the new book and a Location that reads the stored book.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.post(
+            BOOKS_PATH, json={TITLE_FIELD: f'  {TITLE} ', ORTHOGRAPHY_FIELD: Orthography.PRE_REFORM}
+        )
+
+        location = response.headers[LOCATION_HEADER]
+        created = BookSchema.model_validate_json((await fx_client.get(location)).content)
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect(response.json() == str(created.id))
+        expect(location == f'{TEST_BASE_URL}{_book_path(created.id)}')
+        expect((created.details.title, created.details.orthography) == (TITLE, Orthography.PRE_REFORM))
+        expect((created.page_count, created.source_count, created.scan_count) == (0, 0, 0))
+        expect((created.image_policy, created.cover_page_id) == (ImagePolicy.COMPACT, None))
+        assert_expectations()
+
+    async def test_stores_the_full_description_with_normalized_identifiers(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify every group of fields is stored, an ISBN comes back without hyphens and the first author is named.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        body = {
+            TITLE_FIELD: TITLE,
+            'subtitle': 'with notes',
+            'parallel_titles': ['Zbiór'],
+            CONTRIBUTORS_FIELD: [EDITOR, AUTHOR],
+            'printer': 'Government press',
+            'censorship': 'Permitted by the censor. Vilna, 12 May 1896',
+            LANGUAGES_FIELD: ['bel', 'rus'],
+            SCRIPT_FIELD: 'cyrillic',
+            HEIGHT_FIELD: 22,
+            IDENTIFIERS_FIELD: [
+                {'scheme': 'isbn', 'value': f' {VALID_ISBN} '},
+                {'scheme': 'shelfmark', 'value': '18.1'},
+            ],
+            SUBJECTS_FIELD: ['Folklore'],
+            'rights': 'public-domain',
+            'copy_holder': 'Private collection',
+        }
+
+        response = await fx_client.post(BOOKS_PATH, json=body)
+        created = await fx_client.get(response.headers[LOCATION_HEADER])
+
+        details = BookSchema.model_validate_json(created.content).details
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect(
+            [(person.name, person.role) for person in details.contributors]
+            == [
+                (EDITOR['name'], ContributorRole.EDITOR),
+                (AUTHOR['name'], ContributorRole.AUTHOR),
+            ]
+        )
+        expect(details.primary_author == AUTHOR['name'])
+        expect(
+            [(item.scheme, item.value) for item in details.identifiers]
+            == [
+                (IdentifierScheme.ISBN, NORMALIZED_ISBN),
+                (IdentifierScheme.SHELFMARK, '18.1'),
+            ]
+        )
+        expect((details.languages, details.height_cm, details.printer) == (['bel', 'rus'], 22, 'Government press'))
+        expect(
+            (details.parallel_titles, details.subjects, details.copy_holder)
+            == (['Zbiór'], ['Folklore'], 'Private collection')
+        )
+        assert_expectations()
+
+    @pytest.mark.parametrize(CASE_ARG, INVALID_CREATE_CASES, ids=INVALID_CREATE_IDS)
+    async def test_invalid_body_is_a_problem(self, fx_client: httpx.AsyncClient, case: InvalidBody) -> None:
+        """Verify each broken constraint answers 422 as a problem naming the field, and nothing is created.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param case: Body breaking one constraint, and the field it breaks.
+        :type case: InvalidBody
+        """
+        response = await fx_client.post(BOOKS_PATH, json=case.body)
+
+        expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(case.field in response.text)
+        expect((await _list_books(fx_client, {})).total == 0)
+        assert_expectations()
+
+
+class InvisibleBook(StrEnum):
+    """How a book no account can open is stored, for the cases of the read of one book."""
+
+    OTHER_ACCOUNT = 'other-account'
+    UNKNOWN = 'unknown'
+    UNLISTED = 'unlisted'
+
+
+class TestGetBook:
+    """Tests for GET /books/{book_id}."""
+
+    @pytest.mark.parametrize('stored', list(InvisibleBook))
+    async def test_invisible_book_is_not_found(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        *,
+        stored: InvisibleBook,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify another account's book, and a store with no entry in the library, answer like a missing book.
+
+        A store with no entry is a creation broken off half way, which no account can open.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param stored: How the book is stored: for another account, not at all, or as a store with no entry.
+        :type stored: InvisibleBook
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = new_book_id()
+        if stored is InvisibleBook.OTHER_ACCOUNT:
+            owner = await commit_account(fx_database)
+            await store_book(fx_catalogue(), make_record(), owner=owner, databases=fx_databases(), book_id=book_id)
+        elif stored is InvisibleBook.UNLISTED:
+            await fx_databases().create_book(book_id, make_record())
+
+        response = await fx_client.get(_book_path(book_id))
+
+        expect(response.status_code == status.HTTP_404_NOT_FOUND)
+        expect(str(book_id) not in response.text)
+        assert_expectations()
+
+    async def test_malformed_identifier_is_a_problem(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify an identifier that is not a UUID is rejected before the route runs.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(_book_path('not-a-uuid'))
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class TestAccess:
+    """Tests for the guard of the API on the list of books and on a book."""
+
+    async def test_serves_an_own_book(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a book of the signed-in account is served, and so is the list that holds it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+
+        book = await _get_book(fx_client, book_id)
+        listed = await _list_books(fx_client, {})
+
+        expect(book.id == book_id)
+        expect([item.id for item in listed.items] == [book_id])
+        assert_expectations()
+
+    @pytest.mark.usefixtures('fx_signed_out')
+    async def test_refuses_a_caller_without_a_session(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the list, a book that exists, and the creation of a book answer 401 with no session.
+
+        :param fx_client: Client without a session.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The account that owns the stored book.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+
+        listed = await fx_client.get(BOOKS_PATH)
+        read = await fx_client.get(_book_path(book_id))
+        created = await fx_client.post(BOOKS_PATH, json={TITLE_FIELD: TITLE})
+
+        expect(listed.status_code == status.HTTP_401_UNAUTHORIZED)
+        expect(read.status_code == status.HTTP_401_UNAUTHORIZED)
+        expect(created.status_code == status.HTTP_401_UNAUTHORIZED)
+        assert_expectations()
+
+
+class TestUpdateBook:
+    """Tests for PATCH /books/{book_id}."""
+
+    async def test_changes_only_the_fields_sent(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a partial body changes its fields and keeps the rest of the description.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(
+            fx_catalogue(), make_record(title=TITLE), owner=fx_actor.account_id, databases=fx_databases()
+        )
+
+        response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: ' Press '})
+
+        updated = await _get_book(fx_client, book_id)
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect((updated.details.title, updated.details.publisher) == (TITLE, 'Press'))
+        assert_expectations()
+
+    async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a list is replaced as a whole and a normalized identifier is stored, while unsent fields stay.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(
+            fx_catalogue(),
+            attrs.evolve(make_record(), details=FULL_DETAILS),
+            owner=fx_actor.account_id,
+            databases=fx_databases(),
+        )
+
+        response = await fx_client.patch(
+            _book_path(book_id),
+            json={CONTRIBUTORS_FIELD: [AUTHOR], IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': VALID_ISBN}]},
+        )
+
+        details = (await _get_book(fx_client, book_id)).details
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect([person.name for person in details.contributors] == [AUTHOR['name']])
+        expect(
+            [(item.scheme, item.value) for item in details.identifiers] == [(IdentifierScheme.ISBN, NORMALIZED_ISBN)]
+        )
+        expect(
+            (details.languages, details.height_cm, details.subjects)
+            == (['bel', 'rus'], 22, ['Фольклор', 'Народные песни'])
+        )
+        expect((details.title, details.printer) == (FULL_DETAILS.title, FULL_DETAILS.printer))
+        assert_expectations()
+
+    async def test_null_clears_lists_the_height_and_enums_and_omitted_fields_stay(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify null empties a list, clears the height and sets an enum to unknown, and other fields stay.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(
+            fx_catalogue(),
+            attrs.evolve(make_record(), details=FULL_DETAILS),
+            owner=fx_actor.account_id,
+            databases=fx_databases(),
+        )
+
+        response = await fx_client.patch(
+            _book_path(book_id),
+            json={
+                CONTRIBUTORS_FIELD: None,
+                HEIGHT_FIELD: None,
+                SCRIPT_FIELD: None,
+                LANGUAGES_FIELD: None,
+                'printer': None,
+            },
+        )
+
+        details = (await _get_book(fx_client, book_id)).details
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect((details.contributors, details.languages, details.height_cm) == ([], [], None))
+        expect((details.script.value, details.printer, details.primary_author) == ('unknown', '', ''))
+        expect((details.publisher, details.subjects) == (FULL_DETAILS.publisher, ['Фольклор', 'Народные песни']))
+        assert_expectations()
+
+    async def test_null_clears_a_field_as_a_merge_patch(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a merge patch sent with its own media type clears the fields sent as null and keeps the omitted ones.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        author = (Contributor(name=AUTHOR['name'], role=ContributorRole.AUTHOR),)
+        details = BookDetails(title=TITLE, contributors=author, notes=NOTES, orthography=Orthography.PRE_REFORM)
+        book_id = await store_book(
+            fx_catalogue(),
+            attrs.evolve(make_record(), details=details),
+            owner=fx_actor.account_id,
+            databases=fx_databases(),
+        )
+
+        response = await fx_client.patch(
+            _book_path(book_id),
+            content=json.dumps({CONTRIBUTORS_FIELD: None, ORTHOGRAPHY_FIELD: None}),
+            headers={CONTENT_TYPE_HEADER: MERGE_PATCH_MEDIA_TYPE},
+        )
+
+        updated = await _get_book(fx_client, book_id)
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect((updated.details.contributors, updated.details.orthography) == ([], Orthography.UNKNOWN))
+        expect((updated.details.title, updated.details.notes) == (TITLE, NOTES))
+        assert_expectations()
+
+    async def test_sets_the_image_policy_and_null_restores_the_default(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the image policy changes, and null restores the policy a new book has.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(fx_catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
+
+        await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS})
+        was = await _get_book(fx_client, book_id)
+        await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: None})
+        now = await _get_book(fx_client, book_id)
+        expect(was.image_policy == ImagePolicy.LOSSLESS)
+        expect(now.image_policy == ImagePolicy.COMPACT)
+        assert_expectations()
+
+    async def test_the_cover_is_the_first_page_of_the_kind_cover_and_is_not_chosen_by_hand(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the book names its first page of the kind cover as the cover, and a request cannot choose one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        title = make_page(order_key='a0', kind=PageKind.TITLE)
+        cover = make_page(order_key='a1', kind=PageKind.COVER)
+        book_id = await store_book(
+            fx_catalogue(), make_record(), title, cover, owner=fx_actor.account_id, databases=fx_databases()
+        )
+
+        chosen = await fx_client.patch(_book_path(book_id), json={COVER_FIELD: str(title.id)})
+
+        expect((await _get_book(fx_client, book_id)).cover_page_id == cover.id)
+        expect(chosen.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        assert_expectations()
+
+    @pytest.mark.parametrize(CASE_ARG, INVALID_UPDATE_CASES, ids=INVALID_UPDATE_IDS)
+    async def test_invalid_body_is_a_problem_and_changes_nothing(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        case: InvalidBody,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the title cannot be emptied or cleared, unknown fields are refused, and the book stays.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param case: Body breaking one constraint, and the field it breaks.
+        :type case: InvalidBody
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(
+            fx_catalogue(), make_record(title=TITLE), owner=fx_actor.account_id, databases=fx_databases()
+        )
+
+        response = await fx_client.patch(_book_path(book_id), json=case.body)
+
+        expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(case.field in response.text)
+        expect((await _get_book(fx_client, book_id)).details.title == TITLE)
+        assert_expectations()
+
+    async def test_another_accounts_book_is_not_found(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify another account's book cannot be changed.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await commit_record(
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
+
+        response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: 'Press'})
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestDeleteBook:
+    """Tests for DELETE /books/{book_id}."""
+
+    async def test_deletes_the_book_and_its_files(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the answer is 204, the book is gone, and nothing of it is left on disk.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_files: Files of imported books in the application's stores.
+        :type fx_files: BookFiles
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        page = make_page()
+        book_id = await store_book(
+            fx_catalogue(), make_record(), page, owner=fx_actor.account_id, databases=fx_databases()
+        )
+        await fx_files.store(book_id, page)
+
+        response = await fx_client.delete(_book_path(book_id))
+
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect((await fx_client.get(_book_path(book_id))).status_code == status.HTTP_404_NOT_FOUND)
+        expect(fx_files.gone(book_id))
+        assert_expectations()
+
+    async def test_another_accounts_book_is_not_found_and_kept(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_files: BookFiles,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify another account's book and files survive a delete request.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_files: Files of imported books in the application's stores.
+        :type fx_files: BookFiles
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        page = make_page()
+        book_id = await commit_record(
+            fx_database, fx_catalogue(), make_record(), page, owner=new_account_id(), databases=fx_databases()
+        )
+        await fx_files.store(book_id, page)
+
+        response = await fx_client.delete(_book_path(book_id))
+
+        expect(response.status_code == status.HTTP_404_NOT_FOUND)
+        expect(fx_files.kept(page))
+        assert_expectations()
+
+
+class TestArchive:
+    """Tests for GET /books/{book_id}/archive and POST /books/archive, the export and the import of a book."""
+
+    async def test_an_exported_book_is_imported_as_a_new_book(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the export is a ZIP file named after the title, and its import is a new book with the same files.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_files: Files of imported books in the application's stores.
+        :type fx_files: BookFiles
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        page = make_page()
+        book_id = await store_book(
+            fx_catalogue(), make_record(title=ARCHIVED_TITLE), page, owner=fx_actor.account_id, databases=fx_databases()
+        )
+        await fx_files.store(book_id, page)
+
+        exported = await fx_client.get(f'{_book_path(book_id)}{ARCHIVE_SUFFIX}')
+        imported = await fx_client.post(
+            f'{BOOKS_PATH}{ARCHIVE_SUFFIX}', files={ARCHIVE_FIELD: (ARCHIVE_NAME, exported.content, ZIP_MEDIA_TYPE)}
+        )
+
+        copy = BookSchema.model_validate_json((await fx_client.get(imported.headers[LOCATION_HEADER])).content)
+        expect(imported.json() == str(copy.id))
+        expect(exported.status_code == status.HTTP_200_OK)
+        expect(exported.headers[CONTENT_TYPE_HEADER] == ZIP_MEDIA_TYPE)
+        expect(quote(ARCHIVED_TITLE, safe='') in exported.headers[DISPOSITION_HEADER])
+        expect(imported.status_code == status.HTTP_201_CREATED)
+        expect(imported.headers[LOCATION_HEADER] == f'{TEST_BASE_URL}{_book_path(copy.id)}')
+        expect(copy.id != book_id and copy.details.title == ARCHIVED_TITLE)
+        expect(fx_files.kept(page, book_id=copy.id))
+        assert_expectations()
+
+    async def test_a_file_that_is_not_an_archive_is_a_problem(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a file that is not a ZIP archive is refused with 400 and no book is made.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.post(
+            f'{BOOKS_PATH}{ARCHIVE_SUFFIX}', files={ARCHIVE_FIELD: (ARCHIVE_NAME, b'not an archive', ZIP_MEDIA_TYPE)}
+        )
+
+        expect(response.status_code == status.HTTP_400_BAD_REQUEST)
+        expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
+        expect((await _list_books(fx_client, {})).total == 0)
+        assert_expectations()
+
+    async def test_another_accounts_book_is_not_exported(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the archive of another account's book is not found.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await commit_record(
+            fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
+        )
+
+        response = await fx_client.get(f'{_book_path(book_id)}{ARCHIVE_SUFFIX}')
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND

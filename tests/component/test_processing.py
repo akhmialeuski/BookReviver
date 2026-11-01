@@ -1,0 +1,1740 @@
+"""Tests for the processing endpoints, on the application's own adapters with the fake processors of the tests.
+
+The stores, the imaging adapters and the in-memory job board are the application's own, so the files of a version are
+written by libvips as they are for a user, and a test waits until the jobs a request queued have finished.
+"""
+
+import io
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
+
+import pytest
+from attrs import evolve
+from delayed_assert import assert_expectations, expect
+from fastapi import status
+from PIL import Image
+
+from bookreviver.api.schemas.jobs import JobSchema
+from bookreviver.api.schemas.processing import (
+    PageStageSchema,
+    PageVersionSchema,
+    ProcessorSchema,
+    RecipeSchema,
+)
+from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH
+from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.jobs import JobKind, JobState
+from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.pages import PageKind, RecipeKind
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ResultMark, VersionOrigin, VersionScale
+from tests.harness.builders.domain import make_page, make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.processing import ProcessingFakesProvider
+from tests.harness.builders.seeding import store_book
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import httpx
+    from dishka import Provider
+
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
+    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.sources import Scan
+    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.storage import AssetStore
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.storage import SharedBookDirectories
+    from tests.harness.concurrency.board_idle import JobsIdle
+
+pytestmark = pytest.mark.anyio
+
+BOOKS_PATH: str = '/api/v1/books'
+PROCESSORS_PATH: str = '/api/v1/processors'
+MEASURE_SUFFIX: str = '/stages/geometry/measure'
+PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
+CONTENT_TYPE_HEADER: str = 'content-type'
+FAKE_KEY: str = 'geometry.fake'
+SCAN_SIZE_PX: tuple[int, int] = (120, 160)
+ITEMS: str = 'items'
+# An old version of the page that nothing needs, and the bytes of its one file
+OLD_VERSION_ID: str = 'abcdefabcdefabcd'
+OLD_VERSION_CONTENT: bytes = b'an old picture' * 100
+COLLECTABLE_PATH: str = '/versions/collectable'
+
+
+class Book(NamedTuple):
+    """A book of the signed-in account with one page cut from a scan whose image is stored.
+
+    :ivar book_id: Identifier of the book.
+    :ivar page: The page the import made of the scan.
+    """
+
+    book_id: BookId
+    page: Page
+
+    @property
+    def path(self) -> str:
+        """The path of the book."""
+        return f'{BOOKS_PATH}/{self.book_id}'
+
+    @property
+    def page_path(self) -> str:
+        """The path of the page."""
+        return f'{self.path}/pages/{self.page.id}'
+
+
+@pytest.fixture
+def fx_extra_providers() -> Sequence[Provider]:
+    """Replace the catalogue of processors with the fakes of the tests.
+
+    :returns: The provider of the fake catalogue and recipes.
+    :rtype: Sequence[Provider]
+    """
+    return [ProcessingFakesProvider()]
+
+
+@pytest.fixture
+async def fx_book(
+    fx_catalogue: CatalogueDatabaseFactory,
+    fx_directories: SharedBookDirectories,
+    fx_actor: Actor,
+    fx_databases: BookDatabasesFactory,
+) -> Book:
+    """Commit a book of one page and store the full image of its scan as a real JPEG.
+
+    :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+    :type fx_catalogue: CatalogueDatabaseFactory
+    :param fx_directories: Opens the source store and the asset store of a book of the test.
+    :type fx_directories: SharedBookDirectories
+    :param fx_actor: The signed-in account.
+    :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
+    :returns: The stored book.
+    :rtype: Book
+    """
+    source = make_source()
+    scan = evolve(
+        make_scan(source=source, number=0),
+        renditions=Renditions(ready=True),
+    )
+    page = make_page(scan=scan)
+    book_id = await store_book(
+        fx_catalogue(),
+        make_record(),
+        page,
+        owner=fx_actor.account_id,
+        sources=[source],
+        scans=[scan],
+        databases=fx_databases(),
+    )
+    await store_scan_images(fx_directories.assets(book_id), scan)
+    return Book(book_id=book_id, page=page)
+
+
+async def store_scan_images(asset_store: AssetStore, scan: Scan) -> None:
+    """Store the full image and the preview of a scan as real JPEGs.
+
+    :param asset_store: Asset store of the book owning the scan, the application's own.
+    :type asset_store: AssetStore
+    :param scan: The scan, whose renditions are ready.
+    :type scan: Scan
+    """
+    buffer = io.BytesIO()
+    Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
+    for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
+        async with asset_store.writable(BookKeys.scan_rendition(scan, rendition)) as path:
+            path.write_bytes(buffer.getvalue())
+
+
+async def set_strength(client: httpx.AsyncClient, book: Book, step_id: str, value: int) -> httpx.Response:
+    """Set the strength of a step for the page of the book.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param step_id: Identifier of the step.
+    :type step_id: str
+    :param value: The strength the page uses.
+    :type value: int
+    :returns: The answer.
+    :rtype: httpx.Response
+    """
+    body = {'scope': 'pages', 'page_ids': [str(book.page.id)], 'value': value}
+    return await client.put(f'{book.path}/stages/geometry/steps/{step_id}/values/strength', json=body)
+
+
+async def run_stage(client: httpx.AsyncClient, idle: JobsIdle, book: Book, stage: str) -> JobSchema:
+    """Ask for a run of a stage and wait for the job to finish.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param idle: Wait that lets the jobs of the book finish.
+    :type idle: JobsIdle
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param stage: The stage to run.
+    :type stage: str
+    :returns: The job as the request answered with it.
+    :rtype: JobSchema
+    """
+    response = await client.post(f'{book.path}/stages/{stage}/run', json={})
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    await idle(book.book_id)
+    return JobSchema.model_validate_json(response.content)
+
+
+def preview_body(book: Book) -> dict[str, object]:
+    """Build the body of a preview of the fake processor on the page of the book.
+
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :returns: The body.
+    :rtype: dict[str, object]
+    """
+    return {
+        'page_id': str(book.page.id),
+        'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 3}}],
+        'step_index': 0,
+    }
+
+
+class TestProcessors:
+    """Tests for GET /processors."""
+
+    async def test_lists_the_processors_with_the_schema_of_their_parameters(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify every processor of the catalogue is listed with the JSON Schema of its parameters.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(PROCESSORS_PATH)
+        listed = [ProcessorSchema.model_validate(item) for item in response.json()[ITEMS]]
+        expect(response.status_code == status.HTTP_200_OK)
+        expect([processor.key for processor in listed] == ['cleanup.fake', FAKE_KEY, 'split.none'])
+        expect(
+            all(processor.parameters.get('type') == 'object' for processor in listed if processor.key == 'split.none')
+        )
+        assert_expectations()
+
+
+async def recipes_of(client: httpx.AsyncClient, book: Book, stage: str) -> dict[RecipeKind, RecipeSchema]:
+    """List the recipes of a stage through the API, by the kind of page.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param stage: The stage.
+    :type stage: str
+    :returns: The recipe of each kind.
+    :rtype: dict[RecipeKind, RecipeSchema]
+    """
+    listed = await client.get(f'{book.path}/stages/{stage}/recipes')
+    return {recipe.kind: recipe for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS])}
+
+
+class TestRecipes:
+    """Tests for the recipe endpoints."""
+
+    async def test_a_stage_has_a_recipe_for_each_kind_from_the_first_request(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the first request of a stage creates the four recipes, in the order of the kinds.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/recipes')
+        recipes = [RecipeSchema.model_validate(item) for item in response.json()[ITEMS]]
+        expect(response.status_code == status.HTTP_200_OK)
+        expect([recipe.kind for recipe in recipes] == list(RecipeKind))
+        expect(all([step.processor_key for step in recipe.steps] == [FAKE_KEY] for recipe in recipes))
+        assert_expectations()
+
+    async def test_put_replaces_the_steps_and_fills_in_the_defaults(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the recipe is saved with the checked parameters of each step.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        text = (await recipes_of(fx_client, fx_book, 'geometry'))[RecipeKind.TEXT]
+        body = {'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 4}}]}
+        response = await fx_client.put(f'{fx_book.path}/stages/geometry/recipes/{text.id}', json=body)
+        recipe = RecipeSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(
+            (recipe.id, recipe.kind, recipe.steps[0].params)
+            == (text.id, RecipeKind.TEXT, {'strength': 4, 'fail': False})
+        )
+        assert_expectations()
+
+    async def test_steps_that_do_not_fit_are_a_422_problem(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a parameter the processor does not know answers 422 with a problem document.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        text = (await recipes_of(fx_client, fx_book, 'geometry'))[RecipeKind.TEXT]
+        body = {'steps': [{'processor_key': FAKE_KEY, 'params': {'unknown': 1}}]}
+        response = await fx_client.put(f'{fx_book.path}/stages/geometry/recipes/{text.id}', json=body)
+        expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect('Unknown parameters' in response.json()['detail'])
+        assert_expectations()
+
+    async def test_a_recipe_cannot_be_created_or_activated(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the recipes are the four of the kinds, so there is no route to add one or to make one the active.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        text = (await recipes_of(fx_client, fx_book, 'geometry'))[RecipeKind.TEXT]
+        created = await fx_client.post(
+            f'{fx_book.path}/stages/geometry/recipes', json={'steps': [{'processor_key': FAKE_KEY}]}
+        )
+        activated = await fx_client.post(f'{fx_book.path}/stages/geometry/recipes/{text.id}/activate')
+        expect(created.status_code == status.HTTP_405_METHOD_NOT_ALLOWED)
+        expect(activated.status_code == status.HTTP_404_NOT_FOUND)
+        assert_expectations()
+
+    async def test_reset_puts_the_steps_of_the_stage_back_and_keeps_the_recipe(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a saved recipe is reset to the template steps, with its identifier and kind unchanged.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        text = (await recipes_of(fx_client, fx_book, 'geometry'))[RecipeKind.TEXT]
+        body = {'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 4}}]}
+        saved = RecipeSchema.model_validate_json(
+            (await fx_client.put(f'{fx_book.path}/stages/geometry/recipes/{text.id}', json=body)).content
+        )
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/recipes/{saved.id}/reset')
+        reset = RecipeSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect((reset.id, reset.kind) == (saved.id, RecipeKind.TEXT))
+        expect(
+            [(step.processor_key, step.params) for step in reset.steps] == [(FAKE_KEY, {'strength': 1, 'fail': False})]
+        )
+        expect(reset.steps[0].step_id != saved.steps[0].step_id)
+        assert_expectations()
+
+    async def test_reset_of_a_recipe_that_does_not_exist_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an identifier no recipe of the book has is answered 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/recipes/{uuid4()}/reset')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_book_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a book the account does not own is answered 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(f'{BOOKS_PATH}/{new_account_id()}/stages/geometry/recipes')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_stage_that_does_not_exist_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a stage outside the pipeline is refused by the path.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/stages/nowhere/recipes')
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class TestStageSummaries:
+    """Tests for the recipes of each kind a stage summary lists, and the kind of every page of a stage."""
+
+    async def test_a_summary_counts_the_pages_of_each_kind_and_a_page_row_names_its_kind(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_idle: JobsIdle,
+        fx_book: Book,
+        fx_directories: SharedBookDirectories,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a text page and a plate are counted under the recipes of their kinds, and each row says its kind.
+
+        The plate is a picture in colour, since nobody set its colour. This covers the response as it is, and is not a
+        test that fails without a fix.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account with a text page.
+        :type fx_book: Book
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        _, scan = await add_page(fx_book, 'a1', PageKind.PLATE, databases=fx_databases())
+        await store_scan_images(fx_directories.assets(fx_book.book_id), scan)
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
+        recipes = await recipes_of(fx_client, fx_book, 'geometry')
+        summaries = (await fx_client.get(f'{fx_book.path}/stages')).json()[ITEMS]
+        [geometry] = [summary for summary in summaries if summary['stage'] == 'geometry']
+        rows = (await fx_client.get(f'{fx_book.path}/stages/geometry/pages')).json()[ITEMS]
+        expect(
+            geometry['recipes']
+            == [
+                {'kind': kind.value, 'recipe_id': str(recipes[kind].id), 'pages': pages}
+                for kind, pages in zip(RecipeKind, (1, 1, 0, 0), strict=True)
+            ]
+        )
+        expect([row['kind'] for row in rows] == [RecipeKind.TEXT.value, RecipeKind.COLOR_PICTURE.value])
+        assert_expectations()
+
+
+class TestRunAndVersions:
+    """Tests for running a stage, and for reading the stages and versions it made."""
+
+    async def test_run_answers_202_and_the_job_makes_a_current_version_with_served_images(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the run is a job, the stage names its current version, and the version's images are served.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        job = await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        stages = await fx_client.get(f'{fx_book.page_path}/stages')
+        [stage] = [PageStageSchema.model_validate(item) for item in stages.json()[ITEMS]]
+        assert stage.head_version_id is not None
+        version_response = await fx_client.get(f'{fx_book.page_path}/versions/{stage.head_version_id}')
+        version = PageVersionSchema.model_validate_json(version_response.content)
+        assert version.images is not None
+        full = await fx_client.get(version.images.full)
+        info = await fx_client.get(version.images.iiif_info)
+        with Image.open(io.BytesIO(full.content)) as image:
+            size = image.size
+        expect((job.kind, job.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
+        expect(stage.state is StageState.FRESH)
+        expect((version.processor.key, version.tiles_ready, version.error) == ('split.none', True, ''))
+        expect(version.data == {'width_px': 2200, 'height_px': 1561})
+        expect(size == SCAN_SIZE_PX)
+        expect(info.status_code == status.HTTP_200_OK)
+        assert_expectations()
+
+    async def test_second_run_while_one_is_active_is_a_409_problem(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a run answers 409 while another run of the book is queued.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        first = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
+        second = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
+        expect(first.status_code == status.HTTP_202_ACCEPTED)
+        expect(second.status_code == status.HTTP_409_CONFLICT)
+        assert_expectations()
+
+    async def test_versions_are_listed_with_a_filter(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the list of versions filters by scale, and a version that does not exist is a 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        full = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': VersionScale.FULL.value})
+        previews = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': VersionScale.PREVIEW.value})
+        missing = await fx_client.get(f'{fx_book.page_path}/versions/{"0" * 16}')
+        expect((full.json()['total'], previews.json()['total']) == (1, 0))
+        expect(missing.status_code == status.HTTP_404_NOT_FOUND)
+        assert_expectations()
+
+    async def test_malformed_version_identifier_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify an identifier that is not 16 hexadecimal digits is refused by the path.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.page_path}/versions/not-a-version')
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_choosing_a_version_makes_it_current(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify PUT on a stage with a version of the page makes it the current one, and a stranger is refused.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        listed = await fx_client.get(f'{fx_book.page_path}/versions')
+        version_id = listed.json()[ITEMS][0]['id']
+        chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        wrong = await fx_client.put(f'{fx_book.page_path}/stages/geometry', json={'version_id': version_id})
+        expect(chosen.status_code == status.HTTP_200_OK)
+        expect(PageStageSchema.model_validate_json(chosen.content).head_version_id == version_id)
+        expect(wrong.status_code == status.HTTP_409_CONFLICT)
+        assert_expectations()
+
+    async def test_choosing_a_version_while_a_preview_is_active_cancels_it_and_makes_the_version_current(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify PUT on a stage answers 200 while a preview is queued, which it cancels.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
+        preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
+        expect(preview.status_code == status.HTTP_202_ACCEPTED)
+        expect(chosen.status_code == status.HTTP_200_OK)
+        expect(job.json()['state'] == JobState.CANCELLED.value)
+        assert_expectations()
+
+    async def test_choosing_a_version_while_a_run_is_active_is_a_409(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify PUT on a stage answers 409 while a run is queued, which a preview would not cause.
+
+        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
+        run = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={})
+        chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect(chosen.status_code == status.HTTP_409_CONFLICT)
+        assert_expectations()
+
+    async def test_preview_makes_a_preview_version_that_has_only_its_preview_path(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a preview is a job whose result is a preview-scale version with the path of its preview image.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        await fx_idle(fx_book.book_id)
+        previews = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': 'preview'})
+        [version] = [PageVersionSchema.model_validate(item) for item in previews.json()[ITEMS]]
+        assert version.preview is not None
+        served = await fx_client.get(version.preview)
+        expect(response.status_code == status.HTTP_202_ACCEPTED)
+        expect((version.images, served.status_code) == (None, status.HTTP_200_OK))
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'body',
+        [
+            {'page_id': 'not-a-uuid', 'steps': [{'processor_key': FAKE_KEY}], 'step_index': 0},
+            {'page_id': '00000000-0000-0000-0000-000000000000', 'steps': [], 'step_index': 0},
+            {
+                'page_id': '00000000-0000-0000-0000-000000000000',
+                'steps': [{'processor_key': FAKE_KEY}],
+                'step_index': 1,
+            },
+        ],
+        ids=['page', 'no-steps', 'index-past-the-steps'],
+    )
+    async def test_preview_body_that_does_not_validate_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, body: dict[str, object]
+    ) -> None:
+        """Verify the body of a preview is checked before the route runs, the index against the steps included.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param body: Body under test.
+        :type body: dict[str, object]
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=body)
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_collection_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a collection is queued as a job and answered 202.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/versions/collect')
+        job = JobSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_202_ACCEPTED)
+        expect(job.kind is JobKind.COLLECT_VERSIONS)
+        assert_expectations()
+
+    async def test_collection_while_a_preview_is_active_cancels_it_and_is_a_202_job(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a collection is answered 202 while a preview is queued, which it cancels.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        response = await fx_client.post(f'{fx_book.path}/versions/collect')
+        job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
+        expect(response.status_code == status.HTTP_202_ACCEPTED)
+        expect(JobSchema.model_validate_json(response.content).kind is JobKind.COLLECT_VERSIONS)
+        expect(job.json()['state'] == JobState.CANCELLED.value)
+        assert_expectations()
+
+    async def test_collectable_versions_are_counted_with_their_bytes_and_nothing_is_deleted(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_idle: JobsIdle,
+        fx_book: Book,
+        fx_directories: SharedBookDirectories,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the report names the versions a collection would delete and the bytes of their files, and deletes none.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        record = (
+            await fx_databases()
+            .open(fx_book.book_id)
+            .read(
+                lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)),
+            )
+        )
+        assert record.head_version_id is not None
+        head_id = record.head_version_id
+        # A version made from the current one and left behind: it reads the head, and no current chain reads it
+        old = evolve(
+            await fx_databases().open(fx_book.book_id).read(lambda repos: repos.page_versions.get(head_id)),
+            id=PageVersionId(OLD_VERSION_ID),
+            input_id=head_id,
+        )
+        async with fx_directories.assets(fx_book.book_id).writable(
+            BookKeys.version_rendition(old, Rendition.FULL_JPEG)
+        ) as path:
+            path.write_bytes(OLD_VERSION_CONTENT)
+        await fx_databases().open(fx_book.book_id).change(lambda repos, _book_record: repos.page_versions.add(old))
+
+        first = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
+        second = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
+
+        expect(first.status_code == status.HTTP_200_OK)
+        expect(
+            first.json() == {'versions': 1, 'size_bytes': len(OLD_VERSION_CONTENT)} and second.json() == first.json()
+        )
+        expect(
+            await fx_databases().open(fx_book.book_id).read(lambda repos: repos.page_versions.find(old.id)) is not None
+        )
+        assert_expectations()
+
+    async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify the report of a book that is not the account's is answered like one of a missing book.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(f'{BOOKS_PATH}/{uuid4()}{COLLECTABLE_PATH}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_measuring_the_book_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the measure of the book is queued as a job and answered 202.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}{MEASURE_SUFFIX}')
+        job = JobSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_202_ACCEPTED)
+        expect((job.kind, job.state) == (JobKind.MEASURE_BOOK, JobState.QUEUED))
+        assert_expectations()
+
+    async def test_measuring_the_book_while_a_run_is_active_is_a_409_problem(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the measure is refused while a run of the book is queued, which may be writing what it reads.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
+        measure = await fx_client.post(f'{fx_book.path}{MEASURE_SUFFIX}')
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect(measure.status_code == status.HTTP_409_CONFLICT)
+        assert_expectations()
+
+    async def test_measuring_the_book_of_another_account_is_a_404(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a book that is not the account's is reported like a missing one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.post(f'{BOOKS_PATH}/{uuid4()}{MEASURE_SUFFIX}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_tiles_of_a_version_are_cut_on_request(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the tiles endpoint queues a job for a ready version, and answers 404 for one that does not exist.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        listed = await fx_client.get(f'{fx_book.page_path}/versions')
+        version_id = listed.json()[ITEMS][0]['id']
+        accepted = await fx_client.post(f'{fx_book.page_path}/versions/{version_id}/tiles')
+        missing = await fx_client.post(f'{fx_book.page_path}/versions/{"f" * 16}/tiles')
+        expect(accepted.status_code == status.HTTP_202_ACCEPTED)
+        expect(missing.status_code == status.HTTP_404_NOT_FOUND)
+        assert_expectations()
+
+
+async def text_step_id(client: httpx.AsyncClient, book: Book, stage: Stage) -> str:
+    """Read the identifier of the only step of the recipe of text pages of a stage, which an edit is addressed by.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param stage: The stage whose recipe is read.
+    :type stage: Stage
+    :returns: The identifier of the step.
+    :rtype: str
+    """
+    return str((await recipes_of(client, book, stage))[RecipeKind.TEXT].steps[0].step_id)
+
+
+class TestEdits:
+    """Tests for the manual edit endpoints."""
+
+    async def test_edit_is_saved_listed_and_deleted(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the form of an edit is stored with its hash, listed, and removed with a 204.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        path = f'{fx_book.page_path}/edits/geometry/{step_id}'
+        saved = await fx_client.put(path, data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'})
+        listed = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
+        deleted = await fx_client.delete(path)
+        after = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
+        expect(saved.status_code == status.HTTP_200_OK)
+        expect(saved.json()['geometry'] == {'degrees': 1.5})
+        expect(saved.json()['step_id'] == step_id)
+        expect([item['edit_hash'] for item in listed.json()[ITEMS]] == [saved.json()['edit_hash']])
+        expect((deleted.status_code, after.json()['total']) == (status.HTTP_204_NO_CONTENT, 0))
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'data',
+        [
+            {'kind': 'rotation', 'geometry': '{"angle": 1}'},
+            {'kind': 'rotation', 'geometry': 'not json'},
+            {'kind': 'rect', 'geometry': '{"left": 0, "top": 0, "width": 1, "height": 1}'},
+            {'kind': 'rotation'},
+        ],
+        ids=['wrong-shape', 'not-json', 'other-editor', 'no-shape'],
+    )
+    async def test_edit_that_does_not_fit_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, data: dict[str, str]
+    ) -> None:
+        """Verify a shape that does not fit its editor, and an edit the processor does not read, answer 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param data: Form under test.
+        :type data: dict[str, str]
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.put(f'{fx_book.page_path}/edits/geometry/{step_id}', data=data)
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_edit_of_a_step_that_no_recipe_has_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an edit addressed to an identifier that is the step of no recipe of the stage answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{uuid4()}', data={'kind': 'rotation', 'geometry': '{"degrees": 1}'}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_brush_edit_takes_its_mask_as_a_file(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a mask sent with the form is stored and served from the path the edit names.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = f'{fx_book.page_path}/edits/cleanup/{await text_step_id(fx_client, fx_book, Stage.CLEANUP)}'
+        saved = await fx_client.put(path, data={'kind': 'brush-mask'}, files={'mask': ('mask.png', b'mask-bytes')})
+        served = await fx_client.get(saved.json()['mask'])
+        expect(saved.status_code == status.HTTP_200_OK)
+        expect((served.status_code, served.content) == (status.HTTP_200_OK, b'mask-bytes'))
+        assert_expectations()
+
+
+class TestPageHistory:
+    """Tests for the endpoints of the history of a step on a page and of its undo."""
+
+    async def test_changes_are_listed_newest_first_and_an_undo_marks_what_it_took_back(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a setting and an edit are listed newest first, and one undo takes back the edit and nothing else.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await set_strength(fx_client, fx_book, step_id, 2)
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        listed = await fx_client.get(history)
+        undone = await fx_client.post(f'{history}/undo', json={})
+        after = await fx_client.get(history)
+        edit = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
+        expect([item['layer'] for item in listed.json()[ITEMS]] == ['hand', 'settings'])
+        expect([item['undone'] for item in listed.json()[ITEMS]] == [False, False])
+        expect(undone.status_code == status.HTTP_200_OK)
+        expect([(change['layer'], change['source']) for change in undone.json()['changes']] == [('hand', 'undo')])
+        expect(
+            [(item['source'], item['undone']) for item in after.json()[ITEMS]]
+            == [('undo', False), ('user', True), ('user', False)]
+        )
+        expect(edit.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_undo_back_to_a_change_takes_it_and_the_later_ones(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an undo that names the oldest change takes back every change from it, and the page has none left.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await set_strength(fx_client, fx_book, step_id, 2)
+        await set_strength(fx_client, fx_book, step_id, 3)
+        oldest = (await fx_client.get(history)).json()[ITEMS][-1]
+        undone = await fx_client.post(f'{history}/undo', json={'change_id': oldest['id']})
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect(len(undone.json()['changes']) == 2)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_undo_with_nothing_to_take_back_answers_200_with_no_changes(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an undo of an empty history is not an error, so a key press on a page that has no change is quiet.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(f'{fx_book.page_path}/history/geometry/{step_id}/undo', json={})
+        assert (response.status_code, response.json()) == (status.HTTP_200_OK, {'changes': []})
+
+    async def test_undo_back_to_an_unknown_change_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify naming a change the step does not have answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(
+            f'{fx_book.page_path}/history/geometry/{step_id}/undo', json={'change_id': str(uuid4())}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_clear_deletes_the_history_and_the_settings_and_counts_the_changes(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 200 with the numbers of deleted changes and versions, and the step has none left.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await set_strength(fx_client, fx_book, step_id, 2)
+        await set_strength(fx_client, fx_book, step_id, 3)
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 2, 'versions': 0}))
+        expect(listed.json()['total'] == 0)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_clear_deletes_the_result_of_the_step_and_counts_it(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a clear of the only step after a run deletes its result, so the stage has no result on the page.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        versions = f'{fx_book.page_path}/versions'
+        of_step = {'stage': 'geometry', 'step': step_id}
+        before = await fx_client.get(versions, params=of_step)
+        cleared = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{step_id}')
+        after = await fx_client.get(versions, params=of_step)
+        rows = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        expect(before.json()['total'] == 1)
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 0, 'versions': 1}))
+        expect(after.json()['total'] == 0)
+        expect(rows.json()[ITEMS][0]['status'] == 'not-run')
+        assert_expectations()
+
+    async def test_clear_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify clearing the history of a page that is not in the book answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_clear_while_the_book_is_busy_is_a_409_and_deletes_nothing(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 409 while a run of the book is queued, which may read the versions, and keeps a step.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await set_strength(fx_client, fx_book, step_id, 2)
+        run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect(cleared.status_code == status.HTTP_409_CONFLICT)
+        expect(listed.json()['total'] == 1)
+        assert_expectations()
+
+    async def test_clear_while_a_preview_is_active_cancels_it_and_deletes_the_history(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 200 while a preview is queued, which it cancels, and the step has no history left.
+
+        The editor of a step asks for a preview when the step is opened, so a reader who clears the history a moment
+        later finds one that holds the book.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await set_strength(fx_client, fx_book, step_id, 2)
+        preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
+        expect(preview.status_code == status.HTTP_202_ACCEPTED)
+        # The clear goes on and deletes the one change of the step; the results it deletes are not what this checks
+        expect((cleared.status_code, cleared.json()['changes']) == (status.HTTP_200_OK, 1))
+        expect(listed.json()['total'] == 0)
+        expect(job.json()['state'] == JobState.CANCELLED.value)
+        assert_expectations()
+
+    async def test_clear_of_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify clearing a step that is in no recipe of the stage answers 404, as the listing of its versions does.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_history_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the history of a page that is not in the book answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def add_page(
+    book: Book, order_key: str, kind: PageKind = PageKind.TEXT, *, databases: LocatedBookDatabases
+) -> tuple[Page, Scan]:
+    """Commit another page cut from a scan of the book, after the pages it has.
+
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param order_key: Order key of the page, which places it in the book.
+    :type order_key: str
+    :param kind: The role of the page in the book, a text page unless given.
+    :type kind: PageKind
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :returns: The page and the scan it shows.
+    :rtype: tuple[Page, Scan]
+    """
+    source = make_source(name=f'{order_key}.pdf')
+    scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
+    page = make_page(order_key=order_key, scan=scan, kind=kind)
+
+    def add_scan_page(repos: BookRepositories, _book_record: BookRecord) -> None:
+        """Add the source, its scan and the page that shows the scan.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :param _book_record: Record of the book, which the work does not need.
+        :type _book_record: BookRecord
+        """
+        repos.sources.add(source)
+        repos.scans.add(scan)
+        repos.pages.add(page)
+
+    await databases.open(book.book_id).change(add_scan_page)
+    return page, scan
+
+
+class TestCarryOverOfAShape:
+    """Tests for the endpoint that carries the shape a page set by hand over to other pages."""
+
+    async def test_a_shape_is_carried_to_the_following_pages_in_one_batch_that_one_undo_takes_back(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify the shape reaches the pages after the source and one undo on any of them takes it from all.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        pages = [(await add_page(fx_book, order_key, databases=fx_databases()))[0] for order_key in ('a1', 'a2')]
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        carried = await fx_client.post(
+            f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'following'}
+        )
+        body = carried.json()
+        target = f'{fx_book.path}/pages/{pages[0].id}'
+        listed = await fx_client.get(f'{target}/edits/geometry')
+        undone = await fx_client.post(
+            f'{target}/history/geometry/{step_id}/undo', json={'change_id': body['changes'][0]['id']}
+        )
+        after = await fx_client.get(f'{fx_book.path}/pages/{pages[1].id}/edits/geometry')
+        expect(carried.status_code == status.HTTP_200_OK)
+        expect(sorted(change['page_id'] for change in body['changes']) == sorted(str(page.id) for page in pages))
+        expect({change['batch_id'] for change in body['changes']} == {body['batch_id']})
+        expect({(change['source'], change['layer']) for change in body['changes']} == {('carry-over', 'hand')})
+        expect([item['geometry'] for item in listed.json()[ITEMS]] == [{'degrees': 1.5}])
+        expect(len(undone.json()['changes']) == len(pages))
+        expect(after.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_a_page_set_by_hand_separately_is_skipped_unless_the_form_overwrites(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify the page with a shape of its own is listed as skipped and keeps it, and overwriting takes it along.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        page, _ = await add_page(fx_book, 'a1', databases=fx_databases())
+        own = f'{fx_book.path}/pages/{page.id}/edits/geometry'
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        await fx_client.put(f'{own}/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 2.5}'})
+        path = f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over'
+        skipped = await fx_client.post(path, json={'scope': 'kind'})
+        kept = await fx_client.get(own)
+        overwritten = await fx_client.post(path, json={'scope': 'kind', 'overwrite': True})
+        expect(skipped.json()['skipped'] == [str(page.id)] and skipped.json()['changes'] == [])
+        expect([item['geometry'] for item in kept.json()[ITEMS]] == [{'degrees': 2.5}])
+        expect(overwritten.json()['skipped'] == [] and len(overwritten.json()['changes']) == 1)
+        assert_expectations()
+
+    async def test_a_page_with_no_shape_set_by_hand_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify carrying from a page that set no shape answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(
+            f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'following'}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_the_selected_pages_scope_without_pages_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the scope of the selected pages that names none answers 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        response = await fx_client.post(
+            f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'selected'}
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class TestRunModes:
+    """Tests for the mode of a run, and for the count that warns before a mode takes work away."""
+
+    async def test_the_impact_counts_the_pages_the_mode_takes_work_from(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the count is of the pages the run goes over, with the setting of the page, by the mode asked for.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await set_strength(fx_client, fx_book, step_id, 2)
+        drop = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'drop-own-work'})
+        skip = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'skip-own-work'})
+        keep = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={})
+        expect(drop.json() == {'mode': 'drop-own-work', 'pages': 1, 'own_pages': 1, 'affected': 1})
+        expect((skip.json()['affected'], keep.json()['affected'], keep.json()['mode']) == (0, 0, 'keep'))
+        assert_expectations()
+
+    async def test_a_mode_that_takes_work_is_a_409_until_it_is_confirmed_and_then_a_job(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_idle: JobsIdle
+    ) -> None:
+        """Verify the run is refused with the number of pages, and queued with the confirmation, and takes the setting.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await set_strength(fx_client, fx_book, step_id, 2)
+        path = f'{fx_book.path}/stages/geometry/run'
+        refused = await fx_client.post(path, json={'mode': 'drop-own-work'})
+        accepted = await fx_client.post(path, json={'mode': 'drop-own-work', 'confirm_overwrite': True})
+        await fx_idle(fx_book.book_id)
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect(refused.status_code == status.HTTP_409_CONFLICT and '1 pages' in refused.json()['detail'])
+        expect(accepted.status_code == status.HTTP_202_ACCEPTED)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_a_run_keeps_the_settings_by_default(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_idle: JobsIdle
+    ) -> None:
+        """Verify a run that names no mode leaves the setting of the page as it is.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await set_strength(fx_client, fx_book, step_id, 2)
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        assert [item['params'] for item in settings.json()[ITEMS]] == [{'strength': 2}]
+
+    async def test_a_mode_that_does_not_exist_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the body of a run and of its count refuse a mode the application does not have.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        run = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'mode': 'wipe'})
+        impact = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'wipe'})
+        assert (run.status_code, impact.status_code) == (status.HTTP_422_UNPROCESSABLE_CONTENT,) * 2
+
+
+class TestRunThroughAStep:
+    """Tests for a run that stops at a step, and the group of a page."""
+
+    @pytest.mark.parametrize(
+        'through_step', [-1, 'first', RECIPE_STEPS_MAX_LENGTH], ids=['negative', 'text', 'too-large']
+    )
+    async def test_a_run_through_a_step_that_is_not_an_index_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, through_step: object
+    ) -> None:
+        """Verify the body of a run checks the index of the last step before the route runs.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param through_step: Value under test.
+        :type through_step: object
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'through_step': through_step})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_a_run_through_a_step_the_recipe_does_not_have_is_a_409(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the recipe is asked, and a step past its last one is refused with the reason and no job is queued.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(
+            f'{fx_book.path}/stages/geometry/run', json={'through_step': RECIPE_STEPS_MAX_LENGTH - 1}
+        )
+        assert response.status_code == status.HTTP_409_CONFLICT
+
+    async def test_a_run_through_the_first_step_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a run that stops at the first step is queued like any other run.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'through_step': 0})
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+    async def test_the_group_label_of_a_page_is_set_and_cleared(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a patch sets the label of the group, and a null clears it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        grouped = await fx_client.patch(fx_book.page_path, json={'group_label': 'Engravings'})
+        cleared = await fx_client.patch(fx_book.page_path, json={'group_label': None})
+        expect(grouped.json()['group_label'] == 'Engravings')
+        expect(cleared.json()['group_label'] == '')
+        assert_expectations()
+
+
+class TestStepRows:
+    """Tests for the rows of a stage asked for a step: GET /stages/{stage}/pages?step=."""
+
+    async def test_a_page_not_run_has_the_default_shape_at_the_step(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the row says which step it was placed at, with the default shape and no versions.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        step = response.json()[ITEMS][0]['step']
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(step == {'step_id': step_id, 'state': 'default', 'input_version': None, 'version': None, 'flags': []})
+        assert_expectations()
+
+    async def test_a_page_run_through_the_step_has_what_the_step_found_and_read(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the row of a step that ran holds the version it made and the version of the stage before it read.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        row = response.json()[ITEMS][0]
+        step = row['step']
+        expect(step['state'] == 'found')
+        expect(step['version']['id'] == row['version']['id'])
+        expect(step['input_version']['stage'] == 'page-split')
+        assert_expectations()
+
+    async def test_the_picture_of_a_row_is_the_input_of_the_step_and_the_head_of_a_row_without_one(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the row carries the picture of the page: the step input at a step, the current version without one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        row = at_step.json()[ITEMS][0]
+        expect(row['picture']['id'] == row['step']['input_version']['id'])
+        expect(row['picture']['stage'] == 'page-split')
+        expect(alone.json()[ITEMS][0]['picture']['id'] == alone.json()[ITEMS][0]['version']['id'])
+        assert_expectations()
+
+    async def test_a_page_the_stage_has_not_run_on_has_the_picture_the_stage_reads(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a row of a stage that has not run is drawn from the page split, with a step and without one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        expect(at_step.json()[ITEMS][0]['picture']['stage'] == 'page-split')
+        expect(alone.json()[ITEMS][0]['picture']['stage'] == 'page-split')
+        expect(alone.json()[ITEMS][0]['version'] is None)
+        assert_expectations()
+
+    async def test_an_edit_of_the_step_makes_the_shape_set_by_hand(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a saved edit of the step is what the state of the row names, before any run.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        step = response.json()[ITEMS][0]['step']
+        expect(step['state'] == 'by-hand')
+        expect(step['flags'] == ['by-hand'])
+        assert_expectations()
+
+    async def test_a_setting_of_the_page_for_the_step_raises_the_flag_set_by_hand(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a field the page changes for the step is a flag of its row, and leaves the shape as it was.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        changed = await set_strength(fx_client, fx_book, step_id, 2)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        step = response.json()[ITEMS][0]['step']
+        expect(changed.status_code == status.HTTP_200_OK)
+        expect((step['state'], step['flags']) == ('default', ['by-hand']))
+        assert_expectations()
+
+    async def test_rows_asked_for_no_step_carry_none(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the list of the stage alone holds a null where the step would be.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        assert response.json()[ITEMS][0]['step'] is None
+
+    async def test_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify an identifier that is the step of no recipe of the stage answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': str(uuid4())})
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_a_step_that_is_not_an_identifier_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the query is checked before the route runs.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': 'second'})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class TestResultMarks:
+    """Tests for the mark and the comment of a result and the log of their changes."""
+
+    @staticmethod
+    async def version_path(client: httpx.AsyncClient, idle: JobsIdle, book: Book) -> str:
+        """Run the page split and return the path of the version it made.
+
+        :param client: Client of the running application.
+        :type client: httpx.AsyncClient
+        :param idle: Wait that lets the jobs of the book finish.
+        :type idle: JobsIdle
+        :param book: Book of the signed-in account.
+        :type book: Book
+        :returns: The path of the version.
+        :rtype: str
+        """
+        await run_stage(client, idle, book, 'page-split')
+        stages = await client.get(f'{book.page_path}/stages')
+        return f'{book.page_path}/versions/{stages.json()[ITEMS][0]["head_version_id"]}'
+
+    async def test_put_sets_the_mark_and_the_comment_and_the_version_carries_them(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify PUT answers with the version, and a later GET of the version shows the same mark and comment.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = await self.version_path(fx_client, fx_idle, fx_book)
+        before = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
+        response = await fx_client.put(f'{path}/mark', json={'mark': 'bad', 'comment': 'Cut too tight.\nTry again.'})
+        answered = PageVersionSchema.model_validate_json(response.content)
+        read = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect((before.mark, before.comment) == (None, ''))
+        expect((answered.mark, answered.comment) == (ResultMark.BAD, 'Cut too tight.\nTry again.'))
+        expect(read == answered)
+        expect(answered.id == before.id)
+        assert_expectations()
+
+    async def test_a_body_without_a_mark_takes_the_mark_off(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a body that names no mark leaves the result without one, as the version reads back.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = await self.version_path(fx_client, fx_idle, fx_book)
+        await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
+        await fx_client.put(f'{path}/mark', json={'mark': None})
+        read = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
+        assert (read.mark, read.comment) == (None, '')
+
+    async def test_a_mark_that_is_neither_good_nor_bad_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the body is checked before the route runs, and a body without a mark field is refused.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = await self.version_path(fx_client, fx_idle, fx_book)
+        wrong = await fx_client.put(f'{path}/mark', json={'mark': 'fine', 'comment': ''})
+        absent = await fx_client.put(f'{path}/mark', json={'comment': 'x'})
+        expect(wrong.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(absent.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        assert_expectations()
+
+    async def test_a_version_that_does_not_exist_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a PUT of the mark of an unknown version answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = f'{fx_book.page_path}/versions/{"0" * 16}'
+        put = await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
+        assert put.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestResultsOfAStep:
+    """Tests for the step and mark filters of the list of versions, and the flag of a bad result on a row."""
+
+    @staticmethod
+    async def marked_geometry(
+        client: httpx.AsyncClient, idle: JobsIdle, book: Book, mark: str | None
+    ) -> tuple[str, str]:
+        """Run the page split and the geometry, and set a mark on the version the geometry made.
+
+        :param client: Client of the running application.
+        :type client: httpx.AsyncClient
+        :param idle: Wait that lets the jobs of the book finish.
+        :type idle: JobsIdle
+        :param book: Book of the signed-in account.
+        :type book: Book
+        :param mark: The mark to set, or None to leave the version unmarked.
+        :type mark: str | None
+        :returns: The identifier of the step of the geometry recipe and the identifier of the version it made.
+        :rtype: tuple[str, str]
+        """
+        await run_stage(client, idle, book, 'page-split')
+        await run_stage(client, idle, book, 'geometry')
+        step_id = await text_step_id(client, book, Stage.GEOMETRY)
+        stages = await client.get(f'{book.page_path}/stages')
+        [geometry] = [item for item in stages.json()[ITEMS] if item['stage'] == 'geometry']
+        version_id = str(geometry['head_version_id'])
+        if mark is not None:
+            await client.put(f'{book.page_path}/versions/{version_id}/mark', json={'mark': mark, 'comment': ''})
+        return step_id, version_id
+
+    async def test_the_versions_of_a_step_and_of_a_mark_are_listed_apart(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the step narrows the list to its own versions and the mark to the versions that carry it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id, version_id = await self.marked_geometry(fx_client, fx_idle, fx_book, 'bad')
+        versions = f'{fx_book.page_path}/versions'
+        stage = {'stage': 'geometry', 'step': step_id}
+        of_step = await fx_client.get(versions, params=stage)
+        bad = await fx_client.get(versions, params={**stage, 'mark': 'bad'})
+        good = await fx_client.get(versions, params={**stage, 'mark': 'good'})
+        bad_of_stage = await fx_client.get(versions, params={'stage': 'geometry', 'mark': 'bad'})
+        expect([item['id'] for item in of_step.json()[ITEMS]] == [version_id])
+        expect([item['id'] for item in bad.json()[ITEMS]] == [version_id])
+        expect(good.json()['total'] == 0)
+        expect([item['id'] for item in bad_of_stage.json()[ITEMS]] == [version_id])
+        assert_expectations()
+
+    async def test_a_step_without_its_stage_is_a_422_and_a_step_no_recipe_has_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the step is refused without the stage it belongs to, and an unknown step is not an empty list.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id, _ = await self.marked_geometry(fx_client, fx_idle, fx_book, None)
+        versions = f'{fx_book.page_path}/versions'
+        without_stage = await fx_client.get(versions, params={'step': step_id})
+        unknown = await fx_client.get(versions, params={'stage': 'geometry', 'step': str(uuid4())})
+        wrong_mark = await fx_client.get(versions, params={'mark': 'fine'})
+        expect(without_stage.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
+        expect(wrong_mark.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        assert_expectations()
+
+    async def test_a_version_tells_it_was_made_by_the_step(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify a version made without a manual edit has the origin of the step.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        _, version_id = await self.marked_geometry(fx_client, fx_idle, fx_book, None)
+        read = await fx_client.get(f'{fx_book.page_path}/versions/{version_id}')
+        assert PageVersionSchema.model_validate_json(read.content).origin is VersionOrigin.AUTO
+
+    async def test_a_row_tells_that_its_result_is_marked_bad(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
+    ) -> None:
+        """Verify the row of the stage and the row at the step both carry the flag once the result is marked bad.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id, version_id = await self.marked_geometry(fx_client, fx_idle, fx_book, None)
+        rows = f'{fx_book.path}/stages/geometry/pages'
+        before = await fx_client.get(rows)
+        await fx_client.put(f'{fx_book.page_path}/versions/{version_id}/mark', json={'mark': 'bad', 'comment': ''})
+        stage = await fx_client.get(rows)
+        at_step = await fx_client.get(rows, params={'step': step_id})
+        await fx_client.put(f'{fx_book.page_path}/versions/{version_id}/mark', json={'mark': 'good', 'comment': ''})
+        good = await fx_client.get(rows)
+        expect(before.json()[ITEMS][0]['marked_bad'] is False)
+        expect(stage.json()[ITEMS][0]['marked_bad'] is True)
+        expect(at_step.json()[ITEMS][0]['marked_bad'] is True)
+        expect(good.json()[ITEMS][0]['marked_bad'] is False)
+        assert_expectations()

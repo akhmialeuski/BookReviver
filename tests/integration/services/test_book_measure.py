@@ -1,0 +1,719 @@
+"""Tests for the job that measures the book: the content boxes Margins placed, written into the normalize step."""
+
+import math
+from typing import TYPE_CHECKING
+from uuid import uuid4
+
+import pytest
+from attrs import evolve
+from delayed_assert import assert_expectations, expect
+
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
+from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.geometry import Rect
+from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.jobs import JobKind, JobState, StageRun
+from bookreviver.domain.margins import MM_PER_INCH, MarginsSource, NormalizeParam
+from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.recipes import RecipeDraft, Step
+from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
+from bookreviver.services.book_measure import MEASURE_OUTDATED
+from tests.harness.builders.domain import make_page_stage, make_page_version, open_for
+from tests.harness.builders.processing import stored_job
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from bookreviver.domain.accounts import Actor
+    from bookreviver.domain.books import BookRecord
+    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.jobs import Job
+    from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
+    from bookreviver.domain.stages import PageStage
+    from bookreviver.ports.persistence import BookRepositories
+    from tests.harness.adapters.database import LocatedBookDatabases
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.processing import ProcessingKit
+
+pytestmark = pytest.mark.anyio
+
+CROP_KEY: str = 'geometry.crop'
+NORMALIZE_KEY: str = 'geometry.normalize'
+VERSION_ID_DIGITS: int = 16
+FIRST_KEY: str = 'a0'
+BUSY_MESSAGE: str = 'book is busy'
+# The line height a user types into the form while the book is measured
+HAND_LINE_HEIGHT: float = 40.0
+# The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
+# to the median one, which is 30 pixels, so the block is 300 by 600 on all three. Each line height is within the quarter
+# the step scales a page by, since a page farther from the target keeps its size and would not be brought to it
+BLOCKS: tuple[tuple[float, float, float], ...] = ((250, 500, 25), (300, 600, 30), (360, 720, 36))
+MEDIAN_LINE_HEIGHT_PX: float = 30.0
+# The block 300 by 600 plus the margins, which are 8, 10, 10 and 8 percent of the block. The pages carry no resolution,
+# so the block is taken for 100 mm wide, a millimetre is 3 pixels, and the margins are 16, 20, 10 and 8 mm
+PIXELS_PER_MM: int = 3
+EXPECTED_PAGE: dict[str, float] = {
+    NormalizeParam.PAGE_WIDTH: 354,
+    NormalizeParam.PAGE_HEIGHT: 708,
+    NormalizeParam.MARGIN_TOP: 16.0,
+    NormalizeParam.MARGIN_BOTTOM: 20.0,
+    NormalizeParam.MARGIN_INNER: 10.0,
+    NormalizeParam.MARGIN_OUTER: 8.0,
+}
+TOO_WIDE_PX: float = 30_000
+# Three pages on the target of 30, one a tenth below it that the step scales, and one a third below it, which the step
+# leaves as it is unless it is allowed to change the size by half
+FAR_PAGE_BLOCKS: tuple[tuple[float, float, float], ...] = (
+    (300, 600, 30),
+    (300, 600, 30),
+    (300, 600, 30),
+    (330, 660, 27),
+    (300, 600, 20),
+)
+# The margins the measure writes add 18 percent to the block each way
+MARGINS_SHARE: float = 1.18
+SIZE_TOLERANCE_PX: float = 3.0
+
+
+def version_id() -> PageVersionId:
+    """Make the identifier of a version.
+
+    :returns: Sixteen hexadecimal digits that are not any other version's.
+    :rtype: PageVersionId
+    """
+    return PageVersionId(uuid4().hex[:VERSION_ID_DIGITS])
+
+
+async def placed_page(
+    kit: ProcessingKit,
+    book_id: BookId,
+    recipe: Recipe,
+    order_key: str,
+    data: dict[str, object],
+) -> Page:
+    """Commit a page whose Geometry stage stands on a normalize version with the given data.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book_id: Identifier of the book owning the page.
+    :type book_id: BookId
+    :param recipe: Recipe of text pages of the Geometry stage, which the page was processed by.
+    :type recipe: Recipe
+    :param order_key: Order key of the page.
+    :type order_key: str
+    :param data: The data the normalize version recorded.
+    :type data: dict[str, object]
+    :returns: The page.
+    :rtype: Page
+    """
+    page, _ = await kit.seed_scan_page(book_id, order_key=order_key)
+    normalize = evolve(
+        make_page_version(page_id=page.id),
+        id=version_id(),
+        stage=Stage.GEOMETRY,
+        processor=ProcessorRef(key=NORMALIZE_KEY, version='2'),
+        state=VersionState.READY,
+        data=data,
+    )
+
+    def add_normalize(repos: BookRepositories, _book_record: BookRecord) -> None:
+        """Add the normalize version and the record of the Geometry stage that has it as its current version.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :param _book_record: Record of the book, which the work does not need.
+        :type _book_record: BookRecord
+        """
+        repos.page_versions.add(normalize)
+        repos.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
+
+    await kit.databases.open(book_id).change(add_normalize)
+    return page
+
+
+def block_data(width: float, height: float, line_height: float | None, dpi: float | None = None) -> dict[str, object]:
+    """Build the data the normalize step records for a page it placed at the scale of the page itself.
+
+    :param width: Width of the content box in pixels.
+    :type width: float
+    :param height: Height of the content box in pixels.
+    :type height: float
+    :param line_height: Distance between the lines in pixels, or None when the step found none.
+    :type line_height: float | None
+    :param dpi: Resolution of the page, or None for a page that has none.
+    :type dpi: float | None
+    :returns: The box, the factor 1, the confidence, that the page was not skipped, and the line height and the
+              resolution when there are some.
+    :rtype: dict[str, object]
+    """
+    data: dict[str, object] = {
+        VersionData.CONTENT_BOX: Rect(left=10, top=20, width=width, height=height).to_data(),
+        VersionData.BLOCK_SCALE: 1.0,
+        VersionData.CONFIDENCE: 1.0,
+        VersionData.SKIPPED: False,
+    }
+    if line_height is not None:
+        data[VersionData.LINE_HEIGHT_PX] = line_height
+    if dpi is not None:
+        data[VersionData.DPI] = dpi
+    return data
+
+
+async def measure(kit: ProcessingKit, actor: Actor, book_id: BookId) -> Job:
+    """Start the measure of the book and let the board run it.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the book.
+    :type actor: Actor
+    :param book_id: Identifier of the book to measure.
+    :type book_id: BookId
+    :returns: The job as it stands when the board is done.
+    :rtype: Job
+    """
+    job = await kit.service().start_measure(open_for(actor, book_id))
+    await kit.work_queue()
+    return stored_job(kit, job.id)
+
+
+async def geometry_record(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> PageStage:
+    """Read the committed record of the Geometry stage of a page.
+
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :param page: The page.
+    :type page: Page
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :returns: The record.
+    :rtype: PageStage
+    """
+    return await databases.open(book_id).read(
+        lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+    )
+
+
+async def normalize_params(
+    kit: ProcessingKit, actor: Actor, book_id: BookId, kind: RecipeKind = RecipeKind.TEXT
+) -> dict[str, object]:
+    """Read the parameters of the normalize step of the Geometry recipe of a kind of page.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the book.
+    :type actor: Actor
+    :param book_id: The identifier of the book.
+    :type book_id: BookId
+    :param kind: The kind of page, text unless given.
+    :type kind: RecipeKind
+    :returns: The parameters of the step.
+    :rtype: dict[str, object]
+    """
+    recipe = await kit.recipe_of(actor, book_id, Stage.GEOMETRY, kind)
+    [step] = [step for step in recipe.steps if step.processor_key == NORMALIZE_KEY]
+    return dict(step.params)
+
+
+async def set_normalize_params(
+    kit: ProcessingKit,
+    actor: Actor,
+    book_id: BookId,
+    changes: dict[str, object],
+    kind: RecipeKind = RecipeKind.TEXT,
+) -> None:
+    """Save the Geometry recipe of a kind of page with some parameters of its normalize step changed, as the form does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the book.
+    :type actor: Actor
+    :param book_id: The identifier of the book.
+    :type book_id: BookId
+    :param changes: The parameters to set.
+    :type changes: dict[str, object]
+    :param kind: The kind of page, text unless given.
+    :type kind: RecipeKind
+    """
+    recipe = await kit.recipe_of(actor, book_id, Stage.GEOMETRY, kind)
+    steps = [
+        evolve(step, params={**step.params, **changes}) if step.processor_key == NORMALIZE_KEY else step
+        for step in recipe.steps
+    ]
+    await kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps), kind)
+
+
+class TestMeasureBook:
+    """Tests for the ``measure-book`` job."""
+
+    async def test_the_line_height_and_the_page_of_the_pages_are_written_into_the_normalize_step(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the median line height and a page of the largest block with its margins reach the parameters.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(width, height, line_height))
+        before = await normalize_params(fx_cv_kit, actor, book_id)
+        job = await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        expect((job.kind, job.state) == (JobKind.MEASURE_BOOK, JobState.SUCCEEDED))
+        # The reading of the boxes of every page is one task of the job
+        expect((job.progress.done, job.progress.total) == (1, 1))
+        expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
+        expect({name: after[name] for name in EXPECTED_PAGE} == EXPECTED_PAGE)
+        # What the measure does not know is left as the user set it
+        measured = {*EXPECTED_PAGE, NormalizeParam.LINE_HEIGHT}
+        expect(
+            {n: v for n, v in after.items() if n not in measured}
+            == {n: v for n, v in before.items() if n not in measured}
+        )
+        assert_expectations()
+
+    async def test_a_book_with_a_resolution_gets_its_margins_in_the_millimetres_of_that_resolution(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify scans at 300 and 360 dpi of one paper measure to one block in millimetres, and the page holds them.
+
+        The blocks are the same paper at two resolutions, so once their lines are brought to the median one both are
+        2200 by 3300 pixels of 330 dpi, and the margins, which are shares of that block, are the same in millimetres.
+        Both line heights are within the quarter the step scales a page by.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (width, height, line_height, dpi) in enumerate(((2000, 3000, 30, 300), (2400, 3600, 36, 360))):
+            data = block_data(width, height, line_height, dpi)
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', data)
+        await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        pixels_per_mm = 330 / MM_PER_INCH
+        # 10 percent of the width, 8 percent of the width, 8 percent of the height and 10 percent of the height
+        expect(after[NormalizeParam.MARGIN_INNER] == pytest.approx(220 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_OUTER] == pytest.approx(176 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_TOP] == pytest.approx(264 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_BOTTOM] == pytest.approx(330 / pixels_per_mm, abs=0.05))
+        # The margins are rounded to a tenth of a millimetre, which is half a pixel at this resolution
+        expect(after[NormalizeParam.PAGE_WIDTH] == pytest.approx(2200 + 220 + 176, abs=2))
+        assert_expectations()
+
+    async def test_the_page_holds_the_largest_block_of_the_book_in_each_direction(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the page is as wide as the widest block and as high as the highest, which are of two pages.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (width, height) in enumerate(((300, 500), (260, 640), (280, 600))):
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(width, height, MEDIAN_LINE_HEIGHT_PX))
+        await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        # The margins are 8, 10, 10 and 8 percent of the largest block, which is 300 pixels wide and 3 of them a millimetre:
+        # 10 and 8 mm at the sides, and 17.1 and 21.3 mm at the top and the bottom
+        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (10 + 8) * PIXELS_PER_MM)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == math.ceil(640 + (17.1 + 21.3) * PIXELS_PER_MM))
+        assert_expectations()
+
+    async def test_every_kind_of_page_gets_the_one_page_size_and_keeps_its_own_margins(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the sheet is the widest and the highest of what the recipes measure, and each recipe keeps its margins.
+
+        The recipe of text pages is measured with the margins of the block, which make a page of 354 by 708 pixels. The
+        recipe of colour pictures has margins of its own, wider at the sides and shorter at the top and the bottom, which
+        alone make a page of 531 by 699. Neither is the sheet of the book: it is 531 by 708, in both recipes.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(width, height, line_height))
+        margins: dict[str, object] = {
+            NormalizeParam.MARGIN_TOP: 11.0,
+            NormalizeParam.MARGIN_BOTTOM: 22.0,
+            NormalizeParam.MARGIN_INNER: 33.0,
+            NormalizeParam.MARGIN_OUTER: 44.0,
+        }
+        await set_normalize_params(
+            fx_cv_kit,
+            actor,
+            book_id,
+            {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, NormalizeParam.MAX_SCALE_CHANGE: 50.0, **margins},
+            RecipeKind.COLOR_PICTURE,
+        )
+        await measure(fx_cv_kit, actor, book_id)
+        text = await normalize_params(fx_cv_kit, actor, book_id)
+        picture = await normalize_params(fx_cv_kit, actor, book_id, RecipeKind.COLOR_PICTURE)
+        sheet = {NormalizeParam.PAGE_WIDTH: 300 + (33 + 44) * PIXELS_PER_MM, NormalizeParam.PAGE_HEIGHT: 708}
+        expect({name: text[name] for name in sheet} == sheet)
+        expect({name: picture[name] for name in sheet} == sheet)
+        expect({name: text[name] for name in margins} == {n: v for n, v in EXPECTED_PAGE.items() if n in margins})
+        expect({name: picture[name] for name in margins} == margins)
+        expect(picture[NormalizeParam.LINE_HEIGHT] == text[NormalizeParam.LINE_HEIGHT])
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('limit', 'width'),
+        [(None, 366.67 * MARGINS_SHARE), (50.0, 450.0 * MARGINS_SHARE)],
+        ids=['the-limit-the-step-starts-with', 'a-limit-the-user-set'],
+    )
+    async def test_a_page_the_step_leaves_unscaled_is_measured_at_its_own_size(
+        self, fx_cv_kit: ProcessingKit, limit: float | None, width: float
+    ) -> None:
+        """Verify the page is sized by the boxes as the step places them, which leaves a far page at its own size.
+
+        Three pages are on the target of 30 pixels, one is a tenth below it and is scaled, and one is at 20, a third
+        below it, which the default limit of 25 percent leaves at 300 by 600; a limit of 50 percent scales it to 450.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param limit: The largest change of size the step allows, or None to keep the one the step starts with.
+        :type limit: float | None
+        :param width: The width the page of the book comes out at, in pixels.
+        :type width: float
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        if limit is not None:
+            await set_normalize_params(fx_cv_kit, actor, book_id, {NormalizeParam.MAX_SCALE_CHANGE: limit})
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (box_width, box_height, line_height) in enumerate(FAR_PAGE_BLOCKS):
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(box_width, box_height, line_height))
+        await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        expect(after[NormalizeParam.PAGE_WIDTH] == pytest.approx(width, abs=SIZE_TOLERANCE_PX))
+        expect(after[NormalizeParam.PAGE_HEIGHT] == pytest.approx(width * 2, abs=SIZE_TOLERANCE_PX))
+        assert_expectations()
+
+    async def test_the_pages_the_recipe_processed_go_out_of_date(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify a change of the parameters marks the Geometry stage of the pages stale, as every change of a recipe does.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        pages = [
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(width, height, line_height))
+            for index, (width, height, line_height) in enumerate(BLOCKS)
+        ]
+        await measure(fx_cv_kit, actor, book_id)
+        records = [await geometry_record(book_id, page, databases=fx_cv_kit.databases) for page in pages]
+        assert all(record.state is StageState.STALE for record in records)
+
+    async def test_measuring_again_changes_nothing_and_marks_nothing(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify a measure that finds the numbers the step has leaves the recipe and the pages as they are.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        page = await placed_page(fx_cv_kit, book_id, recipe, FIRST_KEY, block_data(300, 600, 30))
+        await measure(fx_cv_kit, actor, book_id)
+        written = await fx_cv_kit.databases.open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
+
+        def make_fresh(repos: BookRepositories, _book_record: BookRecord) -> None:
+            """Make the record of the Geometry stage of the page fresh again.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
+            """
+            repos.page_stages.save(
+                evolve(repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)), state=StageState.FRESH)
+            )
+
+        await fx_cv_kit.databases.open(book_id).change(make_fresh)
+        job = await measure(fx_cv_kit, actor, book_id)
+        again = await fx_cv_kit.databases.open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
+        record = await geometry_record(book_id, page, databases=fx_cv_kit.databases)
+        expect(job.state is JobState.SUCCEEDED)
+        expect(again.steps == written.steps)
+        expect(again.updated_at == written.updated_at)
+        expect(record.state is StageState.FRESH)
+        assert_expectations()
+
+    async def test_a_page_margins_found_no_box_for_or_that_has_no_line_height_is_handled(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a page with no content does not count, and a page with no line height counts by its block alone.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        await placed_page(fx_cv_kit, book_id, recipe, FIRST_KEY, block_data(300, 600, 30))
+        await placed_page(fx_cv_kit, book_id, recipe, 'a1', block_data(300, 600, None))
+        await placed_page(fx_cv_kit, book_id, recipe, 'a2', {VersionData.SKIPPED: True, VersionData.CONFIDENCE: 0.0})
+        await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
+        expect(after[NormalizeParam.PAGE_WIDTH] == EXPECTED_PAGE[NormalizeParam.PAGE_WIDTH])
+        assert_expectations()
+
+    async def test_a_book_none_of_whose_pages_margins_placed_has_nothing_to_measure(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the job fails with the reason, and the recipe is left as it was.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        before = await normalize_params(fx_cv_kit, actor, book_id)
+        job = await measure(fx_cv_kit, actor, book_id)
+        expect(job.state is JobState.FAILED)
+        expect('nothing to measure' in job.error)
+        expect(await normalize_params(fx_cv_kit, actor, book_id) == before)
+        assert_expectations()
+
+    async def test_a_recipe_without_a_normalize_step_has_nowhere_to_write_the_measures(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the job fails with the reason when no recipe of the stage has the step, and no page is marked stale.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipes = [
+            await fx_cv_kit.edit_recipe(
+                actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=[Step(processor_key=CROP_KEY)]), kind
+            )
+            for kind in RecipeKind
+        ]
+        page = await placed_page(fx_cv_kit, book_id, recipes[0], FIRST_KEY, block_data(300, 600, 30))
+        job = await measure(fx_cv_kit, actor, book_id)
+        record = await geometry_record(book_id, page, databases=fx_cv_kit.databases)
+        expect(job.state is JobState.FAILED)
+        expect(NORMALIZE_KEY in job.error)
+        expect(record.state is StageState.FRESH)
+        assert_expectations()
+
+    async def test_a_page_that_does_not_fit_the_bounds_of_the_step_fails_the_job_and_changes_nothing(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a measure that comes out larger than the step allows is refused, and the recipe is left as it was.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        await placed_page(fx_cv_kit, book_id, recipe, FIRST_KEY, block_data(TOO_WIDE_PX, 600, 30))
+        before = await normalize_params(fx_cv_kit, actor, book_id)
+        job = await measure(fx_cv_kit, actor, book_id)
+        expect(job.state is JobState.FAILED)
+        expect(await normalize_params(fx_cv_kit, actor, book_id) == before)
+        assert_expectations()
+
+
+class TestMarginsSource:
+    """Tests for the margins that the user set, which a measure leaves as they are."""
+
+    async def test_a_book_starts_with_measured_margins(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify the normalize step of a new book lets the measure set the margins.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        params = await normalize_params(fx_cv_kit, actor, book_id)
+        expect(params[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MEASURED)
+
+    async def test_manual_margins_survive_a_measure_while_the_line_height_and_the_page_follow(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a measure keeps the four margins, and makes the page the largest of the blocks plus the margins.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(width, height, line_height))
+        margins: dict[str, object] = {
+            NormalizeParam.MARGIN_TOP: 11.0,
+            NormalizeParam.MARGIN_BOTTOM: 22.0,
+            NormalizeParam.MARGIN_INNER: 33.0,
+            NormalizeParam.MARGIN_OUTER: 44.0,
+        }
+        await set_normalize_params(
+            fx_cv_kit, actor, book_id, {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, **margins}
+        )
+        job = await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        expect(job.state is JobState.SUCCEEDED)
+        expect({name: after[name] for name in margins} == margins)
+        expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MANUAL)
+        expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
+        # The block is 300 by 600, and a millimetre of it is 3 pixels. The sheet is the largest of the recipes: the
+        # manual margins make it 531 wide and 699 high, and the other kinds, which have the margins of the block, make
+        # it 354 wide and 708 high
+        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (33 + 44) * PIXELS_PER_MM)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == EXPECTED_PAGE[NormalizeParam.PAGE_HEIGHT])
+        assert_expectations()
+
+    async def test_measured_margins_are_written_again_once_the_source_is_switched_back(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the measure sets the margins of a step that was manual and is measured again.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await placed_page(fx_cv_kit, book_id, recipe, f'a{index}', block_data(width, height, line_height))
+        await set_normalize_params(
+            fx_cv_kit,
+            actor,
+            book_id,
+            {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, NormalizeParam.MARGIN_TOP: 11},
+        )
+        await measure(fx_cv_kit, actor, book_id)
+        await set_normalize_params(fx_cv_kit, actor, book_id, {NormalizeParam.MARGINS_SOURCE: MarginsSource.MEASURED})
+        await measure(fx_cv_kit, actor, book_id)
+        after = await normalize_params(fx_cv_kit, actor, book_id)
+        expect({name: after[name] for name in EXPECTED_PAGE} == EXPECTED_PAGE)
+        expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MEASURED)
+        assert_expectations()
+
+
+class TestMeasureIsProcessing:
+    """Tests for the measure of the book being one of the jobs that run one at a time."""
+
+    async def test_a_run_is_refused_while_a_measure_is_queued(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify a run cannot start while a measure is queued, since the measure rewrites the parameters it reads.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
+        with pytest.raises(ConflictError, match='measure of the book'):
+            await fx_cv_kit.service().start_run(
+                fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            )
+
+    async def test_a_measure_is_refused_while_a_run_is_queued(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify a measure cannot start while a run is queued, since the run writes the versions that are measured.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        await fx_cv_kit.service().start_run(
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
+        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
+            await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
+
+    async def test_a_second_measure_is_refused_while_one_is_queued(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify two measures never overlap.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
+        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
+            await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
+
+
+class TestMeasureApplyStep:
+    """Tests for the change that writes the measures, which reads the recipes again."""
+
+    @pytest.mark.parametrize(
+        'kind',
+        [
+            pytest.param(RecipeKind.TEXT, id='recipe-of-text-pages'),
+            pytest.param(RecipeKind.BW_PICTURE, id='recipe-of-pictures'),
+        ],
+    )
+    async def test_a_recipe_saved_while_the_book_was_measured_fails_the_job_and_nothing_is_written(
+        self, fx_cv_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, kind: RecipeKind
+    ) -> None:
+        """Verify the measure does not write over a recipe a user saved after the measure read it, in any recipe.
+
+        The boxes of the pages are read by a transaction that only reads, and the measure writes in the first
+        ``Book.change`` that follows it, which no other change of the job precedes. The recipe is saved just before that
+        ``Book.change`` begins, so the measure was made from steps that are not the ones stored any more. The recipe of
+        the kind that comes first is written first inside the change, and the change is rolled back as a whole when a
+        later one is found changed.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the catalogue database.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param kind: The kind of page whose recipe the user saves meanwhile.
+        :type kind: RecipeKind
+        """
+        actor, book_id = await fx_cv_kit.seed_book()
+        recipe = await fx_cv_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        await placed_page(fx_cv_kit, book_id, recipe, FIRST_KEY, block_data(300, 600, 30))
+        before = {each: await normalize_params(fx_cv_kit, actor, book_id, each) for each in RecipeKind}
+        # The save goes in before the first change of a book, and passes through the patched method itself, as the
+        # measure's change does
+        change = SqlAlchemyBookDatabase.change
+        saved = False
+
+        async def save_then_change[T](
+            database: SqlAlchemyBookDatabase, work: Callable[[BookRepositories, BookRecord], T]
+        ) -> T:
+            """Save the recipe of a kind through the form's use case before the first change of a book, then change.
+
+            :param database: The book database that changes the book.
+            :type database: SqlAlchemyBookDatabase
+            :param work: Function over the repositories of the transaction and the record of the book.
+            :type work: Callable[[BookRepositories, BookRecord], T]
+            :returns: What the work returns.
+            :rtype: T
+            """
+            nonlocal saved
+            if not saved:
+                saved = True
+                await set_normalize_params(
+                    fx_cv_kit, actor, book_id, {NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}, kind
+                )
+            return await change(database, work)
+
+        monkeypatch.setattr(SqlAlchemyBookDatabase, 'change', save_then_change)
+        job = await measure(fx_cv_kit, actor, book_id)
+        after = {each: await normalize_params(fx_cv_kit, actor, book_id, each) for each in RecipeKind}
+        written_by_hand = {**before[kind], NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}
+        expect((job.state, job.error) == (JobState.FAILED, MEASURE_OUTDATED))
+        expect(after[kind] == written_by_hand)
+        expect(
+            {each: params for each, params in after.items() if each is not kind}
+            == {each: params for each, params in before.items() if each is not kind}
+        )
+        assert_expectations()

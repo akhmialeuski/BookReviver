@@ -12,7 +12,7 @@ import { HttpStatus } from '@/shared/http/status';
  * The place of a book as one query, and the write that replaces it.
  *
  * The query holds the place the reader left the book at, or null when they have not worked on it. The writer
- * (`writer.ts`) also puts the place it is about to write into this cache, so a screen that opens right after another
+ * (`PlaceWriter`) also puts the place it is about to write into this cache, so a screen that opens right after another
  * reads where the reader is, and not where the server last heard of them. A read waits for the writes that are still
  * on their way, for the same reason: a book opened a moment after it was closed must open where it was closed.
  */

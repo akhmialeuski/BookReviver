@@ -1,0 +1,258 @@
+"""Fixtures of the service tests: the local stores over a temporary directory, on top of the shared database."""
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState
+from bookreviver.plugins.split_none import SplitNone
+from bookreviver.services.book import Book
+from bookreviver.services.pagination import PaginationService
+from tests.harness.adapters.page_stage_writes import PageStageWrites
+from tests.harness.adapters.page_writes import PageWrites
+from tests.harness.builders.page_services import make_page_service
+from tests.harness.builders.processing import CV_DEFAULTS, ProcessingKit
+from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.fakes.processors import (
+    CleanupProcessor,
+    FakeProcessor,
+    FirstProcessor,
+    MeasuringProcessor,
+    SecondProcessor,
+    ThirdProcessor,
+)
+from tests.harness.images.samples import CV_MISSING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.domain.ids import BookDirectoryName
+    from bookreviver.domain.jobs import Job
+    from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.pages import PageService
+    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.jobs import RecordingEventBus
+
+
+@pytest.fixture
+def fx_page_stage_writes(monkeypatch: pytest.MonkeyPatch) -> PageStageWrites:
+    """Build the record of the writes of the page stage repository, which a test starts after it has seeded.
+
+    :param monkeypatch: Fixture that undoes the patch of the repository after the test.
+    :type monkeypatch: pytest.MonkeyPatch
+    :returns: Record that holds nothing until ``start`` is called.
+    :rtype: PageStageWrites
+    """
+    return PageStageWrites(monkeypatch)
+
+
+@pytest.fixture
+def fx_page_writes(monkeypatch: pytest.MonkeyPatch) -> PageWrites:
+    """Build the record of the pages the page repository writes, which a test starts after it has seeded.
+
+    :param monkeypatch: Fixture that undoes the patch of the repository after the test.
+    :type monkeypatch: pytest.MonkeyPatch
+    :returns: Record that holds nothing until ``start`` is called.
+    :rtype: PageWrites
+    """
+    return PageWrites(monkeypatch)
+
+
+@pytest.fixture
+def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobBoard:
+    """Build a job board that records what is put on it and runs it when a test says so.
+
+    A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
+    ends at once, since the page tests look at the queueing of those and not at their work.
+
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
+    :type fx_open_book: BookOpener
+    :param fx_events: Recording event bus.
+    :type fx_events: RecordingEventBus
+    :returns: Board the page service puts its jobs on.
+    :rtype: FakeJobBoard
+    """
+
+    async def run(dir_name: BookDirectoryName, job: Job, control: JobControl) -> JobEnd:
+        """Run a job the way the application would, over a page service of its own.
+
+        :param dir_name: Name of the directory of the book whose queue the job was taken from.
+        :type dir_name: BookDirectoryName
+        :param job: The job the board took from its queue.
+        :type job: Job
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: How the job ended.
+        :rtype: JobEnd
+        """
+        if job.kind is not JobKind.PREPARE_PAGES:
+            return JobEnd(state=JobState.SUCCEEDED)
+        service = make_page_service(fx_open_book, (fx_events, board))
+        return await service.prepare_images(Book(dir_name), job, control)
+
+    board = FakeJobBoard(runner=run)
+    return board
+
+
+@pytest.fixture
+def fx_runtime(fx_events: RecordingEventBus, fx_board: FakeJobBoard) -> tuple[RecordingEventBus, FakeJobBoard]:
+    """Gather what a page service reports through: the recording bus and the job board.
+
+    :param fx_events: Recording event bus.
+    :type fx_events: RecordingEventBus
+    :param fx_board: Board that records its jobs.
+    :type fx_board: FakeJobBoard
+    :returns: The publisher and the board, as ``make_page_service`` takes them.
+    :rtype: tuple[RecordingEventBus, FakeJobBoard]
+    """
+    return fx_events, fx_board
+
+
+@pytest.fixture
+def fx_service(
+    fx_open_book: BookOpener,
+    fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
+) -> Callable[[], PageService]:
+    """Return a function building the page service for one request or job.
+
+    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
+    :type fx_open_book: BookOpener
+    :param fx_runtime: The recording bus and the job board the service reports through.
+    :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
+    :returns: Function building a service over a new catalogue database.
+    :rtype: Callable[[], PageService]
+    """
+    return lambda: make_page_service(fx_open_book, fx_runtime)
+
+
+@pytest.fixture
+def fx_pagination() -> Callable[[], PaginationService]:
+    """Return a function building the pagination service for one request.
+
+    :returns: Function building a service.
+    :rtype: Callable[[], PaginationService]
+    """
+    return PaginationService
+
+
+@pytest.fixture
+def fx_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+) -> ProcessingKit:
+    """Build what the processing services of a test share, over the database and the asset store of the test.
+
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: The kit that builds the processing service, the jobs of the workers and the edit service.
+    :rtype: ProcessingKit
+    """
+    return ProcessingKit(fx_database, fx_open_book)
+
+
+@pytest.fixture
+def fx_cv_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+) -> ProcessingKit:
+    """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
+
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto``, the five geometry
+              processors and the four cleanup processors, which the default recipes of those stages need.
+    :rtype: ProcessingKit
+    """
+    split = pytest.importorskip('bookreviver.plugins.split_spread', reason=CV_MISSING).SplitSpread()
+    auto = pytest.importorskip('bookreviver.plugins.split_auto', reason=CV_MISSING).SplitAuto()
+    perspective = pytest.importorskip('bookreviver.plugins.perspective', reason=CV_MISSING).Perspective()
+    deskew = pytest.importorskip('bookreviver.plugins.deskew', reason=CV_MISSING).Deskew()
+    dewarp = pytest.importorskip('bookreviver.plugins.dewarp', reason=CV_MISSING).Dewarp()
+    crop = pytest.importorskip('bookreviver.plugins.crop', reason=CV_MISSING).Crop()
+    normalize = pytest.importorskip('bookreviver.plugins.normalize', reason=CV_MISSING).Normalize()
+    binarize = pytest.importorskip('bookreviver.plugins.binarize', reason=CV_MISSING).Binarize()
+    despeckle = pytest.importorskip('bookreviver.plugins.despeckle', reason=CV_MISSING).Despeckle()
+    thickness = pytest.importorskip('bookreviver.plugins.thickness', reason=CV_MISSING).Thickness()
+    eraser = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
+    return ProcessingKit(
+        fx_database,
+        fx_open_book,
+        processors=[
+            SplitNone(),
+            split,
+            auto,
+            perspective,
+            deskew,
+            dewarp,
+            crop,
+            normalize,
+            binarize,
+            despeckle,
+            thickness,
+            eraser,
+        ],
+        defaults=CV_DEFAULTS,
+    )
+
+
+@pytest.fixture
+def fx_ordered_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+) -> ProcessingKit:
+    """Build the processing kit over processors that declare a place.
+
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
+    :rtype: ProcessingKit
+    """
+    processors = [
+        SplitNone(),
+        FakeProcessor(),
+        CleanupProcessor(),
+        FirstProcessor(),
+        SecondProcessor(),
+        ThirdProcessor(),
+    ]
+    return ProcessingKit(fx_database, fx_open_book, processors=processors)
+
+
+@pytest.fixture
+def fx_measuring_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+) -> ProcessingKit:
+    """Build the processing kit over a processor that finds an angle on each page.
+
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: The kit whose catalogue holds the fakes of the tests and ``geometry.measuring``.
+    :rtype: ProcessingKit
+    """
+    return ProcessingKit(
+        fx_database,
+        fx_open_book,
+        processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()],
+    )
+
+
+@pytest.fixture
+def fx_events(fx_book_parts: RecordingEventBus) -> RecordingEventBus:
+    """Return the recording event bus of the test, which records every event of every book.
+
+    :param fx_book_parts: The bus registered for the test.
+    :type fx_book_parts: RecordingEventBus
+    :returns: The bus every service, job and book database of the test publishes to.
+    :rtype: RecordingEventBus
+    """
+    return fx_book_parts

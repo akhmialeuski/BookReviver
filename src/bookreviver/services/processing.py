@@ -6,7 +6,7 @@ they affect stale, or start heavy work, a run, a preview, a cut of tiles, a coll
 records a job with its parameters, queues it and answers at once, since a request handler never blocks on CPU-bound
 work. A use case that starts heavy work holds no transaction itself: it finds the recipes, which opens a ``Book.change``
 of its own when the stage has none, and then the job starter records the job in a ``change`` of its own. Neither runs
-a processor. The workers do, through ``ProcessingJobs``, and the files of a step are written by ``steps.py``.
+a processor. The workers do, through ``ProcessingJobs``, and the files of a step are written by ``StepRunner``.
 
 Editing a recipe does not process any page again. It marks the stage stale on every page the recipe processed, and the
 user starts the run. The one recipe of each kind of a stage is kept by the database with a unique key.
