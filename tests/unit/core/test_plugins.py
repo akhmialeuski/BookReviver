@@ -5,7 +5,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.processors import ProcessorRole
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.split.split_none import SplitNone
 from tests.harness.fakes.processing import FakeCatalogue
 from tests.harness.fakes.processors import FakeContentProbe, FakeProcessor
 

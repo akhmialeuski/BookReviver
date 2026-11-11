@@ -29,8 +29,8 @@ from bookreviver.app.settings import ImagingSettings
 from bookreviver.core.book import Book
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.slices import SliceRequest
-from bookreviver.plugins.blank import BlankPage
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.pages.blank import BlankPage
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions

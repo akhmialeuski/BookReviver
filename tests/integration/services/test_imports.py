@@ -35,7 +35,7 @@ from bookreviver.domain.pagination import NumberDisplay
 from bookreviver.domain.sources import DjvuDocumentKind, FileType, RejectionReason, SourceKind, SourceStatus
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionInputs, VersionState
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.runtime import JobControl
 from bookreviver.services.imports import IMPORT_ACTIVE, NO_SOURCE_IMPORTED, ImportRun
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate

@@ -20,7 +20,7 @@ from bookreviver.domain.processors import (
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.domain.versions import VersionData
-from bookreviver.plugins.normalize_book import NormalizeBook
+from bookreviver.plugins.geometry.normalize_book import NormalizeBook
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
