@@ -13,8 +13,8 @@ from attrs import evolve
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
+from bookreviver.core.book import Book
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
-from bookreviver.services.book import Book
 from tests.harness.adapters.database import (
     BookSessions,
     LocatedBookDatabases,
@@ -45,7 +45,6 @@ if TYPE_CHECKING:
 TRACED_WAIT_SECONDS: float = 10.0
 # How long a traced book stays open after its last use, longer than any test
 TRACED_IDLE_SECONDS: float = 3600.0
-STORAGE_DIRECTORY: str = 'storage'
 
 
 @pytest.fixture
@@ -73,7 +72,9 @@ def fx_book_sessions(fx_books: BookRegistry) -> BookSessions:
 
 
 @pytest.fixture
-def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: Path) -> Callable[..., ImportRig]:
+def fx_import_rig(
+    fx_database: SqlDatabase, fx_open_book: BookOpener, fx_storage_root: Path
+) -> Callable[..., ImportRig]:
     """Give a function that builds the import rig over the database, whose board runs only the import jobs.
 
     The board of an ``ImportRig`` runs every job as an import. The rig this function builds cuts as many scans at once
@@ -84,8 +85,8 @@ def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: 
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
     :type fx_open_book: BookOpener
-    :param tmp_path: Temporary directory of the test, which holds the storage root of the rig.
-    :type tmp_path: Path
+    :param fx_storage_root: Storage root of the test, which holds the directories of its books and so those of the rig.
+    :type fx_storage_root: Path
     :returns: Function taking the largest number of scans cut at once and returning the rig.
     :rtype: Callable[..., ImportRig]
     """
@@ -98,7 +99,7 @@ def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: 
         :returns: The rig, whose board runs an import on the database.
         :rtype: ImportRig
         """
-        base = ImportRig.build(tmp_path / STORAGE_DIRECTORY, fx_database, fx_open_book)
+        base = ImportRig.build(fx_storage_root, fx_database, fx_open_book)
         # The runner needs the service of the rig and the rig needs the runner, so the rig is found when a job runs
         built: list[ImportRig] = []
 

@@ -36,6 +36,7 @@ from tests.harness.builders.domain import (
     make_page_step_state,
     make_page_version,
     make_recipe,
+    make_recipe_profile,
     make_record,
     make_scan,
     make_section,
@@ -351,6 +352,7 @@ async def fx_book_rows(fx_databases: BookDatabasesFactory, fx_book: Book) -> dic
     values = make_step_values()
     history_entry = make_page_history_entry(page_id=page.id)
     recipe = make_recipe()
+    profile = make_recipe_profile()
     place = make_book_place()
 
     def add_rows(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -371,6 +373,7 @@ async def fx_book_rows(fx_databases: BookDatabasesFactory, fx_book: Book) -> dic
         repos.step_values.add(values)
         repos.page_history.add(history_entry)
         repos.recipes.add(recipe)
+        repos.recipe_profiles.add(profile)
         repos.book_places.save(place)
 
     await fx_databases().open(fx_book.book_id).change(add_rows)
@@ -424,6 +427,12 @@ async def fx_book_rows(fx_databases: BookDatabasesFactory, fx_book: Book) -> dic
             evolve(recipe, updated_at=recipe.updated_at + ONE_MINUTE),
             make_recipe(stage=Stage.CLEANUP),
             recipe.id,
+        ),
+        'recipe_profiles': Row(
+            profile,
+            evolve(profile, updated_at=profile.updated_at + ONE_MINUTE),
+            make_recipe_profile(stage=Stage.CLEANUP),
+            profile.id,
         ),
         'book_places': Row(
             place,
