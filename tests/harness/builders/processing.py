@@ -16,6 +16,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import ProcessingSettings
 from bookreviver.core.book import Book
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.accounts import Actor
 from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
 from bookreviver.domain.jobs import JobKind
@@ -27,7 +28,7 @@ from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
 from bookreviver.domain.versions import VersionState
 from bookreviver.plugins.split_none import SplitNone
-from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
+from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageVersionId
     from bookreviver.domain.jobs import Job, JobEnd
@@ -77,7 +79,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.sources import Scan
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase, PageVersionRepository
-    from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.harness.adapters.database import LocatedBookDatabases

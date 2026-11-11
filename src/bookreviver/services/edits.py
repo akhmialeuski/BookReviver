@@ -40,13 +40,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
     from bookreviver.domain.processors import ProcessorSpec
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from bookreviver.services.stage_records import StageRecords
 

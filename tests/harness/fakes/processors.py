@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, override
 
 from attrs import evolve
 
+from bookreviver.core.plugins import Processor
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import EditorKind
 from bookreviver.domain.images import ColorMode
@@ -12,7 +13,8 @@ from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSp
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.domain.versions import VersionData
-from bookreviver.ports.processing import Processor, StepOutput, StepResult
+from bookreviver.plugins.normalize_book import NormalizeBook
+from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -153,6 +155,7 @@ class FakeProcessor(Processor):
 
 # The key of the processor that finds an angle on each page
 MEASURING_KEY: str = 'geometry.measuring'
+BOOK_SIZED_KEY: str = 'geometry.normalize'
 
 
 class MeasuringProcessor(FakeProcessor):
@@ -196,6 +199,17 @@ class MeasuringProcessor(FakeProcessor):
         [output] = result.outputs
         found: dict[str, object] = {VersionData.ANGLE.value: float(step_input.params[STRENGTH_PARAMETER])}
         return StepResult(outputs=[evolve(output, data={**output.data, **found})])
+
+
+class BookSizedProcessor(FakeProcessor):
+    """A processor under the key of the normalize step whose half that reads the book is the real one.
+
+    The step itself needs OpenCV, and its half that reads the book does not, so a test of what the book gives a step
+    runs with this processor on a machine that has none.
+    """
+
+    spec = evolve(FakeProcessor.spec, key=BOOK_SIZED_KEY, title='Book sized')
+    book_step = NormalizeBook(BOOK_SIZED_KEY)
 
 
 class GpuProcessor(FakeProcessor):

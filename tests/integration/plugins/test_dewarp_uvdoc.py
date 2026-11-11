@@ -15,9 +15,10 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.app.settings import ProcessingSettings
+from bookreviver.core.plugins import Processor
 from bookreviver.domain.step_settings import DewarpMethod
 from bookreviver.domain.versions import VersionData
-from bookreviver.ports.processing import Processor, ProcessorSettings
+from bookreviver.ports.processing import ProcessorSettings
 from tests.harness.images.runner import run_on
 from tests.harness.images.samples import CV_MISSING, save
 from tests.harness.images.scans import SCANS_DIR

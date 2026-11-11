@@ -14,10 +14,11 @@ as stopped there. If the earlier stage of the page is stale, or stopped short of
 its own recipe, which finds its versions in the cache when nothing changed. ``PreviewRun`` runs the steps of a form on
 the previews of the images and never changes what is current.
 
-A page is placed on the page size by the book, which no page alone knows. The fields of the normalize step that are 0
-are laid over its parameters from the content boxes the book has: a run of the whole book works them out once, from the
-boxes its pages were just placed by, and a run of a page or a preview works them out from the box of that page and the
-boxes the other pages hold. The version holds the parameters the step ran with, so the size reaches its identifier.
+A step whose plugin has a half that reads the book (``BookStep``) may leave some of its parameters to the book, such as
+the page size every page is placed on, which no page alone knows. What the book gives is laid over the parameters of
+the step: a run of the whole book asks the plugin once, with the versions of the step its pages were just taken to, and
+a run of a page or a preview asks it with the version of that page, beside what the other pages hold. The version holds
+the parameters the step ran with, so what the book gave reaches its identifier.
 
 Both classes hold no transaction while a processor computes. Each version is
 stored by two short ``Book.change`` calls, the mark that it is running and then its result, so the viewer shows the
@@ -50,7 +51,7 @@ from bookreviver.domain.sides import PageSide
 from bookreviver.domain.spans import SpanAttribute, SpanName, StepOutcome
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import PageSize, PageVersion, VersionData, VersionInputs, VersionScale, VersionState
-from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
+from bookreviver.services.book_steps import BookSteps
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.step_params import PageLayers
 from bookreviver.services.steps import StepRun
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import BookStep, ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
     from bookreviver.domain.metadata import MetadataMap
@@ -67,7 +69,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.tracing import Span, Tracer
     from bookreviver.services.processing_parts import ProcessingParts
@@ -95,8 +96,8 @@ class StepSource:
     :ivar data: ``data`` of the version, or the facts of the scan.
     :ivar scale: Whether the image is the full one or the preview, which is what the step reading it runs on.
     :ivar ratio: Size of the image over the size of the full image, 1 for a full run.
-    :ivar book: What the book gives the fields of the normalize step that are 0, which lies under the settings of the
-                page, or None for a run that has not worked it out.
+    :ivar book: What the book gives the step that reads the book for the fields its parameters leave to it, which lies
+                under the settings of the page, or None for a run that has not worked it out.
     """
 
     version_id: PageVersionId | None
@@ -105,6 +106,20 @@ class StepSource:
     scale: VersionScale = VersionScale.FULL
     ratio: float = 1.0
     book: MetadataMap | None = None
+
+
+@frozen(kw_only=True)
+class BookFields:
+    """The step of a run that reads the book, whose parameters leave a field to the book.
+
+    :ivar position: Place of the step among the steps the run goes over.
+    :ivar book_step: The half of the plugin of the step that reads the book.
+    :ivar params: Parameters of the step with the defaults of the processor filled in.
+    """
+
+    position: int
+    book_step: BookStep
+    params: MetadataMap
 
 
 @frozen(kw_only=True)
@@ -163,20 +178,21 @@ class StageWork:
         self._processors = runtime.processors
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
+        self._book_steps = BookSteps(runtime.processors)
 
     def task_count(self, steps: Sequence[Step]) -> int:
         """Count the tasks of the steps a run or a preview goes over on one page.
 
-        Every step is a task. A page whose normalize step leaves a field to the book is also taken as far as that step
-        once more, to measure its content box, so those steps are tasks again.
+        Every step is a task. A page with a step that leaves a field to the book is also taken as far as that step once
+        more, for the plugin to read what the step found on it, so those steps are tasks again.
 
         :param steps: The steps the run goes over, which are on.
         :type steps: Sequence[Step]
         :returns: The number of tasks the page makes.
         :rtype: int
         """
-        measured = 0 if self._book_fields(steps) is None else self._normalize_position(steps) + 1
-        return len(steps) + measured
+        fields = self._book_fields(steps)
+        return len(steps) + (0 if fields is None else fields.position + 1)
 
     async def _refresh(self, page: Page, stage: Stage) -> None:
         """Bring a stale earlier stage of a page up to date before a step reads it; a preview leaves it as it is.
@@ -375,56 +391,46 @@ class StageWork:
             source = evolve(self._version_source(version, source.scale), book=source.book, ratio=source.ratio)
         return version
 
-    def _book_fields(self, steps: Sequence[Step]) -> MetadataMap | None:
-        """Find the parameters of the normalize step among steps when some of its fields are left to the book.
+    def _book_fields(self, steps: Sequence[Step]) -> BookFields | None:
+        """Find the first step among steps whose plugin reads the book, when its parameters leave a field to the book.
 
         :param steps: The steps a run or a preview goes over.
         :type steps: Sequence[Step]
-        :returns: The parameters of the step with the defaults filled in, or None when no step is a normalize step, or
-                  every field of it has a value.
-        :rtype: MetadataMap | None
+        :returns: The place of the step, the half of its plugin that reads the book and its parameters with the
+                  defaults filled in, or None when no step reads the book, or every field of it has a value.
+        :rtype: BookFields | None
         """
-        step = next((step for step in steps if step.processor_key == NORMALIZE_KEY), None)
-        if step is None:
+        position = self._book_steps.position(steps)
+        book_step = None if position is None else self._book_steps.of(steps[position])
+        if position is None or book_step is None:
             return None
-        params = self._processors.get(NORMALIZE_KEY).validate_params(step.params)
-        return params if wants_the_book(params) else None
+        step = steps[position]
+        params = self._processors.get(step.processor_key).validate_params(step.params)
+        if not book_step.leaves_to_book(params):
+            return None
+        return BookFields(position=position, book_step=book_step, params=params)
 
-    async def _measure(
-        self, page: Page, stage: Stage, steps: Sequence[Step], source: StepSource
-    ) -> BlockMeasure | None:
-        """Make the steps up to the normalize step as they stand, and read the content box it recorded.
+    async def _measure(self, page: Page, stage: Stage, steps: Sequence[Step], source: StepSource) -> PageVersion | None:
+        """Make the steps up to the one that reads the book as they stand, and give the version that step made.
 
         :param page: Page to measure.
         :type page: Page
         :param stage: Stage of the steps.
         :type stage: Stage
-        :param steps: The steps a run or a preview goes over, one of which is the normalize step.
+        :param steps: The steps a run or a preview goes over, as far as the one that reads the book.
         :type steps: Sequence[Step]
         :param source: What the first step reads.
         :type source: StepSource
-        :returns: The box of the page, or None when a step failed or the page has no content to find a box by.
-        :rtype: BlockMeasure | None
+        :returns: The version of the step on the page, or None when a step failed on the way.
+        :rtype: PageVersion | None
         """
-        position = self._normalize_position(steps)
-        version = await self._make_chain(page, stage, steps[: position + 1], source)
-        return None if version is None or version.state is not VersionState.READY else BlockMeasure.of(version)
-
-    @staticmethod
-    def _normalize_position(steps: Sequence[Step]) -> int:
-        """Find the place of the normalize step among steps.
-
-        :param steps: The steps a run or a preview goes over, one of which is the normalize step.
-        :type steps: Sequence[Step]
-        :returns: The index of the normalize step.
-        :rtype: int
-        """
-        return next(index for index, step in enumerate(steps) if step.processor_key == NORMALIZE_KEY)
+        version = await self._make_chain(page, stage, steps, source)
+        return None if version is None or version.state is not VersionState.READY else version
 
     async def _book_of(self, page: Page, stage: Stage, steps: Sequence[Step], source: StepSource) -> MetadataMap:
-        """Work out what the book gives the normalize step on a page that is run or previewed alone.
+        """Work out what the book gives the step that reads it, on a page that is run or previewed alone.
 
-        :param page: The page, whose content box is measured now.
+        :param page: The page, which is taken as far as the step now.
         :type page: Page
         :param stage: Stage of the steps.
         :type stage: Stage
@@ -433,16 +439,16 @@ class StageWork:
         :param source: What the first step reads.
         :type source: StepSource
         :returns: The fields of the step that are by the book with their values, none when the step has no field by the
-                  book or no page has a box.
+                  book or no page has a result of it.
         :rtype: MetadataMap
         """
-        if (params := self._book_fields(steps)) is None:
+        if (fields := self._book_fields(steps)) is None:
             return {}
-        measure = await self._measure(page, stage, steps, source)
-        fresh: dict[PageId, BlockMeasure] = {}
-        if measure is not None:
-            fresh[page.id] = measure
-        return await self._book.read(lambda repos: BookBlocks(repos).by_the_book(stage, params, fresh))
+        made = await self._measure(page, stage, steps[: fields.position + 1], source)
+        fresh = {} if made is None else {page.id: made}
+        return await self._book.read(
+            lambda repos: fields.book_step.from_book(BookContent(repos), stage, fields.params, fresh)
+        )
 
     async def _execute(self, version: PageVersion, run: StepRun) -> PageVersion:
         """Run the step of a version and store its files.
@@ -559,7 +565,7 @@ class StageWork:
                 # with, and two pages that end up with equal ones share it.
                 base = (
                     {**step.params, **source.book}
-                    if source.book and step.processor_key == NORMALIZE_KEY
+                    if source.book and self._book_steps.of(step) is not None
                     else step.params
                 )
                 laid = (
@@ -969,12 +975,12 @@ class RecipeRun(StageWork):
         )
         return holds, undoing
 
-    async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> BlockMeasure | None:
-        """Make the steps of the recipe up to the normalize step, and read the content box the step recorded.
+    async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> PageVersion | None:
+        """Make the steps of the recipe up to the step that reads the book, and give the version that step made.
 
-        A run of the whole book places every page by a page size that is the largest of the boxes of all of them, so it
-        asks every page for its box first. The versions this makes are the ones the run finds again. Called with no
-        transaction open, and the versions are stored by the ``Book.change`` calls of ``_make_version``.
+        A run of the whole book gives every page what the step found on all of them, so it takes every page as far as
+        the step first. The versions this makes are the ones the run finds again. Called with no transaction open, and
+        the versions are stored by the ``Book.change`` calls of ``_make_version``.
 
         :param page: Page to measure.
         :type page: Page
@@ -982,22 +988,21 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
         :type through_step: int | None
-        :returns: The box of the page, or None when the page has no image, a step failed, or it has no content.
-        :rtype: BlockMeasure | None
+        :returns: The version of the step on the page, or None when the page has no image or a step failed.
+        :rtype: PageVersion | None
         """
         steps = [step for _, step in recipe.indexed_steps_through(through_step)]
-        if (
-            self._book_fields(steps) is None
-            or (source := await self._source(page, recipe.stage, VersionScale.FULL)) is None
-        ):
+        if (fields := self._book_fields(steps)) is None or (
+            source := await self._source(page, recipe.stage, VersionScale.FULL)
+        ) is None:
             return None
-        return await self._measure(page, recipe.stage, steps, source)
+        return await self._measure(page, recipe.stage, steps[: fields.position + 1], source)
 
     async def _book_for(self, page: Page, recipe: Recipe, steps: Sequence[Step], source: StepSource) -> MetadataMap:
-        """Give what the book gives the normalize step on a page: what the run worked out, or else the page's own.
+        """Give what the book gives the step that reads it on a page: what the run worked out, or else the page's own.
 
-        A run of the whole book worked the size out once for all its pages. A page that is run alone works it out from
-        its own box and the boxes the other pages hold.
+        A run of the whole book asked the plugin once for all its pages. A page that is run alone asks it with its own
+        version of the step, beside what the other pages hold.
 
         :param page: The page being run.
         :type page: Page
@@ -1014,21 +1019,21 @@ class RecipeRun(StageWork):
         return worked if worked is not None else await self._book_of(page, recipe.stage, steps, source)
 
     async def settle_book(
-        self, recipe: Recipe, fresh: Mapping[PageId, BlockMeasure], *, through_step: int | None = None
+        self, recipe: Recipe, fresh: Mapping[PageId, PageVersion], *, through_step: int | None = None
     ) -> None:
-        """Work out what the book gives the fields of the normalize step that are 0, for every page run by the recipe.
+        """Work out what the book gives the step that reads it, for every page run by the recipe.
 
         :param recipe: Recipe of the stage the pages are run by.
         :type recipe: Recipe
-        :param fresh: The boxes of the pages the run has just measured.
-        :type fresh: Mapping[PageId, BlockMeasure]
+        :param fresh: The versions of the step on the pages the run has just taken as far as it.
+        :type fresh: Mapping[PageId, PageVersion]
         :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
         :type through_step: int | None
         """
-        params = self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)])
-        if params is not None:
+        fields = self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)])
+        if fields is not None:
             self._books[recipe.id] = await self._book.read(
-                lambda repos: BookBlocks(repos).by_the_book(recipe.stage, params, fresh),
+                lambda repos: fields.book_step.from_book(BookContent(repos), recipe.stage, fields.params, fresh),
             )
 
     @override

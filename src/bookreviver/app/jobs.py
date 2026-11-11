@@ -141,7 +141,7 @@ async def collect_versions(request: AsyncContainer, book: Book, job: Job, contro
 
 
 async def measure_book(request: AsyncContainer, book: Book, _job: Job, control: JobControl) -> JobEnd:
-    """Measure the book and write the medians into its normalize step: the entry of ``JobKind.MEASURE_BOOK``.
+    """Measure the book and write the measures into its recipes: the entry of ``JobKind.MEASURE_BOOK``.
 
     :param request: Container of the request scope of the job.
     :type request: AsyncContainer

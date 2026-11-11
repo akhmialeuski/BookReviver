@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from bookreviver.ports.processing import Processor
+    from bookreviver.core.plugins import Processor
 
 PAGE_NAME: str = 'page.png'
 KEY_PATTERN: str = r'cleanup\.thickness'

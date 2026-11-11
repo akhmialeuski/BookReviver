@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, get_args, override
 
 from pydantic import BaseModel, ConfigDict, Discriminator, RootModel, ValidationError, WithJsonSchema
 
+from bookreviver.core.plugins import Processor
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.ports.processing import Processor
 
 if TYPE_CHECKING:
     from enum import StrEnum

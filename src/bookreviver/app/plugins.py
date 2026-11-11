@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, override
 
 from attrs import frozen
 
+from bookreviver.core.plugins import Processor, ProcessorCatalog
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.ports.processing import Processor, ProcessorCatalog
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence

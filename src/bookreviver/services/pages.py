@@ -62,7 +62,6 @@ from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.images import ColorMode
 from bookreviver.domain.jobs import ContentDetection, Job, JobEnd, JobKind, JobState
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.margins import NormalizeParam
 from bookreviver.domain.pages import BlankFill, NewPageOrigin, Page, PageKind, PageOrigin, PageOverview, RecipeKind
 from bookreviver.domain.pagination import Numbering
 from bookreviver.domain.sides import Side
@@ -71,7 +70,6 @@ from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import PageSize, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
-from bookreviver.services.book_measure import NORMALIZE_KEY
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
@@ -89,6 +87,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.book_steps import BookSteps
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
 
@@ -122,10 +121,12 @@ class PageImaging:
 
     :ivar base_versions: Builder of the rows of base versions.
     :ivar runner: Runner of the processors ``split.none`` and ``pages.blank``, and writer of their files.
+    :ivar book_steps: Finder of the steps whose plugin reads the whole book, one of which may give the size of a leaf.
     """
 
     base_versions: BaseVersions
     runner: StepRunner
+    book_steps: BookSteps
 
 
 class PageService:
@@ -157,6 +158,7 @@ class PageService:
         self._order_keys = order_keys
         self._base_versions = imaging.base_versions
         self._runner = imaging.runner
+        self._book_steps = imaging.book_steps
         self._records = StageRecords()
         self._labels = PageLabels()
 
@@ -1134,9 +1136,9 @@ class PageService:
     def _leaf_size(self, repos: BookRepositories) -> PageSize:
         """Return the size of a blank leaf that stands level with the pages of the book.
 
-        Once the book is measured, its pages are the size the normalize step of the Geometry recipe for blank pages
-        gives them, which is the one size of the book that the measure writes into every Geometry recipe, and a leaf
-        has that size. Before that it is the median size of the pages cut from a scan.
+        Once the book is measured, its pages are the size that a step of the Geometry recipe for blank pages brings
+        every page to, which is the one size of the book that the measure writes into every Geometry recipe, and a
+        leaf has that size. Before that it is the median size of the pages cut from a scan.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -1147,16 +1149,10 @@ class PageService:
         median = self._median_size(repos)
         recipes = repos.recipes.list_for_stage(Stage.GEOMETRY)
         recipe = next((recipe for recipe in recipes if recipe.kind is RecipeKind.BLANK), None)
-        step = (
-            None
-            if recipe is None
-            else next((step for step in recipe.steps if step.enabled and step.processor_key == NORMALIZE_KEY), None)
-        )
-        if step is None:
-            return median
-        width, height = (step.params.get(name) for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT))
-        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
-            return evolve(median, width_px=width, height_px=height)
+        for step in () if recipe is None else recipe.enabled_steps:
+            book_step = self._book_steps.of(step)
+            if book_step is not None and (size := book_step.page_size(step.params)) is not None:
+                return evolve(median, width_px=size[0], height_px=size[1])
         return median
 
     def _paper_sources(self, repos: BookRepositories, page: Page) -> list[PageVersionId]:

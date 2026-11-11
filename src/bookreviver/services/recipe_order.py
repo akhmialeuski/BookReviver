@@ -19,8 +19,8 @@ from bookreviver.domain.recipes import OrderMode
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.recipes import Step
-    from bookreviver.ports.processing import ProcessorCatalog
 
 
 class RecipeOrder:

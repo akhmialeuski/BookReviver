@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.processing_parts import ProcessingParts
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
@@ -203,7 +203,7 @@ class ProcessingService:
         return RunPlan(recipes=self._recipes, book=book, run=run)
 
     async def start_measure(self, book: Book) -> Job:
-        """Record a job that measures the book and writes the medians into the normalize step, and queue it.
+        """Record a job that measures the book and writes the measures into the steps that read the book, and queue it.
 
         :param book: The open book.
         :type book: Book

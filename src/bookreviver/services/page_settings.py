@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
@@ -50,7 +51,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import Stage
     from bookreviver.domain.step_values import ValueField
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.stage_records import StageRecords
 
 

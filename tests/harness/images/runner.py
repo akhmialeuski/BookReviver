@@ -10,10 +10,11 @@ from tests.harness.builders.domain import make_geometry_edit
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.sides import PageSide
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.ports.processing import StepOutput
 
 
 class StepExtras(TypedDict):

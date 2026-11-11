@@ -1,11 +1,10 @@
-"""Processing ports: the contract of a processor plugin and the catalogue that finds the plugins.
+"""Processing ports: what a step of a plugin reads and makes, and the executor that runs the step off the event loop.
 
-A processor is one step of a recipe, such as deskewing a page. It is a plugin: the built-in ones live in ``plugins/``
-and are registered through the entry point group ``bookreviver.processors`` that an external package also uses, so the
-application cannot tell them apart. The processor itself is synchronous and touches only the local paths of its
-``StepInput``, since the libraries it uses, OpenCV and libvips, block. The step executor port decides where it runs,
-in a thread or in a pool of processes, so the work stays off the event loop of the application. The service hands the
-executor the paths the asset store gives, and stores what the processor writes.
+A plugin is one step of a recipe, such as deskewing a page, and its contract is ``bookreviver.core.plugins``. The half
+of it that computes is synchronous and touches only the local paths of its ``StepInput``, since the libraries it uses,
+OpenCV and libvips, block. The step executor port decides where it runs, in a thread or in a pool of processes, so the
+work stays off the event loop of the application. The service hands the executor the paths the asset store gives, and
+stores what the processor writes.
 
 A processor writes its image without loss, in a PNG, or leaves an image the service may read as it is, such as the file
 the page was already stored in. The format a version stores is chosen later by the service from the book's image
@@ -14,7 +13,7 @@ it writes into is removed after its files are stored.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from attrs import field, frozen
 
@@ -27,7 +26,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.images import ColorMode
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageEdit
-    from bookreviver.domain.processors import ProcessorSpec
     from bookreviver.domain.sides import PageSide
     from bookreviver.domain.stages import ReviewReason
     from bookreviver.domain.versions import VersionScale
@@ -104,84 +102,6 @@ class ProcessorSettings:
     """
 
     models_dir: Path
-
-
-class Processor(ABC):
-    """One step of a recipe, registered as a plugin.
-
-    :ivar spec: What the processor says about itself, declared on its class so the catalogue lists it without running
-                it.
-    :ivar settings: What the application told the processor about the machine, or None while it has told nothing.
-    """
-
-    spec: ClassVar[ProcessorSpec]
-    settings: ProcessorSettings | None = None
-
-    def configure(self, settings: ProcessorSettings) -> None:
-        """Take the settings of the application, which the catalogue gives every processor it loads.
-
-        A processor that needs something of them reads ``settings`` or overrides this to prepare it.
-
-        :param settings: What the application tells the processor about the machine.
-        :type settings: ProcessorSettings
-        """
-        self.settings = settings
-
-    @abstractmethod
-    def validate_params(self, raw: MetadataMap) -> MetadataMap:
-        """Check the parameters of a step against the schema of the processor and fill in the defaults.
-
-        :param raw: Parameters as a recipe or a form gives them, possibly missing the ones with defaults.
-        :type raw: MetadataMap
-        :returns: The parameters with every default filled in, which are what the identifier of a version hashes.
-        :rtype: MetadataMap
-        :raises InvalidParametersError: If a parameter is missing, unknown or out of its range.
-        """
-
-    @abstractmethod
-    def run(self, step_input: StepInput) -> StepResult:
-        """Run the step on the full image.
-
-        :param step_input: What the step reads, with the directory it writes into.
-        :type step_input: StepInput
-        :returns: The outputs of the step.
-        :rtype: StepResult
-        :raises DomainError: If the step cannot run on this input, which fails its version with the message.
-        """
-
-    def preview(self, step_input: StepInput) -> StepResult:
-        """Run the step on the downscaled image of a preview, which a processor may do faster than a full run.
-
-        :param step_input: What the step reads, whose image is the preview of the input version.
-        :type step_input: StepInput
-        :returns: The outputs of the step, which by default are those of a full run.
-        :rtype: StepResult
-        :raises DomainError: If the step cannot run on this input.
-        """
-        return self.run(step_input)
-
-
-class ProcessorCatalog(ABC):
-    """The processors the application can run, found by their key."""
-
-    @abstractmethod
-    def get(self, key: str) -> Processor:
-        """Return the processor with this key.
-
-        :param key: Key of the processor, such as ``geometry.deskew``.
-        :type key: str
-        :returns: The processor.
-        :rtype: Processor
-        :raises NotFoundError: If no processor has this key.
-        """
-
-    @abstractmethod
-    def specs(self) -> Sequence[ProcessorSpec]:
-        """List what every processor says about itself, by key.
-
-        :returns: The specs of all the processors of the catalogue.
-        :rtype: Sequence[ProcessorSpec]
-        """
 
 
 class StepExecutor(ABC):

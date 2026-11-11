@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.plugins.crop import FrameSearch
-    from bookreviver.ports.processing import Processor
 
 SCAN_ON_BINDING: Path = SCANS_DIR / 'book_scan_on_binding.jpg'
 CLEAN_PAGE: Path = SCANS_DIR / 'book_clean_page.jpg'

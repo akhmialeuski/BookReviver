@@ -27,8 +27,9 @@ from tests.harness.images.samples import INK, LINE_PITCH_PX, PAPER, save, text_p
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.ports.processing import StepOutput
     from tests.harness.images.runner import StepExtras
 
 KEY_PATTERN: str = r'geometry\.normalize'

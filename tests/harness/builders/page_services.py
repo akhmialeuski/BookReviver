@@ -10,11 +10,13 @@ from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.book_steps import BookSteps
 from bookreviver.services.books import BooksService
 from bookreviver.services.pages import PageImaging, PageService
 from bookreviver.services.steps import StepRunner
 from tests.harness.fakes.in_process_executor import InProcessStepExecutor
 from tests.harness.fakes.processing import FakeCatalogue, FakeRenditionWriter
+from tests.harness.fakes.processors import BookSizedProcessor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,15 +110,17 @@ def make_page_service(
     BookEvents.register(events.open)
     BookJobs.register(board.open)
     tiler = FakeTiler()
+    catalogue = FakeCatalogue([SplitNone(), BlankPage(), BookSizedProcessor()])
     return PageService(
         books=BooksService(catalogue=stores.catalogue()),
         order_keys=order_keys or FractionalOrderKeys(),
         imaging=PageImaging(
             base_versions=BaseVersions(tiler=tiler),
             runner=StepRunner(
-                executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), BlankPage()])),
+                executor=InProcessStepExecutor(catalogue),
                 renditions=renditions or FakeRenditionWriter(),
                 tiler=tiler,
             ),
+            book_steps=BookSteps(catalogue),
         ),
     )

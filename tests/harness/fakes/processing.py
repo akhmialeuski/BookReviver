@@ -9,18 +9,18 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.images import Rendition, RenditionInfo
 from bookreviver.ports.imaging import RenditionWriter
-from bookreviver.ports.processing import ProcessorCatalog
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.images import ColorMode
     from bookreviver.domain.processors import ProcessorSpec
-    from bookreviver.ports.processing import Processor
 
 # What the fake writer says every image measures, and what it writes as the smaller files
 IMAGE_SIZE_PX: int = 100

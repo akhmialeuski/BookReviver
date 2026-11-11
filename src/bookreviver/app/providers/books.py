@@ -2,11 +2,12 @@
 
 from dishka import Provider, Scope, provide
 
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import CatalogueDatabase
-from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.book_steps import BookSteps
 from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.pages import PageImaging, PageService
@@ -54,18 +55,20 @@ class BooksProvider(Provider):
         return BooksService(catalogue=catalogue)
 
     @provide(scope=Scope.APP)
-    def page_imaging(self, tiler: Tiler, runner: StepRunner) -> PageImaging:
+    def page_imaging(self, tiler: Tiler, runner: StepRunner, processors: ProcessorCatalog) -> PageImaging:
         """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
 
         :param tiler: Tiler of the application.
         :type tiler: Tiler
         :param runner: Runner of processors of the application.
         :type runner: StepRunner
+        :param processors: The processors the application can run, whose plugins may read the whole book.
+        :type processors: ProcessorCatalog
         :returns: The builder of base versions and the runner of their processors.
         :rtype: PageImaging
         """
         base_versions = BaseVersions(tiler=tiler)
-        return PageImaging(base_versions=base_versions, runner=runner)
+        return PageImaging(base_versions=base_versions, runner=runner, book_steps=BookSteps(processors))
 
     @provide
     def pages(self, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> PageService:

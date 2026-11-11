@@ -64,6 +64,12 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   and joins no repositories itself, and a rule of the book that several use cases follow is a method there.
 - Swapping a technology is a new adapter of an existing port plus configuration in `app`. If a service, a route or a
   service test has to change for it, the port is wrong: fix the port first.
+- A plugin is one step of a recipe, and its contract is `core/plugins.py`. `Processor` is the half that computes: it
+  is synchronous, reads the paths of its `StepInput` and runs in a worker. `BookStep` is the half that reads the book:
+  it runs in the process of the application inside a transaction and is given the `BookContent`. A plugin whose result
+  on one page depends on the other pages sets `book_step` on its class, and the engine asks it what the book gives
+  (`leaves_to_book`, `from_book`, `measured`, `page_size`). `services` never names a plugin to do this: it asks
+  `BookSteps` which steps of a recipe have that half.
 - `services`, `core` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.

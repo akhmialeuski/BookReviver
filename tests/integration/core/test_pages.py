@@ -11,7 +11,7 @@ from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.images import Renditions
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
-from bookreviver.domain.versions import VersionState
+from bookreviver.domain.versions import ProcessorRef, VersionState
 from tests.harness.builders.domain import make_page_stage, make_page_version
 from tests.harness.builders.stage_heads import seed_head
 
@@ -31,6 +31,7 @@ WINDOW_SIZE: int = 5
 FIRST_KEY: str = 'a0'
 SECOND_KEY: str = 'a1'
 THIRD_KEY: str = 'a2'
+WANTED_KEY: str = 'geometry.wanted'
 
 
 async def seed_page(kit: ProcessingKit, book_id: BookId, order_key: str) -> tuple[Page, PageVersion]:
@@ -278,6 +279,35 @@ class TestBookPagesHeads:
         expect({version.id for version in every} == {first_head.id, second_head.id})
         expect(but_one == [second_head])
         expect(none == [])
+        assert_expectations()
+
+
+class TestBookPagesMadeBy:
+    """Tests for BookPages.made_by."""
+
+    async def test_the_version_of_a_processor_is_found_behind_the_current_one(self, fx_kit: ProcessingKit) -> None:
+        """Verify the version a processor made is found by following the current version back through its stage.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        page, base = await seed_page(fx_kit, book_id, FIRST_KEY)
+        other, other_base = await seed_page(fx_kit, book_id, SECOND_KEY)
+        key = PageStageKey(page.id, Stage.GEOMETRY)
+        early = await seed_head(book_id, key, after=base, databases=fx_kit.databases)
+        marked = evolve(early, processor=ProcessorRef(key=WANTED_KEY, version='1'))
+        await fx_kit.databases.open(book_id).change(lambda repos, _record: repos.page_versions.update(marked))
+        await seed_head(book_id, key, after=marked, databases=fx_kit.databases)
+        await seed_head(book_id, PageStageKey(other.id, Stage.GEOMETRY), after=other_base, databases=fx_kit.databases)
+        found = await in_book(fx_kit, book_id, lambda content: content.pages.made_by(Stage.GEOMETRY, WANTED_KEY))
+        left_out = await in_book(
+            fx_kit,
+            book_id,
+            lambda content: content.pages.made_by(Stage.GEOMETRY, WANTED_KEY, leaving_out=[page.id]),
+        )
+        expect([version.id for version in found] == [marked.id])
+        expect(left_out == [])
         assert_expectations()
 
 

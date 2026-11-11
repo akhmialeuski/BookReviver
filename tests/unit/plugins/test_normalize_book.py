@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from bookreviver.domain.margins import MM_PER_INCH, NOMINAL_BLOCK_MM, NormalizeParam
-from bookreviver.services.book_measure import BlockMeasure, BookSize
+from bookreviver.plugins.normalize_book import BlockMeasure, BookSize, NormalizeBook
 
 if TYPE_CHECKING:
     from bookreviver.domain.metadata import MetadataMap
@@ -27,6 +27,7 @@ MEASURED_SHARE: float = 1.18
 DEFAULT_SIDE_MM: float = 25.0
 SIZE_TOLERANCE_PX: float = 3.0
 CASE_ARG: str = 'case'
+NORMALIZE_KEY: str = 'geometry.normalize'
 
 
 class CapCase(NamedTuple):
@@ -125,3 +126,52 @@ class TestBookSizeCapsTheScale:
         measured = BookSize([*on_target, far]).measured({})
         # A tenth of a block of 300 pixels at 300 dpi is 2.54 mm
         assert measured[NormalizeParam.MARGIN_INNER] == pytest.approx(width / 10 / (300.0 / MM_PER_INCH), abs=0.05)
+
+
+class TestNormalizeBook:
+    """Tests for the answers of the half of the normalize step that need no book."""
+
+    @pytest.mark.parametrize(
+        ('params', 'left'),
+        [
+            ({}, True),
+            ({NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 700}, True),
+            (
+                {NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 700, NormalizeParam.LINE_HEIGHT: 30.0},
+                False,
+            ),
+            ({NormalizeParam.PAGE_WIDTH: 0, NormalizeParam.PAGE_HEIGHT: 700, NormalizeParam.LINE_HEIGHT: 30.0}, True),
+        ],
+        ids=['nothing-given', 'no-line-height', 'everything-given', 'a-zero-width'],
+    )
+    def test_a_field_that_is_zero_or_missing_is_left_to_the_book(self, params: MetadataMap, *, left: bool) -> None:
+        """Verify the page size and the line height are left to the book until each has a value.
+
+        :param params: Parameters of the step as a recipe stores them.
+        :type params: MetadataMap
+        :param left: Whether a field is left to the book.
+        :type left: bool
+        """
+        assert NormalizeBook(NORMALIZE_KEY).leaves_to_book(params) is left
+
+    @pytest.mark.parametrize(
+        ('params', 'size'),
+        [
+            ({NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 700}, (500, 700)),
+            ({NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 0}, None),
+            ({NormalizeParam.PAGE_WIDTH: 500.5, NormalizeParam.PAGE_HEIGHT: 700}, None),
+            ({}, None),
+        ],
+        ids=['both-sides', 'a-zero-height', 'a-width-that-is-no-whole-number', 'nothing-given'],
+    )
+    def test_the_page_size_is_told_once_both_sides_are_whole_pixels(
+        self, params: MetadataMap, size: tuple[int, int] | None
+    ) -> None:
+        """Verify the step tells the size it brings every page to only when the parameters hold a whole one.
+
+        :param params: Parameters of the step as a recipe stores them.
+        :type params: MetadataMap
+        :param size: The size told, or None.
+        :type size: tuple[int, int] | None
+        """
+        assert NormalizeBook(NORMALIZE_KEY).page_size(params) == size

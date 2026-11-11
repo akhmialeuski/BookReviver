@@ -21,8 +21,9 @@ from tests.harness.images.scans import SCANS_DIR
 from tests.harness.images.synthetic import draw_sheet
 
 if TYPE_CHECKING:
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.ports.processing import StepOutput
 
 SCAN_ON_BINDING: Path = SCANS_DIR / 'book_scan_on_binding.jpg'
 SCAN_NAME: str = 'scan.png'

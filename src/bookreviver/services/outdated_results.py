@@ -29,12 +29,12 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.books import BooksService
 
 logger = logging.getLogger(__name__)

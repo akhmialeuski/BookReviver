@@ -19,7 +19,6 @@ from bookreviver.domain.pages import PageOrigin
 from bookreviver.domain.runs import RunImpact, RunMode
 from bookreviver.domain.stages import StageState
 from bookreviver.domain.versions import VersionState
-from bookreviver.services.book_measure import leaves_to_the_book
 from bookreviver.services.page_batches import PageBatch
 
 if TYPE_CHECKING:
@@ -220,7 +219,7 @@ class RunPlan:
             stages = by_page.get(page.id, {})
             record = stages.get(stage)
             return (
-                not leaves_to_the_book(picked[page.id], through_step=self._run.through_step)
+                not self._recipes.book_steps.leaves_to_book(picked[page.id], through_step=self._run.through_step)
                 and self._is_fresh(record, picked[page.id], through_step=self._run.through_step)
                 and record is not None
                 and record.head_version_id in ready

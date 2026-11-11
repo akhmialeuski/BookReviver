@@ -9,11 +9,11 @@ from fastapi import status
 
 from bookreviver.api.schemas.processing import ProcessorSchema, RecipeSchema
 from bookreviver.api.schemas.profiles import AppliedProfileSchema
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.processors import OrderRuleKind
 from bookreviver.domain.recipes import OrderMode
 from bookreviver.plugins.split_none import SplitNone
-from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.recipes import DefaultRecipes
 from tests.harness.builders.domain import make_record
 from tests.harness.builders.processing import DEFAULTS

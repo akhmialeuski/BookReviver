@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.ids import PageVersionId, StepId
     from bookreviver.domain.library import BookOverview
     from bookreviver.domain.pages import RecipeKind
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.processing import ProcessorCatalog
 
 
 class StageSummaries:

@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, PageId, StorageKey
     from bookreviver.domain.jobs import Job
@@ -92,7 +93,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.pagination import PaginationSection
     from bookreviver.domain.sources import Scan, Source, SourceFile
     from bookreviver.domain.versions import PageVersion
-    from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from tests.harness.adapters.database import BookDatabasesFactory, LocatedBookDatabases
     from tests.harness.builders.domain import BookOpener

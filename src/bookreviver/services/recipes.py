@@ -28,11 +28,13 @@ from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import OrderMode, Recipe, RecipeDraft, Step
+from bookreviver.services.book_steps import BookSteps
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
@@ -40,7 +42,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.recipe_order import RecipeOrder
 
 NO_STEPS: str = 'A recipe needs at least one step.'
@@ -123,6 +124,7 @@ class RecipeBook:
         self._processors = processors
         self._defaults = defaults
         self._order = order
+        self.book_steps = BookSteps(processors)
 
     async def recipes(
         self, book: Book, stage: Stage, *, checking: Callable[[BookRepositories], object] | None = None
