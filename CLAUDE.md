@@ -55,11 +55,16 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 
 ## Architecture rules
 
-- Ports and adapters. `domain` and `services` depend only on `ports`, which are abstract base classes. Every
+- Ports and adapters. `domain`, `core` and `services` depend only on `ports`, which are abstract base classes. Every
   database, file, imaging, job and event technology lives in an adapter under `adapters/`, selected in `app`.
+- `core` is the book as an object, below `services` and above `ports`. `Book` is one open book. Inside the work of
+  `Book.read` or `Book.change`, `BookContent(repos)` is the book of that transaction: `content.pages` are its pages, a
+  `BookPage` holds its `versions` and the record and the current version of each of its stages, and what a stage reads
+  on a page is asked of `content.pages.inputs`. A use case or a plugin that walks pages and versions asks these objects
+  and joins no repositories itself, and a rule of the book that several use cases follow is a method there.
 - Swapping a technology is a new adapter of an existing port plus configuration in `app`. If a service, a route or a
   service test has to change for it, the port is wrong: fix the port first.
-- `services` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
+- `services`, `core` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.
 - A route validates input, calls one method of a service or of the `Book` it was given, and returns a typed response

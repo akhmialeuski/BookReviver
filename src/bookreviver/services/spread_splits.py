@@ -56,13 +56,13 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageEdit, PageStepState
     from bookreviver.domain.recipes import Recipe
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import Processor, StepOutput
-    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime, StepSource
 

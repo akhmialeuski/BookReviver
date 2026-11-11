@@ -312,6 +312,11 @@ class PageVersion:
         """How the result came about: set by hand when the step read a manual edit, else made by the step itself."""
         return VersionOrigin.HAND if self.edit_hash else VersionOrigin.AUTO
 
+    @property
+    def has_image(self) -> bool:
+        """Whether the version has an image and its files are ready, which makes it something a stage can read."""
+        return self.renditions is not None and self.renditions.ready
+
     def __attrs_post_init__(self) -> None:
         """Check the identifier and the renditions, which place the version's files in storage.
 

@@ -29,12 +29,12 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.page_steps import CarryRequest, PageStepKey
     from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
 SELECTED_NEEDS_PAGES: str = 'A carry-over to the selected pages names at least one page.'

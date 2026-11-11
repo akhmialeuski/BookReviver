@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bookreviver.core.book import Book
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.plugins.split_none import SplitNone
-from bookreviver.services.book import Book
 from bookreviver.services.pagination import PaginationService
 from tests.harness.adapters.page_stage_writes import PageStageWrites
 from tests.harness.adapters.page_writes import PageWrites
@@ -134,23 +134,6 @@ def fx_pagination() -> Callable[[], PaginationService]:
     :rtype: Callable[[], PaginationService]
     """
     return PaginationService
-
-
-@pytest.fixture
-def fx_kit(
-    fx_database: SqlDatabase,
-    fx_open_book: BookOpener,
-) -> ProcessingKit:
-    """Build what the processing services of a test share, over the database and the asset store of the test.
-
-    :param fx_database: Database of the test.
-    :type fx_database: SqlDatabase
-    :param fx_open_book: Opens the books of the test with their databases.
-    :type fx_open_book: BookOpener
-    :returns: The kit that builds the processing service, the jobs of the workers and the edit service.
-    :rtype: ProcessingKit
-    """
-    return ProcessingKit(fx_database, fx_open_book)
 
 
 @pytest.fixture

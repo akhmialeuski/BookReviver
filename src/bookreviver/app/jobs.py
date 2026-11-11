@@ -16,10 +16,10 @@ trace has the same shape however the job was put.
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from bookreviver.core.book import Book
 from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.spans import SpanAttribute, SpanName, SpanParent
 from bookreviver.ports.tracing import Tracer
-from bookreviver.services.book import Book
 from bookreviver.services.imports import ImportService
 from bookreviver.services.pages import PageService
 from bookreviver.services.processing_jobs import ProcessingJobs

@@ -13,8 +13,8 @@ from attrs import asdict
 from bookreviver.domain.places import BookPlace
 
 if TYPE_CHECKING:
+    from bookreviver.core.book import Book
     from bookreviver.domain.places import NewBookPlace
-    from bookreviver.services.book import Book
 
 
 class PlaceService:

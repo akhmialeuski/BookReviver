@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, override
 
 from attrs import evolve, frozen
 
+from bookreviver.core.content import BookContent
+from bookreviver.core.pages import BookPage
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.images import Rendition
@@ -50,13 +52,13 @@ from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import PageSize, PageVersion, VersionData, VersionInputs, VersionScale, VersionState
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
-from bookreviver.services.stage_inputs import StageInputs
 from bookreviver.services.step_params import PageLayers
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
     from bookreviver.domain.metadata import MetadataMap
@@ -68,7 +70,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.tracing import Span, Tracer
-    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.spread_splits import Unsplit
     from bookreviver.services.steps import StepRunner
@@ -191,7 +192,7 @@ class StageWork:
 
         An earlier stage that is stale or run through some of its steps only is brought up to date first, nearest stage
         first and no farther back than the stage that has a result to read, and the version is then picked by the rule
-        of ``StageInputs``, the one the rows of the stage draw their pictures by.
+        of ``BookPages.inputs``, the one the rows of the stage draw their pictures by.
 
         :param page: Page being processed.
         :type page: Page
@@ -206,7 +207,7 @@ class StageWork:
         if stage is Stage.PAGE_SPLIT:
             return await self._scan_source(page, scale)
         for earlier in stage.earlier:
-            record, readable = await self._earlier(page.id, earlier)
+            record, readable = await self._earlier(page, earlier)
             if record is None or record.head_version_id is None:
                 continue
             # A page run through some of the steps only is not ready to be read, and is run through the rest first
@@ -217,7 +218,7 @@ class StageWork:
             # Stages further back are not brought up to date once a nearer one has a result to read
             if readable:
                 break
-        read = (await self._book.read(lambda repos: StageInputs.of(repos, [page.id], stage))).get(page.id)
+        read = await self._book.read(lambda repos: BookContent(repos).pages.inputs(stage, [page.id]).get(page.id))
         return None if read is None else self._version_source(read, scale)
 
     async def _brought_up_to_date(self, page: Page, stage: Stage) -> tuple[PageStage, bool]:
@@ -233,18 +234,18 @@ class StageWork:
         :raises ConflictError: If running the stage again failed.
         """
         await self._refresh(page, stage)
-        record, readable = await self._earlier(page.id, stage)
+        record, readable = await self._earlier(page, stage)
         if record is None:
             raise NotFoundError(PageStageKey(page.id, stage))
         if record.state is StageState.FAILED:
             raise ConflictError(EARLIER_STAGE_FAILED.format(stage=stage.label))
         return record, readable
 
-    async def _earlier(self, page_id: PageId, stage: Stage) -> tuple[PageStage | None, bool]:
+    async def _earlier(self, page: Page, stage: Stage) -> tuple[PageStage | None, bool]:
         """Read the record of an earlier stage of a page, and tell whether its current version has an image to read.
 
-        :param page_id: Page being processed.
-        :type page_id: PageId
+        :param page: Page being processed.
+        :type page: Page
         :param stage: The earlier stage.
         :type stage: Stage
         :returns: The record, or None when the page has not been through the stage, and whether the current version it
@@ -259,15 +260,10 @@ class StageWork:
             :type repos: BookRepositories
             :returns: The record and whether its current version has an image to read.
             :rtype: tuple[PageStage | None, bool]
-            :raises NotFoundError: If the current version the record names is gone.
             """
-            record = repos.page_stages.find(PageStageKey(page_id, stage))
-            readable = (
-                record is not None
-                and record.head_version_id is not None
-                and StageInputs.has_image(repos.page_versions.get(record.head_version_id))
-            )
-            return record, readable
+            in_book = BookPage(page, repos)
+            head = in_book.head(stage)
+            return in_book.stage(stage), head is not None and head.has_image
 
         return await self._book.read(work)
 
@@ -963,7 +959,7 @@ class RecipeRun(StageWork):
         :raises NotFoundError: If the page or the recipe was deleted meanwhile.
         """
         fresh = repos.pages.get(page.id)
-        current = StageInputs.of(repos, [page.id], recipe.stage).get(page.id)
+        current = BookContent(repos).pages.inputs(recipe.stage, [page.id]).get(page.id)
         undoing = None if basis.undoing is None else self._splits.undoing(repos, fresh, recipe, confirmed=True)
         holds = (
             (basis.input_id is None or (current is not None and current.id == basis.input_id))

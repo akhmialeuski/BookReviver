@@ -19,11 +19,11 @@ from fastapi import Depends
 from fastapi_users.models import UserProtocol
 
 from bookreviver.api.auth import signed_in_user
+from bookreviver.core.book import Book
 from bookreviver.domain.accounts import Actor
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import CatalogueDatabase
-from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId

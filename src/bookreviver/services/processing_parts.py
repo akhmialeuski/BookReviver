@@ -36,10 +36,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import timedelta
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.services.book import Book
     from bookreviver.services.recipes import DefaultRecipes
 
 BOOK_BUSY: str = (

@@ -30,11 +30,11 @@ from bookreviver.services.imports import IMPORT_JOBS
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.ids import SourceId
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.sources import Scan, Source
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
 
 SOURCE_IMPORTING: str = 'This book is importing files. Delete the source when the import has finished.'
 

@@ -28,13 +28,13 @@ from bookreviver.services.page_labels import PageLabels
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.pages import Page
     from bookreviver.domain.pagination import PageNumbering, PaginationSectionDraft
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
 
 NUMBERED_PAGES: str = 'Numbered pages'
 SKIPPED_KINDS: str = 'Pages that are not numbered'

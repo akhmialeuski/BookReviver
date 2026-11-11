@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.services.book import Book
+    from bookreviver.core.book import Book
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.harness.adapters.storage import SharedBookDirectories
     from tests.harness.builders.domain import BookOpener

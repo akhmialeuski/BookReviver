@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from attrs import evolve
 
+from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.jobs import ContentDetection
@@ -31,6 +32,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.jobs import Job
@@ -38,7 +40,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
 
@@ -147,9 +148,11 @@ class ContentDetector:
             if detection.page_ids is not None:
                 return [page for page in repos.pages.list_by_ids(detection.page_ids) if self._readable(page)]
             return [
-                page
-                for page in repos.pages.list_all()
-                if self._readable(page) and page.content_type is None and page.kind in self.KINDS
+                in_book.page
+                for in_book in BookContent(repos).pages.all()
+                if self._readable(in_book.page)
+                and in_book.page.content_type is None
+                and in_book.page.kind in self.KINDS
             ]
 
         return await book.read(work)

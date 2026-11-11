@@ -9,7 +9,7 @@ open book has a mark, so the mark of a book is never told to an account that doe
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bookreviver.services.book import Book
+    from bookreviver.core.book import Book
 
 # What stands between the version of a book and the mark of its jobs
 MARK_SEPARATOR: str = '.'

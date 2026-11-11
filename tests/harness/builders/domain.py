@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from attrs import frozen
 
+from bookreviver.core.book import Book
 from bookreviver.domain.books import (
     BookRecord,
     BookResource,
@@ -46,7 +47,6 @@ from bookreviver.domain.sources import FileType, Scan, Source, SourceKind
 from bookreviver.domain.stages import PageStage, Stage, StageState
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.domain.versions import PageVersion
-from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor

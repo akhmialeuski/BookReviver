@@ -30,12 +30,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.core.book import Book as OpenedBook
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.domain.sources import Source
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book as OpenedBook
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.builders.books import Book
     from tests.harness.builders.domain import BookOpener

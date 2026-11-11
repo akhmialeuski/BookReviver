@@ -22,11 +22,11 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from contextlib import AbstractAsyncContextManager
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.slices import SliceRequest
-    from bookreviver.services.book import Book
 
 
 class JobService:

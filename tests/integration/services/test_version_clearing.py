@@ -7,8 +7,8 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.core.book import Book
 from bookreviver.domain.versions import VersionData, VersionState
-from bookreviver.services.book import Book
 from bookreviver.services.version_clearing import BEING_COLLECTED, VersionClearing
 from tests.harness.builders.domain import directory_of, make_page, make_page_version, make_record, new_account_id
 from tests.harness.builders.seeding import commit_record

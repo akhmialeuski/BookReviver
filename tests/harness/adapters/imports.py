@@ -26,12 +26,12 @@ from bookreviver.adapters.imaging import (
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.app.settings import ImagingSettings
+from bookreviver.core.book import Book
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
-from bookreviver.services.book import Book
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.steps import StepRunner

@@ -7,6 +7,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.core.book import Book
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import TransformKind
 from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition, Renditions
@@ -18,7 +19,6 @@ from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepOutput
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions
-from bookreviver.services.book import Book
 from bookreviver.services.steps import StepRun, StepRunner
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.books import IMAGE

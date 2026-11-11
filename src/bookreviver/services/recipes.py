@@ -32,6 +32,7 @@ from bookreviver.domain.recipes import OrderMode, Recipe, RecipeDraft, Step
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.services.book import Book
     from bookreviver.services.recipe_order import RecipeOrder
 
 NO_STEPS: str = 'A recipe needs at least one step.'

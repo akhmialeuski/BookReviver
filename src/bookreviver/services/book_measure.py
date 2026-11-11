@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, ClassVar, Self
 
 from attrs import evolve, frozen
 
+from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale, MarginsSource, NormalizeParam
@@ -42,14 +43,13 @@ from bookreviver.domain.versions import VersionData, VersionState
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.recipes import Recipe, Step
-    from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
@@ -407,28 +407,26 @@ class BookBlocks:
         :returns: The ready versions, one for each page that has one.
         :rtype: list[PageVersion]
         """
-        left_out = set(leaving_out)
-        records = [record for record in self._repos.page_stages.list_for_stage(stage) if record.page_id not in left_out]
-        return self._normalized(records)
+        return self._normalized(BookContent(self._repos).pages.heads(stage, leaving_out=leaving_out))
 
-    def _normalized(self, records: Sequence[PageStage]) -> list[PageVersion]:
+    def _normalized(self, heads: Sequence[PageVersion]) -> list[PageVersion]:
         """Find the version the normalize step made on each page, by following the current version back to it.
 
-        :param records: The records of the stage of the pages.
-        :type records: Sequence[PageStage]
+        :param heads: The current versions of the stage of the pages.
+        :type heads: Sequence[PageVersion]
         :returns: The ready versions of the normalize step, one for each page that has one.
         :rtype: list[PageVersion]
         """
-        pending = {record.head_version_id for record in records if record.head_version_id is not None}
+        level = heads
         found: list[PageVersion] = []
-        while pending:
+        while level:
             following: set[PageVersionId] = set()
-            for version in self._repos.page_versions.list_by_ids(pending):
+            for version in level:
                 if version.processor.key == NORMALIZE_KEY:
                     found.append(version)
                 elif version.input_id is not None and version.stage is Stage.GEOMETRY:
                     following.add(version.input_id)
-            pending = following
+            level = self._repos.page_versions.list_by_ids(following) if following else []
         return [version for version in found if version.state is VersionState.READY]
 
 

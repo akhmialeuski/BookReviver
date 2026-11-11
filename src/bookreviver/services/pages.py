@@ -79,6 +79,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.ids import PageVersionId, ScanId, SourceId
@@ -88,7 +89,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
 
