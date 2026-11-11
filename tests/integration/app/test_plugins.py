@@ -11,7 +11,7 @@ from bookreviver.app.plugins import PROCESSOR_GROUP, EntryPointCatalog
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.processors import WorkerPool
 from bookreviver.domain.step_measures import StepMeasure
-from bookreviver.plugins.base import ModelProcessor
+from bookreviver.plugins.kit.base import ModelProcessor
 from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:

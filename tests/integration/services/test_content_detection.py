@@ -17,7 +17,7 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.jobs import ContentDetection, JobKind, JobState
 from bookreviver.domain.pages import ContentSource, ContentType, PageKind
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.services.content_detection import ContentDetector
 from tests.harness.builders.domain import make_page, make_page_stage, open_for
 from tests.harness.builders.page_services import make_page_service

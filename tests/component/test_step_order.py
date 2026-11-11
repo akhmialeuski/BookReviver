@@ -13,7 +13,7 @@ from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.processors import OrderRuleKind
 from bookreviver.domain.recipes import OrderMode
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.services.recipes import DefaultRecipes
 from tests.harness.builders.domain import make_record
 from tests.harness.builders.processing import DEFAULTS

@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, override
 import anyio
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.plugins.blank import BlankPage
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.pages.blank import BlankPage
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions

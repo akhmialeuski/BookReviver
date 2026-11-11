@@ -5,9 +5,9 @@
     "src/bookreviver/app/providers/accounts.py::UserManager.oauth_callback": 35.3565,
     "src/bookreviver/app/providers/accounts.py::UserManager.reset_password": 10.5,
     "src/bookreviver/domain/books.py::IdentifierScheme.normalize": 8.0233,
-    "src/bookreviver/plugins/binarize.py::Binarize.run": 8.0233,
-    "src/bookreviver/plugins/perspective.py::EdgeSearch._border": 20.0,
-    "src/bookreviver/plugins/uvdoc.py::UvDocModel._download": 20.0,
+    "src/bookreviver/plugins/cleanup/binarize.py::Binarize.run": 8.0233,
+    "src/bookreviver/plugins/geometry/perspective.py::EdgeSearch._border": 20.0,
+    "src/bookreviver/plugins/geometry/uvdoc.py::UvDocModel._download": 20.0,
     "src/bookreviver/services/stage_runs.py::StageWork._make_version": 8.2963,
     "src/bookreviver/services/steps.py::StepRunner.store": 8.1866
   },

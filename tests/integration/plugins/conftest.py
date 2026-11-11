@@ -10,7 +10,7 @@ from tests.harness.images.samples import CV_MISSING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.plugins.gutter import GutterSearch
+    from bookreviver.plugins.split.gutter import GutterSearch
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def fx_deskew() -> Processor:
     :returns: The processor ``geometry.deskew``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.deskew', reason=CV_MISSING).Deskew()
+    processor = pytest.importorskip('bookreviver.plugins.geometry.deskew', reason=CV_MISSING).Deskew()
     assert isinstance(processor, Processor)
     return processor
 
@@ -32,7 +32,7 @@ def fx_split_spread() -> Processor:
     :returns: The processor ``split.spread``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.split_spread', reason=CV_MISSING).SplitSpread()
+    processor = pytest.importorskip('bookreviver.plugins.split.split_spread', reason=CV_MISSING).SplitSpread()
     assert isinstance(processor, Processor)
     return processor
 
@@ -44,7 +44,7 @@ def fx_gutter_search() -> Callable[..., GutterSearch]:
     :returns: A function that builds a ``GutterSearch`` from the parameters it is given, the defaults for any it lacks.
     :rtype: Callable[..., GutterSearch]
     """
-    gutter = pytest.importorskip('bookreviver.plugins.gutter', reason=CV_MISSING)
+    gutter = pytest.importorskip('bookreviver.plugins.split.gutter', reason=CV_MISSING)
 
     def build(**params: float) -> GutterSearch:
         """Build a gutter search.
@@ -66,7 +66,7 @@ def fx_split_auto() -> Processor:
     :returns: The processor ``split.auto``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.split_auto', reason=CV_MISSING).SplitAuto()
+    processor = pytest.importorskip('bookreviver.plugins.split.split_auto', reason=CV_MISSING).SplitAuto()
     assert isinstance(processor, Processor)
     return processor
 
@@ -78,7 +78,7 @@ def fx_perspective() -> Processor:
     :returns: The processor ``geometry.perspective``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.perspective', reason=CV_MISSING).Perspective()
+    processor = pytest.importorskip('bookreviver.plugins.geometry.perspective', reason=CV_MISSING).Perspective()
     assert isinstance(processor, Processor)
     return processor
 
@@ -90,7 +90,7 @@ def fx_dewarp() -> Processor:
     :returns: The processor ``geometry.dewarp``, which is not given a models directory.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.dewarp', reason=CV_MISSING).Dewarp()
+    processor = pytest.importorskip('bookreviver.plugins.geometry.dewarp', reason=CV_MISSING).Dewarp()
     assert isinstance(processor, Processor)
     return processor
 
@@ -102,7 +102,7 @@ def fx_crop() -> Processor:
     :returns: The processor ``geometry.crop``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.crop', reason=CV_MISSING).Crop()
+    processor = pytest.importorskip('bookreviver.plugins.geometry.crop', reason=CV_MISSING).Crop()
     assert isinstance(processor, Processor)
     return processor
 
@@ -114,7 +114,7 @@ def fx_normalize() -> Processor:
     :returns: The processor ``geometry.normalize``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.normalize', reason=CV_MISSING).Normalize()
+    processor = pytest.importorskip('bookreviver.plugins.geometry.normalize', reason=CV_MISSING).Normalize()
     assert isinstance(processor, Processor)
     return processor
 
@@ -126,7 +126,7 @@ def fx_binarize() -> Processor:
     :returns: The processor ``cleanup.binarize``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.binarize', reason=CV_MISSING).Binarize()
+    processor = pytest.importorskip('bookreviver.plugins.cleanup.binarize', reason=CV_MISSING).Binarize()
     assert isinstance(processor, Processor)
     return processor
 
@@ -138,7 +138,7 @@ def fx_despeckle() -> Processor:
     :returns: The processor ``cleanup.despeckle``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.despeckle', reason=CV_MISSING).Despeckle()
+    processor = pytest.importorskip('bookreviver.plugins.cleanup.despeckle', reason=CV_MISSING).Despeckle()
     assert isinstance(processor, Processor)
     return processor
 
@@ -150,7 +150,7 @@ def fx_thickness() -> Processor:
     :returns: The processor ``cleanup.thickness``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.thickness', reason=CV_MISSING).Thickness()
+    processor = pytest.importorskip('bookreviver.plugins.cleanup.thickness', reason=CV_MISSING).Thickness()
     assert isinstance(processor, Processor)
     return processor
 
@@ -162,7 +162,7 @@ def fx_eraser() -> Processor:
     :returns: The processor ``cleanup.eraser``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
+    processor = pytest.importorskip('bookreviver.plugins.cleanup.eraser', reason=CV_MISSING).Eraser()
     assert isinstance(processor, Processor)
     return processor
 
@@ -174,6 +174,6 @@ def fx_content_type() -> Processor:
     :returns: The processor ``pages.content``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.content_type', reason=CV_MISSING).ContentTypeProbe()
+    processor = pytest.importorskip('bookreviver.plugins.pages.content_type', reason=CV_MISSING).ContentTypeProbe()
     assert isinstance(processor, Processor)
     return processor

@@ -14,7 +14,7 @@ from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition, Renditi
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.versions import VersionScale, VersionState
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepOutput
 from bookreviver.ports.storage import BookDirectory
