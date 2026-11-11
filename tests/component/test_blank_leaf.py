@@ -22,8 +22,8 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import BlankFill, PageKind
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionState
-from bookreviver.services.base_versions import BaseVersions
 from tests.harness.builders.domain import EPOCH, make_page, make_page_stage, make_record, make_scan, make_source
+from tests.harness.builders.page_services import make_base_versions
 from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
@@ -137,7 +137,7 @@ async def fx_book(
         for number, (scan, kind) in enumerate(zip(scans, kinds, strict=True))
     ]
     versions = [
-        BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
+        make_base_versions().split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
     book_id = await store_book(

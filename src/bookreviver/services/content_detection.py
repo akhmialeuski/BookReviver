@@ -1,7 +1,8 @@
 """Detecting the content of the pages: what each page shows, written into the page as a proposal the user may change.
 
-The job reads the preview of the base image of a page through the processor ``pages.content``, which finds the pictures
-of the page and their colour, and writes the answer into the page. A job that names no pages goes over the pages of the
+The job reads the preview of the base image of a page through the processor of the role
+``ProcessorRole.CONTENT_PROBE``, which finds the pictures of the page and their colour, and writes the answer into the
+page. A job that names no pages goes over the pages of the
 book that have an image and no content type yet, so a page that was detected, or that the user set by hand, is not read
 again, and the covers, the endpapers and the blank pages are left out, since a page the user gave such a role to is not
 a page of text or of pictures to be told apart. A job that names pages goes over those and only those, whatever they
@@ -26,6 +27,7 @@ from bookreviver.domain.images import Rendition
 from bookreviver.domain.jobs import ContentDetection
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import ContentType, PageKind, PageOrigin
+from bookreviver.domain.processors import ProcessorRole
 from bookreviver.domain.versions import VersionData, VersionScale
 from bookreviver.services.steps import StepRun
 
@@ -43,7 +45,6 @@ if TYPE_CHECKING:
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
 
-PROBE_KEY: str = 'pages.content'
 logger = logging.getLogger(__name__)
 
 
@@ -88,7 +89,7 @@ class ContentDetector:
         """
         detection = ContentDetection.from_map(job.params)
         # A machine without OpenCV offers no such processor, and then the kind of a page is all that says what it shows
-        if all(spec.key != PROBE_KEY for spec in self._processors.specs()):
+        if all(spec.role is not ProcessorRole.CONTENT_PROBE for spec in self._processors.specs()):
             return 0, 0
         pages = await self._pages(book, detection)
         control.plan(len(pages))
@@ -193,7 +194,7 @@ class ContentDetector:
         :raises DomainError: If the image cannot be read.
         """
         run = StepRun(
-            processor_key=PROBE_KEY,
+            processor_key=self._processors.of_role(ProcessorRole.CONTENT_PROBE).key,
             params={},
             input_data=base.data,
             image=BookKeys.version_rendition(base, Rendition.PREVIEW),

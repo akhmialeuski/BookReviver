@@ -56,7 +56,6 @@ from bookreviver.domain.pages import Page, PageOrigin, RecipeKind
 from bookreviver.domain.sources import FileType, RejectionReason, Scan, Source, SourceStatus, SystemFile, UploadPath
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.versions import VersionState
-from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.source_labels import SourceLabels
 from bookreviver.services.stage_records import StageRecords
@@ -68,18 +67,18 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord, MetadataSuggestion
     from bookreviver.domain.sources import SourceKind, UploadedSource
-    from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
+    from bookreviver.ports.imaging import PageRasterizer, SourceInspector
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import IncomingFile
+    from bookreviver.services.base_versions import BaseVersions
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 
 IMPORT_ACTIVE: str = 'This book is already importing files. Wait for the import to finish, or cancel it.'
 NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
 # The processor of the page split that decides for each scan, whose recipe an import runs on the new pages
-AUTOMATIC_SPLIT: str = 'split.auto'
 # Kinds of job that import files, of which a book runs one at a time
 IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
 
@@ -106,13 +105,13 @@ class ImportImaging:
 
     :ivar inspector: Port grouping an upload into sources and describing each source.
     :ivar rasterizer: Port writing one scan as an image.
-    :ivar tiler: Port cutting the pyramid, the preview and the thumbnail of an image.
-    :ivar runner: Runner of the processor ``split.none``, which makes the base version of a page from its scan.
+    :ivar base_versions: Builder of the base version of a page, which also cuts the files of a scan.
+    :ivar runner: Runner of the processor that makes the base version of a page from its scan.
     """
 
     inspector: SourceInspector
     rasterizer: PageRasterizer
-    tiler: Tiler
+    base_versions: BaseVersions
     runner: StepRunner
 
 
@@ -182,7 +181,7 @@ class ImportRun:
         self._runner = imaging.runner
         self._records = StageRecords()
         self._labels = PageLabels()
-        self._base_versions = BaseVersions(tiler=imaging.tiler)
+        self._base_versions = imaging.base_versions
         self._order_keys = runtime.order_keys
         self._limits = runtime.limits
         self._handled: set[str] = set()
@@ -473,14 +472,11 @@ class ImportRun:
             await self._rasterizer.extract(kind, files, scan.number, target, full=full)
         await self._base_versions.derive(of_scan, assets=self.book.assets, full=full)
         versions = []
-        run = StepRun(
-            processor_key=SPLIT_NONE.key,
-            params={},
-            input_data=ready.facts.as_data(),
-            image=of_scan(full),
-        )
+        key = self._base_versions.scan_copy.key
+        run = StepRun(processor_key=key, params={}, input_data=ready.facts.as_data(), image=of_scan(full))
+        base = self._base_versions
         for page in pages:
-            version = BaseVersions.split_none(page=page, scan=ready, state=VersionState.READY, moment=datetime.now(UTC))
+            version = base.split_none(page=page, scan=ready, state=VersionState.READY, moment=datetime.now(UTC))
             async with self._runner.execute(self.book, run) as result:
                 versions.append(
                     await self._runner.store(
@@ -716,7 +712,7 @@ class ImportService:
         """
         try:
             steps = (await self._recipes.of_kind(run.book, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
-            if not steps or steps[0].processor_key != AUTOMATIC_SPLIT:
+            if not steps or not self._recipes.unattended(steps[0]):
                 return
             pages = await run.book.read(
                 lambda repos: [

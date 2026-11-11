@@ -37,7 +37,6 @@ from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionInputs, VersionState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.runtime import JobControl
-from bookreviver.services.base_versions import SPLIT_NONE
 from bookreviver.services.imports import IMPORT_ACTIVE, NO_SOURCE_IMPORTED, ImportRun
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.sources import SOURCE_IMPORTING, SourceService
@@ -57,7 +56,7 @@ from tests.harness.adapters.imports import (
     stored_book,
 )
 from tests.harness.adapters.storage import book_directory, upload
-from tests.harness.builders.domain import make_job, make_record, make_source, new_account_id, open_for
+from tests.harness.builders.domain import SPLIT_NONE, make_job, make_record, make_source, new_account_id, open_for
 from tests.harness.builders.seeding import commit_record
 from tests.harness.concurrency.book_hold import hold_book_in_thread
 from tests.harness.fakes.jobs import JobFakes

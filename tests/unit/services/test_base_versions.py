@@ -11,8 +11,8 @@ from bookreviver.domain.images import ColorMode, Rendition, Renditions
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import PageSize, VersionInputs, VersionState
-from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
-from tests.harness.builders.domain import EPOCH, make_page, make_scan, make_source
+from tests.harness.builders.domain import EPOCH, PAGES_BLANK, SPLIT_NONE, make_page, make_scan, make_source
+from tests.harness.builders.page_services import make_base_versions
 
 if TYPE_CHECKING:
     from bookreviver.domain.sources import Scan
@@ -39,7 +39,7 @@ def _cut_scan(*, dpi_x: float | None = None, dpi_y: float | None = None, full: R
 
 
 class TestSplitNone:
-    """Tests for BaseVersions.split_none()."""
+    """Tests for make_base_versions().split_none()."""
 
     @pytest.mark.parametrize('state', [VersionState.PENDING, VersionState.READY])
     def test_builds_the_version_of_a_whole_scan_in_the_scans_format(self, state: VersionState) -> None:
@@ -51,7 +51,7 @@ class TestSplitNone:
         scan = _cut_scan(full=Rendition.FULL_PNG)
         page = make_page(scan=scan)
 
-        version = BaseVersions.split_none(page=page, scan=scan, state=state, moment=EPOCH)
+        version = make_base_versions().split_none(page=page, scan=scan, state=state, moment=EPOCH)
 
         expect((version.stage, version.processor, version.state) == (Stage.PAGE_SPLIT, SPLIT_NONE, state))
         expect(version.renditions == Renditions(ready=state is VersionState.READY, full=Rendition.FULL_PNG))
@@ -76,20 +76,20 @@ class TestSplitNone:
         scan = _cut_scan(dpi_x=dpi_x, dpi_y=dpi_y)
         page = make_page(scan=scan)
 
-        version = BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
+        version = make_base_versions().split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
 
         assert PageSize.from_data(version.data) == PageSize(width_px=640, height_px=480, dpi=expected)
 
 
 class TestBlank:
-    """Tests for BaseVersions.blank()."""
+    """Tests for make_base_versions().blank()."""
 
     def test_builds_a_pending_version_of_the_page_order_stage_with_the_size_in_its_data(self) -> None:
         """Verify a blank leaf's version is pending, in the page order stage, in the format given."""
         page = make_page()
         size = PageSize(width_px=100, height_px=150, dpi=96.0)
 
-        version = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
+        version = make_base_versions().blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
 
         expect(
             (version.stage, version.processor, version.state) == (Stage.PAGE_ORDER, PAGES_BLANK, VersionState.PENDING)
@@ -103,7 +103,7 @@ class TestBlank:
         page = make_page()
         size = PageSize(width_px=100, height_px=150, dpi=96.0)
 
-        version = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
+        version = make_base_versions().blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
 
         assert version.params == size.as_data()
 
@@ -113,12 +113,14 @@ class TestBlank:
         size = PageSize(width_px=100, height_px=150)
         pages = [PageVersionId('b' * 16), PageVersionId('a' * 16)]
 
-        paper = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=pages)
-        again = BaseVersions.blank(
+        paper = make_base_versions().blank(
+            page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=pages
+        )
+        again = make_base_versions().blank(
             page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=list(reversed(pages))
         )
-        white = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
-        other = BaseVersions.blank(
+        white = make_base_versions().blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
+        other = make_base_versions().blank(
             page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=[PageVersionId('c' * 16)]
         )
 
@@ -126,4 +128,16 @@ class TestBlank:
         expect(paper.params[BlankParam.PAPER_FROM] == sorted(pages))
         expect(paper.id == again.id)
         expect(paper.id not in {white.id, other.id} and white.id != other.id)
+        assert_expectations()
+
+
+class TestProcessorsOfBaseVersions:
+    """Tests for the processors a base version is made by, which the catalogue names by their roles."""
+
+    def test_the_processors_are_those_the_catalogue_lists_for_the_roles(self) -> None:
+        """Verify the builder takes the key and the version of each processor from its spec, and prepares both."""
+        base_versions = make_base_versions()
+        expect(base_versions.scan_copy.ref == SPLIT_NONE)
+        expect(base_versions.blank_leaf.ref == PAGES_BLANK)
+        expect(base_versions.prepared_keys == {SPLIT_NONE.key, PAGES_BLANK.key})
         assert_expectations()

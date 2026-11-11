@@ -28,10 +28,10 @@ from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage, StageState
 from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
-from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.domain import (
     EPOCH,
+    PAGES_BLANK,
     make_page,
     make_page_stage,
     make_page_version,
@@ -41,7 +41,7 @@ from tests.harness.builders.domain import (
     make_source,
     open_for,
 )
-from tests.harness.builders.page_services import make_page_service
+from tests.harness.builders.page_services import make_base_versions, make_page_service
 from tests.harness.builders.seeding import store_book
 from tests.harness.fakes.acting_renditions import ActingRenditionWriter
 from tests.harness.fakes.board import FakeJobBoard
@@ -174,7 +174,9 @@ class LeafDesk:
             page = make_page(order_key=f'a{number}', scan=scan, kind=kind)
             scans.append(scan)
             pages.append(page)
-            versions.append(BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH))
+            versions.append(
+                make_base_versions().split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
+            )
         book_id = await store_book(
             self.open_catalogue(),
             make_record(),

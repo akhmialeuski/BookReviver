@@ -21,13 +21,15 @@ the engine asks it what the book gives before it runs the step on a page. A step
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
+from bookreviver.domain.errors import NotFoundError
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.core.content import BookContent
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.domain.processors import ProcessorSpec
+    from bookreviver.domain.processors import ProcessorRole, ProcessorSpec
     from bookreviver.domain.stages import Stage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.processing import ProcessorSettings, StepInput, StepResult
@@ -175,3 +177,17 @@ class ProcessorCatalog(ABC):
         :returns: The specs of all the processors of the catalogue.
         :rtype: Sequence[ProcessorSpec]
         """
+
+    def of_role(self, role: ProcessorRole) -> ProcessorSpec:
+        """Find the processor the application asks for a job of its own, by the role its spec declares.
+
+        :param role: What the application asks the processor for.
+        :type role: ProcessorRole
+        :returns: The spec of the first processor of that role, by key.
+        :rtype: ProcessorSpec
+        :raises NotFoundError: If no processor of the catalogue has the role.
+        """
+        for spec in self.specs():
+            if spec.role is role:
+                return spec
+        raise NotFoundError(role)

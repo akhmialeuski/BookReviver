@@ -18,7 +18,6 @@ from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.processing import StepOutput
 from bookreviver.ports.storage import BookDirectory
-from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.steps import StepRun, StepRunner
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.books import IMAGE
@@ -30,7 +29,7 @@ from tests.harness.builders.domain import (
     make_source,
     new_book_id,
 )
-from tests.harness.builders.page_services import INFO_NAME, FakeTiler
+from tests.harness.builders.page_services import INFO_NAME, FakeTiler, make_base_versions
 from tests.harness.fakes.in_process_executor import InProcessStepExecutor
 from tests.harness.fakes.processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
 from tests.harness.fakes.processors import FakeProcessor
@@ -95,7 +94,9 @@ class Rig:
         )
         self.scan = _scan()
         page = make_page(scan=self.scan)
-        self.version = BaseVersions.split_none(page=page, scan=self.scan, state=VersionState.PENDING, moment=EPOCH)
+        self.version = make_base_versions().split_none(
+            page=page, scan=self.scan, state=VersionState.PENDING, moment=EPOCH
+        )
 
     async def store_scan(self) -> None:
         """Store the ``full`` image of the scan."""

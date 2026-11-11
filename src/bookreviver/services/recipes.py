@@ -367,6 +367,16 @@ class RecipeBook:
             raise InvalidParametersError(err_msg)
         return evolve(step, params=processor.validate_params(step.params))
 
+    def unattended(self, step: Step) -> bool:
+        """Tell whether a step decides by itself what to do with a page, so its stage may run without the user asking.
+
+        :param step: A step of a recipe.
+        :type step: Step
+        :returns: Whether the processor of the step is installed and says so in its spec.
+        :rtype: bool
+        """
+        return self._offers(step.processor_key) and self._processors.get(step.processor_key).spec.unattended
+
     def installed(self, steps: Sequence[Step]) -> tuple[tuple[Step, ...], tuple[str, ...]]:
         """Split steps into those whose processor the catalogue offers and the keys of the processors it does not.
 
