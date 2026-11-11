@@ -231,7 +231,7 @@ class TestDetectContent:
         response = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: named})
 
         job = JobSchema.model_validate_json(response.content)
-        stored = ContentDetection.from_map(fx_board.get(job.id).params)
+        stored = fx_board.get(job.id).asked(ContentDetection)
         expect(response.status_code == status.HTTP_202_ACCEPTED)
         expect(stored == ContentDetection(page_ids=(fx_book.pages[0].id, fx_book.pages[1].id)))
         assert_expectations()

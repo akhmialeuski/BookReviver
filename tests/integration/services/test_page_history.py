@@ -599,7 +599,7 @@ class TestClear:
         )
         cutting = fx_kit.board.put_jobs[queued:]
         expect([job.kind for job in cutting] == [JobKind.CUT_TILES])
-        expect([TileCut.from_map(job.params).version_ids for job in cutting] == [(made[0].id,)])
+        expect([job.asked(TileCut).version_ids for job in cutting] == [(made[0].id,)])
         assert_expectations()
 
     async def test_a_stage_left_with_no_current_version_or_a_cut_pyramid_queues_nothing(
@@ -981,7 +981,7 @@ class TestClear:
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, book_id, key))
         job = await fx_kit.parts().starter.enqueue(
-            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY).to_map()
+            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY)
         )
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
@@ -1003,7 +1003,7 @@ class TestClear:
         """
         actor, book_id, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, book_id, page)
-        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
+        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
         assert fx_kit.board.get(preview.id).state is JobState.QUEUED

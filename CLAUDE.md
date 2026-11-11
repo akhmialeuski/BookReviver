@@ -107,6 +107,13 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.
+- A background job is what was asked for: a step or a stage, the pages it goes over and its parameters, as the value
+  of its kind in `Job.work` (`StageRun`, `StepPreview`, `TileCut`, …), which a worker reads with `job.asked(...)`.
+  Jobs live in the memory of the process and are never stored, so a restart begins with an empty queue. The queue of a
+  book runs one job at a time in the order they were put, first in, first out, and `JobStarter` refuses nothing
+  because the book is busy: a second run waits behind the first and reads what it made. A preview is the one job that
+  is dropped for another. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
+  service that does each `JobKind`, each taking the book, the job and its control.
 - Every new port gets a fake in `tests/harness/fakes` and a contract test suite that runs against the fake and every adapter.
   `src` holds no code that only tests select. The persistence port has no fake: its tests run on the SQLAlchemy adapter
   over SQLite files in the test's directory, the catalogue and every book copied from a template of its schema built

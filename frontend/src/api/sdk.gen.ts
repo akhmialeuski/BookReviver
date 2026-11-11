@@ -521,7 +521,8 @@ export const resetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPost = <T
  * Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.
  *
  * The job makes a version for every step on every page and reports one step of progress for each page. A book runs
- * one stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages
+ * one job at a time in the order they were asked for, so a run asked for while another is queued or running waits
+ * behind it and reads what it made. A preview of the book is cancelled. A run keeps the settings the pages
  * changed for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409
  * until the body confirms it, when it would take them from any page.
  */
@@ -577,7 +578,7 @@ export const previewStepApiV1BooksBookIdStagesStagePreviewPost = <ThrowOnError e
  * The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
  * writes the median line height and a page size of the median block with its margins into the parameters of the
  * ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
- * book is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
+ * book is cancelled, and the measure waits behind a job of the book that is queued or running.
  */
 export const measureBookApiV1BooksBookIdStagesGeometryMeasurePost = <ThrowOnError extends boolean = false>(options: Options<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostData, ThrowOnError>): RequestResult<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses, MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors, ThrowOnError> => (options.client ?? client).post<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses, MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/stages/geometry/measure', ...options });
 
@@ -644,7 +645,7 @@ export const collectableVersionsApiV1BooksBookIdVersionsCollectableGet = <ThrowO
  *
  * A version goes when it is not current, not in the chain of inputs of a current version, not a base version, not
  * marked Good and without a comment, and, for a preview, older than its retention period. It goes with its files and
- * its row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.
+ * its row. A collection that is queued already is the answer. A run queues one by itself when it ends.
  */
 export const collectVersionsApiV1BooksBookIdVersionsCollectPost = <ThrowOnError extends boolean = false>(options: Options<CollectVersionsApiV1BooksBookIdVersionsCollectPostData, ThrowOnError>): RequestResult<CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses, CollectVersionsApiV1BooksBookIdVersionsCollectPostErrors, ThrowOnError> => (options.client ?? client).post<CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses, CollectVersionsApiV1BooksBookIdVersionsCollectPostErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/versions/collect', ...options });
 

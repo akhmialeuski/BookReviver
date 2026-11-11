@@ -106,6 +106,7 @@ JOB_METHODS: dict[JobKind, str] = {
     JobKind.PREVIEW_STEP: 'preview_step',
     JobKind.CUT_TILES: 'cut_tiles',
     JobKind.COLLECT_VERSIONS: 'collect_versions',
+    JobKind.MEASURE_BOOK: 'measure_book',
     JobKind.DETECT_CONTENT: 'detect_content',
 }
 
@@ -304,8 +305,6 @@ class ProcessingKit:
         book = Book(dir_name)
         if job.kind is JobKind.PREPARE_PAGES:
             return await self._pages().prepare_images(book, job, control)
-        if job.kind is JobKind.MEASURE_BOOK:
-            return await self.jobs().measure_book(book, control)
         return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(book, job, control))
 
     def _pages(self) -> PageService:

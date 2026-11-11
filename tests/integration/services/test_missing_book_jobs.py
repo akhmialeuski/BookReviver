@@ -30,15 +30,15 @@ from tests.harness.fakes.processors import FakeContentProbe, FakeProcessor
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.core.book import Book
-    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.jobs import JobWork
     from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio
 
 JOB_ARG: str = 'job'
-# The jobs that need no book to be valid, by the kind and the parameters their entry point reads
-MISSING_BOOK_JOBS: list[tuple[JobKind, MetadataMap]] = [
-    (JobKind.RUN_STAGE, StageRun(stage=Stage.GEOMETRY).to_map()),
+# The jobs that need no book to be valid, by the kind and the work their worker reads
+MISSING_BOOK_JOBS: list[tuple[JobKind, JobWork | None]] = [
+    (JobKind.RUN_STAGE, StageRun(stage=Stage.GEOMETRY)),
     (
         JobKind.PREVIEW_STEP,
         StepPreview(
@@ -46,12 +46,12 @@ MISSING_BOOK_JOBS: list[tuple[JobKind, MetadataMap]] = [
             stage=Stage.GEOMETRY,
             steps=(Step(processor_key=FakeProcessor.spec.key),),
             step_index=0,
-        ).to_map(),
+        ),
     ),
-    (JobKind.COLLECT_VERSIONS, VersionCollection(previews_older_than=EPOCH + timedelta(days=1)).to_map()),
-    (JobKind.MEASURE_BOOK, {}),
-    (JobKind.CUT_TILES, TileCut(version_ids=(PageVersionId('0123456789abcdef'),)).to_map()),
-    (JobKind.PREPARE_PAGES, {}),
+    (JobKind.COLLECT_VERSIONS, VersionCollection(previews_older_than=EPOCH + timedelta(days=1))),
+    (JobKind.MEASURE_BOOK, None),
+    (JobKind.CUT_TILES, TileCut(version_ids=(PageVersionId('0123456789abcdef'),))),
+    (JobKind.PREPARE_PAGES, None),
 ]
 MISSING_BOOK_IDS: list[str] = [kind for kind, _ in MISSING_BOOK_JOBS]
 
@@ -69,13 +69,13 @@ class TestJobsOfAMissingBook:
     """Tests for the end of each job whose book is not in the library."""
 
     @pytest.mark.parametrize(JOB_ARG, MISSING_BOOK_JOBS, ids=MISSING_BOOK_IDS)
-    async def test_job_ends_failed(self, fx_kit: ProcessingKit, job: tuple[JobKind, MetadataMap]) -> None:
+    async def test_job_ends_failed(self, fx_kit: ProcessingKit, job: tuple[JobKind, JobWork | None]) -> None:
         """Verify a job of a book that is gone ends as failed, and the board holds it so.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         :param job: The kind of the job and the parameters its entry point reads.
-        :type job: tuple[JobKind, MetadataMap]
+        :type job: tuple[JobKind, JobWork | None]
         """
         kind, params = job
         queued = await fx_kit.parts().starter.enqueue(missing_book(), kind, params)
@@ -97,7 +97,7 @@ class TestJobsOfAMissingBook:
         :type fx_open_book: BookOpener
         """
         kit = ProcessingKit(fx_database, fx_open_book, processors=[FakeContentProbe([])])
-        queued = await kit.parts().starter.enqueue(missing_book(), JobKind.DETECT_CONTENT, ContentDetection().to_map())
+        queued = await kit.parts().starter.enqueue(missing_book(), JobKind.DETECT_CONTENT, ContentDetection())
 
         await kit.work_queue()
 
@@ -109,9 +109,7 @@ class TestJobsOfAMissingBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        queued = await fx_kit.parts().starter.enqueue(
-            missing_book(), JobKind.DETECT_CONTENT, ContentDetection().to_map()
-        )
+        queued = await fx_kit.parts().starter.enqueue(missing_book(), JobKind.DETECT_CONTENT, ContentDetection())
 
         await fx_kit.work_queue()
 

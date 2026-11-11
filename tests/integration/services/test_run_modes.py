@@ -275,7 +275,7 @@ class TestConfirmation:
         job = await fx_kit.service().start_run(
             fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         )
-        assert job.params[MODE_KEY] == RunMode.DROP_OWN.value
+        assert job.asked(StageRun).mode is RunMode.DROP_OWN
 
 
 class TestDropOwn:

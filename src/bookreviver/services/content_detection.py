@@ -87,7 +87,7 @@ class ContentDetector:
         :raises NotFoundError: If the book of the job is gone, or the job names a page that is gone.
         :raises JobCancelledError: If the job was cancelled, which stops it between two pages.
         """
-        detection = ContentDetection.from_map(job.params)
+        detection = job.asked(ContentDetection)
         # A machine without OpenCV offers no such processor, and then the kind of a page is all that says what it shows
         if all(spec.role is not ProcessorRole.CONTENT_PROBE for spec in self._processors.specs()):
             return 0, 0
