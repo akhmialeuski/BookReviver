@@ -161,9 +161,9 @@ class ProcessingService:
         :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the book has no such page, or the stage has no recipe.
-        :raises ConflictError: If a run or a measure of the book is queued or running, or the run goes through a
-                               step that the recipe of a page has no such step for, or whose steps up to it are all
-                               switched off, or its mode takes the work of pages away and it is not confirmed.
+        :raises ConflictError: If the run goes through a step that the recipe of a page has no such step for, or whose
+                               steps up to it are all switched off, or its mode takes the work of pages away and it
+                               is not confirmed.
         """
 
         def check(repos: BookRepositories) -> None:
@@ -188,7 +188,7 @@ class ProcessingService:
             affected = (await self._plan(book, run).impact()).affected
             if affected:
                 raise ConflictError(NEEDS_CONFIRMATION.format(mode=run.mode.label, pages=affected))
-        return await self._starter.enqueue(book, JobKind.RUN_STAGE, run.to_map())
+        return await self._starter.enqueue(book, JobKind.RUN_STAGE, run)
 
     def _plan(self, book: Book, run: StageRun) -> RunPlan:
         """Plan a run over the book.
@@ -210,11 +210,9 @@ class ProcessingService:
         :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the Geometry stage has no recipe.
-        :raises ConflictError: If a run or a measure of the book is queued or running, which may be writing the
-                               versions that are measured or the recipe.
         """
         await self._recipes.recipes(book, Stage.GEOMETRY)
-        return await self._starter.enqueue(book, JobKind.MEASURE_BOOK, {})
+        return await self._starter.enqueue(book, JobKind.MEASURE_BOOK)
 
     async def start_preview(self, book: Book, preview: StepPreview) -> Job:
         """Record a job that previews the steps of a form on a page, and queue it.
@@ -227,8 +225,6 @@ class ProcessingService:
         :rtype: Job
         :raises NotFoundError: If the book has no such page.
         :raises InvalidParametersError: If a step does not fit its processor.
-        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the book is queued
-                               or running.
         """
         await book.read(lambda repos: repos.pages.get(preview.page_id))
         checked = StepPreview(
@@ -238,7 +234,7 @@ class ProcessingService:
             steps=self._recipes.check(preview.stage, preview.steps, order=OrderMode.FREE),
             step_index=preview.step_index,
         )
-        return await self._starter.enqueue(book, JobKind.PREVIEW_STEP, checked.to_map())
+        return await self._starter.enqueue(book, JobKind.PREVIEW_STEP, checked)
 
     async def page_stages(self, book: Book, page_id: PageId, request: SliceRequest) -> Slice[PageStage]:
         """List the current version and the state of every stage a page has been through, in pipeline order.
@@ -430,15 +426,14 @@ class ProcessingService:
         :returns: The queued job.
         :rtype: Job
         :raises NotFoundError: If the book has no such page, or the page has no such version.
-        :raises ConflictError: If the version is not ready, has no image, or is a preview, or a run, a preview, a tile
-                               cutting or a collection of the book is queued or running.
+        :raises ConflictError: If the version is not ready, has no image, or is a preview.
         """
         version = await self.version(book, page_id, version_id)
         if version.renditions is None:
             raise ConflictError(NO_IMAGE.format(version_id=version_id))
         if version.state is not VersionState.READY or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=NOT_READY))
-        return await self._starter.enqueue(book, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
+        return await self._starter.enqueue(book, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)))
 
     async def collection_report(self, book: Book) -> CollectionReport:
         """Count the versions a collection would delete now and the size of their files, which it changes nothing of.
@@ -469,13 +464,10 @@ class ProcessingService:
 
         :param book: The open book.
         :type book: Book
-        :returns: The queued job, or the collection that is queued or running already.
+        :returns: The queued job, which is the collection that was queued already when the book has one.
         :rtype: Job
-        :raises ConflictError: If a run, a measure of the book or a tile cutting of the book is queued or running.
         """
-        if (job := await self._starter.enqueue_collection(book)) is None:
-            raise ConflictError(BOOK_BUSY)
-        return job
+        return await self._starter.enqueue_collection(book)
 
     async def map_to_scan(
         self,

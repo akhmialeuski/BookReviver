@@ -171,7 +171,7 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            cut = TileCut.from_map(job.params)
+            cut = job.asked(TileCut)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         control.plan(len(cut.version_ids))
@@ -202,13 +202,15 @@ class ProcessingJobs:
             return JobEnd(state=JobState.FAILED, error=VERSIONS_LEFT.format(count=left))
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def measure_book(self, book: Book, control: JobControl) -> JobEnd:
+    async def measure_book(self, book: Book, _job: Job, control: JobControl) -> JobEnd:
         """Run a ``measure-book`` job: the median line height and page size of the book, written into its recipe.
 
         The measure reads the boxes the pages were placed by and writes one result, so it is one task of its own.
 
         :param book: The book of the queue the job was taken from.
         :type book: Book
+        :param _job: The running job, which the measure reads nothing of.
+        :type _job: Job
         :param control: What the job reports through, and learns of its cancellation from, after each task.
         :type control: JobControl
         :returns: How the job ended: failed with the reason when the book cannot be measured, else succeeded.
@@ -258,7 +260,7 @@ class ProcessingJobs:
         :raises DomainError: If the parameters of the job are not valid, or the recipe or a page it names is gone.
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
-        run = StageRun.from_map(job.params)
+        run = job.asked(StageRun)
         book_record = await book.read(lambda repos: BookContent(repos).record)
         plan = RunPlan(recipes=self._recipes, book=book, run=run)
         pages = await plan.pages()
@@ -370,7 +372,7 @@ class ProcessingJobs:
         :raises DomainError: If the parameters are not valid, the page is gone, or a step fails.
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
-        preview = StepPreview.from_map(job.params)
+        preview = job.asked(StepPreview)
         book_record, page = await book.read(lambda repos: (repos.book_record.get(), repos.pages.get(preview.page_id)))
         executor = PreviewRun(book=book, book_record=book_record, runtime=self._runtime, control=control)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
@@ -438,7 +440,7 @@ class ProcessingJobs:
         :raises DomainError: If the parameters of the job are not valid.
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
-        collection = VersionCollection.from_map(job.params)
+        collection = job.asked(VersionCollection)
         old = await book.read(lambda repos: repos.page_versions.collectable(collection.previews_older_than))
         groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
         control.plan(sum(len(batches) for batches in groups))

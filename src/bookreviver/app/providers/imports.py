@@ -18,7 +18,7 @@ from contextlib import AsyncExitStack
 from dishka import AsyncContainer, Provider, Scope, provide
 
 from bookreviver.adapters.jobs.board import InMemoryJobBoard
-from bookreviver.app.jobs import job_runner
+from bookreviver.app.jobs import JobWorkers, job_runner, job_workers
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector
 from bookreviver.ports.ordering import OrderKeys
@@ -30,12 +30,29 @@ from bookreviver.services.imports import (
     ImportService,
 )
 from bookreviver.services.jobs import JobService
+from bookreviver.services.pages import PageService
+from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingParts
 from bookreviver.services.steps import StepRunner
 
 
 class ImportsProvider(Provider):
     """Builds the job board and the job service once per application, and the import service per request or job."""
+
+    @provide(scope=Scope.REQUEST)
+    def workers(self, imports: ImportService, pages: PageService, processing: ProcessingJobs) -> JobWorkers:
+        """Name the worker of every kind of job for the request scope one job runs in.
+
+        :param imports: Import service of the scope.
+        :type imports: ImportService
+        :param pages: Page service of the scope.
+        :type pages: PageService
+        :param processing: The work of the processing jobs of the scope.
+        :type processing: ProcessingJobs
+        :returns: The workers by the kind of job.
+        :rtype: JobWorkers
+        """
+        return job_workers(imports, pages, processing)
 
     @provide(scope=Scope.APP)
     async def job_board(self, settings: Settings, container: AsyncContainer) -> AsyncIterator[InMemoryJobBoard]:

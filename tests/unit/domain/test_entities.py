@@ -12,12 +12,12 @@ from attrs import evolve, fields
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.books import BookDetails
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.geometry import Line, Point, Rotation
 from bookreviver.domain.history import ChangeSource, PageHistoryEntry, StepHistory
 from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, ScanId, StorageKey
 from bookreviver.domain.images import Rendition, Renditions
-from bookreviver.domain.jobs import JobKind, Progress, StageRun
+from bookreviver.domain.jobs import JobKind, Progress, StageRun, TileCut
 from bookreviver.domain.library import LibraryEntry
 from bookreviver.domain.page_steps import PageEdit, StepLayer
 from bookreviver.domain.pages import BlankFill, ContentSource, ContentType, PageKind, PageOrigin, RecipeKind
@@ -70,20 +70,36 @@ class TestLibraryEntry:
 class TestJobStage:
     """Tests for Job.stage."""
 
-    def test_a_run_stage_job_names_the_stage_of_its_parameters(self) -> None:
-        """Verify the stage comes out of the parameters the job stores."""
-        job = make_job(kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.CLEANUP).to_map())
+    def test_a_run_stage_job_names_the_stage_of_its_work(self) -> None:
+        """Verify the stage comes out of what the job was asked to do."""
+        job = make_job(kind=JobKind.RUN_STAGE, work=StageRun(stage=Stage.CLEANUP))
         assert job.stage is Stage.CLEANUP
 
     def test_a_job_of_another_kind_has_no_stage(self) -> None:
-        """Verify an import job has no stage, whatever its parameters hold."""
-        job = make_job(params=StageRun(stage=Stage.CLEANUP).to_map())
+        """Verify an import job has no stage, whatever it was asked to do."""
+        job = make_job(work=StageRun(stage=Stage.CLEANUP))
         assert job.stage is None
 
-    def test_a_run_stage_job_with_unreadable_parameters_has_no_stage(self) -> None:
-        """Verify parameters that are not those of a stage run give no stage and no error."""
+    def test_a_run_stage_job_with_no_work_has_no_stage(self) -> None:
+        """Verify a job that was asked for nothing gives no stage and no error."""
         job = make_job(kind=JobKind.RUN_STAGE)
         assert job.stage is None
+
+
+class TestJobAsked:
+    """Tests for Job.asked."""
+
+    def test_the_work_is_given_as_the_value_the_worker_expects(self) -> None:
+        """Verify a worker reads what its job was asked to do as the value of its kind."""
+        run = StageRun(stage=Stage.CLEANUP)
+        assert make_job(kind=JobKind.RUN_STAGE, work=run).asked(StageRun) is run
+
+    def test_a_job_with_no_work_or_the_work_of_another_kind_is_refused(self) -> None:
+        """Verify a worker is refused a job that was put with nothing to do, or with what another kind does."""
+        with pytest.raises(InvalidParametersError):
+            make_job(kind=JobKind.RUN_STAGE).asked(StageRun)
+        with pytest.raises(InvalidParametersError):
+            make_job(kind=JobKind.CUT_TILES, work=StageRun(stage=Stage.CLEANUP)).asked(TileCut)
 
 
 class TestPage:

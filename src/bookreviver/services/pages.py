@@ -80,7 +80,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.ids import PageVersionId, ScanId, SourceId
-    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.jobs import JobWork
     from bookreviver.domain.pages import NewPage, PageAnchor
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.ordering import OrderKeys
@@ -288,7 +288,7 @@ class PageService:
 
         await book.read(check)
         detection = ContentDetection(page_ids=None if page_ids is None else tuple(page_ids))
-        if (job := self._enqueue(book, JobKind.DETECT_CONTENT, detection.to_map())) is None:
+        if (job := self._enqueue(book, JobKind.DETECT_CONTENT, detection)) is None:
             raise ConflictError(DETECTION_RUNNING)
         return job
 
@@ -300,7 +300,7 @@ class PageService:
         :param book: The open book.
         :type book: Book
         """
-        self._enqueue(book, JobKind.DETECT_CONTENT, ContentDetection().to_map())
+        self._enqueue(book, JobKind.DETECT_CONTENT, ContentDetection())
 
     async def add(self, book: Book, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
@@ -1066,7 +1066,7 @@ class PageService:
             await book.assets.delete_prefix(BookKeys.page(page.id))
 
     def _enqueue(
-        self, book: Book, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
+        self, book: Book, kind: JobKind, work: JobWork | None = None, *, after: JobId | None = None
     ) -> Job | None:
         """Put a ``prepare-pages`` or ``detect-content`` job on the board, unless one of its kind is active.
 
@@ -1089,7 +1089,7 @@ class PageService:
         """
         if any(active_job.kind is kind and active_job.id != after for active_job in book.jobs.active()):
             return None
-        job = Job(id=JobId(uuid4()), kind=kind, params=params or {}, created_at=datetime.now(UTC))
+        job = Job(id=JobId(uuid4()), kind=kind, work=work, created_at=datetime.now(UTC))
         return book.jobs.put(job)
 
     async def _follow_up(self, book: Book, job: Job) -> None:

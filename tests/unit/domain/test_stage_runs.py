@@ -2,39 +2,23 @@
 
 import pytest
 
-from bookreviver.domain.jobs import THROUGH_STEP_KEY, StageRun
+from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.runs import RunImpact, RunMode
 from bookreviver.domain.stages import Stage
 from tests.harness.builders.domain import new_book_id
 
 BOOK_ID = new_book_id()
-THROUGH_THIRD_STEP: int = 2
+# The field of a run that names its last step, which the refusal of a wrong one names
+THROUGH_STEP_FIELD: str = 'through_step'
 
 
 class TestStageRun:
     """Tests for the parameters of a ``run-stage`` job."""
 
-    def test_the_last_step_of_a_run_survives_the_job_parameters(self) -> None:
-        """Verify a run through a step read back from the parameters of its job still stops there."""
-        run = StageRun(stage=Stage.GEOMETRY, through_step=THROUGH_THIRD_STEP)
-        assert StageRun.from_map(run.to_map()).through_step == run.through_step
-
-    def test_a_job_stored_without_the_last_step_is_a_run_through_every_step(self) -> None:
-        """Verify the parameters of a job queued before the field existed are read as a run through every step."""
-        stored = {
-            key: value for key, value in StageRun(stage=Stage.GEOMETRY).to_map().items() if key != THROUGH_STEP_KEY
-        }
-        assert StageRun.from_map(stored).through_step is None
-
     def test_a_run_through_a_step_before_the_first_is_rejected(self) -> None:
         """Reject a negative index of the last step."""
-        with pytest.raises(ValueError, match=THROUGH_STEP_KEY):
+        with pytest.raises(ValueError, match=THROUGH_STEP_FIELD):
             StageRun(stage=Stage.GEOMETRY, through_step=-1)
-
-    def test_a_job_stored_with_a_recipe_and_a_pin_is_still_read(self) -> None:
-        """Verify the keys a run had before a page was processed by the recipe of its kind are left unread."""
-        stored = {**StageRun(stage=Stage.GEOMETRY).to_map(), 'recipe_id': None, 'pin': False}
-        assert StageRun.from_map(stored) == StageRun(stage=Stage.GEOMETRY)
 
 
 class TestRunMode:

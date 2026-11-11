@@ -169,9 +169,7 @@ class TestReadJob:
         book_id = await store_book(
             fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
-        run = fx_fakes.board.put(
-            book_id, make_job(kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
-        )
+        run = fx_fakes.board.put(book_id, make_job(kind=JobKind.RUN_STAGE, work=StageRun(stage=Stage.GEOMETRY)))
         run_body = (await fx_client.get(JOB_PATH.format(book_id=book_id, job_id=run.id))).json()
         import_body = (
             await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.job.id))

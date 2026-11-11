@@ -428,7 +428,7 @@ class TestStartDetection:
         job = await pages_of(kit).start_detection(fx_open_book(actor, book_id), [pages[1].id])
 
         expect((job.kind, job.state) == (JobKind.DETECT_CONTENT, JobState.QUEUED))
-        expect(ContentDetection.from_map(job.params) == ContentDetection(page_ids=(pages[1].id,)))
+        expect(job.asked(ContentDetection) == ContentDetection(page_ids=(pages[1].id,)))
         expect([queued.id for queued in kit.board.put_jobs] == [job.id])
         assert_expectations()
 
@@ -485,7 +485,7 @@ class TestStartDetection:
 
         [job] = kit.board.put_jobs
         expect(job.kind is JobKind.DETECT_CONTENT)
-        expect(ContentDetection.from_map(job.params) == ContentDetection())
+        expect(job.asked(ContentDetection) == ContentDetection())
         assert_expectations()
 
 

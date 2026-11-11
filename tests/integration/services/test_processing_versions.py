@@ -282,7 +282,7 @@ class TestChooseVersion:
         actor, book_id, page, first = await ran_geometry(fx_kit)
         before = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
         job = await fx_kit.parts().starter.enqueue(
-            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY).to_map()
+            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY)
         )
         with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, first.id)
@@ -301,7 +301,7 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
-        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
+        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         with pytest.raises(ConflictError, match=OTHER_STAGE_REASON):
             await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.CLEANUP, first.id)
         assert stored_job(fx_kit, preview.id).state is JobState.QUEUED
@@ -603,7 +603,7 @@ class TestStartTiles:
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
         job = await fx_kit.service().start_tiles(fx_open_book(actor, book_id), page.id, first.id)
-        assert TileCut.from_map(job.params) == TileCut(version_ids=(first.id,))
+        assert job.asked(TileCut) == TileCut(version_ids=(first.id,))
 
 
 class TestCollection:
@@ -1211,7 +1211,7 @@ class TestChooseVersionApplyStep:
         actor, book_id, page, first = await ran_geometry(fx_kit)
         second = evolve(first, id=PageVersionId(CHOSEN_VERSION_ID), params={STRENGTH_PARAMETER: 7})
         await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(second))
-        await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
+        await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         change_when_published(fx_kit, monkeypatch, partial(change, book_id, second, fx_kit.databases))
         with pytest.raises(refusal):
             await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, second.id)

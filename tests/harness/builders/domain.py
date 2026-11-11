@@ -51,6 +51,7 @@ from bookreviver.domain.versions import PageVersion
 if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.geometry import EditGeometry
+    from bookreviver.domain.jobs import JobWork
     from bookreviver.domain.metadata import MetadataMap
     from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.adapters.storage import SharedBookDirectories
@@ -346,7 +347,7 @@ def make_job(
     state: JobState = JobState.QUEUED,
     minutes: int = 0,
     kind: JobKind = JobKind.IMPORT_SOURCE,
-    params: MetadataMap | None = None,
+    work: JobWork | None = None,
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
@@ -356,8 +357,8 @@ def make_job(
     :type minutes: int
     :param kind: What the job does.
     :type kind: JobKind
-    :param params: What a processing job was asked to do, or None for a job without.
-    :type params: MetadataMap | None
+    :param work: What the job was asked to do, as the value of its kind, or None for a job that takes nothing.
+    :type work: JobWork | None
     :returns: A job with a fresh identifier.
     :rtype: Job
     """
@@ -365,7 +366,7 @@ def make_job(
         id=JobId(uuid4()),
         kind=kind,
         state=state,
-        params={} if params is None else params,
+        work=work,
         created_at=EPOCH + timedelta(minutes=minutes),
     )
 
