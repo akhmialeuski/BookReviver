@@ -20,8 +20,9 @@ from dishka import AsyncContainer, Provider, Scope, provide
 from bookreviver.adapters.jobs.board import InMemoryJobBoard
 from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
-from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
+from bookreviver.ports.imaging import PageRasterizer, SourceInspector
 from bookreviver.ports.ordering import OrderKeys
+from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.imports import (
     ImportImaging,
     ImportLimits,
@@ -84,7 +85,7 @@ class ImportsProvider(Provider):
 
     @provide(scope=Scope.APP)
     def import_imaging(
-        self, inspector: SourceInspector, rasterizer: PageRasterizer, tiler: Tiler, runner: StepRunner
+        self, inspector: SourceInspector, rasterizer: PageRasterizer, base_versions: BaseVersions, runner: StepRunner
     ) -> ImportImaging:
         """Gather the imaging ports an import reads its sources and cuts its scans with.
 
@@ -92,14 +93,14 @@ class ImportsProvider(Provider):
         :type inspector: SourceInspector
         :param rasterizer: Page rasterizer of the application.
         :type rasterizer: PageRasterizer
-        :param tiler: Tiler of the application.
-        :type tiler: Tiler
+        :param base_versions: Builder of base versions of the application, which also cuts the files of a scan.
+        :type base_versions: BaseVersions
         :param runner: Runner of processors of the application, which makes the base version of a page.
         :type runner: StepRunner
         :returns: The imaging ports.
         :rtype: ImportImaging
         """
-        return ImportImaging(inspector=inspector, rasterizer=rasterizer, tiler=tiler, runner=runner)
+        return ImportImaging(inspector=inspector, rasterizer=rasterizer, base_versions=base_versions, runner=runner)
 
     @provide(scope=Scope.APP)
     def import_runtime(self, order_keys: OrderKeys, limits: ImportLimits) -> ImportRuntime:

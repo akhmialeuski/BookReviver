@@ -19,8 +19,8 @@ from bookreviver.domain.images import Rendition, Renditions
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import PageKind, PageOrigin
 from bookreviver.domain.versions import VersionState
-from bookreviver.services.base_versions import BaseVersions
 from tests.harness.builders.domain import EPOCH, make_page, make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.page_services import make_base_versions
 from tests.harness.builders.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
@@ -113,7 +113,7 @@ async def fx_book(
     ]
     shown = make_page(order_key='a0', scan=scans[0])
     placeholder = evolve(make_page(order_key='a1'), kind=PageKind.COVER, notes='Missing')
-    base = BaseVersions.split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
+    base = make_base_versions().split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
     book_id = await store_book(
         fx_catalogue(),
         make_record(),

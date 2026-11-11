@@ -84,6 +84,17 @@ class FakeTiler(Tiler):
         await anyio.Path(target).write_bytes(THUMBNAIL_CONTENT)
 
 
+def make_base_versions(tiler: Tiler | None = None) -> BaseVersions:
+    """Build the builder of base versions over the real processors of a whole scan and of a blank leaf.
+
+    :param tiler: Tiler that cuts the files of a scan, or None for one that writes tokens.
+    :type tiler: Tiler | None
+    :returns: The builder, whose catalogue names the two processors by their roles.
+    :rtype: BaseVersions
+    """
+    return BaseVersions(tiler=tiler or FakeTiler(), processors=FakeCatalogue([SplitNone(), BlankPage()]))
+
+
 def make_page_service(
     stores: BookOpener,
     runtime: tuple[RecordingEventBus, FakeJobBoard],
@@ -115,7 +126,7 @@ def make_page_service(
         books=BooksService(catalogue=stores.catalogue()),
         order_keys=order_keys or FractionalOrderKeys(),
         imaging=PageImaging(
-            base_versions=BaseVersions(tiler=tiler),
+            base_versions=BaseVersions(tiler=tiler, processors=catalogue),
             runner=StepRunner(
                 executor=InProcessStepExecutor(catalogue),
                 renditions=renditions or FakeRenditionWriter(),

@@ -55,11 +55,26 @@ class BooksProvider(Provider):
         return BooksService(catalogue=catalogue)
 
     @provide(scope=Scope.APP)
-    def page_imaging(self, tiler: Tiler, runner: StepRunner, processors: ProcessorCatalog) -> PageImaging:
-        """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
+    def base_versions(self, tiler: Tiler, processors: ProcessorCatalog) -> BaseVersions:
+        """Build the builder of base versions, which names their processors by the roles the catalogue lists.
 
         :param tiler: Tiler of the application.
         :type tiler: Tiler
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
+        :returns: The builder of base versions.
+        :rtype: BaseVersions
+        """
+        return BaseVersions(tiler=tiler, processors=processors)
+
+    @provide(scope=Scope.APP)
+    def page_imaging(
+        self, base_versions: BaseVersions, runner: StepRunner, processors: ProcessorCatalog
+    ) -> PageImaging:
+        """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
+
+        :param base_versions: Builder of base versions of the application.
+        :type base_versions: BaseVersions
         :param runner: Runner of processors of the application.
         :type runner: StepRunner
         :param processors: The processors the application can run, whose plugins may read the whole book.
@@ -67,7 +82,6 @@ class BooksProvider(Provider):
         :returns: The builder of base versions and the runner of their processors.
         :rtype: PageImaging
         """
-        base_versions = BaseVersions(tiler=tiler)
         return PageImaging(base_versions=base_versions, runner=runner, book_steps=BookSteps(processors))
 
     @provide

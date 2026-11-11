@@ -12,7 +12,7 @@ from bookreviver.domain.images import ColorMode
 from bookreviver.domain.step_settings import PaperFill
 from bookreviver.plugins.blank import BlankPage, median_paper
 from bookreviver.ports.processing import StepInput
-from bookreviver.services.base_versions import PAGES_BLANK
+from tests.harness.builders.domain import PAGES_BLANK
 from tests.harness.images.samples import pixel, ruled_page, same_colour, text_page
 
 if TYPE_CHECKING:

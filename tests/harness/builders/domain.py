@@ -107,6 +107,7 @@ PAGE_HEIGHT_PX: int = 1561
 SOURCE_SIZE_BYTES: int = 4096
 # The base step of a page cut from a whole scan, the split being skipped
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
+PAGES_BLANK: ProcessorRef = ProcessorRef(key='pages.blank', version='2')
 # Length of a page version identifier in hexadecimal digits
 VERSION_ID_DIGITS: int = 16
 # The deskew step of the geometry stage, which the processing tests run

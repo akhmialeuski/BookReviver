@@ -24,7 +24,7 @@ import numpy as np
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.images import ColorMode
 from bookreviver.domain.pages import ContentType
-from bookreviver.domain.processors import ProcessorScope, ProcessorSpec
+from bookreviver.domain.processors import ProcessorRole, ProcessorScope, ProcessorSpec
 from bookreviver.domain.sources import COLOR_MODE_KEY
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionData
@@ -115,6 +115,7 @@ class ContentTypeProbe(ModelProcessor):
         title='Content type',
         stage=Stage.PAGE_ORDER,
         scope=ProcessorScope.PAGE,
+        role=ProcessorRole.CONTENT_PROBE,
         outputs=frozenset(),
         parameters=ContentTypeParams.model_json_schema(),
     )

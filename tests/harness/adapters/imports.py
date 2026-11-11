@@ -29,9 +29,11 @@ from bookreviver.app.settings import ImagingSettings
 from bookreviver.core.book import Book
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.slices import SliceRequest
+from bookreviver.plugins.blank import BlankPage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
+from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.steps import StepRunner
@@ -570,7 +572,10 @@ class ImportRig:
         )
         return ImportService(
             imaging=ImportImaging(
-                inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
+                inspector=self.inspector,
+                rasterizer=self.rasterizer,
+                base_versions=BaseVersions(tiler=self.tiler, processors=FakeCatalogue([SplitNone(), BlankPage()])),
+                runner=self.runner(),
             ),
             runtime=ImportRuntime(
                 order_keys=FractionalOrderKeys(),

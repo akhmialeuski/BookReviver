@@ -69,7 +69,6 @@ from bookreviver.domain.slices import Slice, SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import PageSize, VersionData, VersionState
-from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
@@ -87,14 +86,11 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.base_versions import BaseVersions
     from bookreviver.services.book_steps import BookSteps
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
 
-# The processors whose pending and failed versions the ``prepare-pages`` job writes the files of, which are the ones a
-# page is given when it is made. A version of another processor of the same stages, such as a half of a split spread,
-# belongs to the run that makes it
-PREPARED_PROCESSORS: frozenset[str] = frozenset({SPLIT_NONE.key, PAGES_BLANK.key})
 NOT_A_CUT_PAGE: str = 'The page {page_id} is not cut from a scan, so it has no scan to keep or to replace.'
 NOT_A_BLANK_PAGE: str = 'The page {page_id} is not a blank page, so no leaf can stand in place of its scan.'
 NO_BOOK_IMAGE: str = (
@@ -347,7 +343,7 @@ class PageService:
                 repos.pages.add(page)
             if size is not None:
                 full = book_record.image_policy.full_format(ColorMode.BILEVEL)
-                repos.page_versions.add(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
+                repos.page_versions.add(self._base_versions.blank(page=page, size=size, full=full, moment=moment))
             self._labels.settle(repos)
             return self._overview(repos, page)
 
@@ -405,7 +401,7 @@ class PageService:
             for page, new_page in zip(added, new_pages, strict=True):
                 # The median was read above for every blank leaf without a size, so a leaf always has one
                 if new_page.origin is NewPageOrigin.BLANK and (size := new_page.size or median) is not None:
-                    leaves.append(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
+                    leaves.append(self._base_versions.blank(page=page, size=size, full=full, moment=moment))
             repos.page_versions.add_many(leaves)
 
             self._labels.settle(repos)
@@ -568,7 +564,8 @@ class PageService:
             :returns: The identifiers of the pages of the book.
             :rtype: list[PageId]
             """
-            return [record.page_id for record in repos.page_stages.list_replaced(Stage.PAGE_ORDER, PAGES_BLANK)]
+            leaf = self._base_versions.blank_leaf
+            return [record.page_id for record in repos.page_stages.list_replaced(leaf.stage, leaf.ref)]
 
         def work(page_ids: Sequence[PageId], repos: BookRepositories, book_record: BookRecord) -> None:
             """Give the pages of one book that no longer show their scan the leaf their choice says.
@@ -619,7 +616,7 @@ class PageService:
                 self._records.clear(repos, key)
                 continue
             sources = self._paper_sources(repos, page) if page.blank_fill is BlankFill.PAPER else None
-            leaf = BaseVersions.blank(page=page, size=size, full=full, moment=moment, paper_from=sources)
+            leaf = self._base_versions.blank(page=page, size=size, full=full, moment=moment, paper_from=sources)
             made = repos.page_versions.find(leaf.id)
             if made is not None and made.state is VersionState.READY:
                 # The same leaf was made before, so it is current again without the job
@@ -737,7 +734,7 @@ class PageService:
             )
             repos.pages.update(page)
             repos.page_versions.add(
-                BaseVersions.split_none(page=page, scan=scan, state=VersionState.PENDING, moment=moment)
+                self._base_versions.split_none(page=page, scan=scan, state=VersionState.PENDING, moment=moment)
             )
             return self._overview(repos, page), taken
 
@@ -769,7 +766,8 @@ class PageService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled, which stops it between two versions.
         """
-        versions = await book.read(lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS))
+        prepared = self._base_versions.prepared_keys
+        versions = await book.read(lambda repos: repos.page_versions.list_to_prepare(prepared))
         control.plan(len(versions))
         failed = 0
         for version in versions:
@@ -1107,7 +1105,8 @@ class PageService:
         :param job: The prepare-pages job that is ending.
         :type job: Job
         """
-        waiting = await book.read(lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS))
+        prepared = self._base_versions.prepared_keys
+        waiting = await book.read(lambda repos: repos.page_versions.list_to_prepare(prepared))
         if any(version.state is VersionState.PENDING for version in waiting):
             self._enqueue(book, JobKind.PREPARE_PAGES, after=job.id)
 
@@ -1305,8 +1304,7 @@ class PageService:
         except NotFoundError:
             return None
 
-    @staticmethod
-    def _outdated_leaf(version: PageVersion, page: Page) -> bool:
+    def _outdated_leaf(self, version: PageVersion, page: Page) -> bool:
         """Tell whether a version is a leaf whose fill is not the choice of its page any longer.
 
         A page that got its scan back is the usual case.
@@ -1319,7 +1317,7 @@ class PageService:
         :rtype: bool
         """
         return bool(
-            version.processor == PAGES_BLANK
+            version.processor == self._base_versions.blank_leaf.ref
             and page.origin is PageOrigin.SCAN
             and page.blank_fill.value != version.params.get(BlankParam.FILL, PaperFill.WHITE.value)
         )
@@ -1350,22 +1348,23 @@ class PageService:
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
             book_record = repos.book_record.get()
-            if version.processor == SPLIT_NONE:
+            blank_leaf = self._base_versions.blank_leaf.ref
+            if version.processor == self._base_versions.scan_copy.ref:
                 if page.scan_id is None:
                     raise ConflictError(SCAN_DELETED)
                 scan = repos.scans.get(page.scan_id)
                 if not scan.renditions.ready:
                     raise ConflictError(SCAN_NOT_CUT)
                 run = StepRun(
-                    processor_key=SPLIT_NONE.key,
+                    processor_key=version.processor.key,
                     params=version.params,
                     input_data=scan.facts.as_data(),
                     image=BookKeys.scan_rendition(scan, scan.renditions.full),
                 )
-            elif version.processor == PAGES_BLANK and PageSize.from_data(version.data) is not None:
+            elif version.processor == blank_leaf and PageSize.from_data(version.data) is not None:
                 sources = repos.page_versions.list_by_ids(version.params.get(BlankParam.PAPER_FROM, []))
                 run = StepRun(
-                    processor_key=PAGES_BLANK.key,
+                    processor_key=version.processor.key,
                     params=version.params,
                     input_data={},
                     references=[

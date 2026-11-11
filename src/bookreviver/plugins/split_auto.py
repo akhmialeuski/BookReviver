@@ -63,6 +63,7 @@ class SplitAuto(SplitSpread):
         summary='Cuts a spread at the gutter the step finds',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.SPLIT,
+        unattended=True,
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=AutoParams.model_json_schema(),
         editor=SplitChoice.editor,

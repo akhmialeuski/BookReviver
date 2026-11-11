@@ -22,13 +22,26 @@ from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKin
 from bookreviver.domain.sides import Side
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import PageSize, VersionData, VersionState
-from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
 from tests.harness.adapters.imports import stored_book
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.books import IMAGE
-from tests.harness.builders.domain import EPOCH, make_job, make_page, make_record, make_scan, make_source
-from tests.harness.builders.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make_page_service
+from tests.harness.builders.domain import (
+    EPOCH,
+    PAGES_BLANK,
+    SPLIT_NONE,
+    make_job,
+    make_page,
+    make_record,
+    make_scan,
+    make_source,
+)
+from tests.harness.builders.page_services import (
+    PREVIEW_CONTENT,
+    THUMBNAIL_CONTENT,
+    make_base_versions,
+    make_page_service,
+)
 from tests.harness.builders.seeding import commit_account, store_book
 from tests.harness.concurrency.book_hold import hold_book_in_thread
 from tests.harness.fakes.acting_renditions import ActingRenditionWriter
@@ -161,7 +174,7 @@ async def _commit_book(
         scans.append(evolve(scan, facts=facts, renditions=Renditions(ready=True), source_label=f'[{number}]'))
     pages = [make_page(order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
     versions = [
-        BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
+        make_base_versions().split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
     book_id = await store_book(

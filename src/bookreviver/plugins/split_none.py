@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, override
 
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.images import ColorMode
-from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.processors import ProcessorRole, ProcessorScope, ProcessorSpec, VersionOutput
 from bookreviver.domain.sources import COLOR_MODE_KEY
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import PageSize
@@ -40,6 +40,7 @@ class SplitNone(ModelProcessor):
         summary='Keeps the scan as one page',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.PAGE,
+        role=ProcessorRole.SCAN_COPY,
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=NoParams.model_json_schema(),
     )

@@ -25,7 +25,7 @@ import pyvips
 from pydantic import Field
 
 from bookreviver.domain.images import ColorMode
-from bookreviver.domain.processors import ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.processors import ProcessorRole, ProcessorScope, ProcessorSpec, VersionOutput
 from bookreviver.domain.sources import COLOR_MODE_KEY
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_settings import PaperFill
@@ -98,6 +98,7 @@ class BlankPage(ModelProcessor):
         summary='Makes an empty leaf in place of a missing page',
         stage=Stage.PAGE_ORDER,
         scope=ProcessorScope.PAGE,
+        role=ProcessorRole.BLANK_LEAF,
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=BlankParams.model_json_schema(),
     )

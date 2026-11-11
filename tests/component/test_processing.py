@@ -216,7 +216,7 @@ class TestProcessors:
         response = await fx_client.get(PROCESSORS_PATH)
         listed = [ProcessorSchema.model_validate(item) for item in response.json()[ITEMS]]
         expect(response.status_code == status.HTTP_200_OK)
-        expect([processor.key for processor in listed] == ['cleanup.fake', FAKE_KEY, 'split.none'])
+        expect([processor.key for processor in listed] == ['cleanup.fake', FAKE_KEY, 'pages.blank', 'split.none'])
         expect(
             all(processor.parameters.get('type') == 'object' for processor in listed if processor.key == 'split.none')
         )
