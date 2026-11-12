@@ -26,7 +26,7 @@ from bookreviver.domain.images import Rendition
 from bookreviver.domain.jobs import ContentDetection
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import ContentType, PageKind, PageOrigin
-from bookreviver.domain.versions import VersionData, VersionScale, VersionState
+from bookreviver.domain.versions import VersionData, VersionScale
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -178,13 +178,7 @@ class ContentDetector:
         :returns: The latest ready base version of each page that has one.
         :rtype: dict[PageId, PageVersion]
         """
-        versions = await book.read(lambda repos: repos.page_versions.list_base_versions([page.id for page in pages]))
-        # The versions come earliest first, so the latest of a page that was cut again is the one that stays
-        return {
-            version.page_id: version
-            for version in versions
-            if version.state is VersionState.READY and version.renditions is not None and version.renditions.ready
-        }
+        return await book.read(lambda repos: BookContent(repos).pages.bases([page.id for page in pages]))
 
     async def _probe(self, book: Book, base: PageVersion) -> ContentType:
         """Tell what the image of a base version shows, by the processor, on its preview.
