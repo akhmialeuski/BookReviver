@@ -165,6 +165,8 @@ class ProcessingKit:
         self.writer = FakeRenditionWriter()
         self.tiler = FakeTiler()
         self.tracer = RecordingTracer()
+        # Pages a run processes at the same time, one unless a test sets more
+        self.parallel_pages = 1
         self.processors = FakeCatalogue(processors or [SplitNone(), self.fake, self.cleanup])
         self._runner = StepRunner(
             executor=InProcessStepExecutor(self.processors),
@@ -275,6 +277,7 @@ class ProcessingKit:
             order_keys=FractionalOrderKeys(),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             tracer=self.tracer,
+            parallel_pages=self.parallel_pages,
         )
         return ProcessingJobs(
             runtime=runtime,

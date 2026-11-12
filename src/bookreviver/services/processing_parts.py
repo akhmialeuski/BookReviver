@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import frozen
+from attrs import field, frozen, validators
 
 from bookreviver.domain.errors import JobFinishedError, NotFoundError
 from bookreviver.domain.ids import JobId
@@ -56,10 +56,12 @@ class ProcessingConfig:
 
     :ivar preview_retention: How long a preview is kept before a collection may delete it.
     :ivar preview_long_side_px: Longer side of a preview in pixels.
+    :ivar parallel_pages: Largest number of pages a run processes at the same time.
     """
 
     preview_retention: timedelta
     preview_long_side_px: int
+    parallel_pages: int = field(default=1, validator=validators.ge(1))
 
 
 class JobStarter:

@@ -35,7 +35,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, override
 
-from attrs import evolve, frozen
+from attrs import evolve, field, frozen, validators
 
 from bookreviver.core.content import BookContent
 from bookreviver.core.pages import BookPage
@@ -147,6 +147,8 @@ class StageRuntime:
     :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
     :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
     :ivar tracer: Tracer the runs of pages and their steps are timed with.
+    :ivar parallel_pages: Largest number of pages a run processes at the same time, which is as many as the executor
+                          has places for full runs, so a run of a book uses every one of them.
     """
 
     runner: StepRunner
@@ -154,6 +156,7 @@ class StageRuntime:
     order_keys: OrderKeys
     preview_long_side_px: int
     tracer: Tracer
+    parallel_pages: int = field(default=1, validator=validators.ge(1))
 
 
 class StageWork:
