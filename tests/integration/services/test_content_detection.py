@@ -14,12 +14,12 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.jobs import ContentDetection, JobKind, JobState
+from bookreviver.domain.jobs import ContentDetection, JobKind, JobState, StageRun
 from bookreviver.domain.pages import ContentSource, ContentType, PageKind
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.services.content_detection import ContentDetector
-from tests.harness.builders.domain import make_page, make_page_stage, open_for
+from tests.harness.builders.domain import make_job, make_page, make_page_stage, open_for
 from tests.harness.builders.page_services import make_page_service
 from tests.harness.builders.processing import ProcessingKit, stored_job
 from tests.harness.fakes.processors import FakeContentProbe
@@ -487,6 +487,27 @@ class TestStartDetection:
         expect(job.kind is JobKind.DETECT_CONTENT)
         expect(job.asked(ContentDetection) == ContentDetection())
         assert_expectations()
+
+    async def test_the_detection_of_new_pages_runs_before_the_jobs_that_are_queued(
+        self, fx_probe_kit: ProbeKitFactory
+    ) -> None:
+        """Verify the detection that follows from a job starts ahead of a run the user queued meanwhile.
+
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
+        """
+        kit, _ = fx_probe_kit([])
+        actor, book_id, _ = await book_of(kit, [PageKind.TEXT])
+        asked = kit.board.put(book_id, make_job(kind=JobKind.RUN_STAGE, work=StageRun(stage=Stage.GEOMETRY)))
+
+        pages_of(kit).detect_new_pages(open_for(actor, book_id))
+        await kit.work_queue()
+
+        detection = next(job for job in kit.board.put_jobs if job.kind is JobKind.DETECT_CONTENT)
+        first, second = (kit.board.get(job.id).started_at for job in (detection, asked))
+        assert first is not None
+        assert second is not None
+        assert first <= second
 
 
 class TestChangeOfContent:

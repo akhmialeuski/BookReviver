@@ -64,17 +64,19 @@ class FakeJobBoard(InMemoryJobBoard):
         self.put_jobs.append(job)
         self._homes[job.id] = queue.dir_name
 
-    def put(self, book_id: BookId, job: Job) -> Job:
-        """Queue the job at the end of the queue of a book, as the book would.
+    def put(self, book_id: BookId, job: Job, *, next_up: bool = False) -> Job:
+        """Queue the job on the queue of a book, as the book would.
 
         :param book_id: The book the job works on.
         :type book_id: BookId
         :param job: The job to queue, in the queued state.
         :type job: Job
+        :param next_up: Whether the job runs before the jobs that are queued already.
+        :type next_up: bool
         :returns: The job.
         :rtype: Job
         """
-        return self.open(directory_of(book_id)).put(job)
+        return self.open(directory_of(book_id)).put(job, next_up=next_up)
 
     def get(self, job_id: JobId) -> Job:
         """Return a job put on the board, from the queue of its book.

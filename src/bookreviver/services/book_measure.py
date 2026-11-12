@@ -18,13 +18,12 @@ from attrs import evolve, frozen
 from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.recipes import OrderMode, RecipeDraft
-from bookreviver.services.book_steps import BookSteps
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.core.book import Book
-    from bookreviver.core.plugins import BookStep, ProcessorCatalog
+    from bookreviver.core.plugins import BookStep
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.recipes import Recipe, Step
@@ -60,20 +59,18 @@ class _Holder:
 class BookMeasure:
     """Asks the steps that read the whole book what they found, and writes it into the recipes that hold them."""
 
-    def __init__(self, *, recipes: RecipeBook, records: StageRecords, processors: ProcessorCatalog) -> None:
+    def __init__(self, *, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param recipes: The recipes of the book, which supply the recipes of a stage and rewrite them.
+        :param recipes: The recipes of the book, which supply the recipes of a stage, rewrite them, and find the steps
+                        whose plugin reads the book.
         :type recipes: RecipeBook
         :param records: Writer of the stage records, which marks the stage of the pages stale.
         :type records: StageRecords
-        :param processors: The processors the application can run, whose plugins say what they measure.
-        :type processors: ProcessorCatalog
         """
         self._recipes = recipes
         self._records = records
-        self._processors = processors
-        self._steps = BookSteps(processors)
+        self._steps = recipes.book_steps
 
     async def run(self, book: Book) -> None:
         """Measure the pages of the book and write the result into the parameters of the steps that read the book.
@@ -150,9 +147,8 @@ class BookMeasure:
         :rtype: list[_Holder]
         :raises NotFoundError: If a stage of such a plugin has no recipe.
         """
-        stages = {spec.stage for spec in self._processors.specs() if self._processors.get(spec.key).book_step}
         holders: list[_Holder] = []
-        for stage in sorted(stages, key=lambda stage: stage.position):
+        for stage in self._steps.stages():
             for recipe in await self._recipes.recipes(book, stage):
                 position = self._steps.position(recipe.steps)
                 book_step = None if position is None else self._steps.of(recipe.steps[position])

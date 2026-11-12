@@ -127,18 +127,23 @@ class InMemoryBookJobs(BookJobs):
         self._changes = 0
 
     @override
-    def put(self, job: Job) -> Job:
-        """Queue the job at the end of the queue, announce it, and start a task when none serves the book.
+    def put(self, job: Job, *, next_up: bool = False) -> Job:
+        """Queue the job at the end of the queue or ahead of it, announce it, and start a task when none serves it.
 
         :param job: The job to queue, in the queued state.
         :type job: Job
+        :param next_up: Whether the job runs before the jobs that are queued already, right after the running one.
+        :type next_up: bool
         :returns: The job.
         :rtype: Job
         """
         with self._lock:
             self._jobs[job.id] = job
             self._changes += 1
-            self._queue.append(job.id)
+            if next_up:
+                self._queue.appendleft(job.id)
+            else:
+                self._queue.append(job.id)
             starts = not self._serving
             self._serving = True
         self._board.after_put(self, job, starts=starts)

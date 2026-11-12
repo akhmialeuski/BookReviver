@@ -295,12 +295,16 @@ class PageService:
     def detect_new_pages(self, book: Book) -> None:
         """Queue the detection of the content of the pages that have none, which a job asks for when images are made.
 
-        Nothing is queued while a detection of the book is queued or running, which goes over the pages it finds.
+        The detection follows from the job that made the images, so it runs right after it, ahead of the jobs the user
+        queued meanwhile: a run asked for while the pages were being split finds what they show already detected, and
+        so runs each page by the recipe of its kind. Nothing is queued while a detection of the book is queued or
+        running, which goes over the pages it finds.
 
         :param book: The open book.
         :type book: Book
         """
-        self._enqueue(book, JobKind.DETECT_CONTENT, ContentDetection())
+        if not any(active_job.kind is JobKind.DETECT_CONTENT for active_job in book.jobs.active()):
+            book.jobs.put(self._new_job(JobKind.DETECT_CONTENT, ContentDetection()), next_up=True)
 
     async def add(self, book: Book, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
@@ -1080,8 +1084,8 @@ class PageService:
         :type book: Book
         :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
         :type kind: JobKind
-        :param params: What the job was asked to do, in the form its value class writes, or None for a job without.
-        :type params: MetadataMap | None
+        :param work: What the job was asked to do, as the value of its kind, or None for a job that takes nothing.
+        :type work: JobWork | None
         :param after: The running job the new one follows, which is not counted as the active job of the kind, or None.
         :type after: JobId | None
         :returns: The job as the board holds it, queued, or None when a job of the kind is queued or running already.
@@ -1089,8 +1093,20 @@ class PageService:
         """
         if any(active_job.kind is kind and active_job.id != after for active_job in book.jobs.active()):
             return None
-        job = Job(id=JobId(uuid4()), kind=kind, work=work, created_at=datetime.now(UTC))
-        return book.jobs.put(job)
+        return book.jobs.put(self._new_job(kind, work))
+
+    @staticmethod
+    def _new_job(kind: JobKind, work: JobWork | None) -> Job:
+        """Build a queued job.
+
+        :param kind: What the job does.
+        :type kind: JobKind
+        :param work: What the job was asked to do, or None for a job that takes nothing.
+        :type work: JobWork | None
+        :returns: The job, queued as of now.
+        :rtype: Job
+        """
+        return Job(id=JobId(uuid4()), kind=kind, work=work, created_at=datetime.now(UTC))
 
     async def _follow_up(self, book: Book, job: Job) -> None:
         """Queue another job when a version was committed while the job that is ending was running.

@@ -57,6 +57,16 @@ class TestPosition:
         assert_expectations()
 
 
+class TestStages:
+    """Tests for BookSteps.stages."""
+
+    def test_the_stages_are_those_of_the_plugins_that_read_the_book(self) -> None:
+        """Verify only a stage with an installed plugin that reads the book is listed, and none without one."""
+        expect(finder().stages() == [BookSizedProcessor.spec.stage])
+        expect(BookSteps(FakeCatalogue([FakeProcessor()])).stages() == [])
+        assert_expectations()
+
+
 class TestLeavesToBook:
     """Tests for BookSteps.leaves_to_book."""
 
