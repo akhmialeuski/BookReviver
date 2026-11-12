@@ -107,7 +107,7 @@ class ProcessingJobs:
         self._parts = parts
         self._recipes = parts.recipes
         self._records = parts.records
-        self._measure = BookMeasure(recipes=parts.recipes, records=parts.records, processors=runtime.processors)
+        self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
         self._detector = ContentDetector(runtime=runtime, records=parts.records)
         self._starter = parts.starter
         self._pages = pages

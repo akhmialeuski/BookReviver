@@ -342,6 +342,20 @@ class TestFirstInFirstOut:
         expect([job.id for job in fx_kit.board.jobs(book_id, active=True)] == [after.id])
         assert_expectations()
 
+    async def test_a_tile_cutting_leaves_the_preview_of_the_book_alone(self, fx_kit: ProcessingKit) -> None:
+        """Verify the cutting of tiles, which the viewer asks for by itself, waits its turn and cancels no preview.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id, page = await prepared_page(fx_kit)
+        starter = fx_kit.parts().starter
+        preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
+        tiles = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.CUT_TILES, NO_SUCH_TILES)
+        expect(fx_kit.board.get(preview.id).state is JobState.QUEUED)
+        expect(fx_kit.board.put_jobs == [preview, tiles])
+        assert_expectations()
+
     async def test_a_collection_is_queued_once_and_again_behind_one_that_runs(self, fx_kit: ProcessingKit) -> None:
         """Verify a queued collection is the answer to a second one, and nothing else of the book holds it back.
 

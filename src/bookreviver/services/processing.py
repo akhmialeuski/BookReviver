@@ -27,7 +27,7 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.recipes import OrderMode
 from bookreviver.domain.runs import RunMode
 from bookreviver.domain.slices import Slice
-from bookreviver.domain.stages import PageStageKey, Stage
+from bookreviver.domain.stages import PageStageKey
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.domain.versions import CollectionReport, VersionScale, VersionState
 from bookreviver.services.processing_parts import BOOK_BUSY
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.processors import ProcessorSpec
     from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey
     from bookreviver.domain.slices import SliceRequest
-    from bookreviver.domain.stages import PageStage
+    from bookreviver.domain.stages import PageStage, Stage
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.processing_parts import ProcessingParts
@@ -209,9 +209,10 @@ class ProcessingService:
         :type book: Book
         :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
-        :raises NotFoundError: If the Geometry stage has no recipe.
+        :raises NotFoundError: If a stage whose steps measure the book has no recipe.
         """
-        await self._recipes.recipes(book, Stage.GEOMETRY)
+        for stage in self._recipes.book_stages():
+            await self._recipes.recipes(book, stage)
         return await self._starter.enqueue(book, JobKind.MEASURE_BOOK)
 
     async def start_preview(self, book: Book, preview: StepPreview) -> Job:

@@ -43,6 +43,20 @@ class JobKind(LabeledStrEnum):
         """
         return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK, cls.CUT_TILES, cls.COLLECT_VERSIONS})
 
+    @classmethod
+    def replacing_previews(cls) -> frozenset[JobKind]:
+        """Return the kinds of job that cancel the previews of the book when they are asked for.
+
+        A preview is a look at one page that changes nothing that is current. A run and a measure of the book are what
+        the reader pressed a button for, so a preview in their way gives the book up, and a new preview takes the place
+        of the one before it, since the editor shows the latest look only. A tile cutting or a collection waits its
+        turn and cancels nothing.
+
+        :returns: A run, a measure of the book and a preview.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK, cls.PREVIEW_STEP})
+
 
 class JobState(LabeledStrEnum):
     """Lifecycle of a background job."""

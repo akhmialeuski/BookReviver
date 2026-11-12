@@ -58,6 +58,21 @@ class TestBookJobs:
         expect(under_test.runner.begun() == [job.id for job in jobs])
         expect(states == [JobState.SUCCEEDED] * JOBS_PUT)
 
+    async def test_a_job_put_next_up_runs_before_the_jobs_that_are_queued(self, fx_board_adapter: BoardAdapter) -> None:
+        """Verify a follow-up of the running job is taken ahead of the jobs that were put before it and still wait.
+
+        :param fx_board_adapter: Adapter under test.
+        :type fx_board_adapter: BoardAdapter
+        """
+        waiting = [make_job(kind=JobKind.RUN_STAGE, minutes=minute) for minute in range(JOBS_PUT)]
+        follow_up = make_job(kind=JobKind.DETECT_CONTENT, minutes=JOBS_PUT)
+        async with open_board_under_test(fx_board_adapter) as under_test:
+            for job in waiting:
+                under_test.jobs(BOOK).put(job)
+            under_test.jobs(BOOK).put(follow_up, next_up=True)
+            await settle(under_test)
+        assert under_test.runner.begun() == [follow_up.id, *(job.id for job in waiting)]
+
     async def test_a_book_runs_one_job_at_a_time(self, fx_board_adapter: BoardAdapter) -> None:
         """Verify the second job of a book waits while the first one is inside its task, and begins after it returned.
 

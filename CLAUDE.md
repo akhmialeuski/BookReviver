@@ -111,8 +111,10 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   of its kind in `Job.work` (`StageRun`, `StepPreview`, `TileCut`, …), which a worker reads with `job.asked(...)`.
   Jobs live in the memory of the process and are never stored, so a restart begins with an empty queue. The queue of a
   book runs one job at a time in the order they were put, first in, first out, and `JobStarter` refuses nothing
-  because the book is busy: a second run waits behind the first and reads what it made. A preview is the one job that
-  is dropped for another. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
+  because the book is busy: a second run waits behind the first and reads what it made. A job that follows from the
+  running one, such as the split of the pages an import made or the detection of their content, is put `next_up`,
+  ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book and a
+  new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
   service that does each `JobKind`, each taking the book, the job and its control.
 - Every new port gets a fake in `tests/harness/fakes` and a contract test suite that runs against the fake and every adapter.
   `src` holds no code that only tests select. The persistence port has no fake: its tests run on the SQLAlchemy adapter

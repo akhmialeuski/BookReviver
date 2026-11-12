@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from bookreviver.core.plugins import BookStep, ProcessorCatalog
     from bookreviver.domain.recipes import Recipe, Step
+    from bookreviver.domain.stages import Stage
 
 
 class BookSteps:
@@ -39,6 +40,15 @@ class BookSteps:
             return self._processors.get(step.processor_key).book_step
         except NotFoundError:
             return None
+
+    def stages(self) -> list[Stage]:
+        """List the stages an installed plugin that reads the book belongs to, in the order of the pipeline.
+
+        :returns: The stages whose recipes may hold a step that reads the book.
+        :rtype: list[Stage]
+        """
+        reading = {spec.stage for spec in self._processors.specs() if self._processors.get(spec.key).book_step}
+        return sorted(reading, key=lambda stage: stage.position)
 
     def position(self, steps: Sequence[Step]) -> int | None:
         """Find the first of some steps whose plugin reads the book.

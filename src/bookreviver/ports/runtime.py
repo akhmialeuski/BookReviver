@@ -76,13 +76,19 @@ class BookJobs(BookPart, ABC):
     """
 
     @abstractmethod
-    def put(self, job: Job) -> Job:
-        """Append a job to the queue of the book and announce it as queued.
+    def put(self, job: Job, *, next_up: bool = False) -> Job:
+        """Put a job on the queue of the book and announce it as queued.
+
+        A job goes to the end of the queue, so the jobs of a book run in the order they were asked for. A job that
+        follows from the one that is running, such as the split of the pages an import made, is put ``next_up``: ahead
+        of the jobs that are queued, so that what the user asked for meanwhile works on what the follow-up made.
 
         The caller has checked the rules of the book without awaiting, so the check and the put are one step.
 
         :param job: The job to queue, in the queued state.
         :type job: Job
+        :param next_up: Whether the job runs before the jobs that are queued already, right after the running one.
+        :type next_up: bool
         :returns: The job as the board holds it.
         :rtype: Job
         """

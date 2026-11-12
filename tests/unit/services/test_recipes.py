@@ -32,6 +32,37 @@ class TestLeavesToBook:
         assert_expectations()
 
 
+class TestBookStages:
+    """Tests for RecipeBook.book_stages."""
+
+    def test_only_the_stage_of_an_installed_plugin_that_reads_the_book_is_named(self) -> None:
+        """Verify a measure asks for the recipes of the stages a plugin that reads the book belongs to, and no other."""
+        reading = FakeCatalogue([FakeProcessor(), BookSizedProcessor()])
+        plain = FakeCatalogue([FakeProcessor()])
+        expect(
+            RecipeBook(processors=reading, defaults=DefaultRecipes({}), order=RecipeOrder(reading)).book_stages()
+            == [BookSizedProcessor.spec.stage]
+        )
+        expect(RecipeBook(processors=plain, defaults=DefaultRecipes({}), order=RecipeOrder(plain)).book_stages() == [])
+        assert_expectations()
+
+
+class TestBookStepOf:
+    """Tests for RecipeBook.book_step_of."""
+
+    def test_the_first_step_that_reads_the_book_is_given_with_its_half(self) -> None:
+        """Verify a measure finds the place of the step it writes into and the half that measures, and none without."""
+        catalogue = FakeCatalogue([FakeProcessor(), BookSizedProcessor()])
+        recipes = RecipeBook(processors=catalogue, defaults=DefaultRecipes({}), order=RecipeOrder(catalogue))
+        plain, reading = Step(processor_key=FakeProcessor.spec.key), Step(processor_key=BOOK_SIZED_KEY)
+        expect(
+            recipes.book_step_of(evolve(make_recipe(), steps=(plain, reading, reading)))
+            == (1, BookSizedProcessor.book_step)
+        )
+        expect(recipes.book_step_of(evolve(make_recipe(), steps=(plain,))) is None)
+        assert_expectations()
+
+
 class TestUnattended:
     """Tests for RecipeBook.unattended."""
 

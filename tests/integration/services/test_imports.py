@@ -2546,10 +2546,10 @@ class TestRunImportSplit:
         expect(self._split_jobs(offering) == [])
         assert_expectations()
 
-    async def test_a_split_of_a_busy_book_waits_behind_the_job_the_book_has(
+    async def test_the_split_of_an_import_runs_before_a_job_queued_meanwhile(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookId, fx_samples: Path, fx_open_book: BookOpener
     ) -> None:
-        """Verify the split of a book that is processing something already is queued behind what the book has.
+        """Verify the split that follows from an import runs before a job the user queued while the files were read.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2576,6 +2576,11 @@ class TestRunImportSplit:
         expect([split.id for split in splits[:1]] == [busy.id])
         expect(len(splits) == BUSY_AND_QUEUED_SPLITS)
         assert_expectations()
+        asked, followed = (offering.stored_job(split).started_at for split in splits)
+        assert asked is not None
+        assert followed is not None
+        # The split was put after the run the user queued and still began before it
+        assert followed <= asked
 
 
 async def delete_the_page(book_id: BookId, databases: LocatedBookDatabases) -> None:
