@@ -219,7 +219,7 @@ class RunPlan:
             stages = by_page.get(page.id, {})
             record = stages.get(stage)
             return (
-                not self._recipes.book_steps.leaves_to_book(picked[page.id], through_step=self._run.through_step)
+                not self._recipes.leaves_to_book(picked[page.id], through_step=self._run.through_step)
                 and self._is_fresh(record, picked[page.id], through_step=self._run.through_step)
                 and record is not None
                 and record.head_version_id in ready

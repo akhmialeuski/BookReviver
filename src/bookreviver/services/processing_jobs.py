@@ -108,7 +108,6 @@ class ProcessingJobs:
         self._recipes = parts.recipes
         self._records = parts.records
         self._measure = BookMeasure(recipes=parts.recipes, records=parts.records, processors=runtime.processors)
-        self._book_steps = parts.recipes.book_steps
         self._detector = ContentDetector(runtime=runtime, records=parts.records)
         self._starter = parts.starter
         self._pages = pages
@@ -276,7 +275,7 @@ class ProcessingJobs:
             )
         )
         measured = [
-            page for page in pages if self._book_steps.leaves_to_book(recipes[page.id], through_step=run.through_step)
+            page for page in pages if self._recipes.leaves_to_book(recipes[page.id], through_step=run.through_step)
         ]
         if measured:
             await self._measure_book(executor, measured, recipes, run)

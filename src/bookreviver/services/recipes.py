@@ -124,7 +124,7 @@ class RecipeBook:
         self._processors = processors
         self._defaults = defaults
         self._order = order
-        self.book_steps = BookSteps(processors)
+        self._book_steps = BookSteps(processors)
 
     async def recipes(
         self, book: Book, stage: Stage, *, checking: Callable[[BookRepositories], object] | None = None
@@ -378,6 +378,18 @@ class RecipeBook:
         kept = tuple(step for step in steps if self._offers(step.processor_key))
         missing = dict.fromkeys(step.processor_key for step in steps if not self._offers(step.processor_key))
         return kept, tuple(missing)
+
+    def leaves_to_book(self, recipe: Recipe, *, through_step: int | None = None) -> bool:
+        """Tell whether a run of the recipe has a step that takes a field of its parameters from the book.
+
+        :param recipe: Recipe of the stage.
+        :type recipe: Recipe
+        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
+        :type through_step: int | None
+        :returns: Whether a step the run goes over leaves a field to the book.
+        :rtype: bool
+        """
+        return self._book_steps.leaves_to_book(recipe, through_step=through_step)
 
     def _buildable(self, stage: Stage) -> dict[RecipeKind, RecipeTemplate]:
         """List the built-in templates of a stage whose processors are all installed.
