@@ -22,7 +22,7 @@ from tests.harness.images.samples import save
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.ports.processing import Processor
+    from bookreviver.core.plugins import Processor
 
 PAGE_NAME: str = 'page.png'
 KEY_PATTERN: str = r'cleanup\.despeckle'

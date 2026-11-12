@@ -26,7 +26,8 @@ if TYPE_CHECKING:
 
     from PIL import Image
 
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.core.plugins import Processor
+    from bookreviver.ports.processing import StepOutput
 
 SCAN_NAME: str = 'scan.png'
 MIN_SPREAD_RATIO: float = 1.1

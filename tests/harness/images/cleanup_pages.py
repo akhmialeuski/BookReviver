@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.ports.processing import StepOutput
 
 PAGE_SIZE_PX: tuple[int, int] = (600, 800)
 LINE_PITCH_PX: int = 40

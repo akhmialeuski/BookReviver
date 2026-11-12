@@ -37,9 +37,9 @@ if TYPE_CHECKING:
     from datetime import timedelta
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.recipes import DefaultRecipes
 
 BOOK_BUSY: str = (

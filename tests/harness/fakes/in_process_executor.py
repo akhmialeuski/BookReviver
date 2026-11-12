@@ -12,7 +12,8 @@ from bookreviver.domain.versions import VersionScale
 from bookreviver.ports.processing import StepExecutor
 
 if TYPE_CHECKING:
-    from bookreviver.ports.processing import ProcessorCatalog, StepInput, StepResult
+    from bookreviver.core.plugins import ProcessorCatalog
+    from bookreviver.ports.processing import StepInput, StepResult
 
 
 class InProcessStepExecutor(StepExecutor):

@@ -18,7 +18,7 @@ from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
-from bookreviver.services.book_measure import MEASURE_OUTDATED
+from bookreviver.services.book_measure import MEASURE_OUTDATED, NO_MEASURING_STEP
 from tests.harness.builders.domain import make_page_stage, make_page_version, open_for
 from tests.harness.builders.processing import stored_job
 
@@ -500,7 +500,7 @@ class TestMeasureBook:
         job = await measure(fx_cv_kit, actor, book_id)
         record = await geometry_record(book_id, page, databases=fx_cv_kit.databases)
         expect(job.state is JobState.FAILED)
-        expect(NORMALIZE_KEY in job.error)
+        expect(job.error == NO_MEASURING_STEP)
         expect(record.state is StageState.FRESH)
         assert_expectations()
 

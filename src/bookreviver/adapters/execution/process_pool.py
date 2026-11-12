@@ -59,7 +59,8 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Barrier
     from types import TracebackType
 
-    from bookreviver.ports.processing import ProcessorCatalog, StepInput, StepResult
+    from bookreviver.core.plugins import ProcessorCatalog
+    from bookreviver.ports.processing import StepInput, StepResult
 
 # Seconds the processes of the pool have to run their initializers and meet at the barrier of the warm-up
 WARM_UP_TIMEOUT_S: float = 120.0

@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor
 
 PAGE_NAME: str = 'page.png'
 # What a method has to reach on the page of uneven light, which a single threshold does not

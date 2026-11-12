@@ -165,6 +165,34 @@ class BookPages:
         }
         return list(self._repos.page_versions.list_by_ids(head_ids)) if head_ids else []
 
+    def made_by(self, stage: Stage, processor_key: str, *, leaving_out: Collection[PageId] = ()) -> list[PageVersion]:
+        """Find the version one processor made on the way to the current version of a stage, on every page but some.
+
+        The current version of a stage is the result of the last step of its recipe, so the version of an earlier step
+        is found by following the current one back through the versions of the stage, a level at a time for all the
+        pages together.
+
+        :param stage: The stage.
+        :type stage: Stage
+        :param processor_key: Key of the processor whose versions are wanted.
+        :type processor_key: str
+        :param leaving_out: Pages that are not read.
+        :type leaving_out: Collection[PageId]
+        :returns: The versions the processor made, one for each page whose current version came through its step.
+        :rtype: list[PageVersion]
+        """
+        level: Sequence[PageVersion] = self.heads(stage, leaving_out=leaving_out)
+        found: list[PageVersion] = []
+        while level:
+            following: set[PageVersionId] = set()
+            for version in level:
+                if version.processor.key == processor_key:
+                    found.append(version)
+                elif version.input_id is not None and version.stage is stage:
+                    following.add(version.input_id)
+            level = self._repos.page_versions.list_by_ids(following) if following else ()
+        return found
+
     def inputs(self, stage: Stage, page_ids: Collection[PageId]) -> dict[PageId, PageVersion]:
         """Find the version a stage reads on each of some pages.
 

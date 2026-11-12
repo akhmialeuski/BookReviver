@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from bookreviver.ports.processing import Processor
+from bookreviver.core.plugins import Processor
 from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:

@@ -25,8 +25,9 @@ from tests.harness.images.synthetic import draw_spread
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.ports.processing import StepOutput
 
 PAGE_WIDTH_PX: int = 900
 HEIGHT_PX: int = 1_200

@@ -19,11 +19,12 @@ from typing import TYPE_CHECKING, override
 from attrs import frozen
 
 from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor, ThreadVariable
+from bookreviver.core.plugins import Processor
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.images import ColorMode
 from bookreviver.domain.processors import ProcessorSpec
 from bookreviver.domain.stages import Stage
-from bookreviver.ports.processing import Processor, StepInput, StepOutput, StepResult
+from bookreviver.ports.processing import StepInput, StepOutput, StepResult
 from tests.harness.fakes.in_process_executor import InProcessStepExecutor
 from tests.harness.fakes.processing import FakeCatalogue
 

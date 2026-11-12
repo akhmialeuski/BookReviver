@@ -20,9 +20,10 @@ from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
 from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
-from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
+from bookreviver.ports.processing import ProcessorSettings, StepExecutor
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService

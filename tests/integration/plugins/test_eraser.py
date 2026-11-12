@@ -24,8 +24,8 @@ from tests.harness.images.samples import save
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor
 
 PAGE_NAME: str = 'page.png'
 MASK_NAME: str = 'mask.png'

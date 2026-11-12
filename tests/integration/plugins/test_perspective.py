@@ -26,8 +26,8 @@ from tests.harness.images.scans import SCANS_DIR
 from tests.harness.images.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor
     from tests.harness.images.synthetic import SyntheticSheet
 
 SCAN_NAME: str = 'scan.png'

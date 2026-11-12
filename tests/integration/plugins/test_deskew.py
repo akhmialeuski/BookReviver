@@ -26,8 +26,8 @@ from tests.harness.images.samples import ANGLE_TOLERANCE, INK, save, spread, tex
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor
 
 HOUGH_TOLERANCE: float = 0.2
 BASELINE_TOLERANCE: float = 0.15

@@ -66,6 +66,7 @@ from bookreviver.plugins.cv_image import (
     to_bilevel,
     write_png,
 )
+from bookreviver.plugins.normalize_book import NormalizeBook
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
@@ -76,6 +77,8 @@ if TYPE_CHECKING:
 NORMALIZED_IMAGE_NAME: str = 'normalized.png'
 # The name of the step and of the setting that says where its margins come from
 MARGINS_TITLE: str = 'Margins'
+# The key of the step, by which the half that reads the book finds the versions the step made
+NORMALIZE_KEY: str = 'geometry.normalize'
 PERCENT: float = 100.0
 HALF: float = 2.0
 # The bounds of the sizes in pixels, wide enough for a scan of a large page at a high resolution
@@ -491,8 +494,9 @@ class Normalize(ModelProcessor):
     """Scales the content box of a page to the size of the text of the book and puts it on a page of the book."""
 
     params_model = NormalizeParams
+    book_step = NormalizeBook(NORMALIZE_KEY)
     spec = ProcessorSpec(
-        key='geometry.normalize',
+        key=NORMALIZE_KEY,
         version='3',
         title=MARGINS_TITLE,
         summary='One page size, scale and margins for the book',

@@ -41,8 +41,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.ports.processing import Processor, StepOutput
+    from bookreviver.ports.processing import StepOutput
 
 PAGE_NAME: str = 'page.png'
 KEY_PATTERN: str = r'geometry\.dewarp'
