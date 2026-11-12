@@ -128,6 +128,12 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 
 ## Types and classes
 
+- The work of a use case is a chain of classes, each owning the next and holding what its methods share, so a value
+  is given once to the class it belongs to and never handed down from call to call. The run of a stage is the model:
+  `StageWork` is one job on one book, `PageWork` one stage on one page of it, `StepWork` one step on that page, and
+  each reaches the book and the ports through the one it belongs to. A group of methods that pass the same three
+  values on is a class that is missing.
+
 - Closed value sets are `StrEnum` or `IntEnum` in `domain`, each carrying its own label.
 - Data travelling together is a frozen `attrs` class in `domain`, changed with `attrs.evolve`. Identifiers are
   `NewType`s. API schemas are separate Pydantic models in `api`, mapped from domain objects.
