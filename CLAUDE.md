@@ -77,6 +77,11 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   and no version of a plugin. The roles of `ProcessorRole.base()` belong to the base plugins, which are always
   installed: the application refuses to start without a plugin for each. A step that runs on new pages without the
   user asking says `unattended` in its spec.
+- The interface knows a plugin by its spec alone and names none. The settings of a step are a form drawn from the JSON
+  Schema of `ProcessorSpec.parameters`, its editor is the one registered for `ProcessorSpec.editor`, and the measure of
+  the book stands beside the settings of a step whose spec has `book_fields`. The history, the panels, the compare
+  and the run controls are the same for every step. A new plugin that needs something else of the interface adds a
+  field to the spec, and `tests/unit/plugins/test_plugin_contract.py` holds every installed plugin to the contract.
 - `services`, `core` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.

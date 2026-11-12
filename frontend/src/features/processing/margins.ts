@@ -1,5 +1,3 @@
-import { isPlacement } from '@/features/editors/placement';
-
 /**
  * Who sets the margins of the normalize step, the measure of the book or the reader.
  *
@@ -34,20 +32,19 @@ export function hasManualMargins(params: Readonly<Record<string, unknown>>): boo
  * Give the settings a form hands back, with the margins marked as set by hand when the reader changed one of them.
  *
  * Only a change of a margin counts, so a change of the page size or of the margin source itself is taken as it is, and a
- * step of another processor is never touched.
+ * step that has no setting of who sets its margins is never touched.
  *
- * @param processorKey The key of the processor of the step.
  * @param before The settings before the change.
  * @param after The settings the form holds now.
  */
 export function withMarginsSource(
-  processorKey: string,
   before: Readonly<Record<string, unknown>>,
   after: Record<string, unknown>,
 ): Record<string, unknown> {
   const marginChanged = MARGIN_SETTINGS.some((name) => before[name] !== after[name]);
   const sourceChanged = before[MARGINS_SOURCE] !== after[MARGINS_SOURCE];
-  if (!isPlacement(processorKey) || !marginChanged || sourceChanged) {
+  const hasSource = MARGINS_SOURCE in before || MARGINS_SOURCE in after;
+  if (!hasSource || !marginChanged || sourceChanged) {
     return after;
   }
   return { ...after, [MARGINS_SOURCE]: MarginsSource.Manual };

@@ -1,7 +1,6 @@
 import { TriangleAlertIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { CarryOverSchema, ProcessorSchema } from '@/api';
-import { isPlacement } from '@/features/editors/placement';
 import { CarryOver } from '@/features/processing/CarryOver';
 import { MeasureBook } from '@/features/processing/MeasureBook';
 import { ParamsForm } from '@/features/processing/ParamsForm';
@@ -101,7 +100,7 @@ export function StepSettings({
         }
         onChange={(params) => processing.change(draft.id, params)}
       />
-      {isPlacement(draft.processorKey) ? (
+      {processor.book_fields.length > 0 ? (
         <MeasureBook processing={processing} step={draft} />
       ) : null}
     </>

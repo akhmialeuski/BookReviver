@@ -12255,6 +12255,13 @@
             },
             "type": "array",
             "title": "Requires After"
+          },
+          "book_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Book Fields"
           }
         },
         "type": "object",
@@ -12270,10 +12277,11 @@
           "pool",
           "after",
           "before",
-          "requires_after"
+          "requires_after",
+          "book_fields"
         ],
         "title": "ProcessorSchema",
-        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar summary: One line that says what the step does, which the catalogue of steps shows, or an empty string.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on.\n:ivar after: Processors whose steps its step usually stands after.\n:ivar before: Processors whose steps its step usually stands before.\n:ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving."
+        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar summary: One line that says what the step does, which the catalogue of steps shows, or an empty string.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on.\n:ivar after: Processors whose steps its step usually stands after.\n:ivar before: Processors whose steps its step usually stands before.\n:ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving.\n:ivar book_fields: Names of the settings that the value 0 leaves to the book, so the interface offers the measure\n                   of the book beside them. Empty for a step that needs one page only."
       },
       "ProcessorScope": {
         "type": "string",

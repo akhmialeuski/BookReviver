@@ -132,6 +132,10 @@ class ProcessorSpec:
     :ivar before: Processors whose steps this step usually stands before, marked the same way.
     :ivar requires_after: Processors whose steps this step must stand after, since it works on what they leave. A step
                           that stands before one of them is refused, unless the recipe is saved in the free order.
+    :ivar book_fields: Names of the parameters that the value 0 leaves to the book, which a step whose plugin reads
+                       the whole book declares, so the interface offers the measure of the book beside its settings
+                       and knows that such a parameter comes back from a run with the value the book gave. Empty for a
+                       step that needs one page only.
     :ivar measure: What the step finds on each page that the strip compares with the rest of the book, so a page that
                    departs from it is listed, or None for a step that finds nothing to compare.
     """
@@ -152,6 +156,7 @@ class ProcessorSpec:
     after: tuple[OrderRule, ...] = ()
     before: tuple[OrderRule, ...] = ()
     requires_after: tuple[OrderRule, ...] = ()
+    book_fields: tuple[str, ...] = ()
     measure: StepMeasure | None = None
 
     @property

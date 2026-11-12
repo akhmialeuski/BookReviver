@@ -83,6 +83,8 @@ class ProcessorSchema(ResponseModel):
     :ivar after: Processors whose steps its step usually stands after.
     :ivar before: Processors whose steps its step usually stands before.
     :ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving.
+    :ivar book_fields: Names of the settings that the value 0 leaves to the book, so the interface offers the measure
+                       of the book beside them. Empty for a step that needs one page only.
     """
 
     key: str
@@ -98,6 +100,7 @@ class ProcessorSchema(ResponseModel):
     after: list[OrderRuleSchema]
     before: list[OrderRuleSchema]
     requires_after: list[OrderRuleSchema]
+    book_fields: list[str]
 
 
 class StepSchema(ResponseModel):

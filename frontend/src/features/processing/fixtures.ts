@@ -303,6 +303,7 @@ export function processor(key: string, overrides: Partial<ProcessorSchema> = {})
     after: [],
     before: [],
     requires_after: [],
+    book_fields: [],
     ...overrides,
   };
 }
@@ -313,6 +314,7 @@ export function margins(overrides: Partial<ProcessorSchema> = {}): ProcessorSche
     title: 'Margins',
     parameters: MARGINS_PARAMETERS,
     editor: 'content-box',
+    book_fields: ['page_width', 'page_height', 'line_height'],
     ...overrides,
   });
 }

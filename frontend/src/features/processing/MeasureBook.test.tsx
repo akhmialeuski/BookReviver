@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PLACEMENT_KEY } from '@/features/editors/placement';
 import { processing } from '@/features/processing/fixtures';
 import { MeasureBook } from '@/features/processing/MeasureBook';
 import type { StepDraft } from '@/features/processing/recipe';
@@ -39,7 +38,7 @@ describe('MeasureBook', () => {
     const step: StepDraft = {
       id: 'step-0',
       stepId: 'id-normalize',
-      processorKey: PLACEMENT_KEY,
+      processorKey: 'geometry.normalize',
       params,
       enabled: true,
     };
