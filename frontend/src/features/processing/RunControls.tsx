@@ -196,20 +196,20 @@ export function RunControls({
       ) : null}
       <div className="flex">
         <Button
-          className="min-w-0 flex-1 justify-start rounded-r-none"
+          className="h-auto min-h-9 min-w-0 flex-1 justify-start rounded-r-none py-1.5"
           disabled={run.disabled || runs <= 0}
           title={buttonText}
           data-testid="run-start"
           onClick={() => run.start({ ...request, mode })}
         >
           {run.pending ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
-          <span className="truncate">{buttonText}</span>
+          <span className="min-w-0 text-left leading-tight whitespace-normal">{buttonText}</span>
         </Button>
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
             <Button
               size="icon"
-              className="rounded-l-none border-l border-primary-foreground/30"
+              className="h-auto min-h-9 rounded-l-none border-l border-primary-foreground/30"
               disabled={run.disabled}
               aria-label={menu.menu}
               data-testid="run-menu"

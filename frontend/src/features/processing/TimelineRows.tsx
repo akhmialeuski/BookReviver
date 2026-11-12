@@ -21,7 +21,7 @@ const labels = MESSAGES.processing.timeline;
 const resultLabels = MESSAGES.processing.history;
 const values = MESSAGES.processing.steps.values;
 
-const ROW = 'min-w-0 rounded-lg border px-3 py-2 text-sm';
+const ROW = 'min-w-0 py-2.5 text-sm first:pt-0 last:pb-0';
 const META = 'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground';
 
 /** A change of a layer of the step on the page: who made it and when, what it did, and the way to take it back. */
@@ -75,16 +75,16 @@ export function ChangeRow({
       </div>
       {stands(change) ? (
         <Button
-          variant="outline"
-          size="sm"
+          variant="ghost"
+          size="icon-sm"
           className="shrink-0"
+          title={labels.undoHere}
           aria-label={labels.undoHereLabel(labels.change(before, after))}
           disabled={disabled}
           data-testid="page-history-undo-here"
           onClick={onUndo}
         >
           <Undo2Icon />
-          {labels.undoHere}
         </Button>
       ) : null}
     </li>

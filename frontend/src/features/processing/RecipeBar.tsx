@@ -22,10 +22,16 @@ import { ProfileMenu } from '@/features/profiles/ProfileMenu';
 export function RecipeBar({
   processing,
   rows,
+  picker = true,
 }: {
   processing: Processing;
   /** The rows of the stage, which the number of pages a save makes out of date is counted from. */
   rows: readonly StagePageSchema[];
+  /**
+   * Whether the bar draws the choice of the recipe. The bar of the steps above the canvas draws the same choice while a
+   * step is open, so the panel leaves it out then and the recipe is chosen in one place.
+   */
+  picker?: boolean;
 }): React.JSX.Element | null {
   const [libraryOpen, setLibraryOpen] = useState(false);
   if (processing.recipe === undefined) {
@@ -39,11 +45,13 @@ export function RecipeBar({
           <ProfileMenu processing={processing} onManage={() => setLibraryOpen(true)} />
         </div>
         {/* The choice of the recipe is as wide as its label, so the name of the profile takes the rest of the row */}
-        <RecipePicker
-          processing={processing}
-          testId="recipe-bar-select"
-          className="h-8 w-auto max-w-1/2 shrink-0 px-2"
-        />
+        {picker ? (
+          <RecipePicker
+            processing={processing}
+            testId="recipe-bar-select"
+            className="h-8 w-auto max-w-1/2 shrink-0 px-2"
+          />
+        ) : null}
       </div>
       <RecipeSaveBar processing={processing} rows={rows} />
       <ProfileLibraryPanel open={libraryOpen} onOpenChange={setLibraryOpen} book={{ processing }} />

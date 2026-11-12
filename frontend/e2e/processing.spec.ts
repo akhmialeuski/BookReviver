@@ -153,9 +153,11 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
     // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
-    // The profile and the recipe stand in one row at the top of the panel, with no row to save while nothing changed
+    // The profile stands at the top of the panel, with no row to save while nothing changed. The recipe is chosen in the
+    // bar of the steps while a step is open, so the panel does not draw the same choice again
     await expect(page.getByTestId('panel-bar').getByTestId('profile-button')).toBeVisible();
-    await expect(page.getByTestId('panel-bar').getByTestId('recipe-bar-select')).toBeVisible();
+    await expect(page.getByTestId('recipe-bar-select')).toHaveCount(0);
+    await expect(page.getByTestId('recipe-select')).toBeVisible();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     // The name of the profile takes the rest of the row beside the choice of the recipe, so it is drawn whole
     const name = page.getByTestId('panel-bar').getByTestId('profile-name');

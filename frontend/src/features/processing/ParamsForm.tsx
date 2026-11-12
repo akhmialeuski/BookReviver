@@ -1,4 +1,6 @@
+import { RichDescription } from '@rjsf/core';
 import Form from '@rjsf/shadcn';
+import type { DescriptionFieldProps, MultiSchemaFieldTemplateProps } from '@rjsf/utils';
 import validator from '@rjsf/validator-ajv8';
 import { useMemo } from 'react';
 import type { ProcessorSchema } from '@/api';
@@ -16,7 +18,51 @@ import { MESSAGES } from '@/shared/messages';
  * of the open page, each setting carries under it the values the parts of the pages have for it.
  */
 
-const TEMPLATES = { FieldTemplate: ValuesFieldTemplate };
+/**
+ * The settings of a step with several methods: the choice of the method, then the settings of the chosen one.
+ *
+ * The theme draws this as a card with a border and a shadow. The form already stands in the one frame of the settings
+ * of the step, so the card would be a frame inside a frame, and the method is one more setting of the same step.
+ */
+function MethodTemplate({
+  selector,
+  optionSchemaField,
+}: MultiSchemaFieldTemplateProps): React.JSX.Element {
+  return (
+    <div className="grid gap-3" data-testid="params-methods">
+      {selector}
+      {optionSchemaField}
+    </div>
+  );
+}
+
+/**
+ * The hint under a setting, in the small quiet type of the hints of the panel.
+ *
+ * The theme draws it as large as the label, so a form of several settings read as a column of paragraphs and the
+ * settings themselves were hard to find among them.
+ */
+function HintTemplate({
+  id,
+  description,
+  registry,
+  uiSchema,
+}: DescriptionFieldProps): React.JSX.Element | null {
+  if (!description) {
+    return null;
+  }
+  return (
+    <p id={id} className="text-xs leading-snug font-normal text-muted-foreground">
+      <RichDescription description={description} registry={registry} uiSchema={uiSchema} />
+    </p>
+  );
+}
+
+const TEMPLATES = {
+  FieldTemplate: ValuesFieldTemplate,
+  MultiSchemaFieldTemplate: MethodTemplate,
+  DescriptionFieldTemplate: HintTemplate,
+};
 
 export function ParamsForm({
   processor,
@@ -53,7 +99,7 @@ export function ParamsForm({
       liveValidate
       showErrorList={false}
       noHtml5Validate
-      className="grid gap-3"
+      className="grid gap-4"
       onChange={(event) => onChange({ ...(event.formData ?? {}) })}
     />
   );

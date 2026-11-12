@@ -10,6 +10,10 @@ import { Button } from '@/shared/ui/button';
  * number each would list, and the switch between the strip and the grid.
  */
 
+/** The look of a filter of the strip that is a list of choices, the same for every one of them. */
+const STRIP_SELECT =
+  'h-8 min-w-0 flex-1 basis-32 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50';
+
 export function StripToolbar({
   total,
   shown,
@@ -34,6 +38,7 @@ export function StripToolbar({
     <Button
       variant={filter === value ? 'secondary' : 'ghost'}
       size="sm"
+      className="h-7 px-2 text-xs"
       aria-pressed={filter === value}
       data-testid={`strip-filter-${value}`}
       onClick={() => onFilter(value)}
@@ -44,12 +49,22 @@ export function StripToolbar({
   );
 
   return (
-    <div className="grid gap-2 border-b px-3 py-2">
-      <div className="flex items-baseline justify-between">
+    <div className="grid min-w-0 grid-cols-1 gap-2 border-b px-3 py-2">
+      <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold">{labels.title}</h2>
-        <span className="text-xs text-muted-foreground" data-testid="strip-count">
+        <span className="ml-auto text-xs text-muted-foreground" data-testid="strip-count">
           {filter === PageFilter.All ? total : labels.countOf(shown, total)}
         </span>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={grid ? labels.list : labels.grid}
+          title={grid ? labels.list : labels.grid}
+          data-testid="strip-view-switch"
+          onClick={onSwitchView}
+        >
+          {grid ? <ListIcon /> : <LayoutGridIcon />}
+        </Button>
       </div>
       <div className="flex flex-wrap items-center gap-1">
         {filterButton(PageFilter.All, labels.filters.all)}
@@ -63,7 +78,7 @@ export function StripToolbar({
           <select
             aria-label={labels.kind.label}
             data-testid="strip-kind-filter"
-            className="h-8 max-w-40 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className={STRIP_SELECT}
             value={kinds.selected ?? ''}
             onChange={(event) =>
               kinds.onSelect(event.target.value === '' ? null : (event.target.value as RecipeKind))
@@ -81,7 +96,7 @@ export function StripToolbar({
           <select
             aria-label={labels.stopped.label}
             data-testid="strip-stopped-filter"
-            className="h-8 max-w-44 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className={STRIP_SELECT}
             value={stopped.selected === null ? '' : String(stopped.selected)}
             onChange={(event) =>
               stopped.onSelect(event.target.value === '' ? null : Number(event.target.value))
@@ -99,7 +114,7 @@ export function StripToolbar({
           <select
             aria-label={labels.flag.label}
             data-testid="strip-step-filter"
-            className="h-8 max-w-44 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className={STRIP_SELECT}
             value={flagged.selected ?? ''}
             onChange={(event) =>
               flagged.onSelect(event.target.value === '' ? null : (event.target.value as StepFlag))
@@ -113,17 +128,6 @@ export function StripToolbar({
             ))}
           </select>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="ml-auto"
-          aria-label={grid ? labels.list : labels.grid}
-          title={grid ? labels.list : labels.grid}
-          data-testid="strip-view-switch"
-          onClick={onSwitchView}
-        >
-          {grid ? <ListIcon /> : <LayoutGridIcon />}
-        </Button>
       </div>
     </div>
   );
