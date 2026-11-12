@@ -150,8 +150,8 @@ test('a recipe is saved as a profile and the profile is renamed in the library o
     await page.getByTestId('profile-rename-submit').click();
     const renamed = page.locator(`[data-testid="profile-row"][data-name="${RENAMED}"]`);
     await expect(renamed).toHaveCount(1);
-    // The picture is taken once the dialog has faded out
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // The picture is taken once the dialog of the name has faded out; the library it opened from is a dialog too, and stays
+    await expect(page.getByLabel('New name')).toHaveCount(0);
     await snap(page, 'profile-renamed');
   });
 });
