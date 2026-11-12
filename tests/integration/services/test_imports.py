@@ -27,7 +27,7 @@ from bookreviver.domain.errors import (
 )
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged
 from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
-from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StageRun
+from bookreviver.domain.jobs import ImportRequest, JobEnd, JobKind, JobState, StageRun
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.page_label_rules import LabelStyle
 from bookreviver.domain.pages import PageOrigin, RecipeKind
@@ -105,6 +105,8 @@ STAGE_METHOD: str = 'stage'
 INCOMING_UPLOADS: str = 'incoming/*'
 FILES_ARG: str = 'files'
 AUTO_SPLIT: str = 'split.auto'
+# The run the book was busy with and the split the import queued behind it
+BUSY_AND_QUEUED_SPLITS: int = 2
 CASE_ARG: str = 'case'
 # The renditions cut from the ``full`` image, whatever its format
 DERIVED: tuple[Rendition, ...] = (Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES)
@@ -706,8 +708,7 @@ class TestStartImport:
         expect(fx_rig.fakes.board.put_jobs == [job])
         expect((job.kind, job.state, job.progress.total) == (JobKind.IMPORT_SOURCE, JobState.QUEUED, 0))
         expect(
-            job.request is not None
-            and [file.name for file in job.request.files]
+            [file.name for file in job.asked(ImportRequest).files]
             == [
                 PART_THREE_NAME,
                 PART_TWO_NAME,
@@ -2497,9 +2498,7 @@ class TestRunImportSplit:
         [queued] = self._split_jobs(offering)
         pages = await _pages(fx_book, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
-        expect(
-            StageRun.from_map(queued.params) == StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(p.id for p in pages))
-        )
+        expect(queued.asked(StageRun) == StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(p.id for p in pages)))
         expect(queued.id in [job.id for job in offering.fakes.board.jobs(fx_book, active=False)])
         assert_expectations()
 
@@ -2521,7 +2520,7 @@ class TestRunImportSplit:
         await _import(offering, fx_owner, fx_book, [pdf_upload(fx_samples, PDF_NAME, pages=2)])
         await _import(offering, fx_owner, fx_book, [pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)])
 
-        runs = [StageRun.from_map(job.params) for job in self._split_jobs(offering)]
+        runs = [job.asked(StageRun) for job in self._split_jobs(offering)]
         pages = await _pages(fx_book, databases=fx_rig.databases)
         assert [run.page_ids for run in runs][1] == (pages[-1].id,)
 
@@ -2547,10 +2546,10 @@ class TestRunImportSplit:
         expect(self._split_jobs(offering) == [])
         assert_expectations()
 
-    async def test_a_split_that_cannot_be_queued_does_not_fail_the_import(
+    async def test_the_split_of_an_import_runs_before_a_job_queued_meanwhile(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookId, fx_samples: Path, fx_open_book: BookOpener
     ) -> None:
-        """Verify a book that is processing something already still ends its import as succeeded.
+        """Verify the split that follows from an import runs before a job the user queued while the files were read.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2572,9 +2571,16 @@ class TestRunImportSplit:
 
         await offering.fakes.board.run_queued()
 
+        splits = self._split_jobs(offering)
         expect(offering.stored_job(job).state is JobState.SUCCEEDED)
-        expect(self._split_jobs(offering) == [busy])
+        expect([split.id for split in splits[:1]] == [busy.id])
+        expect(len(splits) == BUSY_AND_QUEUED_SPLITS)
         assert_expectations()
+        asked, followed = (offering.stored_job(split).started_at for split in splits)
+        assert asked is not None
+        assert followed is not None
+        # The split was put after the run the user queued and still began before it
+        assert followed <= asked
 
 
 async def delete_the_page(book_id: BookId, databases: LocatedBookDatabases) -> None:

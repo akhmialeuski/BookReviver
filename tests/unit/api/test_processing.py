@@ -11,7 +11,6 @@ from bookreviver.api.schemas.processing import (
     StageRunBody,
 )
 from bookreviver.domain.geometry import ContentBox, EditorKind, Line, Mesh, SplitChoice
-from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.runs import RunMode
 from bookreviver.domain.stages import Stage
 
@@ -92,29 +91,21 @@ class TestStageRunBody:
     """Tests for the body of a run of a stage."""
 
     @pytest.mark.parametrize('confirmed', [True, False], ids=['confirmed', 'not-confirmed'])
-    def test_the_confirmation_of_an_unsplit_reaches_the_run_and_the_job_that_stores_it(
-        self, *, confirmed: bool
-    ) -> None:
-        """Verify the confirmation is in the run the body states, and survives being stored as the parameters of a job.
+    def test_the_confirmation_of_an_unsplit_reaches_the_run(self, *, confirmed: bool) -> None:
+        """Verify the confirmation is in the run the body states, which is what the job is asked to do.
 
         :param confirmed: Whether the body confirms that undoing a split deletes the right half.
         :type confirmed: bool
         """
         run = StageRunBody(confirm_unsplit=confirmed).to_run(Stage.PAGE_SPLIT)
-        assert (run.confirm_unsplit, StageRun.from_map(run.to_map()).confirm_unsplit) == (confirmed, confirmed)
+        assert run.confirm_unsplit is confirmed
 
     @pytest.mark.parametrize('mode', list(RunMode), ids=[mode.value for mode in RunMode])
-    def test_the_mode_and_its_confirmation_reach_the_run_and_the_job_that_stores_it(self, mode: RunMode) -> None:
-        """Verify the mode and the confirmation to overwrite are in the run the body states, and survive the job.
+    def test_the_mode_and_its_confirmation_reach_the_run(self, mode: RunMode) -> None:
+        """Verify the mode and the confirmation to overwrite are in the run the body states.
 
         :param mode: Mode under test.
         :type mode: RunMode
         """
         run = StageRunBody(mode=mode, confirm_overwrite=True).to_run(Stage.GEOMETRY)
-        stored = StageRun.from_map(run.to_map())
-        assert (run.mode, stored.mode, stored.confirm_overwrite) == (mode, mode, True)
-
-    def test_a_job_stored_before_the_modes_runs_in_the_usual_mode(self) -> None:
-        """Verify the parameters of a job without a mode are read as a run that keeps the work of the pages."""
-        old = {key: value for key, value in StageRun(stage=Stage.GEOMETRY).to_map().items() if key != 'mode'}
-        assert StageRun.from_map(old).mode is RunMode.KEEP
+        assert (run.mode, run.confirm_overwrite) == (mode, True)

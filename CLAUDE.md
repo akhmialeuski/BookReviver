@@ -74,7 +74,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   `geometry`, `cleanup`. A group imports `plugins/kit`, which holds what plugins share, and never another group. Where
   the application needs a plugin for work of its own, such as the image of a page no stage has processed yet, the
   plugin declares a `ProcessorRole` in its spec and the catalogue finds it with `of_role`, so `services` holds no key
-  and no version of a plugin. A step that runs on new pages without the user asking says `unattended` in its spec.
+  and no version of a plugin. The roles of `ProcessorRole.base()` belong to the base plugins, which are always
+  installed: the application refuses to start without a plugin for each. A step that runs on new pages without the
+  user asking says `unattended` in its spec.
 - `services`, `core` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.
@@ -107,6 +109,15 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.
+- A background job is what was asked for: a step or a stage, the pages it goes over and its parameters, as the value
+  of its kind in `Job.work` (`StageRun`, `StepPreview`, `TileCut`, …), which a worker reads with `job.asked(...)`.
+  Jobs live in the memory of the process and are never stored, so a restart begins with an empty queue. The queue of a
+  book runs one job at a time in the order they were put, first in, first out, and `JobStarter` refuses nothing
+  because the book is busy: a second run waits behind the first and reads what it made. A job that follows from the
+  running one, such as the split of the pages an import made or the detection of their content, is put `next_up`,
+  ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book and a
+  new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
+  service that does each `JobKind`, each taking the book, the job and its control.
 - Every new port gets a fake in `tests/harness/fakes` and a contract test suite that runs against the fake and every adapter.
   `src` holds no code that only tests select. The persistence port has no fake: its tests run on the SQLAlchemy adapter
   over SQLite files in the test's directory, the catalogue and every book copied from a template of its schema built

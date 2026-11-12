@@ -25,8 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId, JobId
-    from bookreviver.domain.jobs import Job
-    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.jobs import Job, JobWork
     from bookreviver.domain.pages import Page
     from bookreviver.services.processing_parts import JobStarter
     from tests.harness.builders.domain import BookOpener
@@ -36,12 +35,12 @@ pytestmark = pytest.mark.anyio
 
 # Names of the test arguments that the parametrized kinds of job are passed in
 REQUESTED_ARGUMENT: str = 'requested'
-ACTIVE_ARGUMENT: str = 'active'
 HOUSEKEEPING_ARGUMENT: str = 'housekeeping'
-BUSY_REASON: str = 'book is busy'
+EARLIER_ARGUMENT: str = 'earlier'
+LATER_ARGUMENT: str = 'later'
 # A tile cutting of a version that is not stored, which the job passes over
 NO_SUCH_VERSION: PageVersionId = PageVersionId(str(uuid4()))
-NO_SUCH_TILES: MetadataMap = TileCut(version_ids=(NO_SUCH_VERSION,)).to_map()
+NO_SUCH_TILES: TileCut = TileCut(version_ids=(NO_SUCH_VERSION,))
 # The ways the user asks for a collection and for a measure of the book, from the processing service
 ASK_FOR_COLLECTION = attrgetter('start_collection')
 ASK_FOR_MEASURE = attrgetter('start_measure')
@@ -93,25 +92,25 @@ def began(kit: ProcessingKit) -> list[JobId]:
     return list(dict.fromkeys(started))
 
 
-def params_of(starter: JobStarter, kind: JobKind) -> MetadataMap:
-    """Give the parameters a job of a kind is asked for with, which a job that is run reads without failing.
+def params_of(starter: JobStarter, kind: JobKind) -> JobWork | None:
+    """Give the work a job of a kind is asked for with, which a job that is run reads without failing.
 
     :param starter: Starter whose collection is described.
     :type starter: JobStarter
     :param kind: The kind of job.
     :type kind: JobKind
-    :returns: The parameters.
-    :rtype: MetadataMap
+    :returns: The work, or None for a job that is put with none.
+    :rtype: JobWork | None
     """
     match kind:
         case JobKind.CUT_TILES:
             return NO_SUCH_TILES
         case JobKind.COLLECT_VERSIONS:
-            return starter.collection().to_map()
-        case JobKind.PREVIEW_STEP:
-            return {}
+            return starter.collection()
+        case JobKind.PREVIEW_STEP | JobKind.MEASURE_BOOK:
+            return None
         case _:
-            return StageRun(stage=Stage.GEOMETRY).to_map()
+            return StageRun(stage=Stage.GEOMETRY)
 
 
 def preview_of(page: Page) -> StepPreview:
@@ -163,32 +162,6 @@ class TestRunFollowUp:
         await fx_kit.work_queue()
         expect(seen == [(JobKind.COLLECT_VERSIONS, [JobKind.RUN_STAGE])])
         expect(processing_kinds(fx_kit, book_id) == [])
-        assert_expectations()
-
-    @pytest.mark.parametrize(HOUSEKEEPING_ARGUMENT, [JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS])
-    async def test_run_queues_no_collection_while_a_housekeeping_job_is_active(
-        self, fx_kit: ProcessingKit, housekeeping: JobKind, fx_open_book: BookOpener
-    ) -> None:
-        """Verify a run that ends with a tile cutting or a collection queued behind it puts no second collection.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param housekeeping: The kind of the job queued behind the run.
-        :type housekeeping: JobKind
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(
-            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-        )
-        starter = fx_kit.parts().starter
-        waiting = await starter.enqueue(
-            await open_book(fx_kit, book_id), housekeeping, params_of(starter, housekeeping)
-        )
-        await fx_kit.work_queue()
-        expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE, housekeeping])
-        expect(began(fx_kit) == [run.id, waiting.id])
         assert_expectations()
 
     async def test_cancelled_run_queues_no_collection_of_its_own(
@@ -263,23 +236,6 @@ class TestCancelledRunHoldsTheBook:
 class TestRunHandOff:
     """Tests for the jobs a book queues behind a run, and the run it is asked for while it waits."""
 
-    async def test_second_run_is_refused_while_a_run_is_active(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify a run is refused with a readable reason while another run of the book is queued.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id, _ = await prepared_page(fx_kit)
-        await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_run(
-                fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-            )
-
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     @pytest.mark.parametrize(HOUSEKEEPING_ARGUMENT, [JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS])
     async def test_request_waits_behind_housekeeping_and_starts_after_it(
@@ -307,10 +263,57 @@ class TestRunHandOff:
         expect(began(fx_kit)[:2] == [blocker.id, waiting.id])
         assert_expectations()
 
-    async def test_housekeeping_waits_behind_a_run_and_a_second_one_is_refused(
+
+class TestFirstInFirstOut:
+    """Tests for the order of the jobs of a book: each starts when the one put before it has ended."""
+
+    @pytest.mark.parametrize(
+        (EARLIER_ARGUMENT, LATER_ARGUMENT),
+        [
+            (JobKind.RUN_STAGE, JobKind.RUN_STAGE),
+            (JobKind.RUN_STAGE, JobKind.MEASURE_BOOK),
+            (JobKind.MEASURE_BOOK, JobKind.RUN_STAGE),
+            (JobKind.MEASURE_BOOK, JobKind.MEASURE_BOOK),
+            (JobKind.CUT_TILES, JobKind.CUT_TILES),
+            (JobKind.COLLECT_VERSIONS, JobKind.CUT_TILES),
+            (JobKind.RUN_STAGE, JobKind.PREVIEW_STEP),
+        ],
+        ids=[
+            'run-then-run',
+            'run-then-measure',
+            'measure-then-run',
+            'measure-then-measure',
+            'tiles-then-tiles',
+            'collection-then-tiles',
+            'run-then-preview',
+        ],
+    )
+    async def test_a_job_asked_for_while_another_is_active_waits_and_starts_after_it(
+        self, fx_kit: ProcessingKit, earlier: JobKind, later: JobKind
+    ) -> None:
+        """Verify no job is refused because the book is busy: the later one is queued and starts when the earlier ends.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param earlier: The kind of the job asked for first.
+        :type earlier: JobKind
+        :param later: The kind of the job asked for while the first is queued.
+        :type later: JobKind
+        """
+        _, book_id, _ = await prepared_page(fx_kit)
+        starter = fx_kit.parts().starter
+        first = await starter.enqueue(await open_book(fx_kit, book_id), earlier, params_of(starter, earlier))
+        second = await starter.enqueue(await open_book(fx_kit, book_id), later, params_of(starter, later))
+        expect(second.state is JobState.QUEUED)
+        expect(fx_kit.board.put_jobs == [first, second])
+        await fx_kit.work_queue()
+        expect(began(fx_kit)[:2] == [first.id, second.id])
+        assert_expectations()
+
+    async def test_a_second_run_of_a_stage_is_queued_behind_the_first(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Verify a tile cutting asked for during a run is queued behind it, and a second cutting is refused.
+        """Verify a run asked for through the service while a run of the book is queued is a job, and no refusal.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -318,15 +321,68 @@ class TestRunHandOff:
         :type fx_open_book: BookOpener
         """
         actor, book_id, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(
-            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-        )
+        run = StageRun(stage=Stage.GEOMETRY)
+        first = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
+        second = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
+        expect(fx_kit.board.put_jobs == [first, second])
+        expect(processing_kinds(fx_kit, book_id) == [JobKind.RUN_STAGE, JobKind.RUN_STAGE])
+        assert_expectations()
+
+    async def test_a_new_preview_takes_the_place_of_the_one_before_it(self, fx_kit: ProcessingKit) -> None:
+        """Verify a preview asked for while another is queued cancels that one, so the book holds one look at a time.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id, page = await prepared_page(fx_kit)
         starter = fx_kit.parts().starter
+        before = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
+        after = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
+        expect(fx_kit.board.get(before.id).state is JobState.CANCELLED)
+        expect([job.id for job in fx_kit.board.jobs(book_id, active=True)] == [after.id])
+        assert_expectations()
+
+    async def test_a_tile_cutting_leaves_the_preview_of_the_book_alone(self, fx_kit: ProcessingKit) -> None:
+        """Verify the cutting of tiles, which the viewer asks for by itself, waits its turn and cancels no preview.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id, page = await prepared_page(fx_kit)
+        starter = fx_kit.parts().starter
+        preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
         tiles = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.CUT_TILES, NO_SUCH_TILES)
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await starter.enqueue(await open_book(fx_kit, book_id), JobKind.CUT_TILES, NO_SUCH_TILES)
-        expect(fx_kit.board.put_jobs == [run, tiles])
-        expect(tiles.state is JobState.QUEUED)
+        expect(fx_kit.board.get(preview.id).state is JobState.QUEUED)
+        expect(fx_kit.board.put_jobs == [preview, tiles])
+        assert_expectations()
+
+    async def test_a_collection_is_queued_once_and_again_behind_one_that_runs(self, fx_kit: ProcessingKit) -> None:
+        """Verify a queued collection is the answer to a second one, and nothing else of the book holds it back.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id, _ = await prepared_page(fx_kit)
+        starter = fx_kit.parts().starter
+        run = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.RUN_STAGE, StageRun(stage=Stage.GEOMETRY))
+        first = starter.queue_collection(await open_book(fx_kit, book_id))
+        again = starter.queue_collection(await open_book(fx_kit, book_id))
+        expect(again == first)
+        expect(fx_kit.board.put_jobs == [run, first])
+        assert_expectations()
+
+    async def test_tile_cuttings_queue_behind_each_other(self, fx_kit: ProcessingKit) -> None:
+        """Verify the cutting of the tiles of a version is queued while another cutting of the book is.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id, _ = await prepared_page(fx_kit)
+        starter = fx_kit.parts().starter
+        first = await starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
+        second = await starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
+        expect(first is not None and second is not None and first.id != second.id)
+        expect(fx_kit.board.put_jobs == [first, second])
         assert_expectations()
 
 
@@ -368,7 +424,7 @@ class TestRunTakesTheBookFromAPreview:
         _, book_id, _ = await prepared_page(fx_kit)
         starter = fx_kit.parts().starter
         tiles = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.CUT_TILES, NO_SUCH_TILES)
-        preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
+        preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         run = await starter.enqueue(
             await open_book(fx_kit, book_id), JobKind.RUN_STAGE, params_of(starter, JobKind.RUN_STAGE)
         )
@@ -388,51 +444,10 @@ class TestRunTakesTheBookFromAPreview:
         """
         actor, book_id, _ = await prepared_page(fx_kit)
         starter = fx_kit.parts().starter
-        preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
+        preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         changes = [event.job for event in fx_kit.events.published if isinstance(event, JobChanged)]
         assert [(job.id, job.state) for job in changes] == [(preview.id, JobState.CANCELLED)]
-
-    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    @pytest.mark.parametrize(ACTIVE_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    async def test_run_or_measure_is_refused_while_another_is_active(
-        self, fx_kit: ProcessingKit, requested: JobKind, active: JobKind
-    ) -> None:
-        """Verify a run or a measure is refused by an active run or measure, and the preview is left alone.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param requested: The kind of job the user asks for.
-        :type requested: JobKind
-        :param active: The kind of the job that is queued.
-        :type active: JobKind
-        """
-        _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
-        await starter.enqueue(await open_book(fx_kit, book_id), active, params_of(starter, active))
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await starter.enqueue(await open_book(fx_kit, book_id), requested, params_of(starter, requested))
-        expect(processing_kinds(fx_kit, book_id) == [active])
-        assert_expectations()
-
-    @pytest.mark.parametrize(ACTIVE_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    async def test_preview_is_refused_while_a_run_or_a_measure_is_active(
-        self, fx_kit: ProcessingKit, active: JobKind
-    ) -> None:
-        """Verify a preview does not take the book from a run or a measure that is queued.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param active: The kind of the job that is queued.
-        :type active: JobKind
-        """
-        _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
-        await starter.enqueue(await open_book(fx_kit, book_id), active, params_of(starter, active))
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, {})
-        expect(processing_kinds(fx_kit, book_id) == [active])
-        assert_expectations()
 
 
 class TestHousekeepingRequests:
@@ -445,28 +460,9 @@ class TestHousekeepingRequests:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        collection = await fx_kit.parts().starter.enqueue_collection(await open_book(fx_kit, book_id))
+        collection = fx_kit.parts().starter.queue_collection(await open_book(fx_kit, book_id))
         expect(collection is not None and collection.kind is JobKind.COLLECT_VERSIONS)
         expect(fx_kit.board.put_jobs == [collection])
-        assert_expectations()
-
-    @pytest.mark.parametrize(ACTIVE_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK, JobKind.CUT_TILES])
-    async def test_collection_is_not_queued_beside_another_job_that_processes_the_book(
-        self, fx_kit: ProcessingKit, active: JobKind
-    ) -> None:
-        """Verify a collection asked for during a run, a measure or a tile cutting is not put, and gets no job back.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param active: The kind of the job that is queued.
-        :type active: JobKind
-        """
-        _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
-        blocker = await starter.enqueue(await open_book(fx_kit, book_id), active, params_of(starter, active))
-        asked = await starter.enqueue_collection(await open_book(fx_kit, book_id))
-        expect(asked is None)
-        expect(fx_kit.board.put_jobs == [blocker])
         assert_expectations()
 
     async def test_collection_asked_for_during_a_collection_gets_the_active_one(self, fx_kit: ProcessingKit) -> None:
@@ -477,8 +473,8 @@ class TestHousekeepingRequests:
         """
         _, book_id, _ = await prepared_page(fx_kit)
         starter = fx_kit.parts().starter
-        first = await starter.enqueue_collection(await open_book(fx_kit, book_id))
-        second = await starter.enqueue_collection(await open_book(fx_kit, book_id))
+        first = starter.queue_collection(await open_book(fx_kit, book_id))
+        second = starter.queue_collection(await open_book(fx_kit, book_id))
         expect(first is not None and second == first)
         expect(fx_kit.board.put_jobs == [first])
         assert_expectations()
@@ -509,29 +505,8 @@ class TestHousekeepingRequests:
         )
         tiles = await fx_kit.parts().starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
         expect(tiles is not None and tiles.state is JobState.QUEUED)
-        expect(tiles is not None and TileCut.from_map(tiles.params) == TileCut(version_ids=(NO_SUCH_VERSION,)))
+        expect(tiles is not None and tiles.asked(TileCut) == TileCut(version_ids=(NO_SUCH_VERSION,)))
         expect(fx_kit.board.put_jobs == [run, tiles])
-        assert_expectations()
-
-    @pytest.mark.parametrize(HOUSEKEEPING_ARGUMENT, [JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS])
-    async def test_tile_cutting_is_left_out_while_another_housekeeping_job_is_active(
-        self, fx_kit: ProcessingKit, housekeeping: JobKind
-    ) -> None:
-        """Verify a book has one tile cutting or collection at a time, so a second request puts nothing.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param housekeeping: The kind of the job that is queued.
-        :type housekeeping: JobKind
-        """
-        _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
-        blocker = await starter.enqueue(
-            await open_book(fx_kit, book_id), housekeeping, params_of(starter, housekeeping)
-        )
-        asked = await starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
-        expect(asked is None)
-        expect(fx_kit.board.put_jobs == [blocker])
         assert_expectations()
 
 
@@ -580,36 +555,6 @@ class TestConcurrentRequests:
             group.start_soon(ask, first, 0)
             group.start_soon(ask, second, 1)
         return book_id, outcomes
-
-    @pytest.mark.parametrize(
-        ('first', 'second'),
-        [
-            pytest.param(JobKind.RUN_STAGE, JobKind.RUN_STAGE, id='run-then-run'),
-            pytest.param(JobKind.RUN_STAGE, JobKind.MEASURE_BOOK, id='run-then-measure'),
-            pytest.param(JobKind.MEASURE_BOOK, JobKind.RUN_STAGE, id='measure-then-run'),
-            pytest.param(JobKind.RUN_STAGE, JobKind.PREVIEW_STEP, id='run-then-preview'),
-            pytest.param(JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS, id='tiles-then-collection'),
-            pytest.param(JobKind.COLLECT_VERSIONS, JobKind.CUT_TILES, id='collection-then-tiles'),
-        ],
-    )
-    async def test_second_request_for_a_group_the_first_took_is_refused(
-        self, fx_kit: ProcessingKit, first: JobKind, second: JobKind
-    ) -> None:
-        """Verify the second request reads the job of the first and is refused as busy, putting nothing.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param first: The kind of job the first request asks for.
-        :type first: JobKind
-        :param second: The kind of job the second request asks for, whose group the first took.
-        :type second: JobKind
-        """
-        book_id, (won, lost) = await self.ask_at_once(fx_kit, first, second)
-        expect(won is not None and not isinstance(won, ConflictError))
-        expect(isinstance(lost, ConflictError))
-        expect([job.kind for job in fx_kit.board.put_jobs] == [first])
-        expect(processing_kinds(fx_kit, book_id) == [first])
-        assert_expectations()
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_run_asked_for_with_the_preview_of_a_rival_request_cancels_it(

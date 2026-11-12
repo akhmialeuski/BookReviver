@@ -3504,7 +3504,7 @@
           "processing"
         ],
         "summary": "Run Stage",
-        "description": "Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A book runs\none stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
+        "description": "Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A book runs\none job at a time in the order they were asked for, so a run asked for while another is queued or running waits\nbehind it and reads what it made. A preview of the book is cancelled. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
         "operationId": "run_stage_api_v1_books__book_id__stages__stage__run_post",
         "parameters": [
           {
@@ -3798,7 +3798,7 @@
           "processing"
         ],
         "summary": "Measure Book",
-        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the\nbook is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.",
+        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the\nbook is cancelled, and the measure waits behind a job of the book that is queued or running.",
         "operationId": "measure_book_api_v1_books__book_id__stages_geometry_measure_post",
         "parameters": [
           {
@@ -4559,7 +4559,7 @@
           "processing"
         ],
         "summary": "Collect Versions",
-        "description": "Delete the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. It goes with its files and\nits row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.",
+        "description": "Delete the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. It goes with its files and\nits row. A collection that is queued already is the answer. A run queues one by itself when it ends.",
         "operationId": "collect_versions_api_v1_books__book_id__versions_collect_post",
         "parameters": [
           {

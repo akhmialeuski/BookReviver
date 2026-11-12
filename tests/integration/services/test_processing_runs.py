@@ -12,7 +12,7 @@ from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.geometry import EditorKind, Rotation
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
-from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview
+from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview, TileCut
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
 from bookreviver.domain.pages import RecipeKind
@@ -58,6 +58,8 @@ EVERYTHING: SliceRequest = SliceRequest(limit=100)
 # What another request sets while a job runs: a strength, the identifier of a version, and a comment
 STRENGTH_BY_HAND: int = 7
 OTHER_INPUT_ID: str = '00112233445566ff'
+# A version a job of another kind names, which a run is not asked for
+NOT_A_RUN: PageVersionId = PageVersionId('0123456789abcdef')
 COMMENT_BY_HAND: str = 'Check the margin.'
 # The order key of the second page of a book
 SECOND_PAGE_KEY: str = 'a1'
@@ -473,17 +475,17 @@ class TestRunStage:
         )
         assert_expectations()
 
-    async def test_job_with_parameters_it_cannot_read_fails_with_the_reason(self, fx_kit: ProcessingKit) -> None:
-        """Verify a job whose parameters are not those of a run fails and says so.
+    async def test_job_with_the_work_of_another_kind_fails_with_the_reason(self, fx_kit: ProcessingKit) -> None:
+        """Verify a job that was not asked for a run fails and says so.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        job = fx_kit.board.put(book_id, make_job(kind=JobKind.RUN_STAGE, params={'stage': 'nowhere'}))
+        job = fx_kit.board.put(book_id, make_job(kind=JobKind.RUN_STAGE, work=TileCut(version_ids=(NOT_A_RUN,))))
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
-        assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
+        assert (stored.state, 'was not asked for a StageRun' in stored.error) == (JobState.FAILED, True)
 
 
 async def save_three_steps(kit: ProcessingKit, actor: Actor, book_id: BookId) -> None:
@@ -670,7 +672,7 @@ class TestRunThroughStep:
         await save_three_steps(fx_kit, actor, book_id)
         run = StageRun(stage=Stage.GEOMETRY, through_step=1)
         job = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
-        assert StageRun.from_map(job.params) == run
+        assert job.asked(StageRun) == run
 
 
 class TestPreviewStep:

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bookreviver.core.book import Book
-    from bookreviver.core.plugins import ProcessorCatalog
+    from bookreviver.core.plugins import BookStep, ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
@@ -400,6 +400,27 @@ class RecipeBook:
         :rtype: bool
         """
         return self._book_steps.leaves_to_book(recipe, through_step=through_step)
+
+    def book_stages(self) -> list[Stage]:
+        """List the stages an installed plugin that reads the book belongs to, in the order of the pipeline.
+
+        :returns: The stages whose recipes may hold a step that reads the book.
+        :rtype: list[Stage]
+        """
+        return self._book_steps.stages()
+
+    def book_step_of(self, recipe: Recipe) -> tuple[int, BookStep] | None:
+        """Find the first step of a recipe whose plugin reads the book, which is the step a measure writes into.
+
+        :param recipe: A recipe of the book.
+        :type recipe: Recipe
+        :returns: The place of the step among the steps of the recipe and the half of its plugin that reads the book,
+                  or None when no step of the recipe reads the book.
+        :rtype: tuple[int, BookStep] | None
+        """
+        position = self._book_steps.position(recipe.steps)
+        book_step = None if position is None else self._book_steps.of(recipe.steps[position])
+        return None if position is None or book_step is None else (position, book_step)
 
     def _buildable(self, stage: Stage) -> dict[RecipeKind, RecipeTemplate]:
         """List the built-in templates of a stage whose processors are all installed.

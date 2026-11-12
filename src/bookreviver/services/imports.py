@@ -175,7 +175,7 @@ class ImportRun:
         self.book = book
         self._job = job
         self._control = running.control
-        self._files = {file.name: file for file in (job.request.files if job.request else ())}
+        self._files = {file.name: file for file in job.asked(ImportRequest).files}
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
         self._runner = imaging.runner
@@ -655,7 +655,7 @@ class ImportService:
                 Job(
                     id=job_id,
                     kind=JobKind.IMPORT_SOURCE,
-                    request=ImportRequest(files=staged),
+                    work=ImportRequest(files=staged),
                     created_at=datetime.now(UTC),
                 )
             )
@@ -720,8 +720,9 @@ class ImportService:
                 ],
             )
             if pages:
+                # The split follows from the import, so it runs before what the user queued while the files were read
                 await self._starter.enqueue(
-                    run.book, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)).to_map()
+                    run.book, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)), next_up=True
                 )
         except DomainError:
             logger.warning('The split of the pages of import job %s was not queued', job.id, exc_info=True)

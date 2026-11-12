@@ -4,18 +4,20 @@ A use case of processing writes recipes and stage records, follows jobs and star
 the objects that do these on the book a use case is given, so ``ProcessingService`` and ``ProcessingJobs`` take one
 value for them and are built the same way.
 
-A job is put on the job queue of its book, which queues it behind the jobs the book has already and runs one job of the
-book at a time. A book processes one thing at a time. The user asks for a run, a preview or a measure of the book, of
-which the book has one, and the application queues a tile cutting and a collection of old versions for itself, of
-which it has one too. A request for a second of the first kind is refused, except that a run or a measure takes the
-book from a preview by cancelling it, since a preview is a look that changes nothing. A request that comes while a
-job of the other kind is active is queued behind it, so the tile cutting of the viewer never refuses a run and a run
-never waits on a collection with a 409. The collection that every run queues is put behind the run when it ends, and is
-left out while a housekeeping job is active.
+A job is what was asked for: a step or a stage, the pages it goes over, and its parameters, as the value of its kind
+(``Job.work``). It is put on the job queue of its book, which runs one job of the book at a time in the order they were
+put: first in, first out. A run of the geometry followed by a run of the cleanup is two jobs, and the second starts when
+the first has ended, so it reads what the first made. Nothing is refused because the book is busy. A job that follows
+from the one that is running, such as the split of the pages an import made, is put next up, ahead of the queued jobs,
+so that what the user asked for meanwhile works on what the follow-up made.
 
-The rules are checked against the jobs of the book and the job is put with no ``await`` in between, so no other request
-can put a job between the check and the put. A cancelled preview that is running keeps its place until its current task
-has returned, and the job put behind it starts only then.
+A preview is the one job that is dropped for another. It is a look at one page that changes nothing that is current,
+so a run, a measure of the book and a collection the user asks for cancel the previews of the book that are queued or
+running, and a new preview takes the place of the one before it. A tile cutting cancels nothing. The collection that
+every run queues when it ends is left out while a collection of the book is queued already, since one is enough.
+
+The job is put with no ``await`` before it, so no other request can put a job in between. A cancelled preview that is
+running keeps its place until its current task has returned, and the job put behind it starts only then.
 """
 
 from contextlib import suppress
@@ -25,9 +27,9 @@ from uuid import uuid4
 
 from attrs import frozen
 
-from bookreviver.domain.errors import ConflictError, JobFinishedError, NotFoundError
+from bookreviver.domain.errors import JobFinishedError, NotFoundError
 from bookreviver.domain.ids import JobId
-from bookreviver.domain.jobs import Job, JobKind, TileCut, VersionCollection
+from bookreviver.domain.jobs import Job, JobKind, JobState, TileCut, VersionCollection
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.stage_records import StageRecords
@@ -39,12 +41,12 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.ids import PageVersionId
-    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.jobs import JobWork
     from bookreviver.services.recipes import DefaultRecipes
 
 BOOK_BUSY: str = (
-    'The book is busy with another run, preview, measure of the book, tile cutting or collection of old versions. '
-    'Wait for it to end, or cancel it.'
+    'The book is busy with a run, a measure of the book, a tile cutting or a collection of old versions, which this '
+    'change would be read or written over by. Wait for it to end, or cancel it.'
 )
 
 
@@ -61,75 +63,50 @@ class ProcessingConfig:
 
 
 class JobStarter:
-    """Puts the jobs of a book on its queue, under the rules of what a book may process at once."""
+    """Puts the jobs of a book on its queue, which runs them one at a time in the order they were put."""
 
     def __init__(self, *, config: ProcessingConfig) -> None:
         """Start jobs through the queue of a book.
 
-        :param config: The retention period of a preview, which a collection is started with.
+        :param config: The retention period of a preview.
         :type config: ProcessingConfig
         """
         self._config = config
 
-    async def enqueue(self, book: Book, kind: JobKind, params: MetadataMap) -> Job:
-        """Put a job that processes the versions of the book on its queue, behind the jobs the book has.
+    async def enqueue(self, book: Book, kind: JobKind, work: JobWork | None = None, *, next_up: bool = False) -> Job:
+        """Put a job on the queue of the book, behind the jobs the book has, and drop the previews it replaces.
 
-        A book has one run, preview or measure at a time, and one tile cutting or collection at a time. A job whose
-        own group is free is queued whatever the other group is doing, and runs after the job before it.
+        The job starts when every job put before it has ended, so two jobs of a book never overlap and a later one
+        reads what an earlier one made. A run, a measure of the book and a new preview cancel the previews of the
+        book, queued or running, the way an account holder cancels a job, after the new job is put. A preview that was
+        still queued never runs. One that is running stops at the boundary of its current task, and the new job starts
+        after that.
 
-        A run or a measure of the book does not wait for a preview of the book, queued or running, nor is it refused
-        by one: the preview is cancelled the way an account holder cancels a job, after the new job is put, and the
-        request goes on as if the book had been free of it. A preview that was still queued never runs. One that is
-        running stops at the boundary of its current task, and the new job starts after that, so the two never overlap.
-        A preview asked for while a run or a measure is active, and a run or a measure asked for while another run or
-        measure is, are refused. A measure takes a preview's place like a run does, as the measure is the other button
-        the reader presses while the editor of the step is looking at the page.
-
-        :param book: The open book the job works on.
-        :type book: Book
-        :param kind: What the job does, one of the processing kinds.
-        :type kind: JobKind
-        :param params: What the job was asked to do, in the form its value class writes.
-        :type params: MetadataMap
-        :returns: The job as the queue holds it, queued.
-        :rtype: Job
-        :raises ConflictError: If a run, a preview or a measure is asked for while a run or a measure is queued or
-                               running, or while a preview is, unless the request is a run or a measure, or a tile
-                               cutting or a collection while one is.
-        """
-        if (job := await self._place(book, kind, params)) is None:
-            raise ConflictError(BOOK_BUSY)
-        return job
-
-    async def _place(self, book: Book, kind: JobKind, params: MetadataMap) -> Job | None:
-        """Check the rules of the book, put the job, and cancel the previews the job takes the place of.
-
-        :param book: The open book the job works on.
+        :param book: The open book.
         :type book: Book
         :param kind: What the job does.
         :type kind: JobKind
-        :param params: What the job was asked to do.
-        :type params: MetadataMap
-        :returns: The job as the queue holds it, or None when a job of its group is active, which puts nothing.
-        :rtype: Job | None
+        :param work: What the job was asked to do, as the value of its kind, or None for a job that takes nothing.
+        :type work: JobWork | None
+        :param next_up: Whether the job follows from the one that is running, so it runs before the jobs that are
+                        queued already.
+        :type next_up: bool
+        :returns: The job as the queue holds it, queued.
+        :rtype: Job
         """
-        group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        previews, others = self._active(book)
-        # A job that takes the place of previews is not refused by them
-        taken = previews if kind in JobKind.preemptive() else []
-        if any(job.kind in group for job in [*others, *(previews if not taken else [])]):
-            return None
-        job = book.jobs.put(self._new_job(kind, params))
-        await self._cancel(book, taken)
+        previews = self._active(book)[0] if kind in JobKind.replacing_previews() else []
+        job = book.jobs.put(self._new_job(kind, work), next_up=next_up)
+        await self._cancel(book, previews)
         return job
 
     async def free_of_previews(self, book: Book) -> list[Job]:
         """Cancel the previews of the book that are queued or running, and return the jobs that are still active.
 
         A preview is cancelled the way an account holder cancels a job, so a request that would be refused by a preview
-        alone, a run, a measure of the book or the clear of a page, goes on as if the book had been free of it.
+        alone, such as the choice of another version of a page or the clear of a step, goes on as if the book had been
+        free of it.
 
-        :param book: The open book whose previews are cancelled.
+        :param book: The open book.
         :type book: Book
         :returns: The queued or running run, tile cutting, collection or measure of the book, newest first, which
                   are none when the book was free of them.
@@ -147,63 +124,58 @@ class JobStarter:
         """
         return VersionCollection(previews_older_than=datetime.now(UTC) - self._config.preview_retention)
 
-    async def enqueue_collection(self, book: Book) -> Job | None:
-        """Queue a collection of the book's old versions, unless the book is processing something.
+    async def enqueue_collection(self, book: Book) -> Job:
+        """Queue the collection the user asked for, unless one is queued already, and drop the previews of the book.
 
-        A preview, queued or running, does not count as processing: it is cancelled, since the collection is what the
-        reader asked for and a preview is disposable. A preview younger than its retention is kept by the collection
-        itself.
-
-        :param book: The open book whose versions are collected.
+        :param book: The open book.
         :type book: Book
-        :returns: The collection job, new or the one that is queued or running already, or None when another job
-                  processes the book. A run queues its collection when it ends, through ``queue_collection``.
-        :rtype: Job | None
+        :returns: The collection job, new or the one that was queued already.
+        :rtype: Job
         """
-        previews, others = self._active(book)
-        collection = None if others else self._put_collection(book)
+        previews, _ = self._active(book)
+        job = self.queue_collection(book)
         await self._cancel(book, previews)
-        if others:
-            return others[0] if others[0].kind is JobKind.COLLECT_VERSIONS else None
-        return collection
+        return job
 
-    def queue_collection(self, book: Book) -> Job | None:
-        """Queue the collection a run follows with, behind the job that is running, unless a housekeeping job is active.
+    def queue_collection(self, book: Book) -> Job:
+        """Queue a collection of the book's old versions behind the jobs the book has, unless one is queued already.
 
-        :param book: The open book whose versions are collected.
+        A collection that is queued deletes what is not needed when it starts, so a second one behind it would find
+        nothing left. One that is running has chosen what it deletes already, so a new one is queued behind it.
+
+        :param book: The open book.
         :type book: Book
-        :returns: The collection job, or None when a tile cutting or a collection of the book is queued or running,
-                  which a collection is not needed beside.
-        :rtype: Job | None
+        :returns: The collection job, new or the one that was queued already.
+        :rtype: Job
         """
         _, others = self._active(book)
-        if any(job.kind in JobKind.housekeeping() for job in others):
-            return None
-        return self._put_collection(book)
+        for job in others:
+            if job.kind is JobKind.COLLECT_VERSIONS and job.state is JobState.QUEUED:
+                return job
+        return book.jobs.put(self._new_job(JobKind.COLLECT_VERSIONS, self.collection()))
 
     async def enqueue_tiles(self, book: Book, version_ids: Sequence[PageVersionId]) -> Job | None:
         """Queue the cutting of the pyramids of versions that were just made the current ones of their stages.
 
-        The change that made them current is committed already, so a job of another request that took the book in
-        the meantime does not undo it. The viewer asks for the pyramid of a current version, and only the last step of
-        a run cuts one, so the version of a step in the middle of a recipe has none until it is cut here.
+        The change that made them current is committed already. The viewer asks for the pyramid of a current version,
+        and only the last step of a run cuts one, so the version of a step in the middle of a recipe has none until it
+        is cut here.
 
-        :param book: The open book whose versions are cut.
+        :param book: The open book.
         :type book: Book
-        :param version_ids: The versions, which may be empty.
+        :param version_ids: Versions to cut.
         :type version_ids: Sequence[PageVersionId]
-        :returns: The tile cutting job, or None when there is no version to cut or another tile cutting or collection
-                  of the book is queued or running.
+        :returns: The tile cutting job, or None when there is no version to cut.
         :rtype: Job | None
         """
         if not version_ids:
             return None
-        return await self._place(book, JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids)).to_map())
+        return book.jobs.put(self._new_job(JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids))))
 
     def _active(self, book: Book) -> tuple[list[Job], list[Job]]:
         """Read the jobs of the book that process its versions and are queued or running.
 
-        :param book: The open book whose jobs are read.
+        :param book: The open book.
         :type book: Book
         :returns: The previews, and the other jobs, each newest first.
         :rtype: tuple[list[Job], list[Job]]
@@ -215,37 +187,27 @@ class JobStarter:
     async def _cancel(self, book: Book, jobs: Sequence[Job]) -> None:
         """Cancel jobs the way an account holder cancels them, leaving out one that has ended meanwhile.
 
-        :param book: The open book the jobs belong to.
+        :param book: The open book whose queue holds the jobs.
         :type book: Book
-        :param jobs: The jobs, which may be none.
+        :param jobs: The jobs to cancel.
         :type jobs: Sequence[Job]
         """
         for job in jobs:
             with suppress(JobFinishedError, NotFoundError):
                 await book.jobs.cancel(job.id)
 
-    def _put_collection(self, book: Book) -> Job:
-        """Put a collection of the old versions of the book on its queue.
-
-        :param book: The open book whose versions are collected.
-        :type book: Book
-        :returns: The queued job.
-        :rtype: Job
-        """
-        return book.jobs.put(self._new_job(JobKind.COLLECT_VERSIONS, self.collection().to_map()))
-
     @staticmethod
-    def _new_job(kind: JobKind, params: MetadataMap) -> Job:
+    def _new_job(kind: JobKind, work: JobWork | None) -> Job:
         """Build a queued job.
 
         :param kind: What the job does.
         :type kind: JobKind
-        :param params: What the job was asked to do.
-        :type params: MetadataMap
+        :param work: What the job was asked to do, or None for a job that takes nothing.
+        :type work: JobWork | None
         :returns: The job, queued as of now.
         :rtype: Job
         """
-        return Job(id=JobId(uuid4()), kind=kind, params=params, created_at=datetime.now(UTC))
+        return Job(id=JobId(uuid4()), kind=kind, work=work, created_at=datetime.now(UTC))
 
 
 @frozen(kw_only=True)

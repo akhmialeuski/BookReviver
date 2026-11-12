@@ -9,10 +9,9 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
-from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.jobs import JobKind, JobState, StageRun
+from bookreviver.domain.jobs import JobKind, JobState
 from bookreviver.domain.margins import MM_PER_INCH, MarginsSource, NormalizeParam
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, Step
@@ -34,7 +33,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
     from tests.harness.adapters.database import LocatedBookDatabases
-    from tests.harness.builders.domain import BookOpener
     from tests.harness.builders.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -594,59 +592,6 @@ class TestMarginsSource:
         expect({name: after[name] for name in EXPECTED_PAGE} == EXPECTED_PAGE)
         expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MEASURED)
         assert_expectations()
-
-
-class TestMeasureIsProcessing:
-    """Tests for the measure of the book being one of the jobs that run one at a time."""
-
-    async def test_a_run_is_refused_while_a_measure_is_queued(
-        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify a run cannot start while a measure is queued, since the measure rewrites the parameters it reads.
-
-        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
-        :type fx_cv_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_cv_kit.seed_book()
-        await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
-        with pytest.raises(ConflictError, match='measure of the book'):
-            await fx_cv_kit.service().start_run(
-                fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-            )
-
-    async def test_a_measure_is_refused_while_a_run_is_queued(
-        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify a measure cannot start while a run is queued, since the run writes the versions that are measured.
-
-        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
-        :type fx_cv_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_cv_kit.seed_book()
-        await fx_cv_kit.service().start_run(
-            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
-        )
-        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
-
-    async def test_a_second_measure_is_refused_while_one_is_queued(
-        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Verify two measures never overlap.
-
-        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
-        :type fx_cv_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_cv_kit.seed_book()
-        await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
-        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_cv_kit.service().start_measure(fx_open_book(actor, book_id))
 
 
 class TestMeasureApplyStep:

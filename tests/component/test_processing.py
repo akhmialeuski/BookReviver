@@ -451,10 +451,10 @@ class TestRunAndVersions:
         expect(info.status_code == status.HTTP_200_OK)
         assert_expectations()
 
-    async def test_second_run_while_one_is_active_is_a_409_problem(
+    async def test_second_run_while_one_is_active_is_queued_behind_it(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify a run answers 409 while another run of the book is queued.
+        """Verify a run asked for while another run of the book is queued is a job of its own, queued behind it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -464,7 +464,9 @@ class TestRunAndVersions:
         first = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
         second = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
         expect(first.status_code == status.HTTP_202_ACCEPTED)
-        expect(second.status_code == status.HTTP_409_CONFLICT)
+        expect(second.status_code == status.HTTP_202_ACCEPTED)
+        expect(first.json()['id'] != second.json()['id'])
+        expect(second.json()['state'] == JobState.QUEUED.value)
         assert_expectations()
 
     async def test_versions_are_listed_with_a_filter(
@@ -728,10 +730,10 @@ class TestRunAndVersions:
         expect((job.kind, job.state) == (JobKind.MEASURE_BOOK, JobState.QUEUED))
         assert_expectations()
 
-    async def test_measuring_the_book_while_a_run_is_active_is_a_409_problem(
+    async def test_measuring_the_book_while_a_run_is_active_is_queued_behind_it(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify the measure is refused while a run of the book is queued, which may be writing what it reads.
+        """Verify the measure asked for while a run of the book is queued waits behind it, so it reads what the run made.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -741,7 +743,8 @@ class TestRunAndVersions:
         run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
         measure = await fx_client.post(f'{fx_book.path}{MEASURE_SUFFIX}')
         expect(run.status_code == status.HTTP_202_ACCEPTED)
-        expect(measure.status_code == status.HTTP_409_CONFLICT)
+        expect(measure.status_code == status.HTTP_202_ACCEPTED)
+        expect(JobSchema.model_validate_json(measure.content).kind is JobKind.MEASURE_BOOK)
         assert_expectations()
 
     async def test_measuring_the_book_of_another_account_is_a_404(self, fx_client: httpx.AsyncClient) -> None:

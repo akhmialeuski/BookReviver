@@ -1,24 +1,21 @@
 """Background jobs: their kinds, their state and progress, and the parameters each kind runs with."""
 
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Self
-from uuid import UUID
+from typing import TYPE_CHECKING, ClassVar, Self
 
 from attrs import field, frozen, validators
 
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.ids import PageId, PageVersionId
 from bookreviver.domain.labels import LabeledStrEnum
-from bookreviver.domain.recipes import Step
 from bookreviver.domain.runs import RunMode
-from bookreviver.domain.stages import Stage
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
-    from bookreviver.domain.ids import JobId
-    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.ids import JobId, PageId, PageVersionId
+    from bookreviver.domain.recipes import Step
     from bookreviver.domain.sources import SourceFile
+    from bookreviver.domain.stages import Stage
 
 
 class JobKind(LabeledStrEnum):
@@ -35,52 +32,30 @@ class JobKind(LabeledStrEnum):
 
     @classmethod
     def processing(cls) -> frozenset[JobKind]:
-        """Return the kinds of job that read and write the versions of pages, of which a book runs one at a time.
+        """Return the kinds of job that read and write the versions of pages.
 
-        A run, a preview and a tile cutting write the files of versions they may have found made already, and a
-        collection deletes them, so no two of them may overlap, and two of one kind would write the same files. A
-        measure of the book reads the versions a run writes and rewrites the parameters a run reads, so it is one of
-        them.
+        A book runs one job at a time, in the order the jobs were put, so two of them never overlap. A change the user
+        makes to what is current, such as choosing another version of a page, is refused while one of them is queued or
+        running, since the job would read or write over it.
 
-        :returns: The kinds of the processing jobs.
+        :returns: A run, a preview, a measure of the book, a tile cutting and a collection of old versions.
         :rtype: frozenset[JobKind]
         """
-        return cls.requested() | cls.housekeeping()
+        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK, cls.CUT_TILES, cls.COLLECT_VERSIONS})
 
     @classmethod
-    def requested(cls) -> frozenset[JobKind]:
-        """Return the kinds of processing job that the user asks for, of which a book has one queued or running.
+    def replacing_previews(cls) -> frozenset[JobKind]:
+        """Return the kinds of job that cancel the previews of the book when they are asked for.
 
-        :returns: A run, a preview and a measure of the book.
+        A preview is a look at one page that changes nothing that is current. A run and a measure of the book are what
+        the reader pressed a button for, so a preview in their way gives the book up, and a new preview takes the place
+        of the one before it, since the editor shows the latest look only. A tile cutting or a collection waits its
+        turn and cancels nothing.
+
+        :returns: A run, a measure of the book and a preview.
         :rtype: frozenset[JobKind]
         """
-        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK})
-
-    @classmethod
-    def preemptive(cls) -> frozenset[JobKind]:
-        """Return the kinds of job that cancel a preview of the book instead of being refused by it.
-
-        A preview is a look at one page that the editor of a step asks for by itself and the reader asks for with a
-        switch, and it changes nothing that is current: it writes versions of the preview scale only, which no run and
-        no measure reads, under identifiers that name that scale. A run and a measure of the book are what the reader
-        pressed a button for, so a preview that happens to be in the way gives the book up, queued or running.
-
-        :returns: A run and a measure of the book.
-        :rtype: frozenset[JobKind]
-        """
-        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK})
-
-    @classmethod
-    def housekeeping(cls) -> frozenset[JobKind]:
-        """Return the kinds of processing job that the application queues for itself, of which a book has one.
-
-        A job of these kinds never refuses what the user asks for. The request is stored and waits, and starts when
-        the housekeeping job ends.
-
-        :returns: A tile cutting and a collection of old versions.
-        :rtype: frozenset[JobKind]
-        """
-        return frozenset({cls.CUT_TILES, cls.COLLECT_VERSIONS})
+        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK, cls.PREVIEW_STEP})
 
 
 class JobState(LabeledStrEnum):
@@ -105,14 +80,6 @@ class JobState(LabeledStrEnum):
         :rtype: frozenset[JobState]
         """
         return frozenset(state for state in cls if not state.is_final)
-
-
-# Keys in the stored parameters of the jobs: the last step of a ``run-stage`` job to run, and the pages a job works on
-THROUGH_STEP_KEY: str = 'through_step'
-PAGE_IDS_KEY: str = 'page_ids'
-# Keys of the mode and of its confirmation in the stored parameters of a ``run-stage`` job
-MODE_KEY: str = 'mode'
-CONFIRM_OVERWRITE_KEY: str = 'confirm_overwrite'
 
 
 @frozen(kw_only=True)
@@ -168,20 +135,6 @@ class Progress:
         return self.done / self.total if self.total else 0.0
 
 
-def _params_error(kind: JobKind, error: Exception) -> InvalidParametersError:
-    """Build the error of the parameters of a job that its value class cannot read.
-
-    :param kind: Kind of the job whose parameters were read.
-    :type kind: JobKind
-    :param error: The error the reading raised.
-    :type error: Exception
-    :returns: The error to raise.
-    :rtype: InvalidParametersError
-    """
-    err_msg = f'The parameters of a {kind} job are not valid: {error}.'
-    return InvalidParametersError(err_msg)
-
-
 @frozen(kw_only=True)
 class StageRun:
     """What a ``run-stage`` job runs: a stage over some pages by a recipe.
@@ -205,44 +158,6 @@ class StageRun:
     through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
     mode: RunMode = RunMode.KEEP
     confirm_overwrite: bool = False
-
-    def to_map(self) -> dict[str, Any]:
-        """Return the value as the JSON object a job stores.
-
-        :returns: The stage, the pages as text, the confirmations, the last step and the mode.
-        :rtype: dict[str, Any]
-        """
-        return {
-            'stage': self.stage.value,
-            PAGE_IDS_KEY: None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
-            'confirm_unsplit': self.confirm_unsplit,
-            THROUGH_STEP_KEY: self.through_step,
-            MODE_KEY: self.mode.value,
-            CONFIRM_OVERWRITE_KEY: self.confirm_overwrite,
-        }
-
-    @classmethod
-    def from_map(cls, stored: MetadataMap) -> Self:
-        """Read the value from the JSON object ``to_map`` wrote.
-
-        :param stored: The stored object.
-        :type stored: MetadataMap
-        :returns: The value.
-        :rtype: Self
-        :raises InvalidParametersError: If the object is not one of a ``run-stage`` job.
-        """
-        try:
-            page_ids = stored[PAGE_IDS_KEY]
-            return cls(
-                stage=Stage(stored['stage']),
-                page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
-                confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
-                through_step=stored.get(THROUGH_STEP_KEY),
-                mode=RunMode(stored.get(MODE_KEY, RunMode.KEEP)),
-                confirm_overwrite=bool(stored.get(CONFIRM_OVERWRITE_KEY, False)),
-            )
-        except (KeyError, ValueError, TypeError) as error:
-            raise _params_error(JobKind.RUN_STAGE, error) from error
 
 
 @frozen(kw_only=True)
@@ -269,39 +184,6 @@ class StepPreview:
             err_msg = f'The step index {self.step_index} is past the {len(self.steps)} steps of the preview.'
             raise ValueError(err_msg)
 
-    def to_map(self) -> dict[str, Any]:
-        """Return the value as the JSON object a job stores.
-
-        :returns: The page, the stage, the steps and the index.
-        :rtype: dict[str, Any]
-        """
-        return {
-            'page_id': str(self.page_id),
-            'stage': self.stage.value,
-            'steps': [step.to_map() for step in self.steps],
-            'step_index': self.step_index,
-        }
-
-    @classmethod
-    def from_map(cls, stored: MetadataMap) -> Self:
-        """Read the value from the JSON object ``to_map`` wrote.
-
-        :param stored: The stored object.
-        :type stored: MetadataMap
-        :returns: The value.
-        :rtype: Self
-        :raises InvalidParametersError: If the object is not one of a ``preview-step`` job.
-        """
-        try:
-            return cls(
-                page_id=PageId(UUID(stored['page_id'])),
-                stage=Stage(stored['stage']),
-                steps=tuple(Step.from_map(step) for step in stored['steps']),
-                step_index=stored['step_index'],
-            )
-        except (KeyError, ValueError, TypeError) as error:
-            raise _params_error(JobKind.PREVIEW_STEP, error) from error
-
 
 @frozen(kw_only=True)
 class TileCut:
@@ -311,29 +193,6 @@ class TileCut:
     """
 
     version_ids: tuple[PageVersionId, ...] = field(validator=validators.min_len(1))
-
-    def to_map(self) -> dict[str, Any]:
-        """Return the value as the JSON object a job stores.
-
-        :returns: The identifiers of the versions.
-        :rtype: dict[str, Any]
-        """
-        return {'version_ids': list(self.version_ids)}
-
-    @classmethod
-    def from_map(cls, stored: MetadataMap) -> Self:
-        """Read the value from the JSON object ``to_map`` wrote.
-
-        :param stored: The stored object.
-        :type stored: MetadataMap
-        :returns: The value.
-        :rtype: Self
-        :raises InvalidParametersError: If the object is not one of a ``cut-tiles`` job.
-        """
-        try:
-            return cls(version_ids=tuple(PageVersionId(version_id) for version_id in stored['version_ids']))
-        except (KeyError, ValueError, TypeError) as error:
-            raise _params_error(JobKind.CUT_TILES, error) from error
 
 
 @frozen(kw_only=True)
@@ -346,30 +205,6 @@ class ContentDetection:
     """
 
     page_ids: tuple[PageId, ...] | None = None
-
-    def to_map(self) -> dict[str, Any]:
-        """Return the value as the JSON object a job stores.
-
-        :returns: The pages as text, or None for the pages that are not detected yet.
-        :rtype: dict[str, Any]
-        """
-        return {PAGE_IDS_KEY: None if self.page_ids is None else [str(page_id) for page_id in self.page_ids]}
-
-    @classmethod
-    def from_map(cls, stored: MetadataMap) -> Self:
-        """Read the value from the JSON object ``to_map`` wrote.
-
-        :param stored: The stored object.
-        :type stored: MetadataMap
-        :returns: The value.
-        :rtype: Self
-        :raises InvalidParametersError: If the object is not one of a ``detect-content`` job.
-        """
-        try:
-            page_ids = stored[PAGE_IDS_KEY]
-            return cls(page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids))
-        except (KeyError, ValueError, TypeError) as error:
-            raise _params_error(JobKind.DETECT_CONTENT, error) from error
 
 
 @frozen(kw_only=True)
@@ -384,28 +219,9 @@ class VersionCollection:
 
     previews_older_than: datetime
 
-    def to_map(self) -> dict[str, Any]:
-        """Return the value as the JSON object a job stores.
 
-        :returns: The moment as ISO 8601 text.
-        :rtype: dict[str, Any]
-        """
-        return {'previews_older_than': self.previews_older_than.isoformat()}
-
-    @classmethod
-    def from_map(cls, stored: MetadataMap) -> Self:
-        """Read the value from the JSON object ``to_map`` wrote.
-
-        :param stored: The stored object.
-        :type stored: MetadataMap
-        :returns: The value.
-        :rtype: Self
-        :raises InvalidParametersError: If the object is not one of a ``collect-versions`` job.
-        """
-        try:
-            return cls(previews_older_than=datetime.fromisoformat(stored['previews_older_than']))
-        except (KeyError, ValueError, TypeError) as error:
-            raise _params_error(JobKind.COLLECT_VERSIONS, error) from error
+# What a job was asked to do: the value of its kind, which says the step or the stage, the pages and the parameters
+type JobWork = ImportRequest | StageRun | StepPreview | TileCut | ContentDetection | VersionCollection
 
 
 @frozen(kw_only=True)
@@ -420,9 +236,9 @@ class Job:
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its tasks are done.
     :ivar error: Why the job failed, shown to the user, or empty.
-    :ivar request: The staged files an import job was asked to import, which its run needs in memory, or None for a
-                   job that takes none.
-    :ivar params: What a processing job was asked to do, in the form its value class writes, empty for a job without.
+    :ivar work: What the job was asked to do, as the value of its kind: the stage and the pages of a run, the steps
+                of a preview, the files of an import, or None for a job that takes nothing, such as a measure of the
+                book.
     :ivar created_at: When the job was queued.
     :ivar started_at: When its book began to run the job, or None while it is queued.
     :ivar finished_at: When the job reached a final state, or None before.
@@ -433,22 +249,30 @@ class Job:
     state: JobState = JobState.QUEUED
     progress: Progress = field(factory=Progress)
     error: str = ''
-    request: ImportRequest | None = None
-    params: MetadataMap = field(factory=dict)
+    work: JobWork | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
+    def asked[WorkT](self, work_type: type[WorkT]) -> WorkT:
+        """Give what the job was asked to do, as the value the worker of its kind reads.
+
+        :param work_type: The class of the value the worker expects, such as ``StageRun``.
+        :type work_type: type[WorkT]
+        :returns: The work of the job.
+        :rtype: WorkT
+        :raises InvalidParametersError: If the job was put with no work, or with the work of another kind.
+        """
+        if not isinstance(self.work, work_type):
+            err_msg = f'A {self.kind} job was not asked for a {work_type.__name__}.'
+            raise InvalidParametersError(err_msg)
+        return self.work
+
     @property
     def stage(self) -> Stage | None:
-        """Name the stage the job runs, or None for a job that runs none or whose parameters cannot be read.
+        """Name the stage the job runs, or None for a job that runs none.
 
         :returns: The stage of a ``run-stage`` job.
         :rtype: Stage | None
         """
-        if self.kind is not JobKind.RUN_STAGE:
-            return None
-        try:
-            return StageRun.from_map(self.params).stage
-        except InvalidParametersError:
-            return None
+        return self.work.stage if self.kind is JobKind.RUN_STAGE and isinstance(self.work, StageRun) else None

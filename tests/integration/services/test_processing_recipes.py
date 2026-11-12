@@ -9,9 +9,9 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
-from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
+from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview
+from bookreviver.domain.jobs import JobKind, JobState, StageRun
 from bookreviver.domain.pages import PageKind, RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
 from bookreviver.domain.slices import SliceRequest
@@ -490,45 +490,9 @@ class TestStartRun:
         job = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
         held = fx_kit.board.get(job.id)
         expect((held.kind, held.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
-        expect(StageRun.from_map(held.params) == run)
+        expect(held.asked(StageRun) == run)
         expect(fx_kit.board.put_jobs == [job])
         assert_expectations()
-
-    async def test_second_run_while_one_is_active_is_a_conflict(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Reject a run while another job that processes the book is queued or running.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
-
-    async def test_preview_and_collection_are_refused_while_a_run_is_active(
-        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
-    ) -> None:
-        """Reject a preview and a collection while a run of the book is queued, since the book processes one thing.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        actor, book_id = await fx_kit.seed_book()
-        page, _ = await fx_kit.seed_scan_page(book_id)
-        await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        preview = StepPreview(
-            page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
-        )
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview)
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_collection(fx_open_book(actor, book_id))
 
     async def test_run_waits_while_a_collection_is_active(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -562,8 +526,9 @@ class TestStartRun:
         actor, book_id = await fx_kit.seed_book()
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         starter = fx_kit.parts().starter
-        expect(await starter.enqueue_collection(await open_book(fx_kit, book_id)) is None)
-        expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE])
+        collection = starter.queue_collection(await open_book(fx_kit, book_id))
+        expect(collection.state is JobState.QUEUED)
+        expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE, JobKind.COLLECT_VERSIONS])
         assert_expectations()
 
     async def test_page_of_another_book_is_not_found(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:

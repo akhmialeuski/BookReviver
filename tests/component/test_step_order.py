@@ -13,6 +13,7 @@ from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.processors import OrderRuleKind
 from bookreviver.domain.recipes import OrderMode
+from bookreviver.plugins.pages.blank import BlankPage
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.services.recipes import DefaultRecipes
 from tests.harness.builders.domain import make_record
@@ -67,6 +68,7 @@ class OrderedFakesProvider(Provider):
         return FakeCatalogue(
             [
                 SplitNone(),
+                BlankPage(),
                 FakeProcessor(),
                 CleanupProcessor(),
                 OpeningProcessor(),
