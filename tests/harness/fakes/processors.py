@@ -9,11 +9,18 @@ from bookreviver.core.plugins import Processor
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import EditorKind
 from bookreviver.domain.images import ColorMode
-from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput, WorkerPool
+from bookreviver.domain.processors import (
+    OrderRule,
+    ProcessorRole,
+    ProcessorScope,
+    ProcessorSpec,
+    VersionOutput,
+    WorkerPool,
+)
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.domain.versions import VersionData
-from bookreviver.plugins.normalize_book import NormalizeBook
+from bookreviver.plugins.geometry.normalize_book import NormalizeBook
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
@@ -252,6 +259,7 @@ class AutoSplitProcessor(FakeProcessor):
         title='Fake automatic split',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.SPLIT,
+        unattended=True,
         outputs=frozenset({VersionOutput.IMAGE}),
         editor=EditorKind.SPLIT,
     )
@@ -271,6 +279,7 @@ class FakeContentProbe(Processor):
         title='Content type',
         stage=Stage.PAGE_ORDER,
         scope=ProcessorScope.PAGE,
+        role=ProcessorRole.CONTENT_PROBE,
         outputs=frozenset(),
     )
 

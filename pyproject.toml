@@ -58,20 +58,20 @@ bookreviver-trace-report = "bookreviver.app.trace_report:main"
 # Processing plugins, found by the catalogue in the application through importlib.metadata.entry_points. An external
 # package registers its own processors in this group in the same way
 [project.entry-points."bookreviver.processors"]
-"split.none" = "bookreviver.plugins.split_none:SplitNone"
-"pages.blank" = "bookreviver.plugins.blank:BlankPage"
-"pages.content" = "bookreviver.plugins.content_type:ContentTypeProbe"
-"split.spread" = "bookreviver.plugins.split_spread:SplitSpread"
-"split.auto" = "bookreviver.plugins.split_auto:SplitAuto"
-"geometry.perspective" = "bookreviver.plugins.perspective:Perspective"
-"geometry.deskew" = "bookreviver.plugins.deskew:Deskew"
-"geometry.dewarp" = "bookreviver.plugins.dewarp:Dewarp"
-"geometry.crop" = "bookreviver.plugins.crop:Crop"
-"geometry.normalize" = "bookreviver.plugins.normalize:Normalize"
-"cleanup.binarize" = "bookreviver.plugins.binarize:Binarize"
-"cleanup.despeckle" = "bookreviver.plugins.despeckle:Despeckle"
-"cleanup.eraser" = "bookreviver.plugins.eraser:Eraser"
-"cleanup.thickness" = "bookreviver.plugins.thickness:Thickness"
+"split.none" = "bookreviver.plugins.split.split_none:SplitNone"
+"pages.blank" = "bookreviver.plugins.pages.blank:BlankPage"
+"pages.content" = "bookreviver.plugins.pages.content_type:ContentTypeProbe"
+"split.spread" = "bookreviver.plugins.split.split_spread:SplitSpread"
+"split.auto" = "bookreviver.plugins.split.split_auto:SplitAuto"
+"geometry.perspective" = "bookreviver.plugins.geometry.perspective:Perspective"
+"geometry.deskew" = "bookreviver.plugins.geometry.deskew:Deskew"
+"geometry.dewarp" = "bookreviver.plugins.geometry.dewarp:Dewarp"
+"geometry.crop" = "bookreviver.plugins.geometry.crop:Crop"
+"geometry.normalize" = "bookreviver.plugins.geometry.normalize:Normalize"
+"cleanup.binarize" = "bookreviver.plugins.cleanup.binarize:Binarize"
+"cleanup.despeckle" = "bookreviver.plugins.cleanup.despeckle:Despeckle"
+"cleanup.eraser" = "bookreviver.plugins.cleanup.eraser:Eraser"
+"cleanup.thickness" = "bookreviver.plugins.cleanup.thickness:Thickness"
 
 [project.optional-dependencies]
 cv = [
@@ -124,6 +124,15 @@ layers = [
     "bookreviver.core",
     "bookreviver.ports",
     "bookreviver.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Plugin groups import the kit and never each other"
+type = "layers"
+containers = ["bookreviver.plugins"]
+layers = [
+    "cleanup | geometry | pages | split",
+    "kit",
 ]
 
 [[tool.importlinter.contracts]]

@@ -27,7 +27,8 @@ from bookreviver.domain.recipes import RecipeKey
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
 from bookreviver.domain.versions import VersionState
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.pages.blank import BlankPage
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.runtime import BookJobs
 from bookreviver.services.edits import EditService
@@ -626,7 +627,7 @@ class ProcessingFakesProvider(Provider):
         :returns: The catalogue of the tests.
         :rtype: ProcessorCatalog
         """
-        return FakeCatalogue([SplitNone(), FakeProcessor(), CleanupProcessor()])
+        return FakeCatalogue([SplitNone(), BlankPage(), FakeProcessor(), CleanupProcessor()])
 
     @provide(override=True)
     def default_recipes(self) -> DefaultRecipes:

@@ -22,6 +22,20 @@ class OrderRuleKind(LabeledStrEnum):
     REQUIRED = 'required', 'Required place'
 
 
+class ProcessorRole(LabeledStrEnum):
+    """What the application asks a processor for, apart from being a step a user puts into a recipe.
+
+    The engine never names a plugin. Where it needs one for a job of its own, such as the image of a page that no stage
+    has processed yet, it asks the catalogue for the processor of that role, and the base plugins that are always
+    installed declare the roles.
+    """
+
+    STEP = 'step', 'A step of a recipe'
+    SCAN_COPY = 'scan-copy', 'Makes the image of a page that shows a whole scan'
+    BLANK_LEAF = 'blank-leaf', 'Draws the image of a blank leaf'
+    CONTENT_PROBE = 'content-probe', 'Tells what a page shows, which it records as the content type in its data'
+
+
 class ProcessorScope(LabeledStrEnum):
     """How many outputs a processor makes from its input."""
 
@@ -91,6 +105,9 @@ class ProcessorSpec:
     :ivar summary: One line the catalogue of steps shows under the title, saying what the step does to a page.
     :ivar stage: Stage whose recipe the step may be put into.
     :ivar scope: Whether the step makes one output for the page or one for each part of a scan.
+    :ivar role: What the application asks the processor for, apart from being a step of a recipe.
+    :ivar unattended: Whether the step decides by itself what to do with a page, so a stage whose recipe starts with
+                      it is run on the pages of an import without the user asking.
     :ivar outputs: What the step writes.
     :ivar parameters: JSON Schema of the parameters, from which the interface builds the settings form.
     :ivar editor: Editor of the manual edit the step reads.
@@ -112,6 +129,8 @@ class ProcessorSpec:
     summary: str = ''
     stage: Stage
     scope: ProcessorScope = ProcessorScope.PAGE
+    role: ProcessorRole = ProcessorRole.STEP
+    unattended: bool = False
     outputs: frozenset[VersionOutput] = frozenset({VersionOutput.IMAGE})
     parameters: MetadataMap = field(factory=dict)
     editor: EditorKind = EditorKind.NONE

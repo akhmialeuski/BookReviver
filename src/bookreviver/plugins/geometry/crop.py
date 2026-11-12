@@ -1,0 +1,476 @@
+"""Setting the borders of the content of a page, which are recorded and cut by nobody here.
+
+``geometry.crop`` finds where the text and the pictures of a page lie and records that frame. The page itself stays as
+it is: the step hands on the image of its input, the same size and the same pixels, with the identity as its transform,
+so a border that is moved on the canvas moves a box over a picture that does not change. The cutting is done later by
+``geometry.normalize``, which cuts the block out and puts it on the page of the book, as ScanTailor cuts at the output
+and not at Select Content. The frame is recorded in the pixels of the page, as ``frame`` and as ``content_frame``, which
+the steps after it carry on.
+
+The page is shrunk and made black and white, by the method of Otsu or by a threshold that follows the light of the
+neighbourhood. The specks of the ink are cleaned away, and so are the lines that touch the edge of the sheet, which are
+the edge of the paper and not its content. Then the ink is smeared with a rectangle whose sides are shares of the page,
+so the step behaves the same at any resolution of the scan, and the dense blocks that come of it are joined into the
+frame. A block is kept by the ink it holds and by how full it is, never by where it lies, so no glyph is cut.
+
+A side of the sheet that lies on the edge of the scan, which ``geometry.perspective`` records in ``cut_edges``, may hold
+text that the scanner cut, so the lines that touch it are kept, and a frame that comes to such a side is marked for
+review, because the margin on that side is not known. Even there, ink that is not text is cleaned: a piece that runs
+along the side for many lines of text, or is a large dark area, is a border or a shadow of the scan. After the smear, a
+narrow tall strip in the outer margin at the left or the right of the page and a small stain in a corner are dropped as
+well, while the text lies elsewhere. How tall a line of text is, the page tells by its own glyphs, so the cleaning
+follows the size of the print. A page with no ink to speak of is left as it is and marked for review. A frame the user
+gave as a ``rect`` edit replaces the search.
+
+The step also measures the distance between the lines of text of the frame, from the profile of its ink along the rows,
+and records it as the line height of the page for ``geometry.normalize`` and for the measuring of the book.
+"""
+
+import math
+from typing import TYPE_CHECKING, Literal, override
+
+import cv2
+import numpy as np
+from attrs import frozen
+from pydantic import Field, model_validator
+
+from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.geometry import Rect
+from bookreviver.domain.processors import OrderRule, ProcessorScope, ProcessorSpec, VersionOutput
+from bookreviver.domain.sides import SheetEdge
+from bookreviver.domain.stages import ReviewReason, Stage
+from bookreviver.domain.step_measures import StepMeasure
+from bookreviver.domain.step_settings import Binarization, CropMethod
+from bookreviver.domain.versions import VersionData
+from bookreviver.plugins.kit.base import METHOD_TITLE, ModelProcessor, Params
+from bookreviver.plugins.kit.cv_image import (
+    COLOR_PLANES,
+    MANUAL_CONFIDENCE,
+    MIN_TONE_CONTRAST,
+    NO_IMAGE,
+    WHITE,
+    OtsuSplit,
+    color_mode_of,
+    image_data,
+    line_pitch,
+    odd_size,
+    read_samples,
+    settle_review,
+    source_size_data,
+)
+from bookreviver.ports.processing import StepOutput, StepResult
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.plugins.kit.cv_image import Indices, Samples
+    from bookreviver.ports.processing import StepInput
+
+# The parameter of the versions of this step before it stopped cutting, which a stored recipe may still hold
+LEGACY_MARGIN_PARAM: str = 'margin_percent'
+# The longer side in pixels the page is shrunk to for the search of the frame, since the blocks of text show at it
+SEARCH_LONG_SIDE_PX: int = 1_000
+# Size of the rectangle that smears the ink into blocks, as shares of the width and of the height of the page
+SMEAR_WIDTH_SHARE: float = 0.015
+SMEAR_HEIGHT_SHARE: float = 0.006
+SMEAR_ITERATIONS: int = 2
+# The least ink a block holds to be kept, as a share of the area of the page, and the least share of the smeared block
+# that the ink fills, which drop the specks and the sparse bands the smear makes of them
+MIN_BLOCK_INK_SHARE: float = 0.0001
+MIN_BLOCK_FILL: float = 0.1
+# Side of the neighbourhood of the adaptive threshold as a share of the longer side, and what the threshold lies below
+# the mean of the neighbourhood, in samples
+ADAPTIVE_BLOCK_SHARE: float = 0.03
+MIN_ADAPTIVE_BLOCK: int = 3
+ADAPTIVE_OFFSET: int = 10
+# How many heights of a glyph a piece of ink that touches a side may run along it, and how many it may measure on both
+# its sides, before it is a border or a shadow of the scan and not text. A cut line of text is a few glyphs long and one
+# glyph high, so it stays
+EDGE_RUN_HEIGHTS: float = 10.0
+EDGE_BLOB_HEIGHTS: float = 3.0
+# The smallest area, in pixels of the shrunk page, of a piece of ink that counts as a glyph when the height of a line of
+# text is measured, which leaves the dust out of the median
+GLYPH_MIN_AREA_PX: int = 20
+# A block is a strip of a shadow or a border when it lies wholly in the outer share of the width of the page at the left
+# or the right side, is narrower than the second share, and is at least this many times as tall as it is wide: a line of
+# text is wide, and a number or a glyph of a margin is not taller than it is wide by this much
+STRIP_ZONE_SHARE: float = 0.1
+STRIP_WIDTH_SHARE: float = 0.08
+STRIP_MIN_ASPECT: float = 2.0
+# A block that touches two sides of the page is a stain of the corner, not text, when it is smaller than this share of
+# the page in both directions
+CORNER_BLOCK_SHARE: float = 0.25
+# Room the frame keeps round the blocks, in pixels of the shrunk page, since the edge of the ink of the full page falls
+# between two pixels of the shrunk one
+FRAME_ROOM_PX: int = 2
+# How close the frame is to a side of the page to come to it, as a share of the size of the page
+EDGE_TOLERANCE_SHARE: float = 0.01
+
+
+def cut_edges_of(facts: MetadataMap) -> frozenset[SheetEdge]:
+    """Read the sides of the sheet that lie on the edge of the scan from the data of the input of a step.
+
+    :param facts: Data of the input version, which ``geometry.perspective`` filled in.
+    :type facts: MetadataMap
+    :returns: The sides, none when the data names none.
+    :rtype: frozenset[SheetEdge]
+    """
+    stated = facts.get(VersionData.CUT_EDGES)
+    if not isinstance(stated, list):
+        return frozenset[SheetEdge]()
+    return frozenset(SheetEdge(edge) for edge in stated)
+
+
+class CropParams(Params):
+    """How the content is found.
+
+    ``CropMethod.LAYOUT`` is not accepted here while no Layout stage exists to give the regions it takes the frame from.
+    A recipe saved while the step still cut the page may hold its ``margin_percent``, which is left out, since the step
+    cuts nothing and the margins of the page are set by ``geometry.normalize``.
+
+    :ivar method: The blocks of ink, the one method offered.
+    :ivar binarization: How the page is made black and white to find its ink.
+    :ivar noise_min_area: Ink smaller than this many pixels of the shrunk page is dust and is cleaned away.
+    """
+
+    method: Literal[CropMethod.INK_BLOCKS] = Field(
+        default=CropMethod.INK_BLOCKS,
+        title=METHOD_TITLE,
+        description='The frame is the union of the dense blocks of ink',
+    )
+    binarization: Binarization = Field(
+        default=Binarization.OTSU,
+        title='Black and white',
+        description='How the page is made black and white to find its ink',
+    )
+    noise_min_area: int = Field(
+        default=4,
+        ge=0,
+        le=10_000,
+        title='Smallest speck',
+        description='Ink smaller than this, in pixels of the page shrunk to a thousand, is dust',
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def drop_legacy_margin(cls, raw: object) -> object:
+        """Leave out the margin that the step took before it stopped cutting the page.
+
+        :param raw: The parameters as a recipe or a form gives them.
+        :type raw: object
+        :returns: The parameters without the legacy margin, or the value as it came when it is not a mapping.
+        :rtype: object
+        """
+        if isinstance(raw, dict):
+            return {name: value for name, value in raw.items() if name != LEGACY_MARGIN_PARAM}
+        return raw
+
+
+@frozen(kw_only=True)
+class Frame:
+    """The frame of the content of a page.
+
+    :ivar rect: The frame in the pixels of the image it was searched on.
+    :ivar confidence: How sure the search is of the frame, from 0 to 1.
+    """
+
+    rect: Rect
+    confidence: float
+
+
+class FrameSearch:
+    """Finds the frame of the content of a page by its ink."""
+
+    def __init__(self, image: Samples, params: CropParams, cut_edges: frozenset[SheetEdge]) -> None:
+        """Shrink the page and make it black and white.
+
+        :param image: The samples of the page.
+        :type image: Samples
+        :param params: The parameters of the step.
+        :type params: CropParams
+        :param cut_edges: Sides of the sheet that lie on the edge of the scan.
+        :type cut_edges: frozenset[SheetEdge]
+        """
+        height, width = image.shape[:2]
+        shrink = min(1.0, SEARCH_LONG_SIDE_PX / max(height, width))
+        size = (max(1, round(width * shrink)), max(1, round(height * shrink)))
+        self._small = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+        # The ratios that turn a place of the shrunk page into a place of the page
+        self._to_page = np.array([width / size[0], height / size[1]])
+        self._page_size = np.array([width, height])
+        self._params = params
+        self._cut_edges = cut_edges
+        gray = cv2.cvtColor(self._small, cv2.COLOR_BGR2GRAY) if self._small.ndim == COLOR_PLANES else self._small
+        self._gray = np.asarray(gray, dtype=np.uint8)
+        self._split = OtsuSplit.of(self._gray)
+        self._ink = self._binarize()
+
+    def find(self) -> Frame | None:
+        """Search the frame.
+
+        :returns: The frame in the pixels of the page, or None when the page has no ink that parts from its paper.
+        :rtype: Frame | None
+        """
+        if self._split.contrast < MIN_TONE_CONTRAST:
+            return None
+        blocks = self._blocks()
+        if blocks is None:
+            return None
+        boxes, confidence = blocks
+        left, top = boxes[:, cv2.CC_STAT_LEFT].min(), boxes[:, cv2.CC_STAT_TOP].min()
+        right = (boxes[:, cv2.CC_STAT_LEFT] + boxes[:, cv2.CC_STAT_WIDTH]).max()
+        bottom = (boxes[:, cv2.CC_STAT_TOP] + boxes[:, cv2.CC_STAT_HEIGHT]).max()
+        first = np.maximum((np.array([left, top]) - FRAME_ROOM_PX) * self._to_page, 0)
+        last = np.minimum((np.array([right, bottom]) + FRAME_ROOM_PX) * self._to_page, self._page_size)
+        rect = Rect(
+            left=float(first[0]), top=float(first[1]), width=float(last[0] - first[0]), height=float(last[1] - first[1])
+        )
+        return Frame(rect=rect, confidence=confidence)
+
+    def _blocks(self) -> tuple[Indices, float] | None:
+        """Smear the ink into blocks and keep the ones that hold enough of it and are full enough.
+
+        :returns: The statistics of the kept blocks, one row each as OpenCV gives them, and the share of the ink of the
+                  page that the kept blocks hold; None when no block is kept.
+        :rtype: tuple[Indices, float] | None
+        """
+        ink = self._cleaned()
+        height, width = ink.shape
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (odd_size(SMEAR_WIDTH_SHARE * width), odd_size(SMEAR_HEIGHT_SHARE * height))
+        )
+        smeared = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, kernel, iterations=SMEAR_ITERATIONS)
+        count, found, stats, _ = cv2.connectedComponentsWithStats(smeared, connectivity=8)
+        labels = np.asarray(found, dtype=np.intp)
+        ink_per_block = np.bincount(labels.ravel(), weights=(ink > 0).ravel(), minlength=count)
+        areas = stats[:, cv2.CC_STAT_AREA]
+        kept = (ink_per_block >= MIN_BLOCK_INK_SHARE * width * height) & (ink_per_block >= MIN_BLOCK_FILL * areas)
+        kept[0] = False  # Label 0 is the background
+        if not kept.any():
+            return None
+        strays = self._strays(np.asarray(stats, dtype=np.int_)) & kept
+        if (kept & ~strays).any():  # A stray block is dropped only while the text lies elsewhere
+            kept &= ~strays
+        total = float((ink > 0).sum())
+        return np.asarray(stats[kept], dtype=np.int_), float(ink_per_block[kept].sum()) / total
+
+    def _strays(self, stats: Indices) -> NDArray[np.bool_]:
+        """Tell which blocks are the shadow, the border or the stain of the edge of the sheet and not text.
+
+        Two kinds of block are told. A strip lies in the outer margin at the left or the right of the page, is narrow,
+        and is far taller than it is wide: a line of text is wide, so a tall sliver is no line. A corner block is small
+        and touches two sides of the page, where the dark corner of a sheet shows, and no text starts.
+
+        :param stats: The statistics of every smeared block, one row each as OpenCV gives them.
+        :type stats: Indices
+        :returns: One flag for each row, set for a block that is no text.
+        :rtype: NDArray[np.bool_]
+        """
+        height, width = self._ink.shape
+        left, top = stats[:, cv2.CC_STAT_LEFT], stats[:, cv2.CC_STAT_TOP]
+        wide, tall = stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT]
+        zone = STRIP_ZONE_SHARE * width
+        in_zone = (left + wide <= zone) | (left >= width - zone)
+        strips = in_zone & (wide < STRIP_WIDTH_SHARE * width) & (tall >= STRIP_MIN_ASPECT * wide)
+        reach_x, reach_y = EDGE_TOLERANCE_SHARE * width, EDGE_TOLERANCE_SHARE * height
+        by_side = (left <= reach_x) | (left + wide >= width - reach_x)
+        by_end = (top <= reach_y) | (top + tall >= height - reach_y)
+        corners = by_side & by_end & (wide < CORNER_BLOCK_SHARE * width) & (tall < CORNER_BLOCK_SHARE * height)
+        return strips | corners
+
+    def _binarize(self) -> Samples:
+        """Make the shrunk page black and white.
+
+        :returns: The ink as 255 on 0.
+        :rtype: Samples
+        """
+        if self._params.binarization is Binarization.ADAPTIVE:
+            block = max(MIN_ADAPTIVE_BLOCK, odd_size(ADAPTIVE_BLOCK_SHARE * max(self._gray.shape)))
+            ink = cv2.adaptiveThreshold(
+                self._gray, WHITE, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, block, ADAPTIVE_OFFSET
+            )
+        else:
+            ink = np.where(self._gray > self._split.threshold, 0, WHITE)
+        return np.asarray(ink, dtype=np.uint8)
+
+    @staticmethod
+    def _borders(stats: Indices, touches: dict[SheetEdge, NDArray[np.bool_]]) -> NDArray[np.bool_]:
+        """Tell which pieces of ink that touch a side of the page are a border or a shadow of the scan and not text.
+
+        A line of text that the scanner cut is a few glyphs long and one glyph high. A piece that runs along the side
+        for many glyph heights, or measures several of them on both its sides, is no line of text. The height of a glyph
+        is the median of the pieces that lie clear of every side, so where there is none nothing is told.
+
+        :param stats: The statistics of every piece of ink, one row each as OpenCV gives them.
+        :type stats: Indices
+        :param touches: For each side of the page, which pieces touch it.
+        :type touches: dict[SheetEdge, NDArray[np.bool_]]
+        :returns: One flag for each piece, set for one that is a border or a shadow.
+        :rtype: NDArray[np.bool_]
+        """
+        wide, tall = stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT]
+        on_edge = np.logical_or.reduce(list(touches.values()))
+        glyphs = ~on_edge & (stats[:, cv2.CC_STAT_AREA] >= GLYPH_MIN_AREA_PX)
+        glyphs[0] = False  # Label 0 is the background
+        if not glyphs.any():
+            return np.zeros(len(stats), dtype=np.bool_)
+        glyph_height = float(np.median(tall[glyphs]))
+        run, blob = EDGE_RUN_HEIGHTS * glyph_height, EDGE_BLOB_HEIGHTS * glyph_height
+        along_side = ((touches[SheetEdge.LEFT] | touches[SheetEdge.RIGHT]) & (tall > run)) | (
+            (touches[SheetEdge.TOP] | touches[SheetEdge.BOTTOM]) & (wide > run)
+        )
+        return on_edge & (along_side | ((wide > blob) & (tall > blob)))
+
+    def _cleaned(self) -> Samples:
+        """Clean the ink of specks and of the lines that lie on the edge of the sheet.
+
+        A piece of ink that touches a side of the page is the edge of the paper, unless the scanner cut the paper at
+        that side, where it may be text and is kept. Even there it is cleaned when it is no text: when it runs along the
+        side for many glyph heights, or measures many of them on both its sides, the page is showing a border or a
+        shadow. The height of a glyph is the median of the pieces of ink that lie clear of every side.
+
+        :returns: The ink as 255 on 0, without what was cleaned.
+        :rtype: Samples
+        """
+        height, width = self._ink.shape
+        _, found, measured, _ = cv2.connectedComponentsWithStats(self._ink, connectivity=8)
+        labels = np.asarray(found, dtype=np.intp)
+        stats = np.asarray(measured, dtype=np.int_)
+        left, top = stats[:, cv2.CC_STAT_LEFT], stats[:, cv2.CC_STAT_TOP]
+        touches = {
+            SheetEdge.TOP: top == 0,
+            SheetEdge.LEFT: left == 0,
+            SheetEdge.BOTTOM: top + stats[:, cv2.CC_STAT_HEIGHT] == height,
+            SheetEdge.RIGHT: left + stats[:, cv2.CC_STAT_WIDTH] == width,
+        }
+        remove = stats[:, cv2.CC_STAT_AREA] < self._params.noise_min_area
+        for edge, touching in touches.items():
+            if edge not in self._cut_edges:
+                remove |= touching
+        remove |= self._borders(stats, touches)
+        remove[0] = False  # Label 0 is the background
+        cleaned = self._ink.copy()
+        cleaned[remove[labels]] = 0
+        return cleaned
+
+
+class Crop(ModelProcessor):
+    """Records the frame of the content of a page and leaves the page as it is."""
+
+    params_model = CropParams
+    spec = ProcessorSpec(
+        key='geometry.crop',
+        version='2',
+        title='Select content',
+        summary='Finds the borders of the content and leaves the page as it is',
+        stage=Stage.GEOMETRY,
+        scope=ProcessorScope.PAGE,
+        outputs=frozenset({VersionOutput.IMAGE}),
+        parameters=CropParams.model_json_schema(),
+        editor=Rect.editor,
+        measure=StepMeasure.FRAME_SIZE,
+        after=(
+            OrderRule(
+                processor_key='geometry.perspective',
+                reason=(
+                    'Select content reads the sides of the sheet that Perspective records, '
+                    'so it usually comes after Perspective.'
+                ),
+            ),
+            OrderRule(
+                processor_key='geometry.deskew',
+                reason=(
+                    'Select content finds the frame of the text on a page that is turned level, '
+                    'so it usually comes after Deskew.'
+                ),
+            ),
+            OrderRule(
+                processor_key='geometry.dewarp',
+                reason='Select content finds the frame of the text on a flat page, so it usually comes after Dewarp.',
+            ),
+        ),
+    )
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Find the frame of the content and record it, handing on the page as it was.
+
+        :param step_input: The image of the page, the parameters, and the rect edit if there is one.
+        :type step_input: StepInput
+        :returns: One output holding the image of the input with the frame in its data, or with no frame and a mark for
+                  review when the page holds no content.
+        :rtype: StepResult
+        :raises ConflictError: If there is no image, or it cannot be read.
+        """
+        if step_input.image is None:
+            raise ConflictError(NO_IMAGE.format(key=self.spec.key))
+        params = CropParams.model_validate(step_input.params)
+        image = read_samples(step_input.image)
+        color_mode = color_mode_of(image, step_input.input_data)
+        cut_edges = cut_edges_of(step_input.input_data)
+        frame = self._frame(step_input, FrameSearch(image, params, cut_edges))
+        data = image_data(image, step_input.input_data, color_mode) | source_size_data(image, step_input.scale)
+        if frame is None:
+            data |= {VersionData.CONFIDENCE: 0.0, VersionData.SKIPPED: True}
+            review = settle_review(data, ReviewReason.NOT_APPLIED, step_input.input_data)
+            return StepResult(
+                outputs=[StepOutput(image=step_input.image, color_mode=color_mode, data=data, review=review)]
+            )
+        # The frame is in the pixels of the page, which the step does not change, so it is also the frame of its output
+        found = frame.rect.scaled(1 / step_input.scale).to_data()
+        data |= {
+            VersionData.FRAME: found,
+            VersionData.CONTENT_FRAME: found,
+            VersionData.CONFIDENCE: frame.confidence,
+            VersionData.SKIPPED: False,
+        }
+        block = image[
+            max(0, math.floor(frame.rect.top)) : math.ceil(frame.rect.top + frame.rect.height),
+            max(0, math.floor(frame.rect.left)) : math.ceil(frame.rect.left + frame.rect.width),
+        ]
+        if (pitch := line_pitch(block)) is not None:
+            data[VersionData.LINE_HEIGHT_PX] = pitch / step_input.scale
+        own = ReviewReason.CUT_BY_EDGE if self._reaches_cut_edge(frame.rect, image, cut_edges) else None
+        review = settle_review(data, own, step_input.input_data)
+        return StepResult(outputs=[StepOutput(image=step_input.image, color_mode=color_mode, data=data, review=review)])
+
+    @staticmethod
+    def _frame(step_input: StepInput, search: FrameSearch) -> Frame | None:
+        """Take the frame the user gave, or else search it.
+
+        :param step_input: The rect edit of the page if there is one, and the scale of the image.
+        :type step_input: StepInput
+        :param search: The search of the frame on the page.
+        :type search: FrameSearch
+        :returns: The frame in the pixels of the image, or None when the page holds no content.
+        :rtype: Frame | None
+        """
+        edit = step_input.edit
+        if edit is not None and isinstance(edit.geometry, Rect):
+            return Frame(rect=edit.geometry.scaled(step_input.scale), confidence=MANUAL_CONFIDENCE)
+        return search.find()
+
+    @staticmethod
+    def _reaches_cut_edge(rect: Rect, image: Samples, cut_edges: frozenset[SheetEdge]) -> bool:
+        """Tell whether the frame comes to a side of the sheet where the scanner cut the paper.
+
+        :param rect: The frame in the pixels of the page.
+        :type rect: Rect
+        :param image: The samples of the page.
+        :type image: Samples
+        :param cut_edges: Sides of the sheet that lie on the edge of the scan.
+        :type cut_edges: frozenset[SheetEdge]
+        :returns: Whether the margin of the page on a side that was cut is not known.
+        :rtype: bool
+        """
+        height, width = image.shape[:2]
+        slack_x = EDGE_TOLERANCE_SHARE * width
+        slack_y = EDGE_TOLERANCE_SHARE * height
+        reaches = {
+            SheetEdge.TOP: rect.top <= slack_y,
+            SheetEdge.RIGHT: rect.left + rect.width >= width - slack_x,
+            SheetEdge.BOTTOM: rect.top + rect.height >= height - slack_y,
+            SheetEdge.LEFT: rect.left <= slack_x,
+        }
+        return any(reaches[edge] for edge in cut_edges)

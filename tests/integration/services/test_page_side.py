@@ -10,7 +10,7 @@ from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.sides import PageSide
 from bookreviver.domain.stages import PageStageKey, Stage
-from bookreviver.plugins.split_none import SplitNone
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.processing import StepResult
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from tests.harness.builders.domain import SPLIT_NONE
