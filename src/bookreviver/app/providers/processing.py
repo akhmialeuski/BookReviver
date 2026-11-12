@@ -132,6 +132,8 @@ class ProcessingProvider(Provider):
         return ProcessingConfig(
             preview_retention=timedelta(hours=settings.processing.preview_retention_hours),
             preview_long_side_px=settings.imaging.preview_long_side_px,
+            # A run takes every process the executor keeps for full runs, which is all but those of the previews
+            parallel_pages=settings.processing.step_processes - settings.processing.preview_step_processes,
         )
 
     @provide(scope=Scope.APP)
@@ -225,6 +227,7 @@ class ProcessingProvider(Provider):
             order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
             tracer=tracer,
+            parallel_pages=config.parallel_pages,
         )
 
     @provide(scope=Scope.REQUEST)

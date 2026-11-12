@@ -53,6 +53,7 @@ from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.run_plans import RunPlan
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 from bookreviver.services.version_clearing import VersionClearing
+from bookreviver.services.worker_group import WorkerGroup
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -108,6 +109,7 @@ class ProcessingJobs:
         self._recipes = parts.recipes
         self._records = parts.records
         self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
+        self._parallel_pages = runtime.parallel_pages
         self._detector = ContentDetector(runtime=runtime, records=parts.records)
         self._starter = parts.starter
         self._pages = pages
@@ -281,7 +283,10 @@ class ProcessingJobs:
         ]
         if measured:
             await self._measure_book(executor, measured, recipes, run)
-        return [await self._run_page(book, executor, page, recipes[page.id], run) for page in pages]
+        # A split puts the right half of a spread into the book right after the left, at a place it reads from the
+        # pages round it, so the pages of the page split are cut one after the other
+        workers = WorkerGroup(1 if run.stage is Stage.PAGE_SPLIT else self._parallel_pages)
+        return await workers.run(pages, lambda page: self._run_page(book, executor, page, recipes[page.id], run))
 
     async def _measure_book(
         self, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
@@ -301,13 +306,24 @@ class ProcessingJobs:
         :type run: StageRun
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
-        made: dict[RecipeId, dict[PageId, PageVersion]] = {}
-        for page in pages:
+
+        async def measure(page: Page) -> PageVersion | None:
+            """Take one page as far as the step that reads the book, so that a fault of the page fails only the page.
+
+            :param page: The page.
+            :type page: Page
+            :returns: The version of the step on the page, or None when the page could not be taken that far.
+            :rtype: PageVersion | None
+            """
             try:
-                version = await executor.measure(page, recipes[page.id], through_step=run.through_step)
+                return await executor.measure(page, recipes[page.id], through_step=run.through_step)
             except Exception:
                 logger.exception('Page %s could not be taken as far as the step that reads the book', page.id)
-                version = None
+                return None
+
+        made: dict[RecipeId, dict[PageId, PageVersion]] = {}
+        versions = await WorkerGroup(self._parallel_pages).run(pages, measure)
+        for page, version in zip(pages, versions, strict=True):
             if version is not None:
                 made.setdefault(recipes[page.id].id, {})[page.id] = version
         for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
