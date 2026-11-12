@@ -14,8 +14,8 @@ from bookreviver.services.recipe_profiles import COPY_NAME
 from tests.harness.fakes.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 
 if TYPE_CHECKING:
+    from bookreviver.core.book import Book
     from bookreviver.domain.recipes import RecipeProfile
-    from bookreviver.services.book import Book
     from tests.harness.builders.domain import BookOpener
     from tests.harness.builders.processing import ProcessingKit
 

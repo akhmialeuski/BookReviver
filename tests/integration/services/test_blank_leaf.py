@@ -13,6 +13,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
+from bookreviver.core.book import Book
 from bookreviver.domain.books import BookResource
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -28,7 +29,6 @@ from bookreviver.domain.stages import Stage, StageState
 from bookreviver.domain.step_settings import BlankParam, PaperFill
 from bookreviver.domain.versions import ProcessorRef, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
-from bookreviver.services.book import Book
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.domain import (
     EPOCH,

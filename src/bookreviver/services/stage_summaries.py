@@ -16,15 +16,16 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
+from bookreviver.core.content import BookContent
 from bookreviver.domain.slices import Slice
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary
 from bookreviver.domain.stages import PageStageStatus, Stage
-from bookreviver.services.stage_inputs import StageInputs
 from bookreviver.services.step_rows import StepRows
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.ids import PageVersionId, StepId
     from bookreviver.domain.library import BookOverview
     from bookreviver.domain.pages import RecipeKind
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.services.book import Book
 
 
 class StageSummaries:
@@ -168,7 +168,7 @@ class StageSummaries:
                     repos, pages.items, records, heads
                 )
             )
-            reads = StageInputs.of(repos, [page.id for page in pages.items], stage)
+            reads = BookContent(repos).pages.inputs(stage, [page.id for page in pages.items])
             rows: list[StageRow] = []
             for page in pages.items:
                 record = records.get(page.id)

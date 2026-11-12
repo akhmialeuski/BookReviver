@@ -20,17 +20,19 @@ from typing import TYPE_CHECKING, ClassVar
 
 from attrs import evolve
 
+from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.jobs import ContentDetection
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import ContentType, PageKind, PageOrigin
-from bookreviver.domain.versions import VersionData, VersionScale, VersionState
+from bookreviver.domain.versions import VersionData, VersionScale
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.jobs import Job
@@ -38,7 +40,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
 
@@ -147,9 +148,11 @@ class ContentDetector:
             if detection.page_ids is not None:
                 return [page for page in repos.pages.list_by_ids(detection.page_ids) if self._readable(page)]
             return [
-                page
-                for page in repos.pages.list_all()
-                if self._readable(page) and page.content_type is None and page.kind in self.KINDS
+                in_book.page
+                for in_book in BookContent(repos).pages.all()
+                if self._readable(in_book.page)
+                and in_book.page.content_type is None
+                and in_book.page.kind in self.KINDS
             ]
 
         return await book.read(work)
@@ -175,13 +178,7 @@ class ContentDetector:
         :returns: The latest ready base version of each page that has one.
         :rtype: dict[PageId, PageVersion]
         """
-        versions = await book.read(lambda repos: repos.page_versions.list_base_versions([page.id for page in pages]))
-        # The versions come earliest first, so the latest of a page that was cut again is the one that stays
-        return {
-            version.page_id: version
-            for version in versions
-            if version.state is VersionState.READY and version.renditions is not None and version.renditions.ready
-        }
+        return await book.read(lambda repos: BookContent(repos).pages.bases([page.id for page in pages]))
 
     async def _probe(self, book: Book, base: PageVersion) -> ContentType:
         """Tell what the image of a base version shows, by the processor, on its preview.

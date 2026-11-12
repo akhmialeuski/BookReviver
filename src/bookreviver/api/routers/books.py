@@ -23,8 +23,8 @@ from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import slice_request
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.books import ArchiveForm, BookCreate, BookSchema, BookUpdate
+from bookreviver.core.book import Book
 from bookreviver.domain.ids import BookId
-from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 

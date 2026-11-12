@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.core.book import Book
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
@@ -35,7 +36,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.harness.adapters.database import BookDatabasesFactory, LocatedBookDatabases
     from tests.harness.builders.domain import BookOpener

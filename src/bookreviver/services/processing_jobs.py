@@ -37,6 +37,7 @@ import logging
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
+from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.images import Rendition
@@ -56,6 +57,7 @@ from bookreviver.services.version_clearing import VersionClearing
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
     from bookreviver.domain.jobs import Job
@@ -64,7 +66,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.book import Book
     from bookreviver.services.book_measure import BlockMeasure
     from bookreviver.services.pages import PageService
     from bookreviver.services.processing_parts import ProcessingParts
@@ -259,7 +260,7 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         run = StageRun.from_map(job.params)
-        book_record = await book.read(lambda repos: repos.book_record.get())
+        book_record = await book.read(lambda repos: BookContent(repos).record)
         plan = RunPlan(recipes=self._recipes, book=book, run=run)
         pages = await plan.pages()
         executor = RecipeRun(

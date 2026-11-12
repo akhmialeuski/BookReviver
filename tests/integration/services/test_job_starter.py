@@ -22,12 +22,12 @@ from tests.harness.fakes.processors import FakeProcessor
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId, JobId
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.pages import Page
-    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from tests.harness.builders.domain import BookOpener
     from tests.harness.builders.processing import ProcessingKit

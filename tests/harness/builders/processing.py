@@ -15,6 +15,7 @@ from dishka import Provider, Scope, provide
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import ProcessingSettings
+from bookreviver.core.book import Book
 from bookreviver.domain.accounts import Actor
 from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
 from bookreviver.domain.jobs import JobKind
@@ -28,7 +29,6 @@ from bookreviver.domain.versions import VersionState
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.ports.runtime import BookJobs
-from bookreviver.services.book import Book
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService

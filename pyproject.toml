@@ -115,12 +115,13 @@ root_package = "bookreviver"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layers point inwards: app, then api, adapters and plugins, then services, ports, domain"
+name = "Layers point inwards: app, then api, adapters and plugins, then services, core, ports, domain"
 type = "layers"
 layers = [
     "bookreviver.app",
     "bookreviver.api | bookreviver.adapters | bookreviver.plugins",
     "bookreviver.services",
+    "bookreviver.core",
     "bookreviver.ports",
     "bookreviver.domain",
 ]
@@ -139,7 +140,7 @@ ancestors = ["bookreviver.domain"]
 [[tool.importlinter.contracts]]
 name = "The core imports no framework and no I/O library"
 type = "forbidden"
-source_modules = ["bookreviver.domain", "bookreviver.ports", "bookreviver.services"]
+source_modules = ["bookreviver.domain", "bookreviver.ports", "bookreviver.core", "bookreviver.services"]
 forbidden_modules = [
     "advanced_alchemy",
     "cv2",

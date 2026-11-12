@@ -28,13 +28,13 @@ from bookreviver.domain.recipes import OrderMode, RecipeDraft, RecipeKey, Recipe
 from bookreviver.domain.slices import Slice
 
 if TYPE_CHECKING:
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.pages import RecipeKind
     from bookreviver.domain.recipes import ProfileDraft, Recipe
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from bookreviver.services.processing import ProcessingService
     from bookreviver.services.recipes import RecipeBook
 

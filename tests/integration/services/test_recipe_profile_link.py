@@ -13,9 +13,9 @@ from bookreviver.domain.stages import Stage
 from tests.harness.fakes.processors import SECOND_KEY, THIRD_KEY
 
 if TYPE_CHECKING:
+    from bookreviver.core.book import Book
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.recipes import Recipe, RecipeProfile
-    from bookreviver.services.book import Book
     from tests.harness.adapters.database import LocatedBookDatabases
     from tests.harness.builders.domain import BookOpener
     from tests.harness.builders.processing import ProcessingKit

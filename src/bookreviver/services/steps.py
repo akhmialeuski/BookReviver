@@ -35,6 +35,7 @@ from bookreviver.ports.processing import StepInput, StepOutput, StepResult
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.ids import StorageKey
     from bookreviver.domain.images import ImagePolicy
     from bookreviver.domain.metadata import MetadataMap
@@ -43,7 +44,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.imaging import RenditionWriter, Tiler
     from bookreviver.ports.processing import StepExecutor
-    from bookreviver.services.book import Book
 
 NOT_READY: str = 'The version {version_id} has no image that is ready to cut.'
 

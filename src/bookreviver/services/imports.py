@@ -65,6 +65,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord, MetadataSuggestion
     from bookreviver.domain.sources import SourceKind, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
@@ -72,7 +73,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import IncomingFile
-    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 

@@ -82,7 +82,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             err_msg = f'{item.nodeid} lies outside the directories of the levels ({levels}) under {tests_dir}'
             raise pytest.UsageError(err_msg)
         item.stash[LEVEL_KEY] = Level(parts[0])
-        item.add_marker(item.stash[LEVEL_KEY])
+        # The name of a marker travels to the controller of a parallel run, which serialises a plain string only
+        item.add_marker(item.stash[LEVEL_KEY].value)
 
 
 @pytest.hookimpl(tryfirst=True)

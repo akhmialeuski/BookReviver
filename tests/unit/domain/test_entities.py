@@ -181,6 +181,14 @@ class TestPageVersion:
         with pytest.raises(ValueError, match='page version id'):
             evolve(make_page_version(page_id=PageId(uuid4())), id=PageVersionId(version_id))
 
+    def test_a_version_has_an_image_only_when_its_files_are_ready(self) -> None:
+        """Verify a stage can read a version with published files, and neither one being written nor one without."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        expect(evolve(version, renditions=Renditions(ready=True)).has_image)
+        expect(not evolve(version, renditions=Renditions(ready=False)).has_image)
+        expect(not evolve(version, renditions=None).has_image)
+        assert_expectations()
+
     def test_a_version_is_not_marked_until_the_user_marks_it(self) -> None:
         """Verify a new version carries no mark and no comment, which the user's notes then fill in."""
         version = make_page_version(page_id=PageId(uuid4()))

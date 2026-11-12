@@ -39,6 +39,7 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.storage import AssetStore, IncomingFile
-    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
 WRONG_EDITOR: str = 'The processor {key} reads an edit of the {expected} editor, not of the {actual} editor.'

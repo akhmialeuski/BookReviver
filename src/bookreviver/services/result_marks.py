@@ -10,15 +10,16 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.core.content import BookContent
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.versions import VersionScale
 
 if TYPE_CHECKING:
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId
     from bookreviver.domain.versions import PageVersion, ResultNote
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
 
 PREVIEW_TAKES_NO_MARK: str = 'The version {version_id} is a preview, which takes no mark and no comment.'
 
@@ -85,8 +86,4 @@ class ResultMarksService:
         :rtype: PageVersion
         :raises NotFoundError: If the book has no such page, or the page has no such version.
         """
-        repos.pages.get(page_id)
-        version = repos.page_versions.get(version_id)
-        if version.page_id != page_id:
-            raise NotFoundError(version_id)
-        return version
+        return BookContent(repos).pages.get(page_id).versions.get(version_id)

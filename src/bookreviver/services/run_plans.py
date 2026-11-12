@@ -25,6 +25,7 @@ from bookreviver.services.page_batches import PageBatch
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.history import PageHistoryEntry
     from bookreviver.domain.ids import PageId, PageVersionId, StepId
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.stages import PageStage, Stage
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook
 
 

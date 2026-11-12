@@ -12,8 +12,8 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
+from bookreviver.core.book import Book
 from bookreviver.domain.slices import SliceRequest
-from bookreviver.services.book import Book
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.harness.adapters.statements import STATEMENT_EVENT, StatementCounter
 from tests.harness.builders.domain import make_job, make_page, make_page_stage, make_record

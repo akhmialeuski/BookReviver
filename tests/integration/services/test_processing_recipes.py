@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
+    from bookreviver.core.book import Book
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName, BookId
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.stages import PageStage
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from tests.harness.adapters.database import LocatedBookDatabases
     from tests.harness.builders.domain import BookOpener
     from tests.harness.builders.processing import ProcessingKit

@@ -17,11 +17,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from bookreviver.core.book import Book
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.library import LibraryEntry
-from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

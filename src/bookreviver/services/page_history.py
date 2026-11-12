@@ -34,12 +34,12 @@ from bookreviver.services.processing_parts import BOOK_BUSY
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.domain.recipes import Recipe
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from bookreviver.services.stage_records import StageRecords
 

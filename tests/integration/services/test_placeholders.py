@@ -10,6 +10,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
+from bookreviver.core.book import Book
 from bookreviver.domain.books import BookResource
 from bookreviver.domain.errors import ConflictError, NotAPlaceholderError, NotFoundError, ScanAlreadyInBookError
 from bookreviver.domain.events import JobChanged, PageVersionReady
@@ -22,7 +23,6 @@ from bookreviver.domain.sides import Side
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import PageSize, VersionData, VersionState
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
-from bookreviver.services.book import Book
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
 from tests.harness.adapters.imports import stored_book
 from tests.harness.adapters.storage import book_directory

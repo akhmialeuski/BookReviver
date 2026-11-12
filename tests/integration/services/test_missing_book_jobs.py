@@ -29,8 +29,8 @@ from tests.harness.fakes.processors import FakeContentProbe, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.core.book import Book
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.services.book import Book
     from tests.harness.builders.domain import BookOpener
 
 pytestmark = pytest.mark.anyio

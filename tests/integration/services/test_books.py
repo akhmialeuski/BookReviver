@@ -11,6 +11,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.core.book import Book
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.images import Rendition
@@ -18,7 +19,6 @@ from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.page_steps import PageStepKey
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.ports.storage import BookDirectory
-from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.harness.adapters.storage import BookFiles, SharedBookDirectories, SharedDirectory

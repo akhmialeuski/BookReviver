@@ -22,11 +22,11 @@ from bookreviver.domain.versions import VersionData, VersionState
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.book import Book
 
 BEING_COLLECTED: str = 'The version is being deleted.'
 

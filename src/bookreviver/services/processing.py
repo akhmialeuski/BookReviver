@@ -19,6 +19,8 @@ without its picture. A preview goes only once it is old.
 
 from typing import TYPE_CHECKING
 
+from bookreviver.core.content import BookContent
+from bookreviver.core.pages import BookPage
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.jobs import JobKind, StepPreview, TileCut
 from bookreviver.domain.keys import BookKeys
@@ -34,6 +36,7 @@ from bookreviver.services.run_plans import RunPlan
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId
@@ -46,7 +49,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
@@ -375,7 +377,7 @@ class ProcessingService:
             recipes = repos.recipes.list_for_stage(version_filter.stage)
             if not any(step.step_id == step_id for recipe in recipes for step in recipe.steps):
                 raise NotFoundError(step_id)
-            found = repos.page_versions.list_for_page(page_id)
+            found = BookContent(repos).pages.get(page_id).versions.all()
             made = versions_of_step(found, version_filter.stage, step_places(recipes, step_id), stage_depths(found))
             matching = [
                 version
@@ -412,8 +414,7 @@ class ProcessingService:
             :raises NotFoundError: If the book has no such page, or the page has no
                                    such version.
             """
-            repos.pages.get(page_id)
-            return self._version_of(repos, page_id, version_id)
+            return BookContent(repos).pages.get(page_id).versions.get(version_id)
 
         return await book.read(work)
 
@@ -514,14 +515,10 @@ class ProcessingService:
                                    version, or a version of the chain was deleted.
             :raises UnsupportedTransformError: If a version of the chain follows a mesh.
             """
-            repos.pages.get(page_id)
-            version = self._version_of(repos, page_id, version_id)
             mapped = list(points)
-            while True:
+            for version in BookContent(repos).pages.get(page_id).versions.chain(version_id):
                 mapped = [version.transform.to_input(point) for point in mapped]
-                if version.input_id is None:
-                    return mapped
-                version = self._version_of(repos, page_id, version.input_id)
+            return mapped
 
         return await book.read(work)
 
@@ -544,28 +541,9 @@ class ProcessingService:
         :raises NotFoundError: If the page has no such version.
         :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
         """
-        version = self._version_of(repos, page.id, version_id)
+        version = BookPage(page, repos).versions.get(version_id)
         if (reason := self._why_not_choosable(version, stage)) is not None:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
-        return version
-
-    @staticmethod
-    def _version_of(repos: BookRepositories, page_id: PageId, version_id: PageVersionId) -> PageVersion:
-        """Return a version of a page, in the transaction of the caller.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param page_id: Identifier of the page.
-        :type page_id: PageId
-        :param version_id: Identifier of the version.
-        :type version_id: PageVersionId
-        :returns: The version.
-        :rtype: PageVersion
-        :raises NotFoundError: If the version does not exist or belongs to another page.
-        """
-        version = repos.page_versions.get(version_id)
-        if version.page_id != page_id:
-            raise NotFoundError(version_id)
         return version
 
     @staticmethod
