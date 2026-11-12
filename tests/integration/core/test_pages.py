@@ -1,4 +1,4 @@
-"""Tests for the rule of what a stage reads on a page, which a run and the rows of a stage both follow."""
+"""Tests for the pages of a book and the versions of a page, and for the rule of what a stage reads on a page."""
 
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -8,6 +8,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.core.content import BookContent
+from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.images import Renditions
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import VersionState
@@ -15,7 +16,7 @@ from tests.harness.builders.domain import make_page_stage, make_page_version
 from tests.harness.builders.stage_heads import seed_head
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Callable, Collection
 
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.domain.pages import Page
@@ -94,7 +95,193 @@ async def inputs_of(
     return await databases.open(book_id).read(lambda repos: BookContent(repos).pages.inputs(stage, page_ids))
 
 
-class TestOf:
+async def in_book[T](kit: ProcessingKit, book_id: BookId, ask: Callable[[BookContent], T]) -> T:
+    """Ask the content of a book in a transaction that only reads.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :param ask: What is asked of the content.
+    :type ask: Callable[[BookContent], T]
+    :returns: The answer.
+    :rtype: T
+    """
+    return await kit.databases.open(book_id).read(lambda repos: ask(BookContent(repos)))
+
+
+class TestPageVersionsAll:
+    """Tests for PageVersions.all."""
+
+    async def test_every_version_of_the_page_is_listed(self, fx_kit: ProcessingKit) -> None:
+        """Verify the versions of a page are its base version and every version made from it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        page, base = await seed_page(fx_kit, book_id, FIRST_KEY)
+        geometry = await seed_head(
+            book_id, PageStageKey(page.id, Stage.GEOMETRY), after=base, databases=fx_kit.databases
+        )
+        every = await in_book(fx_kit, book_id, lambda content: content.pages.get(page.id).versions.all())
+        assert {version.id for version in every} == {geometry.id, base.id}
+
+
+class TestPageVersionsGet:
+    """Tests for PageVersions.get."""
+
+    async def test_a_version_of_another_page_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify a page refuses the version of another page of the same book.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        page, _ = await seed_page(fx_kit, book_id, FIRST_KEY)
+        _, other_base = await seed_page(fx_kit, book_id, SECOND_KEY)
+        with pytest.raises(NotFoundError):
+            await in_book(fx_kit, book_id, lambda content: content.pages.get(page.id).versions.get(other_base.id))
+
+
+class TestPageVersionsChain:
+    """Tests for PageVersions.chain."""
+
+    async def test_the_chain_follows_a_version_back_to_the_base(self, fx_kit: ProcessingKit) -> None:
+        """Verify the chain of a version lists it and every version it was made from, the latest first.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        page, base = await seed_page(fx_kit, book_id, FIRST_KEY)
+        geometry = await seed_head(
+            book_id, PageStageKey(page.id, Stage.GEOMETRY), after=base, databases=fx_kit.databases
+        )
+        cleanup = await seed_head(
+            book_id, PageStageKey(page.id, Stage.CLEANUP), after=geometry, databases=fx_kit.databases
+        )
+        chain = await in_book(fx_kit, book_id, lambda content: content.pages.get(page.id).versions.chain(cleanup.id))
+        assert chain == [cleanup, geometry, base]
+
+
+class TestBookPageStage:
+    """Tests for BookPage.stage."""
+
+    async def test_the_record_of_a_stage_is_read_and_none_for_a_stage_that_never_ran(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a page gives the record of a stage it went through, and None for a stage that never ran on it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        page, base = await seed_page(fx_kit, book_id, FIRST_KEY)
+        key = PageStageKey(page.id, Stage.GEOMETRY)
+        await seed_head(book_id, key, after=base, databases=fx_kit.databases)
+        record, missing = await in_book(
+            fx_kit,
+            book_id,
+            lambda content: (
+                content.pages.get(page.id).stage(Stage.GEOMETRY),
+                content.pages.get(page.id).stage(Stage.CLEANUP),
+            ),
+        )
+        expect(record is not None and record.key == key)
+        expect(missing is None)
+        assert_expectations()
+
+
+class TestBookPageHead:
+    """Tests for BookPage.head."""
+
+    async def test_the_current_version_is_read_and_none_for_a_stage_that_never_ran(self, fx_kit: ProcessingKit) -> None:
+        """Verify a page gives the current version of a stage it went through, and None for a stage that never ran.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        page, base = await seed_page(fx_kit, book_id, FIRST_KEY)
+        geometry = await seed_head(
+            book_id, PageStageKey(page.id, Stage.GEOMETRY), after=base, databases=fx_kit.databases
+        )
+        head, missing = await in_book(
+            fx_kit,
+            book_id,
+            lambda content: (
+                content.pages.get(page.id).head(Stage.GEOMETRY),
+                content.pages.get(page.id).head(Stage.CLEANUP),
+            ),
+        )
+        expect(head == geometry)
+        expect(missing is None)
+        assert_expectations()
+
+
+class TestBookPagesAll:
+    """Tests for BookPages.all."""
+
+    async def test_the_pages_come_in_book_order(self, fx_kit: ProcessingKit) -> None:
+        """Verify every page of the book is listed, in the order of the book.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        second, _ = await seed_page(fx_kit, book_id, SECOND_KEY)
+        first, _ = await seed_page(fx_kit, book_id, FIRST_KEY)
+        listed = await in_book(fx_kit, book_id, lambda content: [page.id for page in content.pages.all()])
+        assert listed == [first.id, second.id]
+
+
+class TestBookPagesGet:
+    """Tests for BookPages.get."""
+
+    async def test_a_page_the_book_lacks_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify asking for a page of another book is refused.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        _, other_id = await fx_kit.seed_book()
+        page, _ = await seed_page(fx_kit, other_id, FIRST_KEY)
+        with pytest.raises(NotFoundError):
+            await in_book(fx_kit, book_id, lambda content: content.pages.get(page.id))
+
+
+class TestBookPagesHeads:
+    """Tests for BookPages.heads."""
+
+    async def test_heads_are_the_current_versions_of_the_stage_but_those_left_out(self, fx_kit: ProcessingKit) -> None:
+        """Verify the current versions of a stage are read for every page except the ones named.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, book_id = await fx_kit.seed_book()
+        first, first_base = await seed_page(fx_kit, book_id, FIRST_KEY)
+        second, second_base = await seed_page(fx_kit, book_id, SECOND_KEY)
+        first_head = await seed_head(
+            book_id, PageStageKey(first.id, Stage.GEOMETRY), after=first_base, databases=fx_kit.databases
+        )
+        second_head = await seed_head(
+            book_id, PageStageKey(second.id, Stage.GEOMETRY), after=second_base, databases=fx_kit.databases
+        )
+        every = await in_book(fx_kit, book_id, lambda content: content.pages.heads(Stage.GEOMETRY))
+        but_one = await in_book(
+            fx_kit, book_id, lambda content: content.pages.heads(Stage.GEOMETRY, leaving_out=[first.id])
+        )
+        none = await in_book(fx_kit, book_id, lambda content: content.pages.heads(Stage.CLEANUP))
+        expect({version.id for version in every} == {first_head.id, second_head.id})
+        expect(but_one == [second_head])
+        expect(none == [])
+        assert_expectations()
+
+
+class TestBookPagesInputs:
     """Tests for BookPages.inputs."""
 
     async def test_the_nearest_earlier_stage_with_a_head_is_read(self, fx_kit: ProcessingKit) -> None:
