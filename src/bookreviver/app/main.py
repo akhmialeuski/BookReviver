@@ -24,6 +24,7 @@ from bookreviver.app.providers.accounts import SessionCleanup, account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.errors import DomainError
 from bookreviver.domain.ids import BookDirectoryName
 from bookreviver.ports.persistence import BookDatabase
@@ -45,6 +46,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+BASE_PLUGINS_MISSING: str = (
+    'No installed plugin does what the application cannot work without: {roles}. '
+    'The base plugins are part of BookReviver, so run `uv sync` to install its entry points again.'
+)
+ROLE_SEPARATOR: str = '; '
+
 
 async def prepare_start(container: AsyncContainer) -> None:
     """Do what the application does once before it serves a request, which starts no job.
@@ -55,7 +62,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     the first preview does not wait for it. The file of default recipes is read here too, so a file that does not fit
     stops the start. The storage, the registry of the databases of the books, the event channels and the job board are
     built here as well, and their openers are registered with the four ports of the parts of a book, its directory, its
-    database, its event channel and its job queue, so every book opened afterwards finds them.
+    database, its event channel and its job queue, so every book opened afterwards finds them. The catalogue of the
+    plugins is asked for the base plugins, without which no page gets an image, so a start without one of them stops.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
     left half done is left as it is. The upload an import was receiving or running on is removed from each book the
@@ -67,13 +75,16 @@ async def prepare_start(container: AsyncContainer) -> None:
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer
-    :raises RuntimeError: When the database is not at the head revision of the migrations.
+    :raises RuntimeError: When the database is not at the head revision of the migrations, or a base plugin is not
+                          installed.
     """
     await container.get(SqlDatabase)
     BookDirectory.register(await container.get(Callable[[BookDirectoryName], BookDirectory]))
     BookDatabase.register(await container.get(Callable[[BookDirectoryName], BookDatabase]))
     BookEvents.register((await container.get(EventChannels)).open)
     BookJobs.register((await container.get(InMemoryJobBoard)).open)
+    if missing := (await container.get(ProcessorCatalog)).missing_base_roles():
+        raise RuntimeError(BASE_PLUGINS_MISSING.format(roles=ROLE_SEPARATOR.join(role.label for role in missing)))
     await container.get(StepExecutor)
     await container.get(DefaultRecipes)
     async with container() as request:

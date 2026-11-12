@@ -74,7 +74,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   `geometry`, `cleanup`. A group imports `plugins/kit`, which holds what plugins share, and never another group. Where
   the application needs a plugin for work of its own, such as the image of a page no stage has processed yet, the
   plugin declares a `ProcessorRole` in its spec and the catalogue finds it with `of_role`, so `services` holds no key
-  and no version of a plugin. A step that runs on new pages without the user asking says `unattended` in its spec.
+  and no version of a plugin. The roles of `ProcessorRole.base()` belong to the base plugins, which are always
+  installed: the application refuses to start without a plugin for each. A step that runs on new pages without the
+  user asking says `unattended` in its spec.
 - `services`, `core` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.
