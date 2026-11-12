@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
 from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.processors import ProcessorRole
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.core.content import BookContent
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.domain.processors import ProcessorRole, ProcessorSpec
+    from bookreviver.domain.processors import ProcessorSpec
     from bookreviver.domain.stages import Stage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.processing import ProcessorSettings, StepInput, StepResult
@@ -191,3 +192,12 @@ class ProcessorCatalog(ABC):
             if spec.role is role:
                 return spec
         raise NotFoundError(role)
+
+    def missing_base_roles(self) -> list[ProcessorRole]:
+        """List the roles of the base plugins that no processor of the catalogue fills.
+
+        :returns: The missing roles, none for a catalogue the application can work with.
+        :rtype: list[ProcessorRole]
+        """
+        filled = {spec.role for spec in self.specs()}
+        return sorted(ProcessorRole.base() - filled)
