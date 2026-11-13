@@ -61,8 +61,11 @@ NEEDS_CONFIRMATION: str = (
 )
 STEP_NEEDS_STAGE: str = 'The versions of a step are listed with the stage of the step.'
 NO_STEP_TO_RUN_THROUGH: str = (
-    'Step {index} of the recipe for {name} does not exist, or it and every step before it are switched off.'
+    'The step {step_id} is in no recipe of the pages of the run, or it and every step before it are switched off in '
+    'the recipe for {names}.'
 )
+# Separates the names of the recipes in the text of an error
+NAME_SEPARATOR: str = ', '
 
 
 class ProcessingService:
@@ -161,9 +164,9 @@ class ProcessingService:
         :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the book has no such page, or the stage has no recipe.
-        :raises ConflictError: If the run goes through a step that the recipe of a page has no such step for, or whose
-                               steps up to it are all switched off, or its mode takes the work of pages away and it
-                               is not confirmed.
+        :raises ConflictError: If the run goes through a step that no recipe of its pages holds, or that a recipe holds
+                               with every step up to it switched off, or its mode takes the work of pages away and it
+                               is not confirmed. The pages of a recipe that does not hold the step run every step.
         """
 
         def check(repos: BookRepositories) -> None:
@@ -177,13 +180,13 @@ class ProcessingService:
                 repos.pages.list_by_ids(page_ids)
 
         await self._recipes.recipes(book, stage, checking=check)
-        if run.through_step is not None:
+        if (step_id := run.through_step_id) is not None:
             planned = {recipe.id: recipe for recipe in (await self._plan(book, run).recipes()).values()}
-            for recipe in planned.values():
-                if run.through_step >= len(recipe.steps) or not recipe.indexed_steps_through(run.through_step):
-                    raise ConflictError(
-                        NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.kind.label)
-                    )
+            holding = [recipe for recipe in planned.values() if recipe.holds(step_id)]
+            refused = [recipe for recipe in holding if not recipe.indexed_steps_through(step_id)]
+            if refused or (planned and not holding):
+                names = NAME_SEPARATOR.join(recipe.kind.label for recipe in refused or planned.values())
+                raise ConflictError(NO_STEP_TO_RUN_THROUGH.format(step_id=step_id, names=names))
         if run.mode is not RunMode.KEEP and not run.confirm_overwrite:
             affected = (await self._plan(book, run).impact()).affected
             if affected:

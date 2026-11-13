@@ -21,7 +21,7 @@ const TWO_STEPS = recipe('r1', {
 });
 
 describe('draftOf and bodyOf', () => {
-  it('gives each step a place in the draft, and sends the identifier the server gave it', () => {
+  it('gives each step a place in the draft, and sends the identifier the server gave it and its origin', () => {
     const draft = draftOf(TWO_STEPS);
 
     expect(draft.map((entry) => entry.id)).toEqual(['step-0', 'step-1']);
@@ -31,12 +31,14 @@ describe('draftOf and bodyOf', () => {
         params: { max_angle: 5 },
         enabled: true,
         step_id: 'id-geometry.deskew',
+        origin_step_id: null,
       },
       {
         processor_key: 'geometry.crop',
         params: {},
         enabled: false,
         step_id: 'id-geometry.crop',
+        origin_step_id: null,
       },
     ]);
   });

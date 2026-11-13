@@ -579,7 +579,11 @@ class TestClear:
         stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
-        assert (stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0)
+        assert (stored.head_version_id, stored.state, stored.through_step_id) == (
+            made[0].id,
+            StageState.STALE,
+            step_ids[0],
+        )
 
     async def test_the_version_the_stage_stands_on_gets_its_pyramid_cut_since_the_page_is_shown_by_it(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -658,7 +662,10 @@ class TestClear:
         stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
-        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
+        expect(
+            (stored.head_version_id, stored.recipe_id, stored.through_step_id)
+            == (made[0].id, blank_recipe.id, blank_recipe.steps[0].step_id)
+        )
         assert_expectations()
 
     async def test_the_first_step_leaves_the_stage_with_no_current_version(

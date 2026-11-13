@@ -126,14 +126,17 @@ describe('StageStrip', () => {
 
   describe('the steps a run stopped at', () => {
     it('names each step by its title, with the pages that stopped there and no number', () => {
-      const titles = ['Perspective', 'Deskew'];
+      const titles = new Map([
+        ['first', 'Perspective'],
+        ['second', 'Deskew'],
+      ]);
       render(2, {
         stopped: {
           options: [
-            { step: 0, pages: 1 },
-            { step: 1, pages: 76 },
+            { step: 'first', pages: 1 },
+            { step: 'second', pages: 76 },
           ],
-          titleOf: (step) => titles[step] ?? '',
+          titleOf: (step) => titles.get(step) ?? '',
           selected: null,
           onSelect: vi.fn(),
         },

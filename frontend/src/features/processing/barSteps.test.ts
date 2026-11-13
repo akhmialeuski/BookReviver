@@ -70,8 +70,8 @@ describe('defaultStepOf', () => {
     CATALOGUE,
   );
   const head = { id: 'v' } as NonNullable<ReturnType<typeof row>['version']>;
-  const ran = (id: string, through: number | null, status: 'fresh' | 'failed' = 'fresh') =>
-    row(id, { recipe_id: 'r', version: head, through_step: through, status });
+  const ran = (id: string, through: string | null, status: 'fresh' | 'failed' = 'fresh') =>
+    row(id, { recipe_id: 'r', version: head, through_step_id: through, status });
 
   it('is the last step when every page went through the whole recipe', () => {
     expect(defaultStepOf(steps, [ran('1', null), ran('2', null)], 'r')?.stepId).toBe('c');
@@ -93,19 +93,21 @@ describe('defaultStepOf', () => {
   });
 
   it('is the step the furthest run stopped at when no page went through the whole recipe', () => {
-    expect(defaultStepOf(steps, [ran('1', 0), ran('2', 1), ran('3', 0)], 'r')?.stepId).toBe('b');
+    expect(defaultStepOf(steps, [ran('1', 'a'), ran('2', 'b'), ran('3', 'a')], 'r')?.stepId).toBe(
+      'b',
+    );
   });
 
   it('counts a page that went through the whole recipe over pages that stopped early', () => {
-    expect(defaultStepOf(steps, [ran('1', 0), ran('2', null)], 'r')?.stepId).toBe('c');
+    expect(defaultStepOf(steps, [ran('1', 'a'), ran('2', null)], 'r')?.stepId).toBe('c');
   });
 
   it('leaves out failed pages, pages of another recipe and pages with no result', () => {
     const rows = [
-      ran('1', 1),
+      ran('1', 'b'),
       ran('2', null, 'failed'),
-      row('3', { recipe_id: 'other', version: head, through_step: null }),
-      row('4', { recipe_id: 'r', version: null, through_step: null }),
+      row('3', { recipe_id: 'other', version: head, through_step_id: null }),
+      row('4', { recipe_id: 'r', version: null, through_step_id: null }),
     ];
 
     expect(defaultStepOf(steps, rows, 'r')?.stepId).toBe('b');

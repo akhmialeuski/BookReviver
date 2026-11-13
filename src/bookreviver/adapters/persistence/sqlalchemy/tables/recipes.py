@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import enum_by_value
 from bookreviver.adapters.persistence.sqlalchemy.tables.base import (
+    ID_COLUMN,
     RECIPE_PROFILES_TABLE,
     RECIPES_TABLE,
     STAGE_COLUMN,
@@ -22,13 +23,11 @@ from bookreviver.domain.stages import Stage
 class RecipeRow(BookTable):
     """Row of one recipe of a stage of a book, of which there is one for each kind of page.
 
-    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, since no query looks inside
-    them.
+    The steps are rows of ``steps``, which the recipe places in its order through rows of ``recipe_steps``.
 
     :ivar id: Recipe identifier, assigned by the domain.
     :ivar stage: Stage the recipe processes, stored by value.
     :ivar kind: Kind of the pages the recipe processes, stored by value.
-    :ivar steps: The steps in order, as JSON.
     :ivar profile_id: Profile of the book the recipe was made from, which the service empties with the profile.
     :ivar created_at: Time the recipe was created.
     :ivar updated_at: Time the recipe last changed.
@@ -36,12 +35,12 @@ class RecipeRow(BookTable):
 
     __tablename__ = RECIPES_TABLE
     # The database keeps two requests that both make the recipes of a stage from both succeeding
-    __table_args__ = (UniqueConstraint(STAGE_COLUMN, 'kind'),)
+    # The pair the places of the steps name, so a recipe holds only steps of its own stage
+    __table_args__ = (UniqueConstraint(STAGE_COLUMN, 'kind'), UniqueConstraint(ID_COLUMN, STAGE_COLUMN))
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     kind: Mapped[RecipeKind] = mapped_column(enum_by_value(RecipeKind))
-    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     # No key, so the recipes that name a profile do not block its deletion, and the service empties the name
     profile_id: Mapped[UUID | None] = mapped_column(index=True)
     created_at: Mapped[datetime]
@@ -51,8 +50,9 @@ class RecipeRow(BookTable):
 class RecipeProfileRow(BookTable):
     """Row of one recipe profile of a book.
 
-    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. A recipe may
-    name the profile it was made from, with no key to check the name.
+    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, since a profile is a template
+    whose steps no row names. A recipe may name the profile it was made from, with no key to check the name, and a step
+    made from a step of the profile names that step in ``steps.origin_step_id``.
 
     :ivar id: Profile identifier, assigned by the domain.
     :ivar stage: Stage whose recipes the profile can be applied to, stored by value.

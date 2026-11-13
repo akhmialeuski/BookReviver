@@ -55,6 +55,12 @@ RECIPES_TABLE: Final = 'recipes'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 
 
+STEPS_TABLE: Final = 'steps'
+
+
+RECIPE_STEPS_TABLE: Final = 'recipe_steps'
+
+
 # Columns that several keys, indexes and constraints name
 ID_COLUMN: Final = 'id'
 
@@ -63,6 +69,20 @@ PAGE_ID_COLUMN: Final = 'page_id'
 
 
 STAGE_COLUMN: Final = 'stage'
+
+
+STEP_ID_COLUMN: Final = 'step_id'
+
+
+RECIPE_ID_COLUMN: Final = 'recipe_id'
+
+
+# The columns of a step a row names, with the stage of the row, which a composite key matches to the stage of the step
+STEP_OF_STAGE: Final = (STEP_ID_COLUMN, STAGE_COLUMN)
+
+
+# The columns of ``steps`` a composite key names, so a row of a stage can name only a step of the same stage
+STEP_KEY_OF_STAGE: Final = (f'{STEPS_TABLE}.{ID_COLUMN}', f'{STEPS_TABLE}.{STAGE_COLUMN}')
 
 
 SEQUENCE_COLUMN: Final = 'sequence'

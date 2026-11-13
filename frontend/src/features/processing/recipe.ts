@@ -18,6 +18,8 @@ export interface StepDraft {
   id: string;
   /** The identifier of the saved step, or null for a step that was added to the draft. */
   stepId: string | null;
+  /** The step of a profile the saved step was made from, which the comparison with the profile matches it by. */
+  originStepId?: string | null;
   processorKey: string;
   params: Record<string, unknown>;
   enabled: boolean;
@@ -39,6 +41,7 @@ export function draftOf(recipe: Pick<RecipeSchema, 'steps'>): StepDraft[] {
   return recipe.steps.map((step, index) => ({
     id: draftIdAt(index),
     stepId: step.step_id,
+    originStepId: step.origin_step_id ?? null,
     processorKey: step.processor_key,
     params: { ...step.params },
     enabled: step.enabled,
@@ -52,6 +55,7 @@ export function bodyOf(steps: readonly StepDraft[]): StepBody[] {
     params: step.params,
     enabled: step.enabled,
     step_id: step.stepId,
+    origin_step_id: step.originStepId ?? null,
   }));
 }
 

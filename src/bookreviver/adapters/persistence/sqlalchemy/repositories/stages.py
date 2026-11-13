@@ -12,7 +12,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStageRow,
     PageVersionRow,
 )
-from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.pages import PageOrigin
 from bookreviver.domain.stage_summaries import StageTally, StepTally
 from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
@@ -190,7 +190,7 @@ class SqlAlchemyPageStageRepository(
                 PageStageRow.state == StageState.FAILED,
                 marked,
                 or_(PageStageRow.state != StageState.FRESH, marked),
-                and_(PageStageRow.state != StageState.FAILED, PageStageRow.through_step.is_not(None)),
+                and_(PageStageRow.state != StageState.FAILED, PageStageRow.through_step_id.is_not(None)),
             )
         )
         statement = (
@@ -230,17 +230,17 @@ class SqlAlchemyPageStageRepository(
         :rtype: Sequence[StepTally]
         """
         statement = (
-            select(PageStageRow.stage, PageStageRow.through_step, func.count())
+            select(PageStageRow.stage, PageStageRow.through_step_id, func.count())
             .join(PageRow, PageStageRow.page_id == PageRow.id)
             .where(
                 PageRow.origin != PageOrigin.PLACEHOLDER,
                 PageStageRow.state != StageState.FAILED,
-                PageStageRow.through_step.is_not(None),
+                PageStageRow.through_step_id.is_not(None),
             )
-            .group_by(PageStageRow.stage, PageStageRow.through_step)
+            .group_by(PageStageRow.stage, PageStageRow.through_step_id)
         )
         return [
-            StepTally(stage=stage, through_step=through_step, pages=pages)
-            for stage, through_step, pages in self._rows.session.execute(statement)
-            if through_step is not None
+            StepTally(stage=stage, through_step_id=StepId(through_step_id), pages=pages)
+            for stage, through_step_id, pages in self._rows.session.execute(statement)
+            if through_step_id is not None
         ]

@@ -1,9 +1,9 @@
 import { BookmarkIcon, ChevronDownIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useSaveRecipe } from '@/features/processing/queries';
-import { bodyOf, draftOf } from '@/features/processing/recipe';
+import { bodyOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
-import { type ProfileChange, profileChanges } from '@/features/profiles/changes';
+import { draftFromProfile, type ProfileChange, profileChanges } from '@/features/profiles/changes';
 import { useApplyProfile, useProfiles, useReplaceProfile } from '@/features/profiles/queries';
 import { SaveProfileDialog } from '@/features/profiles/SaveProfileDialog';
 import { describeError } from '@/shared/http/problem';
@@ -193,7 +193,10 @@ export function ProfileMenu({
                 data-testid="profile-revert"
                 onClick={() => {
                   if (linked !== undefined) {
-                    processing.loadSteps(draftOf(linked), linked.order);
+                    processing.loadSteps(
+                      draftFromProfile(linked.steps, recipe.steps),
+                      linked.order,
+                    );
                     setOpen(false);
                   }
                 }}

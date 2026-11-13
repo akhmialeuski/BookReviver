@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.ids import JobId, PageId, PageVersionId
+    from bookreviver.domain.ids import JobId, PageId, PageVersionId, StepId
     from bookreviver.domain.recipes import Step
     from bookreviver.domain.sources import SourceFile
     from bookreviver.domain.stages import Stage
@@ -143,9 +143,9 @@ class StageRun:
     :ivar page_ids: Pages to run it on, or None for every page with an image.
     :ivar confirm_unsplit: Whether the user confirmed that a page split that is undone deletes the right half of a
                            spread, which a run that would do so refuses without it.
-    :ivar through_step: Index in the recipe of each page of the last step to run, or None to run through the last step
-                        that is on. The steps before it are found in the cache of versions when their inputs did not
-                        change.
+    :ivar through_step_id: The last step to run, which the recipe of each page of the run holds, or None to run
+                           through the last step that is on. The steps before it are found in the cache of versions
+                           when their inputs did not change.
     :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they read:
                 keeps both, which is the usual run, or takes one of them away from every page it goes over first.
     :ivar confirm_overwrite: Whether the user confirmed that a mode that takes work away does so on the pages it
@@ -155,7 +155,7 @@ class StageRun:
     stage: Stage
     page_ids: tuple[PageId, ...] | None = None
     confirm_unsplit: bool = False
-    through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
+    through_step_id: StepId | None = None
     mode: RunMode = RunMode.KEEP
     confirm_overwrite: bool = False
 

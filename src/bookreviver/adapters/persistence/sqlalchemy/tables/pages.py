@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, false
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, String, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE, SET_NULL, enum_by_value
@@ -30,6 +30,9 @@ from bookreviver.adapters.persistence.sqlalchemy.tables.base import (
     PAGINATION_SECTIONS_TABLE,
     RECIPES_TABLE,
     STAGE_COLUMN,
+    STEP_KEY_OF_STAGE,
+    STEP_OF_STAGE,
+    STEPS_TABLE,
     VERSION_ID_LENGTH,
     BookTable,
     Relation,
@@ -225,16 +228,16 @@ class PageVersionRow(BookTable):
 class PageStageRow(BookTable):
     """Row of the current version of one stage of one page, keyed by the page and the stage.
 
-    The head version and the recipe are optional references that the database empties when the version or the recipe
-    is deleted, so a record outlives both.
+    The head version, the recipe and the step the page stopped at are optional references that the database empties
+    when the version, the recipe or the step is deleted, so a record outlives them.
 
     :ivar page_id: Page the record belongs to.
     :ivar stage: The stage, stored by value.
     :ivar recipe_id: Recipe the page was processed by, or null.
     :ivar head_version_id: Current version of the stage, or null.
     :ivar state: Whether the current version matches the inputs of the stage, stored by value.
-    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
-                        that is on, or null for a page run through all of them.
+    :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+                           is on, or null for a page run through all of them.
     :ivar updated_at: Time the record last changed.
     :ivar page: Page owning the record, never loaded implicitly.
     """
@@ -249,7 +252,10 @@ class PageStageRow(BookTable):
     )
     head_version_id: Mapped[str | None] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=SET_NULL), index=True)
     state: Mapped[StageState] = mapped_column(enum_by_value(StageState))
-    through_step: Mapped[int | None]
+    # Indexed, since the database looks the records up when a step is deleted
+    through_step_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(f'{STEPS_TABLE}.{ID_COLUMN}', ondelete=SET_NULL), index=True
+    )
     updated_at: Mapped[datetime]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.STAGES, lazy=NO_IMPLICIT_LOAD)
@@ -258,10 +264,10 @@ class PageStageRow(BookTable):
 class PageStepStateRow(BookTable):
     """Row of what one page keeps for one step of a recipe, keyed by the page, the stage and the step.
 
-    The step is named by the identifier its recipe gives it, with no foreign key: the steps are a JSON list in the row
-    of a recipe, and a step that is removed leaves its state, which finds the step again if it is put back. The columns
-    of the manual edit are null while the page has no edit of the step, and the settings are an empty object while it
-    changes no field.
+    The step is a row of ``steps`` of the same stage, which a key of the step and the stage names. A step that is
+    taken out of every recipe keeps its row, marked removed, so its state stays and finds the step again if it is put
+    back. The columns of the manual edit are null while the page has no edit of the step, and the settings are an empty
+    object while it changes no field.
 
     :ivar page_id: Page the state belongs to.
     :ivar stage: Stage of the step, stored by value.
@@ -277,6 +283,7 @@ class PageStepStateRow(BookTable):
     """
 
     __tablename__ = 'page_step_states'
+    __table_args__ = (ForeignKeyConstraint(STEP_OF_STAGE, STEP_KEY_OF_STAGE), Index(None, *STEP_OF_STAGE))
 
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
@@ -297,8 +304,9 @@ class StepChangeRow(BookTable):
 
     A change of the page's own layer reaches that page, and a change of the values of the odd pages, the even pages or
     a group reaches every page that took them, so the change is stored once and ``page_history`` links it to each page.
-    The step is named by its identifier with no foreign key, as in ``page_step_states``, since a change outlives a step
-    that is removed from its recipe. The values are the whole layer before and after the change, as JSON objects.
+    The step is named by a key of the step and the stage, as in ``page_step_states``, and a step that is removed from
+    its recipe keeps its row, so the change outlives it. The values are the whole layer before and after the change, as
+    JSON objects.
 
     :ivar id: Change identifier, assigned by the domain.
     :ivar stage: Stage of the step, stored by value.
@@ -310,7 +318,7 @@ class StepChangeRow(BookTable):
     :ivar after: Content of the layer after the change, or null when it is emptied.
     :ivar source: What made the change, stored by value.
     :ivar batch_id: Identifier shared by the changes of one batch, or null.
-    :ivar undoes_id: The change this one takes back, with no foreign key like the step, or null.
+    :ivar undoes_id: The change this one takes back, with no foreign key, or null.
     :ivar created_at: Time the change was made.
     """
 
@@ -319,6 +327,8 @@ class StepChangeRow(BookTable):
         Index(None, 'batch_id'),
         Index(None, 'undoes_id'),
         Index(None, GROUP_ID_COLUMN),
+        Index(None, *STEP_OF_STAGE),
+        ForeignKeyConstraint(STEP_OF_STAGE, STEP_KEY_OF_STAGE),
         CheckConstraint(GROUP_OF_A_GROUP, name='group_of_a_group'),
     )
 

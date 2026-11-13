@@ -2,7 +2,8 @@
 
 The package declares the ``book_records``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
 ``page_step_states``, ``step_changes``, ``page_history``, ``page_groups``, ``step_values``, ``group_values``,
-``pagination_sections``, ``book_places``, ``recipes`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative
+``pagination_sections``, ``book_places``, ``recipes``, ``steps``, ``recipe_steps``, ``recipe_step_params`` and
+``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative
 style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
 :class:`BookTable`, which carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData``
 of their own, apart from the tables of the catalogue in :mod:`bookreviver.adapters.persistence.sqlalchemy.catalogue`,
@@ -52,10 +53,16 @@ from bookreviver.adapters.persistence.sqlalchemy.tables.base import (
     PAGES_TABLE,
     PAGINATION_SECTIONS_TABLE,
     PARITY_SCOPE,
+    RECIPE_ID_COLUMN,
     RECIPE_PROFILES_TABLE,
+    RECIPE_STEPS_TABLE,
     RECIPES_TABLE,
     SEQUENCE_COLUMN,
     STAGE_COLUMN,
+    STEP_ID_COLUMN,
+    STEP_KEY_OF_STAGE,
+    STEP_OF_STAGE,
+    STEPS_TABLE,
     VERSION_ID_LENGTH,
     BookTable,
     Relation,
@@ -74,6 +81,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables.pages import (
 from bookreviver.adapters.persistence.sqlalchemy.tables.recipes import RecipeProfileRow, RecipeRow
 from bookreviver.adapters.persistence.sqlalchemy.tables.sources import ScanRow, SourceRow
 from bookreviver.adapters.persistence.sqlalchemy.tables.step_values import GroupValuesRow, StepValuesRow
+from bookreviver.adapters.persistence.sqlalchemy.tables.steps import RecipeStepParamsRow, RecipeStepRow, StepRow
 
 __all__ = [
     'BOOK_BIND_KEY',
@@ -101,9 +109,15 @@ __all__ = [
     'PAGINATION_SECTIONS_TABLE',
     'PARITY_SCOPE',
     'RECIPES_TABLE',
+    'RECIPE_ID_COLUMN',
     'RECIPE_PROFILES_TABLE',
+    'RECIPE_STEPS_TABLE',
     'SEQUENCE_COLUMN',
     'STAGE_COLUMN',
+    'STEPS_TABLE',
+    'STEP_ID_COLUMN',
+    'STEP_KEY_OF_STAGE',
+    'STEP_OF_STAGE',
     'VERSION_ID_LENGTH',
     'BookPlaceRow',
     'BookRecordRow',
@@ -118,9 +132,12 @@ __all__ = [
     'PaginationSectionRow',
     'RecipeProfileRow',
     'RecipeRow',
+    'RecipeStepParamsRow',
+    'RecipeStepRow',
     'Relation',
     'ScanRow',
     'SourceRow',
     'StepChangeRow',
+    'StepRow',
     'StepValuesRow',
 ]

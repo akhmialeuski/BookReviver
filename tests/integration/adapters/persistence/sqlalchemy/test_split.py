@@ -19,6 +19,7 @@ from attrs import evolve, frozen
 from delayed_assert import assert_expectations, expect
 from sqlalchemy.orm import Session
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
@@ -189,7 +190,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         :param session: Session of the transaction.
         :type session: Session
         """
-        repos = SqlAlchemyBookRepositories(session)
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
         repos.book_record.add(first)
         repos.sources.add(source)
         repos.scans.add(scan)
@@ -204,7 +205,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         :param session: Session of the transaction.
         :type session: Session
         """
-        repos = SqlAlchemyBookRepositories(session)
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
         repos.book_record.add(second)
         repos.pages.add(make_page())
 

@@ -20,15 +20,18 @@ from attrs import frozen
 from dishka import Provider, Scope, provide
 from sqlalchemy.engine import make_url
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+from bookreviver.adapters.persistence.sqlalchemy.tables import StepRow
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.keys import KeySegment
 from bookreviver.domain.spans import BlockKind
+from bookreviver.domain.stages import Stage
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from bookreviver.ports.storage import BookDirectory
-from tests.harness.builders.domain import directory_of
+from tests.harness.builders.domain import DESKEW, EPOCH, directory_of, step_of_stage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -154,7 +157,7 @@ class LocatedBookDatabases:
         :returns: The database of the book.
         :rtype: SqlAlchemyBookDatabase
         """
-        return SqlAlchemyBookDatabase(directory_of(book_id), books=self.books)
+        return SqlAlchemyBookDatabase(directory_of(book_id), books=self.books, order_keys=FractionalOrderKeys())
 
     def path(self, book_id: BookId) -> Path:
         """Name the database file of a book, which may not exist yet.
@@ -169,6 +172,10 @@ class LocatedBookDatabases:
     async def create_book(self, book_id: BookId, book_record: BookRecord) -> None:
         """Make the directory of a new book and its database with the record, as a creation does.
 
+        The file also holds the step of each stage that the builders of the settings, the edits, the values and the
+        history of a step name, as a step no recipe holds, which a recipe that takes the step finds again. A test of
+        what a page keeps for a step then needs no recipe, as a book whose recipe left the step needs none.
+
         :param book_id: Identifier of the new book.
         :type book_id: BookId
         :param book_record: The record of the book.
@@ -177,6 +184,7 @@ class LocatedBookDatabases:
         """
         await BookDirectory.open(directory_of(book_id)).create()
         await self.open(book_id).create(book_record)
+        await BookSessions(self.books).write(book_id, store_builder_steps)
 
     async def delete_book(self, book_id: BookId) -> None:
         """Close the database of a book once its transactions have ended, and delete its directory, as a deletion does.
@@ -291,6 +299,25 @@ async def copy_schema_template(template: Path, target: Path) -> None:
     """
     await anyio.Path(target.parent).mkdir(parents=True, exist_ok=True)
     await anyio.Path(template).copy(target)
+
+
+def store_builder_steps(session: Session) -> None:
+    """Store the step of each stage that the builders name, as a step no recipe holds, removed at the epoch.
+
+    :param session: Session of a transaction of a new book.
+    :type session: Session
+    """
+    session.add_all(
+        StepRow(
+            id=step_of_stage(stage),
+            stage=stage,
+            type_key=DESKEW.key,
+            origin_step_id=None,
+            created_at=EPOCH,
+            removed_at=EPOCH,
+        )
+        for stage in Stage
+    )
 
 
 @frozen

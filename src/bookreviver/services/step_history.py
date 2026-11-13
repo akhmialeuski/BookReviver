@@ -31,7 +31,7 @@ from bookreviver.domain.version_chains import StepVersions, step_places
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
+    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId, StepId
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.domain.recipes import Recipe
     from bookreviver.ports.persistence import BookRepositories
@@ -351,15 +351,15 @@ class StepClear:
                 continue
             if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
                 untiled.append(head)
-            through_step = self._through_step(recipes, record.recipe_id, chain.depths[head])
+            through_step_id = self._through_step(recipes, record.recipe_id, chain.depths[head])
             records.set_head(
-                repos, record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step
+                repos, record.key, head_version_id=head, recipe_id=record.recipe_id, through_step_id=through_step_id
             )
         return untiled
 
     @staticmethod
-    def _through_step(recipes: Sequence[Recipe], recipe_id: RecipeId | None, place: int) -> int | None:
-        """Return the index of the step a page was run through when its new current version is the result at this depth.
+    def _through_step(recipes: Sequence[Recipe], recipe_id: RecipeId | None, place: int) -> StepId | None:
+        """Return the step a page was run through when its new current version is the result at this depth.
 
         The new head is the result of the step at its depth in the recipe the page was run by, and the page was run
         through that step only, which is before the last step that is on.
@@ -370,10 +370,9 @@ class StepClear:
         :type recipe_id: RecipeId | None
         :param place: The depth of the new current version among the steps that are on.
         :type place: int
-        :returns: The index of the step the run stopped at, or None when the version is the result of the last step
-                  that is on.
-        :rtype: int | None
+        :returns: The step the run stopped at, or None when the version is the result of the last step that is on.
+        :rtype: StepId | None
         """
         recipe = next((recipe for recipe in recipes if recipe.id == recipe_id), None)
         enabled = () if recipe is None else recipe.indexed_steps_through(None)
-        return None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
+        return None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][1].step_id)

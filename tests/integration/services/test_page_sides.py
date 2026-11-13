@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
-from attrs import evolve
 
 from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKind
 from bookreviver.domain.sides import Side
@@ -157,8 +156,7 @@ async def _seed_checked_book(
         if valued is not None:
             scope, stage = valued
             group_label = GROUP if scope is ValueScope.GROUP else ''
-            values = make_step_values(scope=scope, group_label=group_label)
-            repos.step_values.save(evolve(values, stage=stage))
+            repos.step_values.save(make_step_values(scope=scope, group_label=group_label, stage=stage))
 
     await databases.open(book.book_id).change(save_records)
     return book

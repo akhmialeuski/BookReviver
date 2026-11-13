@@ -60,13 +60,17 @@ class Step:
     :ivar params: Parameters of the step, following the processor's JSON Schema.
     :ivar enabled: Whether a run and a preview run the step. A step that is off stays in the recipe with its parameters,
                    so switching it on again loses nothing.
-    :ivar step_id: Identifier of the step, made when the step is added.
+    :ivar step_id: Identifier of the step, made when the step is added, unique in the book.
+    :ivar origin_step_id: The step of a profile this step was made from, or None. It tells where the step came from
+                          and is no part of what the step does, so two steps that differ only in it are equal. A recipe
+                          stores it when the step is first added and keeps it as the step moves and changes.
     """
 
     processor_key: str = field(validator=validators.min_len(1))
     params: MetadataMap = field(factory=dict)
     enabled: bool = True
     step_id: StepId = field(factory=lambda: StepId(uuid4()))
+    origin_step_id: StepId | None = field(default=None, eq=False)
 
     def to_map(self) -> dict[str, Any]:
         """Return the step as the JSON object a recipe and the parameters of a job store.
@@ -200,33 +204,56 @@ class Recipe:
         """
         return next((place for place, step in enumerate(self.enabled_steps) if step.step_id == step_id), None)
 
-    def indexed_steps_through(self, through_step: int | None) -> tuple[tuple[int, Step], ...]:
-        """Give the steps that are on up to one of them, each with its index in the recipe.
+    def index_of(self, step_id: StepId) -> int | None:
+        """Give the index of a step in the recipe, which is computed in passing and never stored.
 
-        :param through_step: Index of the last step to take, or None to take every step that is on.
-        :type through_step: int | None
-        :returns: The pairs of index and step in the order they run. Empty when every step up to the index is off.
-        :rtype: tuple[tuple[int, Step], ...]
-        """
-        return tuple(
-            (index, step)
-            for index, step in enumerate(self.steps)
-            if step.enabled and (through_step is None or index <= through_step)
-        )
-
-    def stopped_at(self, through_step: int | None) -> int | None:
-        """Tell where a run through one step stops when that is short of the last step that is on.
-
-        :param through_step: Index of the last step to run, or None for every step that is on.
-        :type through_step: int | None
-        :returns: The index of the last step that run makes, or None when it makes the last step that is on, or none.
+        :param step_id: The step.
+        :type step_id: StepId
+        :returns: The index, from zero, or None when the recipe has no such step.
         :rtype: int | None
         """
-        reached = self.indexed_steps_through(through_step)
+        return next((index for index, step in enumerate(self.steps) if step.step_id == step_id), None)
+
+    def indexed_steps_through(self, through_step_id: StepId | None) -> tuple[tuple[int, Step], ...]:
+        """Give the steps that are on up to one of them, each with its index in the recipe.
+
+        A run of a stage names its last step once for the pages of every kind, so a recipe that does not hold the step
+        runs every step that is on, as a run that names no step does.
+
+        :param through_step_id: The last step to take, or None to take every step that is on.
+        :type through_step_id: StepId | None
+        :returns: The pairs of index and step in the order they run. Empty when every step up to the one named is off.
+        :rtype: tuple[tuple[int, Step], ...]
+        """
+        last = None if through_step_id is None else self.index_of(through_step_id)
+        if last is None:
+            last = len(self.steps)
+        return tuple((index, step) for index, step in enumerate(self.steps) if step.enabled and index <= last)
+
+    def holds(self, step_id: StepId) -> bool:
+        """Tell whether the recipe holds a step.
+
+        :param step_id: The step.
+        :type step_id: StepId
+        :returns: Whether one of the steps of the recipe is the step.
+        :rtype: bool
+        """
+        return self.index_of(step_id) is not None
+
+    def stopped_at(self, through_step_id: StepId | None) -> StepId | None:
+        """Tell where a run through one step stops when that is short of the last step that is on.
+
+        :param through_step_id: The last step to run, or None for every step that is on, as for a step the recipe does
+                                not hold.
+        :type through_step_id: StepId | None
+        :returns: The last step that run makes, or None when it makes the last step that is on, or none.
+        :rtype: StepId | None
+        """
+        reached = self.indexed_steps_through(through_step_id)
         every = self.indexed_steps_through(None)
         if not reached or reached[-1] == every[-1]:
             return None
-        return reached[-1][0]
+        return reached[-1][1].step_id
 
 
 @frozen(kw_only=True)

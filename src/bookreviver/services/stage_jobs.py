@@ -93,13 +93,17 @@ class StageRunJob:
         await plan.apply_mode()
         control.plan(
             sum(
-                executor.task_count([step for _, step in recipes[page.id].indexed_steps_through(run.through_step)])
+                executor.task_count([step for _, step in recipes[page.id].indexed_steps_through(run.through_step_id)])
                 for page in pages
             )
         )
         pages_run = PagesRun(self, executor, recipes)
         await pages_run.measure_book(
-            [page for page in pages if recipes_of_book.leaves_to_book(recipes[page.id], through_step=run.through_step)]
+            [
+                page
+                for page in pages
+                if recipes_of_book.leaves_to_book(recipes[page.id], through_step_id=run.through_step_id)
+            ]
         )
         # A split puts the right half of a spread into the book right after the left, at a place it reads from the
         # pages round it, so the pages of the page split are cut one after the other
@@ -142,14 +146,14 @@ class PagesRun:
         """
         if not pages:
             return
-        recipes, through_step = self.recipes, self.job.run.through_step
+        recipes, through_step_id = self.recipes, self.job.run.through_step_id
         made: dict[RecipeId, dict[PageId, PageVersion]] = {}
         versions = await WorkerGroup(self.job.runtime.parallel_pages).run(pages, self._measured)
         for page, version in zip(pages, versions, strict=True):
             if version is not None:
                 made.setdefault(recipes[page.id].id, {})[page.id] = version
         for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
-            await self.executor.settle_book(recipe, made.get(recipe.id, {}), through_step=through_step)
+            await self.executor.settle_book(recipe, made.get(recipe.id, {}), through_step_id=through_step_id)
 
     async def page(self, page: Page) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
@@ -168,7 +172,7 @@ class PagesRun:
         with self.job.runtime.tracer.span(SpanName.RUN_PAGE, attributes) as span:
             try:
                 outcome = await self.executor.run(
-                    page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step
+                    page, recipe, confirmed=run.confirm_unsplit, through_step_id=run.through_step_id
                 )
             except Exception:
                 logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
@@ -186,7 +190,9 @@ class PagesRun:
         :rtype: PageVersion | None
         """
         try:
-            return await self.executor.measure(page, self.recipes[page.id], through_step=self.job.run.through_step)
+            return await self.executor.measure(
+                page, self.recipes[page.id], through_step_id=self.job.run.through_step_id
+            )
         except Exception:
             logger.exception('Page %s could not be taken as far as the step that reads the book', page.id)
             return None

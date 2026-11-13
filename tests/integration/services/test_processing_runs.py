@@ -2,6 +2,7 @@
 
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
 
 import pytest
 from attrs import evolve
@@ -10,12 +11,12 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.geometry import EditorKind, Rotation
-from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.images import ColorMode, ImagePolicy, Rendition
 from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview, TileCut
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.page_steps import NewPageEdit, PageStepKey
-from bookreviver.domain.pages import RecipeKind
+from bookreviver.domain.pages import PageKind, RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
@@ -525,7 +526,7 @@ class TestRunStage:
         assert (stored.state, 'was not asked for a StageRun' in stored.error) == (JobState.FAILED, True)
 
 
-async def save_three_steps(kit: ProcessingKit, actor: Actor, book_id: BookId) -> None:
+async def save_three_steps(kit: ProcessingKit, actor: Actor, book_id: BookId) -> tuple[StepId, ...]:
     """Save a geometry recipe of three steps of the fake processor, which differ by their strength.
 
     :param kit: What the processing services of the test share.
@@ -534,9 +535,12 @@ async def save_three_steps(kit: ProcessingKit, actor: Actor, book_id: BookId) ->
     :type actor: Actor
     :param book_id: Identifier of the book to save the recipe in.
     :type book_id: BookId
+    :returns: The identifiers of the three steps, in their order.
+    :rtype: tuple[StepId, ...]
     """
     steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in range(1, 4)]
-    await kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+    recipe = await kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+    return tuple(step.step_id for step in recipe.steps)
 
 
 class TestRunThroughStep:
@@ -549,15 +553,36 @@ class TestRunThroughStep:
         :type fx_kit: ProcessingKit
         """
         actor, book_id, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_id)
-        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=1))
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[1]))
         head = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         versions = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         expect((fx_kit.fake.runs, versions.total) == (2, 2))
         expect(head.params[STRENGTH_PARAMETER] == 2)
-        expect((record.through_step, record.state) == (1, StageState.FRESH))
+        expect((record.through_step_id, record.state) == (step_ids[1], StageState.FRESH))
         expect(head.tiles_ready)
+        assert_expectations()
+
+    async def test_the_record_names_the_same_step_after_the_steps_are_reordered(self, fx_kit: ProcessingKit) -> None:
+        """Verify the step a page stopped at stays that step when the steps of the recipe are moved.
+
+        The record named the step by its index once, which pointed at another step after a reorder. A page run through
+        the second step names that step, wherever it stands after the first and the last steps swap places.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, book_id, page = await prepared_page(fx_kit)
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[1]))
+        recipe = await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+        first, second, third = recipe.steps
+        reordered = await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=[third, first, second]))
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
+        expect([step.step_id for step in reordered.steps] == [step_ids[2], step_ids[0], step_ids[1]])
+        expect(record.through_step_id == step_ids[1])
+        expect(reordered.steps[reordered.index_of(step_ids[1]) or 0].params[STRENGTH_PARAMETER] == 2)
         assert_expectations()
 
     async def test_run_through_the_next_step_finds_the_steps_before_it_in_the_cache(
@@ -569,16 +594,17 @@ class TestRunThroughStep:
         :type fx_kit: ProcessingKit
         """
         actor, book_id, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_id)
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
         calls = []
-        for through_step in (0, 1, None):
-            await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=through_step))
+        for through_step_id in (step_ids[0], step_ids[1], None):
+            run = StageRun(stage=Stage.GEOMETRY, through_step_id=through_step_id)
+            await run_stage(fx_kit, actor, book_id, run)
             calls.append(fx_kit.fake.runs)
         record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         versions = await stage_versions(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         expect(calls == [1, 2, 3])
         expect(versions.total == 3)
-        expect(record.through_step is None)
+        expect(record.through_step_id is None)
         assert_expectations()
 
     async def test_run_through_the_last_step_that_is_on_is_a_complete_run(self, fx_kit: ProcessingKit) -> None:
@@ -592,10 +618,11 @@ class TestRunThroughStep:
             Step(processor_key=FAKE_KEY),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, enabled=False),
         ]
-        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
-        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        recipe = await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        run = StageRun(stage=Stage.GEOMETRY, through_step_id=recipe.steps[0].step_id)
+        await run_stage(fx_kit, actor, book_id, run)
         record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        assert record.through_step is None
+        assert record.through_step_id is None
 
     async def test_page_stopped_before_the_last_step_is_run_through_the_rest_before_the_next_stage(
         self, fx_kit: ProcessingKit
@@ -606,12 +633,12 @@ class TestRunThroughStep:
         :type fx_kit: ProcessingKit
         """
         actor, book_id, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_id)
-        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[0]))
         await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.CLEANUP))
         geometry = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
         cleanup = await head_of(fx_kit, book_id, page, Stage.CLEANUP)
-        expect((geometry.through_step, geometry.state) == (None, StageState.FRESH))
+        expect((geometry.through_step_id, geometry.state) == (None, StageState.FRESH))
         expect(cleanup.input_id == geometry.head_version_id)
         expect((await head_of(fx_kit, book_id, page, Stage.GEOMETRY)).params[STRENGTH_PARAMETER] == 3)
         # The first geometry step is not computed twice, and the cleanup has a processor of its own
@@ -629,8 +656,8 @@ class TestRunThroughStep:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_id)
-        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[0]))
         first = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         edit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
         recipe = await fx_kit.parts().recipes.of_kind(await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
@@ -650,29 +677,59 @@ class TestRunThroughStep:
         """
         actor, book_id, page = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})]
-        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
-        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=0))
-        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step=1))
+        recipe = await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        first, second = (step.step_id for step in recipe.steps)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=first))
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=second))
         record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        expect((record.state, record.through_step) == (StageState.FAILED, 0))
+        expect((record.state, record.through_step_id) == (StageState.FAILED, first))
         assert_expectations()
 
-    @pytest.mark.parametrize('through_step', [3, 7])
+    async def test_a_page_whose_recipe_lacks_the_step_runs_its_whole_recipe(self, fx_kit: ProcessingKit) -> None:
+        """Verify a run through a step of the recipe of text runs a plate, whose recipe lacks the step, through it all.
+
+        The step is named once for the pages of every kind, and the recipe of the plate has no step at its place.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, book_id, text = await prepared_page(fx_kit)
+        plate, _ = await fx_kit.seed_scan_page(book_id, order_key='b0')
+        await fx_kit.seed_base_version(book_id, plate)
+        plate = evolve(plate, kind=PageKind.PLATE)
+        await fx_kit.databases.open(book_id).change(lambda repos, _book_record: repos.pages.update(plate))
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        two = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in (5, 6)]
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=two), RecipeKind.COLOR_PICTURE)
+        await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[0]))
+        records = [await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases) for page in (text, plate)]
+        heads = [await head_of(fx_kit, book_id, page, Stage.GEOMETRY) for page in (text, plate)]
+        expect([record.through_step_id for record in records] == [step_ids[0], None])
+        expect([head.params[STRENGTH_PARAMETER] for head in heads] == [1, 6])
+        assert_expectations()
+
+    @pytest.mark.parametrize('removed', [0, 1], ids=['unknown', 'removed'])
     async def test_run_through_a_step_the_recipe_does_not_have_is_refused(
-        self, fx_kit: ProcessingKit, through_step: int, fx_open_book: BookOpener
+        self, fx_kit: ProcessingKit, removed: int, fx_open_book: BookOpener
     ) -> None:
         """Verify the request is refused at once, and no job is queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param through_step: Index past the last of the three steps.
-        :type through_step: int
+        :param removed: How many steps the recipe loses from its end, the last of which the run names, or none for a
+                        step the recipe never had.
+        :type removed: int
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         actor, book_id, _ = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_id)
-        run = StageRun(stage=Stage.GEOMETRY, through_step=through_step)
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        step_id = StepId(uuid4())
+        if removed:
+            recipe = await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
+            await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=recipe.steps[:-1]))
+            step_id = step_ids[-1]
+        run = StageRun(stage=Stage.GEOMETRY, through_step_id=step_id)
         with pytest.raises(ConflictError):
             await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
         assert fx_kit.board.put_jobs == []
@@ -689,11 +746,10 @@ class TestRunThroughStep:
         """
         actor, book_id, _ = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY, enabled=False), Step(processor_key=FAKE_KEY)]
-        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        recipe = await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=steps))
+        run = StageRun(stage=Stage.GEOMETRY, through_step_id=recipe.steps[0].step_id)
         with pytest.raises(ConflictError):
-            await fx_kit.service().start_run(
-                fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, through_step=0)
-            )
+            await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
 
     async def test_run_through_a_step_is_stored_with_the_job_and_read_back(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -706,8 +762,8 @@ class TestRunThroughStep:
         :type fx_open_book: BookOpener
         """
         actor, book_id, _ = await prepared_page(fx_kit)
-        await save_three_steps(fx_kit, actor, book_id)
-        run = StageRun(stage=Stage.GEOMETRY, through_step=1)
+        step_ids = await save_three_steps(fx_kit, actor, book_id)
+        run = StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[1])
         job = await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, run)
         assert job.asked(StageRun) == run
 

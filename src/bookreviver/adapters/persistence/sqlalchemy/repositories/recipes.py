@@ -1,10 +1,14 @@
 """Repositories of the recipes of a book and of its recipe profiles."""
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, override
+
+from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import RecipeMapper
 from bookreviver.adapters.persistence.sqlalchemy.profile_mappers import RecipeProfileMapper
 from bookreviver.adapters.persistence.sqlalchemy.repositories.base import SqlAlchemyRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories.recipe_steps import RecipeSteps
 from bookreviver.adapters.persistence.sqlalchemy.rows import (
     RecipeProfileRows,
     RecipeRows,
@@ -29,18 +33,97 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.domain.stages import Stage
+    from bookreviver.ports.ordering import OrderKeys
 
 
 class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRow], RecipeRepository):
-    """Recipes of the books, of which a stage has one for each kind."""
+    """Recipes of the books, of which a stage has one for each kind, with their steps in the tables of the steps.
 
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``recipes`` table.
+    The row of a recipe goes through the generic operations, and the steps through :class:`RecipeSteps`, which reads
+    them in order and writes back the rows that changed.
+    """
+
+    def __init__(self, session: Session, order_keys: OrderKeys) -> None:
+        """Create the repository over the ``recipes`` table and the tables of the steps.
 
         :param session: Session of the transaction.
         :type session: Session
+        :param order_keys: The order keys that place the steps of a recipe.
+        :type order_keys: OrderKeys
         """
         super().__init__(rows=RecipeRows(session=session), mapper=RecipeMapper())
+        self._steps = RecipeSteps(session, order_keys)
+
+    @override
+    def get(self, entity_id: RecipeId) -> Recipe:
+        """Return the recipe with this identifier, with its steps in order.
+
+        :param entity_id: Identifier of the recipe.
+        :type entity_id: RecipeId
+        :returns: The stored recipe.
+        :rtype: Recipe
+        :raises NotFoundError: If no recipe has this identifier.
+        """
+        return self._with_steps([self._rows.get(entity_id)])[0]
+
+    @override
+    def add(self, entity: Recipe) -> Recipe:
+        """Store a new recipe and its steps.
+
+        :param entity: Recipe to store, with its identifier already assigned.
+        :type entity: Recipe
+        :returns: The recipe as stored.
+        :rtype: Recipe
+        :raises ConflictError: If the recipe or another of its kind in its stage is stored, or it holds a step twice.
+        :raises NotFoundError: If a step of the recipe is a step of another stage.
+        """
+        return self.add_many([entity])[0]
+
+    @override
+    def add_many(self, entities: Sequence[Recipe]) -> Sequence[Recipe]:
+        """Store several new recipes and their steps.
+
+        :param entities: Recipes to store, with their identifiers already assigned.
+        :type entities: Sequence[Recipe]
+        :returns: The recipes as stored, in the given order.
+        :rtype: Sequence[Recipe]
+        :raises ConflictError: If one of the recipes or another of its kind in its stage is stored, or a recipe holds a
+                               step twice.
+        :raises NotFoundError: If a step of a recipe is a step of another stage.
+        """
+        if not entities:
+            return entities
+        rows = self._rows.add_many([self._mapper.to_row(entity) for entity in entities])
+        for entity in entities:
+            self._steps.write(entity)
+        return self._with_steps(rows)
+
+    @override
+    def update(self, entity: Recipe) -> Recipe:
+        """Replace the stored state of a recipe, writing back the rows of its steps that changed.
+
+        :param entity: Recipe with its new state.
+        :type entity: Recipe
+        :returns: The recipe as stored.
+        :rtype: Recipe
+        :raises NotFoundError: If the recipe is not stored, or a step of it is a step of another stage.
+        :raises ConflictError: If the recipe holds a step twice.
+        """
+        row = self._rows.update(self._mapper.to_row(entity))
+        self._steps.write(entity)
+        return self._with_steps([row])[0]
+
+    @override
+    def delete(self, entity_id: RecipeId) -> None:
+        """Remove the recipe and the places of its steps, and mark removed the steps no other recipe holds.
+
+        :param entity_id: Identifier of the recipe.
+        :type entity_id: RecipeId
+        :raises NotFoundError: If no recipe has this identifier.
+        """
+        held = self._steps.held_by(entity_id)
+        self._rows.delete(entity_id)
+        self._steps.release(held, datetime.now(UTC))
 
     @override
     def list_for_stage(self, stage: Stage) -> Sequence[Recipe]:
@@ -51,8 +134,9 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
         :returns: The recipes of the stage.
         :rtype: Sequence[Recipe]
         """
-        rows = self._rows.get_many(order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()], stage=stage)
-        return [self._mapper.to_entity(row) for row in rows]
+        return self._with_steps(
+            self._rows.get_many(order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()], stage=stage)
+        )
 
     @override
     def list_all(self) -> Sequence[Recipe]:
@@ -61,8 +145,19 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
         :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
         """
-        rows = self._rows.get_many(order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()])
-        return sorted((self._mapper.to_entity(row) for row in rows), key=lambda recipe: recipe.stage.position)
+        recipes = self._with_steps(self._rows.get_many(order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()]))
+        return sorted(recipes, key=lambda recipe: recipe.stage.position)
+
+    def _with_steps(self, rows: Sequence[RecipeRow]) -> list[Recipe]:
+        """Build the recipes of some rows, each with its steps in order.
+
+        :param rows: Recipe rows loaded from the database.
+        :type rows: Sequence[RecipeRow]
+        :returns: The recipes, in the order of the rows.
+        :rtype: list[Recipe]
+        """
+        steps = self._steps.read([row.id for row in rows])
+        return [evolve(self._mapper.to_entity(row), steps=steps.get(row.id, ())) for row in rows]
 
 
 class SqlAlchemyRecipeProfileRepository(

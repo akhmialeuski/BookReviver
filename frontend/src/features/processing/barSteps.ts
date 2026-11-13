@@ -22,7 +22,7 @@ export interface BarStep {
   stepId: string;
   /** Its place in the recipe from one, which counts the steps that are off too, as the list of the panel does. */
   number: number;
-  /** Its place in the recipe from zero, which a run up to the step is asked for by. */
+  /** Its place in the recipe from zero, which the lists of the panel and the chain of versions count by. */
   index: number;
   /** The title of its processor, or the key of the processor when it is not installed on this machine. */
   title: string;
@@ -79,10 +79,12 @@ export function defaultStepOf(
   if (ran.length === 0) {
     return last;
   }
-  if (ran.some((row) => row.through_step === null)) {
+  if (ran.some((row) => row.through_step_id === null)) {
     return [...steps].reverse().find((step) => step.enabled) ?? last;
   }
-  const furthest = Math.max(...ran.map((row) => row.through_step ?? 0));
+  const furthest = Math.max(
+    ...ran.map((row) => steps.findIndex((step) => step.stepId === row.through_step_id)),
+  );
   return steps[furthest] ?? last;
 }
 

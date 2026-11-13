@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.core.plugins import BookStep, ProcessorCatalog
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import PageId
+    from bookreviver.domain.ids import PageId, StepId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.domain.pages import Page
@@ -389,17 +389,17 @@ class RecipeBook:
         missing = dict.fromkeys(step.processor_key for step in steps if not self._offers(step.processor_key))
         return kept, tuple(missing)
 
-    def leaves_to_book(self, recipe: Recipe, *, through_step: int | None = None) -> bool:
+    def leaves_to_book(self, recipe: Recipe, *, through_step_id: StepId | None = None) -> bool:
         """Tell whether a run of the recipe has a step that takes a field of its parameters from the book.
 
         :param recipe: Recipe of the stage.
         :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step the run goes over, or None for every step that is on.
+        :type through_step_id: StepId | None
         :returns: Whether a step the run goes over leaves a field to the book.
         :rtype: bool
         """
-        return self._book_steps.leaves_to_book(recipe, through_step=through_step)
+        return self._book_steps.leaves_to_book(recipe, through_step_id=through_step_id)
 
     def book_stages(self) -> list[Stage]:
         """List the stages an installed plugin that reads the book belongs to, in the order of the pipeline.

@@ -26,6 +26,7 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAl
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.app.settings import Settings
 from bookreviver.domain.ids import BookDirectoryName
+from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import BookDatabase, CatalogueDatabase, ChangeWaitSeconds
 from bookreviver.ports.tracing import Tracer
 
@@ -125,15 +126,17 @@ class DatabaseProvider(Provider):
             await books.dispose()
 
     @provide(scope=Scope.APP)
-    def book_database(self, books: BookRegistry) -> Callable[[BookDirectoryName], BookDatabase]:
+    def book_database(self, books: BookRegistry, order_keys: OrderKeys) -> Callable[[BookDirectoryName], BookDatabase]:
         """Build the function that opens the database of a book over the registry of the books.
 
         :param books: The registry of the databases of the books.
         :type books: BookRegistry
+        :param order_keys: The order keys the repositories of a book place the steps of a recipe with.
+        :type order_keys: OrderKeys
         :returns: The opener, from the directory name of a book to its database.
         :rtype: Callable[[BookDirectoryName], BookDatabase]
         """
-        return lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=books)
+        return lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=books, order_keys=order_keys)
 
     @provide(scope=Scope.REQUEST)
     def catalogue_database(

@@ -187,7 +187,7 @@ class StageSummaries:
                         recipe_id=record.recipe_id,
                         kind=page.recipe_kind,
                         head_version=head,
-                        through_step=record.through_step,
+                        through_step_id=record.through_step_id,
                         review_processor=None if head is None else markers.get(head.id),
                         step=step,
                         picture=picture,
@@ -266,6 +266,6 @@ class StageSummaries:
                 tally=tallies.get(stage),
             )
             .with_recipes(recipes.get(stage, ()), kinds)
-            .with_stopped(stopped.get(stage, ()))
+            .with_stopped(stopped.get(stage, ()), recipes.get(stage, ()))
             for stage in Stage
         ]
