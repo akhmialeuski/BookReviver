@@ -219,7 +219,7 @@ useless-overload-body = "error"
 include = [
     "src/bookreviver/adapters/persistence/sqlalchemy/accounts.py",
     "src/bookreviver/adapters/persistence/sqlalchemy/catalogue.py",
-    "src/bookreviver/adapters/persistence/sqlalchemy/tables.py",
+    "src/bookreviver/adapters/persistence/sqlalchemy/tables/**",
 ]
 
 [tool.ty.overrides.rules]
