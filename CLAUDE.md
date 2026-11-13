@@ -135,14 +135,17 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 
 - The work of a use case is a chain of classes, each owning the next and holding what its methods share, so a value
   is given once to the class it belongs to and never handed down from call to call. The run of a stage is the model:
-  `StageWork` is one job on one book, `PageWork` one stage on one page of it, `StepWork` one step on that page, and
-  each reaches the book and the ports through the one it belongs to. The other use cases follow it: `PagesWork` is the
-  pages of one transaction with their `PageOverviews`, `PagePlaces` and `Leaves`, `PageImages` the prepare-pages job
-  with a `BaseVersionWork` for each version, `StepOnPage` a step on a page with its `StepUndo` and `StepClear`,
-  `DetectionWork` a detect-content job with a `PageDetection` for a page, `StageRunJob` a run-stage job with the
-  `PagesRun` of its pages, and `PageSplit` the split of a scan with the `MadeSplit` of its result. A group of methods
-  that pass the same three values on is a class that is missing. A class of a chain lives in a module that imports the
-  module of its owner and never the reverse, which the `acyclic_siblings` contract on `services` enforces.
+  `StageRuns`, built once by the container, opens the work of a job, `StageEngine` runs the steps, `StageWork` is one
+  job on one book of the engine, `PageWork` one stage on one page of it, `StepWork` one step on that page, and each
+  reaches the book and the ports through the one it belongs to. The other use cases follow it: `PageKeeping`, built
+  once, opens `PagesWork`, the pages of one transaction with their `PageOverviews`, `PagePlaces` and `Leaves`,
+  `PageImages` the prepare-pages job of the keeping with a `BaseVersionWork` for each version, `StepOnPage` a step on a
+  page with its `StepUndo` and `StepClear`, `DetectionWork` a detect-content job with a `PageDetection` for a page,
+  `StageRunJob` a run-stage job of `StageRuns` with the `PagesRun` of its pages, `PageSplit` the split of a scan with
+  the `MadeSplit` of its result, and `ImportRun` an import job of `ImportService`, whose scans `ScanCutter` cuts. A
+  group of methods that pass the same three values on is a class that is missing. A class of a chain lives in a module
+  that imports the module of its owner and never the reverse, which the `acyclic_siblings` contract on `services`
+  enforces.
 
 - Closed value sets are `StrEnum` or `IntEnum` in `domain`, each carrying its own label.
 - Data travelling together is a frozen `attrs` class in `domain`, changed with `attrs.evolve`. Identifiers are
