@@ -3294,7 +3294,7 @@
           "processing"
         ],
         "summary": "Put Recipe",
-        "description": "Replace the steps of a recipe of a stage, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer.",
+        "description": "Replace the steps of a recipe of a stage, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer. A step the recipe keeps under another processor answers 409: its type is replaced by\n``PUT .../steps/{step_id}/type``.",
         "operationId": "put_recipe_api_v1_books__book_id__stages__stage__recipes__recipe_id__put",
         "parameters": [
           {
@@ -3338,6 +3338,128 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RecipeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/steps/{step_id}/type": {
+      "put": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Replace Step Type",
+        "description": "Give a step of a recipe another type, in every recipe of the stage that holds the step.\n\nThe step keeps its identifier and its place. Each recipe runs it with the parameters it kept for the new type, or\nthe defaults of the processor, and keeps those of the earlier type, which come back with it, as do the settings,\nthe edits and the values the pages keep for that type. The history of every page that keeps a setting or an edit of\nthe step under either type gains the replacement, as one batch whose undo brings the earlier type back. The pages\nthat run the step are marked stale and none is processed. A processor that is unknown or of another stage answers\n422, and so does one that would stand where it cannot work, unless the body asks for the free order. A step the\nrecipe does not hold answers 404. A recipe saved with another processor for a step it keeps answers 409, so this is\nthe one way to change a type.",
+        "operationId": "replace_step_type_api_v1_books__book_id__stages__stage__recipes__recipe_id__steps__step_id__type_put",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe",
+              "title": "Recipe Id"
+            },
+            "description": "Identifier of the recipe"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepTypeBody"
               }
             }
           }
@@ -13685,6 +13807,27 @@
         ],
         "title": "StepSchema",
         "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.\n:ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.\n:ivar origin_step_id: The step of a profile the step was made from, by which the step is matched with the profile,\n                      or None."
+      },
+      "StepTypeBody": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Processor Key"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processor_key"
+        ],
+        "title": "StepTypeBody",
+        "description": "The type a step of a recipe is given in place of the one it has.\n\n:ivar processor_key: Key of the processor that becomes the type of the step, which must belong to the stage of the\n                     recipe.\n:ivar order: ``usual`` refuses a type that would stand where it cannot work at the place of the step in a recipe\n             that holds it, with the reason as the detail of a 422, and ``free`` gives it and reports it in the\n             answer."
       },
       "StepValuesSchema": {
         "properties": {

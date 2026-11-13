@@ -10,7 +10,8 @@ of its own when the stage has none, and then the job starter records the job in 
 a processor. The workers do, through ``ProcessingJobs``, and the files of a step are written by ``StepRunner``.
 
 Editing a recipe does not process any page again. It marks the stage stale on every page the recipe processed, and the
-user starts the run. The one recipe of each kind of a stage is kept by the database with a unique key.
+user starts the run. The one recipe of each kind of a stage is kept by the database with a unique key. The type of a
+step is replaced by an operation of its own, which ``StepTypes`` does, and never by saving the steps of a recipe.
 
 Versions are not deleted when they stop being current, so going back to earlier parameters stays possible. The job
 ``collect-versions``, which a run queues when it ends and the owner of the book starts by hand, deletes the ones that
@@ -33,6 +34,7 @@ from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.domain.versions import CollectionReport, VersionScale, VersionState
 from bookreviver.services.run_plans import RunPlan
+from bookreviver.services.step_types import StepTypes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,7 +47,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.pages import Page
     from bookreviver.domain.processors import ProcessorSpec
-    from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey
+    from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey, RecipeStepKey
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion, VersionFilter
@@ -98,6 +100,7 @@ class ProcessingService:
         self._recipes = recipes
         self._records = records
         self._starter = starter
+        self._types = StepTypes(recipes=recipes, records=records)
 
     def processors(self) -> Sequence[ProcessorSpec]:
         """List what every processor of the catalogue says about itself.
@@ -159,6 +162,50 @@ class ProcessingService:
             changed = self._recipes.rewrite(repos, recipe, draft)
             self._records.mark_recipe_stale(repos, recipe.id)
             return changed
+
+        return await book.change(work)
+
+    async def replace_step_type(self, book: Book, key: RecipeStepKey, processor_key: str, order: OrderMode) -> Recipe:
+        """Give a step another type in every recipe of its stage that holds it, in one transaction.
+
+        The step keeps its identifier and its place. Each recipe keeps the parameters of the earlier type and runs the
+        step with those it kept for the new type, or the defaults of its processor. What the pages keep for the earlier
+        type stays, unread, and comes back with it. The history of every page that keeps a setting or an edit of the
+        step under either type gains the replacement, one batch, and the pages that run the step are marked stale. A
+        type that is the one the step has changes nothing.
+
+        :param book: The open book.
+        :type book: Book
+        :param key: The stage the request names, the recipe and the step, which the recipe must hold.
+        :type key: RecipeStepKey
+        :param processor_key: Key of the processor of the new type.
+        :type processor_key: str
+        :param order: Whether the new type is refused where it would stand off a required place, or only warned of.
+        :type order: OrderMode
+        :returns: The recipe of the request as stored.
+        :rtype: Recipe
+        :raises NotFoundError: If the book has no such recipe of the stage, or the recipe does not hold the step.
+        :raises InvalidParametersError: If the processor does not exist or belongs to another stage, or would stand off
+                                        a required place in the usual order of a recipe that holds the step.
+        """
+
+        def work(repos: BookRepositories, _book_record: BookRecord) -> Recipe:
+            """Replace the type of the step, keep it in the histories, and mark the pages that run the step stale.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: The record of the book as the change finds it.
+            :type _book_record: BookRecord
+            :returns: The recipe of the request as stored.
+            :rtype: Recipe
+            :raises NotFoundError: If the book has no such recipe of the stage, or the recipe does not hold the step.
+            :raises InvalidParametersError: If the new type does not fit the recipes that hold the step.
+            """
+            recipe = self._recipes.get(repos, key.recipe_id, stage=key.stage)
+            if not recipe.holds(key.step_id):
+                raise NotFoundError(key.step_id)
+            self._types.open(repos, key.stage, key.step_id).replace(processor_key, order)
+            return repos.recipes.get(recipe.id)
 
         return await book.change(work)
 

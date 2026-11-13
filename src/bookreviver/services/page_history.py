@@ -23,6 +23,7 @@ from bookreviver.domain.errors import DomainError
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StepClearing
 from bookreviver.domain.keys import BookKeys
 from bookreviver.services.step_history import StepOnPage
+from bookreviver.services.step_types import StepTypes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.job_starter import JobStarter
+    from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
 logger = logging.getLogger(__name__)
@@ -42,16 +44,19 @@ logger = logging.getLogger(__name__)
 class PageHistoryService:
     """Lists the history of the steps of the acting account's pages, takes its changes back, and clears a step."""
 
-    def __init__(self, *, records: StageRecords, starter: JobStarter) -> None:
+    def __init__(self, *, recipes: RecipeBook, records: StageRecords, starter: JobStarter) -> None:
         """Work over the ports of one request.
 
+        :param recipes: The recipes of the books and the check of their steps, which the undo of a replacement of the
+                        type of a step asks.
+        :type recipes: RecipeBook
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
         :param starter: Queuer of the jobs, which queues a clear and the cutting of the pyramid of the version it
                         makes current.
         :type starter: JobStarter
         """
-        self._records = records
+        self._types = StepTypes(recipes=recipes, records=records)
         self._starter = starter
 
     async def list(self, book: Book, key: PageStepKey) -> StepHistory:
@@ -65,8 +70,8 @@ class PageHistoryService:
         :rtype: StepHistory
         :raises NotFoundError: If the book has no such page.
         """
-        records = self._records
-        return await book.read(lambda repos: StepOnPage(records, repos, key).history())
+        types = self._types
+        return await book.read(lambda repos: StepOnPage(types, repos, key).history())
 
     async def undo(
         self, book: Book, key: PageStepKey, change_id: PageHistoryEntryId | None
@@ -88,8 +93,8 @@ class PageHistoryService:
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
                                same page or of a page of the batch did.
         """
-        records = self._records
-        return await book.change(lambda repos, _book_record: StepOnPage(records, repos, key).undo(change_id))
+        types = self._types
+        return await book.change(lambda repos, _book_record: StepOnPage(types, repos, key).undo(change_id))
 
     async def start_clear(self, book: Book, key: PageStepKey) -> Job:
         """Queue a job that returns a step to its initial state on a page, behind the jobs the book has.
@@ -106,8 +111,8 @@ class PageHistoryService:
         :rtype: Job
         :raises NotFoundError: If the book has no such page, or no recipe of the stage has the step.
         """
-        records = self._records
-        await book.read(lambda repos: StepOnPage(records, repos, key).recipes())
+        types = self._types
+        await book.read(lambda repos: StepOnPage(types, repos, key).recipes())
         return await self._starter.enqueue(book, JobKind.CLEAR_STEP, StepClearing(key=key))
 
     async def clear_step(self, book: Book, job: Job, control: JobControl) -> JobEnd:
@@ -158,8 +163,8 @@ class PageHistoryService:
         :rtype: ClearedStep
         :raises NotFoundError: If the book has no such page, or no recipe of the stage has the step.
         """
-        records = self._records
-        cleared, untiled = await book.change(lambda repos, _book_record: StepOnPage(records, repos, key).clear())
+        types = self._types
+        cleared, untiled = await book.change(lambda repos, _book_record: StepOnPage(types, repos, key).clear())
         await self._starter.enqueue_tiles(book, untiled)
         for version in cleared.versions:
             try:

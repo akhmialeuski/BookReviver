@@ -197,6 +197,32 @@ class TestEnforce:
         assert str(refused.value) == THIRD_REASON
 
 
+class TestEnforceChange:
+    """Tests for RecipeOrder.enforce_change, which refuses only what a change of the steps breaks anew."""
+
+    def test_a_change_that_breaks_a_required_place_is_refused_in_the_usual_order(self, fx_order: RecipeOrder) -> None:
+        """Verify a step given a processor that must stand after a later step is refused, and let be in the free order.
+
+        :param fx_order: Finder over the processors of the test.
+        :type fx_order: RecipeOrder
+        """
+        before = steps_of(FIRST_KEY, SECOND_KEY)
+        after = [Step(processor_key=THIRD_KEY, step_id=before[0].step_id), before[1]]
+        with pytest.raises(InvalidParametersError, match=THIRD_REASON):
+            fx_order.enforce_change(before, after, OrderMode.USUAL)
+        fx_order.enforce_change(before, after, OrderMode.FREE)
+
+    def test_a_required_place_the_steps_broke_before_the_change_is_not_refused(self, fx_order: RecipeOrder) -> None:
+        """Verify a recipe saved in the free order can still be changed in the usual one where the change breaks nothing.
+
+        :param fx_order: Finder over the processors of the test.
+        :type fx_order: RecipeOrder
+        """
+        before = steps_of(THIRD_KEY, SECOND_KEY, FIRST_KEY)
+        after = [*before[:2], Step(processor_key=OPENING_KEY, step_id=before[2].step_id)]
+        fx_order.enforce_change(before, after, OrderMode.USUAL)
+
+
 def draft_of(*keys: str, order: OrderMode = OrderMode.USUAL) -> RecipeDraft:
     """Build a draft of steps of the processors in the given order.
 

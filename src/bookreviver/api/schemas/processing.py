@@ -232,6 +232,20 @@ class RecipeBody(RequestModel):
         return RecipeDraft(steps=[step.to_step() for step in self.steps], order=self.order)
 
 
+class StepTypeBody(RequestModel):
+    """The type a step of a recipe is given in place of the one it has.
+
+    :ivar processor_key: Key of the processor that becomes the type of the step, which must belong to the stage of the
+                         recipe.
+    :ivar order: ``usual`` refuses a type that would stand where it cannot work at the place of the step in a recipe
+                 that holds it, with the reason as the detail of a 422, and ``free`` gives it and reports it in the
+                 answer.
+    """
+
+    processor_key: ProcessorKeyText
+    order: OrderMode = OrderMode.USUAL
+
+
 class StageRunBody(RequestModel):
     """What a run of a stage is asked to do; the stage is in the address.
 

@@ -367,6 +367,29 @@ class RecipeBook:
             raise InvalidParametersError(err_msg)
         return evolve(step, params=processor.validate_params(step.params))
 
+    def retyped(self, recipe: Recipe, step: Step, order: OrderMode) -> Step:
+        """Check a step of a recipe that is given another type, at the place the step has in the recipe.
+
+        The processor of the new type must exist and belong to the stage of the recipe, and the order of the recipe
+        must let it stand where the step stands, as it would for a step added there.
+
+        :param recipe: A recipe that holds the step.
+        :type recipe: Recipe
+        :param step: The step with its new type and the parameters it starts the type with, which the defaults of the
+                     processor fill out.
+        :type step: Step
+        :param order: Whether a step that would stand where it cannot work is refused or only warned of.
+        :type order: OrderMode
+        :returns: The step with its checked parameters.
+        :rtype: Step
+        :raises InvalidParametersError: If the processor does not exist or belongs to another stage, a parameter is
+                                        wrong, or the step would stand off a required place in the usual order.
+        """
+        checked = self._check_step(recipe.stage, step)
+        after = tuple(checked if held.step_id == step.step_id else held for held in recipe.steps)
+        self._order.enforce_change(recipe.steps, after, order)
+        return checked
+
     def unattended(self, step: Step) -> bool:
         """Tell whether a step decides by itself what to do with a page, so its stage may run without the user asking.
 
