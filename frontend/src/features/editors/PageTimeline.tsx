@@ -95,7 +95,7 @@ export function PageTimeline({
   const versions = stepId === null ? ofStage : ofStep;
   const undo = useUndo(bookId);
   const clear = useClearHistory(bookId);
-  const choose = useChooseVersion(bookId, stage);
+  const choose = useChooseVersion(bookId);
   const [filter, setFilter] = useState<TimelineFilter>(TimelineFilter.All);
   const [shown, setShown] = useState(ROWS_AT_A_TIME);
   const [question, setQuestion] = useState<Question>(null);

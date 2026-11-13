@@ -963,6 +963,8 @@ export const MESSAGES = {
       'collect-versions': 'Clearing old results',
       'measure-book': 'Measuring the book',
       'detect-content': 'Detecting what pages show',
+      'clear-step': 'Clearing a step on a page',
+      'choose-version': 'Choosing a result',
     } satisfies Record<JobKind, string>,
     stageRun: (stage: string) => `${stage} run`,
     chip: (kind: string, progress: { done: number; total: number }) =>

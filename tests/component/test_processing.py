@@ -182,6 +182,23 @@ async def run_stage(client: httpx.AsyncClient, idle: JobsIdle, book: Book, stage
     return JobSchema.model_validate_json(response.content)
 
 
+async def head_of(client: httpx.AsyncClient, book: Book, stage: Stage) -> str | None:
+    """Read the current version of a stage of the page of the book, as the list of its stages gives it.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param stage: The stage.
+    :type stage: Stage
+    :returns: The identifier of the current version, or None when the page has no record of the stage or no version.
+    :rtype: str | None
+    """
+    listed = await client.get(f'{book.page_path}/stages')
+    records = [PageStageSchema.model_validate(item) for item in listed.json()[ITEMS]]
+    return next((record.head_version_id for record in records if record.stage is stage), None)
+
+
 def preview_body(book: Book) -> dict[str, object]:
     """Build the body of a preview of the fake processor on the page of the book.
 
@@ -496,7 +513,7 @@ class TestRunAndVersions:
     async def test_choosing_a_version_makes_it_current(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify PUT on a stage with a version of the page makes it the current one, and a stranger is refused.
+        """Verify PUT on a stage queues a job that makes the version current, and a version of another stage is a 409.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -510,15 +527,19 @@ class TestRunAndVersions:
         version_id = listed.json()[ITEMS][0]['id']
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
         wrong = await fx_client.put(f'{fx_book.page_path}/stages/geometry', json={'version_id': version_id})
-        expect(chosen.status_code == status.HTTP_200_OK)
-        expect(PageStageSchema.model_validate_json(chosen.content).head_version_id == version_id)
+        await fx_idle(fx_book.book_id)
+        job = await fx_client.get(f'{fx_book.path}/jobs/{chosen.json()["id"]}')
+        expect(chosen.status_code == status.HTTP_202_ACCEPTED)
+        expect(JobSchema.model_validate_json(chosen.content).kind is JobKind.CHOOSE_VERSION)
+        expect(job.json()['state'] == JobState.SUCCEEDED.value)
+        expect(await head_of(fx_client, fx_book, Stage.PAGE_SPLIT) == version_id)
         expect(wrong.status_code == status.HTTP_409_CONFLICT)
         assert_expectations()
 
     async def test_choosing_a_version_while_a_preview_is_active_cancels_it_and_makes_the_version_current(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify PUT on a stage answers 200 while a preview is queued, which it cancels.
+        """Verify PUT on a stage answers 202 while a preview is queued, which it cancels.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -531,18 +552,18 @@ class TestRunAndVersions:
         version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        await fx_idle(fx_book.book_id)
         job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
         expect(preview.status_code == status.HTTP_202_ACCEPTED)
-        expect(chosen.status_code == status.HTTP_200_OK)
+        expect(chosen.status_code == status.HTTP_202_ACCEPTED)
         expect(job.json()['state'] == JobState.CANCELLED.value)
+        expect(await head_of(fx_client, fx_book, Stage.PAGE_SPLIT) == version_id)
         assert_expectations()
 
-    async def test_choosing_a_version_while_a_run_is_active_is_a_409(
+    async def test_choosing_a_version_while_a_run_is_active_waits_behind_it_and_is_made_after(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify PUT on a stage answers 409 while a run is queued, which a preview would not cause.
-
-        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+        """Verify PUT on a stage answers 202 while a run is queued, and the choice is made once the run has ended.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -555,8 +576,16 @@ class TestRunAndVersions:
         version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
         run = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={})
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        await fx_idle(fx_book.book_id)
+        ran = JobSchema.model_validate_json((await fx_client.get(f'{fx_book.path}/jobs/{run.json()["id"]}')).content)
+        made = JobSchema.model_validate_json(
+            (await fx_client.get(f'{fx_book.path}/jobs/{chosen.json()["id"]}')).content
+        )
         expect(run.status_code == status.HTTP_202_ACCEPTED)
-        expect(chosen.status_code == status.HTTP_409_CONFLICT)
+        expect(chosen.status_code == status.HTTP_202_ACCEPTED)
+        expect(made.state is JobState.SUCCEEDED)
+        expect(ran.finished_at is not None and made.started_at is not None and made.started_at >= ran.finished_at)
+        expect(await head_of(fx_client, fx_book, Stage.PAGE_SPLIT) == version_id)
         assert_expectations()
 
     async def test_preview_makes_a_preview_version_that_has_only_its_preview_path(
@@ -950,13 +979,15 @@ class TestPageHistory:
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_clear_deletes_the_history_and_the_settings_and_counts_the_changes(
-        self, fx_client: httpx.AsyncClient, fx_book: Book
+    async def test_clear_deletes_the_history_and_the_settings(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify a clear answers 200 with the numbers of deleted changes and versions, and the step has none left.
+        """Verify a clear answers 202 with its job, and the step has no history and no settings once the job ended.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
@@ -965,17 +996,21 @@ class TestPageHistory:
         await set_strength(fx_client, fx_book, step_id, 2)
         await set_strength(fx_client, fx_book, step_id, 3)
         cleared = await fx_client.delete(history)
+        await fx_idle(fx_book.book_id)
         listed = await fx_client.get(history)
         settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
-        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 2, 'versions': 0}))
+        job = await fx_client.get(f'{fx_book.path}/jobs/{cleared.json()["id"]}')
+        expect(cleared.status_code == status.HTTP_202_ACCEPTED)
+        expect(JobSchema.model_validate_json(cleared.content).kind is JobKind.CLEAR_STEP)
+        expect(job.json()['state'] == JobState.SUCCEEDED.value)
         expect(listed.json()['total'] == 0)
         expect(settings.json()['total'] == 0)
         assert_expectations()
 
-    async def test_clear_deletes_the_result_of_the_step_and_counts_it(
+    async def test_clear_deletes_the_result_of_the_step(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify a clear of the only step after a run deletes its result, so the stage has no result on the page.
+        """Verify a clear of the only step after a run deletes its result once its job ended, so the stage has none.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -991,16 +1026,17 @@ class TestPageHistory:
         of_step = {'stage': 'geometry', 'step': step_id}
         before = await fx_client.get(versions, params=of_step)
         cleared = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{step_id}')
+        await fx_idle(fx_book.book_id)
         after = await fx_client.get(versions, params=of_step)
         rows = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
         expect(before.json()['total'] == 1)
-        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 0, 'versions': 1}))
+        expect(cleared.status_code == status.HTTP_202_ACCEPTED)
         expect(after.json()['total'] == 0)
         expect(rows.json()[ITEMS][0]['status'] == 'not-run')
         assert_expectations()
 
     async def test_clear_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
-        """Verify clearing the history of a page that is not in the book answers 404.
+        """Verify clearing the history of a page that is not in the book answers 404 and queues nothing.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -1008,15 +1044,20 @@ class TestPageHistory:
         :type fx_book: Book
         """
         response = await fx_client.delete(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        jobs = await fx_client.get(f'{fx_book.path}/jobs')
+        expect(response.status_code == status.HTTP_404_NOT_FOUND)
+        expect(jobs.json()['total'] == 0)
+        assert_expectations()
 
-    async def test_clear_while_the_book_is_busy_is_a_409_and_deletes_nothing(
-        self, fx_client: httpx.AsyncClient, fx_book: Book
+    async def test_clear_while_a_run_is_queued_waits_behind_it_and_deletes_after(
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify a clear answers 409 while a run of the book is queued, which may read the versions, and keeps a step.
+        """Verify a clear answers 202 while a run of the book is queued, and deletes the step once the run has ended.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
@@ -1025,16 +1066,23 @@ class TestPageHistory:
         await set_strength(fx_client, fx_book, step_id, 2)
         run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
         cleared = await fx_client.delete(history)
+        await fx_idle(fx_book.book_id)
         listed = await fx_client.get(history)
+        ran = JobSchema.model_validate_json((await fx_client.get(f'{fx_book.path}/jobs/{run.json()["id"]}')).content)
+        made = JobSchema.model_validate_json(
+            (await fx_client.get(f'{fx_book.path}/jobs/{cleared.json()["id"]}')).content
+        )
         expect(run.status_code == status.HTTP_202_ACCEPTED)
-        expect(cleared.status_code == status.HTTP_409_CONFLICT)
-        expect(listed.json()['total'] == 1)
+        expect(cleared.status_code == status.HTTP_202_ACCEPTED)
+        expect(made.state is JobState.SUCCEEDED)
+        expect(ran.finished_at is not None and made.started_at is not None and made.started_at >= ran.finished_at)
+        expect(listed.json()['total'] == 0)
         assert_expectations()
 
     async def test_clear_while_a_preview_is_active_cancels_it_and_deletes_the_history(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify a clear answers 200 while a preview is queued, which it cancels, and the step has no history left.
+        """Verify a clear answers 202 while a preview is queued, which it cancels, and the step has no history left.
 
         The editor of a step asks for a preview when the step is opened, so a reader who clears the history a moment
         later finds one that holds the book.
@@ -1052,11 +1100,11 @@ class TestPageHistory:
         await set_strength(fx_client, fx_book, step_id, 2)
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         cleared = await fx_client.delete(history)
+        await fx_idle(fx_book.book_id)
         listed = await fx_client.get(history)
         job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
         expect(preview.status_code == status.HTTP_202_ACCEPTED)
-        # The clear goes on and deletes the one change of the step; the results it deletes are not what this checks
-        expect((cleared.status_code, cleared.json()['changes']) == (status.HTTP_200_OK, 1))
+        expect(cleared.status_code == status.HTTP_202_ACCEPTED)
         expect(listed.json()['total'] == 0)
         expect(job.json()['state'] == JobState.CANCELLED.value)
         assert_expectations()

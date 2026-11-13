@@ -33,7 +33,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job, JobEnd
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.imports import ImportService
+    from bookreviver.services.page_history import PageHistoryService
     from bookreviver.services.pages import PageService
+    from bookreviver.services.processing import ProcessingService
     from bookreviver.services.processing_jobs import ProcessingJobs
 
 # A worker: the book of the queue the job was taken from, the job and its control, to how the job ended
@@ -61,7 +63,13 @@ class JobWorkers:
         return self.by_kind[kind]
 
 
-def job_workers(imports: ImportService, pages: PageService, processing: ProcessingJobs) -> JobWorkers:
+def job_workers(
+    imports: ImportService,
+    pages: PageService,
+    processing: ProcessingJobs,
+    choices: ProcessingService,
+    history: PageHistoryService,
+) -> JobWorkers:
     """Name the worker of every kind of job, each one method of a service of the request scope.
 
     :param imports: Import service of the scope, which imports the sources of a book.
@@ -70,6 +78,10 @@ def job_workers(imports: ImportService, pages: PageService, processing: Processi
     :type pages: PageService
     :param processing: The work of the processing jobs of the scope.
     :type processing: ProcessingJobs
+    :param choices: Processing service of the scope, which makes the version a reader chose current.
+    :type choices: ProcessingService
+    :param history: Page history service of the scope, which clears a step on a page.
+    :type history: PageHistoryService
     :returns: The workers by the kind of job.
     :rtype: JobWorkers
     """
@@ -84,6 +96,8 @@ def job_workers(imports: ImportService, pages: PageService, processing: Processi
                 JobKind.COLLECT_VERSIONS: processing.collect_versions,
                 JobKind.MEASURE_BOOK: processing.measure_book,
                 JobKind.DETECT_CONTENT: processing.detect_content,
+                JobKind.CLEAR_STEP: history.clear_step,
+                JobKind.CHOOSE_VERSION: choices.make_current,
             }
         )
     )

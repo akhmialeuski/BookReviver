@@ -15,7 +15,7 @@ from bookreviver.domain.jobs import JobKind, JobState, StageRun, StepPreview, Ti
 from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
 from tests.harness.builders.domain import directory_of
-from tests.harness.builders.processing import open_book
+from tests.harness.builders.processing import open_book, started_after
 from tests.harness.concurrency.held_steps import steps_held
 from tests.harness.fakes.processors import FakeProcessor
 
@@ -491,8 +491,10 @@ class TestHousekeepingRequests:
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
 
-    async def test_tile_cutting_is_queued_behind_a_run(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
-        """Verify a tile cutting asked for during a run is queued behind it, with the versions it must cut.
+    async def test_tile_cutting_follows_the_running_job_ahead_of_a_queued_run(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify a tile cutting is put next up, ahead of a queued run, since it follows the job that made its versions.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -504,9 +506,11 @@ class TestHousekeepingRequests:
             fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         tiles = await fx_kit.parts().starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
-        expect(tiles is not None and tiles.state is JobState.QUEUED)
-        expect(tiles is not None and tiles.asked(TileCut) == TileCut(version_ids=(NO_SUCH_VERSION,)))
-        expect(fx_kit.board.put_jobs == [run, tiles])
+        assert tiles is not None
+        await fx_kit.work_queue()
+        expect(tiles.state is JobState.QUEUED)
+        expect(tiles.asked(TileCut) == TileCut(version_ids=(NO_SUCH_VERSION,)))
+        expect(started_after(fx_kit, run.id, tiles.id))
         assert_expectations()
 
 

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageHistoryEntrySchema } from '@/api';
 import { PageTimeline } from '@/features/editors/PageTimeline';
+import { job } from '@/features/import/fixtures';
 import { processing, recipe, step, version } from '@/features/processing/fixtures';
 import { ProblemError } from '@/shared/http/problem';
 import { HISTORY_OPEN_KEY } from '@/shared/panel/historyOpen';
@@ -201,8 +202,10 @@ describe('PageTimeline', () => {
     serve([]);
     sdk.versions.mockResolvedValue(EMPTY_LIST);
     sdk.undo.mockResolvedValue({ data: { changes: [] } });
-    sdk.clear.mockResolvedValue({ data: { changes: 2, versions: 2 } });
-    sdk.choose.mockResolvedValue({ data: {} });
+    sdk.clear.mockResolvedValue({ data: job('clear', { kind: 'clear-step', state: 'queued' }) });
+    sdk.choose.mockResolvedValue({
+      data: job('choose', { kind: 'choose-version', state: 'queued' }),
+    });
     sdk.mark.mockResolvedValue({ data: {} });
     container = document.createElement('div');
     document.body.append(container);
@@ -875,32 +878,9 @@ describe('PageTimeline', () => {
       expect(sdk.clear).not.toHaveBeenCalled();
     });
 
-    it('reads the history, the results and the rows of the stage again, and leaves the list empty and grey', async () => {
+    it('reads the jobs again for the job of the clear, and leaves the history to the events of the book', async () => {
       serve(settingsChanges(2));
       sdk.versions.mockResolvedValue(listed(OLD, NEW));
-      open();
-      await render();
-      expect(order()).toHaveLength(3);
-      await click('page-history-clear');
-      sdk.history.mockClear();
-      sdk.versions.mockClear();
-      serve([]);
-      sdk.versions.mockResolvedValue(EMPTY_LIST);
-
-      await click('page-history-confirm');
-
-      expect(sdk.history).toHaveBeenCalled();
-      expect(sdk.versions).toHaveBeenCalled();
-      expect(order()).toEqual([]);
-      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('true');
-      expect(byId('page-history-reason')?.textContent).toContain(
-        'Nothing has happened on this page yet.',
-      );
-      expect(byId('page-history-count')).toBeNull();
-    });
-
-    it('marks the results of the page out of date, which the server deleted', async () => {
-      serve(settingsChanges(2));
       open();
       await render();
       await click('page-history-clear');
@@ -912,7 +892,33 @@ describe('PageTimeline', () => {
         const head = filters?.queryKey?.[0];
         return typeof head === 'object' && head !== null && '_id' in head ? head._id : null;
       });
-      expect(asked).toContain('listVersionsApiV1BooksBookIdPagesPageIdVersionsGet');
+      expect(asked).toEqual(['listBookJobsApiV1BooksBookIdJobsGet']);
+      expect(order()).toHaveLength(3);
+    });
+
+    it('is empty and grey once the book says the job of the clear deleted the history and the results', async () => {
+      serve(settingsChanges(2));
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+      await render();
+      expect(order()).toHaveLength(3);
+      await click('page-history-clear');
+      await click('page-history-confirm');
+      serve([]);
+      sdk.versions.mockResolvedValue(EMPTY_LIST);
+
+      // The `book-changed` event of the history and the versions reads them again
+      await act(async () => {
+        await client.invalidateQueries();
+      });
+      await settle();
+
+      expect(order()).toEqual([]);
+      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('true');
+      expect(byId('page-history-reason')?.textContent).toContain(
+        'Nothing has happened on this page yet.',
+      );
+      expect(byId('page-history-count')).toBeNull();
     });
 
     it('is the last thing in the list, and is not there while no step is open', async () => {

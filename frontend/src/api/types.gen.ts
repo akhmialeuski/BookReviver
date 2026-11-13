@@ -867,25 +867,6 @@ export type CarryScope = 'following' | 'selected' | 'kind';
 export type ChangeSource = 'user' | 'run' | 'carry-over' | 'undo';
 
 /**
- * ClearedSchema
- *
- * What clearing a step on a page deleted.
- *
- * :ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.
- * :ivar versions: How many versions were deleted: the results of the step on the page and the results that read them.
- */
-export type ClearedSchema = {
-    /**
-     * Changes
-     */
-    changes: number;
-    /**
-     * Versions
-     */
-    versions: number;
-};
-
-/**
  * CollectionReportSchema
  *
  * What a collection would delete from a book now.
@@ -1135,7 +1116,7 @@ export type ImagePolicy = 'compact' | 'lossless';
  *
  * What a background job does.
  */
-export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book' | 'detect-content';
+export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book' | 'detect-content' | 'clear-step' | 'choose-version';
 
 /**
  * JobSchema
@@ -5851,7 +5832,7 @@ export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses = {
     /**
      * Successful Response
      */
-    200: PageStageSchema;
+    202: JobSchema;
 };
 
 export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses];
@@ -7036,7 +7017,7 @@ export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteRespo
     /**
      * Successful Response
      */
-    200: ClearedSchema;
+    202: JobSchema;
 };
 
 export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponse = ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses[keyof ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses];
