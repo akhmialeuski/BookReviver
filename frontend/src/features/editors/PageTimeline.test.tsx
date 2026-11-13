@@ -3,11 +3,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageHistoryEntrySchema } from '@/api';
+import { PageTimeline } from '@/features/editors/PageTimeline';
 import { processing, recipe, step, version } from '@/features/processing/fixtures';
-import { PageTimeline } from '@/features/processing/PageTimeline';
-import { HISTORY_OPEN_KEY } from '@/features/workspace/historyOpen';
-import { StagePanel } from '@/features/workspace/StagePanel';
 import { ProblemError } from '@/shared/http/problem';
+import { HISTORY_OPEN_KEY } from '@/shared/panel/historyOpen';
+import { StagePanel } from '@/shared/panel/StagePanel';
 
 /**
  * The history of the open page as one list: the changes of a step and the results merged by time, each with its chip,

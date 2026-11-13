@@ -4,14 +4,14 @@ import { SQUARE_HANDLE } from '@/features/editors/handles';
 import { boundsOf, moveCorner } from '@/features/editors/regions';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing } from '@/features/editors/shapeEditing';
+import type { CanvasProps } from '@/features/editors/types';
 import {
   type Point,
   pairOf,
   type RegionsShape,
   ZoneMode,
   type ZoneShape,
-} from '@/features/editors/shapes';
-import type { CanvasProps } from '@/features/editors/types';
+} from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

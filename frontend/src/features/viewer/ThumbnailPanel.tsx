@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { PageSchema } from '@/api';
-import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
+import { PageThumbnail } from '@/shared/ui/page-thumbnail';
 
 /**
  * The collapsible column of thumbnails beside the viewer, with the pages that are on screen marked.

@@ -1,9 +1,8 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { page, row } from '@/features/workspace/fixtures';
-import { PageFilter } from '@/features/workspace/params';
-import { StageStrip } from '@/features/workspace/StageStrip';
+import { page, row } from '@/features/pages/fixtures';
+import { PageFilter } from '@/features/processing/stageParams';
 import {
   countFilters,
   type FlagView,
@@ -11,7 +10,8 @@ import {
   type KindView,
   type StopView,
   type StripItem,
-} from '@/features/workspace/strip';
+} from '@/features/processing/strip';
+import { StageStrip } from '@/features/workspace/StageStrip';
 
 /**
  * The strip of a long book keeps only the rows in sight in the document.

@@ -20,9 +20,9 @@ import {
 } from '@/features/pages/gaps';
 import { LABEL_STYLES, PAGE_KINDS } from '@/features/pages/kinds';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
-import { StagePanel } from '@/features/workspace/StagePanel';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
+import { StagePanel } from '@/shared/panel/StagePanel';
 import { Button } from '@/shared/ui/button';
 import { CheckboxField } from '@/shared/ui/checkbox-field';
 import { ErrorAlert } from '@/shared/ui/error-alert';

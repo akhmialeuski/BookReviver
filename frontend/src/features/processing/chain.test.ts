@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stepChain, stepVersion } from '@/features/editors/chain';
+import { stepChain, stepVersion } from '@/features/processing/chain';
 import { step, version } from '@/features/processing/fixtures';
 
 /** Finding the versions that made the current one of a stage, one for each step. */

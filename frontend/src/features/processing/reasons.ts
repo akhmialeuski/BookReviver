@@ -1,7 +1,7 @@
 import type { ProcessorSchema, RecipeSchema } from '@/api';
 import { readResult } from '@/features/processing/results';
 import { stepOfProcessor } from '@/features/processing/stepRuns';
-import { needsCheck, type StripItem } from '@/features/workspace/strip';
+import { needsCheck, type StripItem } from '@/features/processing/strip';
 import { MESSAGES } from '@/shared/messages';
 
 /**

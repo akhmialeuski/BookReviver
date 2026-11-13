@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { page, row } from '@/features/pages/fixtures';
 import {
   type PageGroup,
   pageIdsFor,
@@ -6,8 +7,7 @@ import {
   scopeChoices,
   troubleOf,
 } from '@/features/processing/scope';
-import { page, row } from '@/features/workspace/fixtures';
-import { joinRows } from '@/features/workspace/strip';
+import { joinRows } from '@/features/processing/strip';
 
 const PAGES = [
   page('a', { position: 0 }),

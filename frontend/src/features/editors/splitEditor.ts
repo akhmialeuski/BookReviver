@@ -1,8 +1,8 @@
 import { cutLine } from '@/features/editors/line';
 import { lineEditor } from '@/features/editors/lineEditor';
 import { SplitCanvas } from '@/features/editors/SplitCanvas';
-import { readSplit, type SplitShape, writeSplit } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
+import { readSplit, type SplitShape, writeSplit } from '@/features/processing/shapes';
 import { PAGES_OF, SplitChoice } from '@/features/processing/split';
 import { MESSAGES } from '@/shared/messages';
 

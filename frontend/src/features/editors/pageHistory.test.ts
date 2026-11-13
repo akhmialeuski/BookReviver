@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PageHistoryEntrySchema } from '@/api';
-import { describeContent, lastStanding, stands } from '@/features/processing/pageHistory';
+import { describeContent, lastStanding, stands } from '@/features/editors/pageHistory';
 
 function change(overrides: Partial<PageHistoryEntrySchema> = {}): PageHistoryEntrySchema {
   return {

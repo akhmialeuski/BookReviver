@@ -6,10 +6,10 @@ import type {
   ScanSchema,
   StepSchema,
 } from '@/api';
+import { images } from '@/features/pages/fixtures';
 import type { PageValues } from '@/features/processing/pageSettings';
 import { draftOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
-import { images } from '@/features/workspace/fixtures';
 
 /**
  * Processors, recipes and versions as the tests of the processing workspace build them: the parameter schemas are the

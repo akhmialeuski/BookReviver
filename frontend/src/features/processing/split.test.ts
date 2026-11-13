@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { page } from '@/features/pages/fixtures';
 import { recipe, scan, step } from '@/features/processing/fixtures';
 import {
   autoRecipeOf,
@@ -15,7 +16,6 @@ import {
   undoesSplit,
   wideScanIds,
 } from '@/features/processing/split';
-import { page } from '@/features/workspace/fixtures';
 
 describe('isWide and wideScanIds', () => {
   it('calls a scan wider than tall wide, and a square or tall one not', () => {

@@ -5,8 +5,8 @@ import { EditorLayer } from '@/features/editors/EditorLayer';
 import { clampToScan } from '@/features/editors/line';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing } from '@/features/editors/shapeEditing';
-import type { BrushShape, Point } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
+import type { BrushShape, Point } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

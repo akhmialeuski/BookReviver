@@ -12,9 +12,9 @@ import type { StepDraft } from '@/features/processing/recipe';
 import { StepSorter } from '@/features/processing/StepSorter';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
 import type { Processing } from '@/features/processing/useProcessing';
-import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
+import { PanelHeading } from '@/shared/panel/PanelHeading';
 import { Button } from '@/shared/ui/button';
 import { Switch } from '@/shared/ui/switch';
 

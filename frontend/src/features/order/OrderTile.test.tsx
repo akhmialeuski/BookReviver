@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema } from '@/api';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
 import { SECTION_TONES, type SectionSpan, sectionSpans } from '@/features/order/sections';
+import { images, page, section } from '@/features/pages/fixtures';
 import { AnchorSide } from '@/features/pages/order';
-import { images, page, section } from '@/features/workspace/fixtures';
 
 /**
  * The tile of the Order grid: what a click with a modifier key asks of the selection, the words and marks it shows

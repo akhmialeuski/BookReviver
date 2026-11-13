@@ -13,9 +13,9 @@ import { Restore } from '@/features/place/writer';
 import type { ComparePair, PairPlacement } from '@/features/processing/compare';
 import { clampDivider, DIVIDER_CENTRE } from '@/features/processing/compare';
 import { CompareStage, type EditorReach } from '@/features/processing/compareStage';
+import { CompareMode } from '@/features/processing/stageParams';
 import { useHoldKey } from '@/features/processing/useHoldKey';
 import type { PageCanvasHandle } from '@/features/viewer/PageCanvas';
-import { CompareMode } from '@/features/workspace/params';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 

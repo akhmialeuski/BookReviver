@@ -1,9 +1,9 @@
 import { PanelLeftIcon, PanelRightIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useDefaultLayout, usePanelRef } from 'react-resizable-panels';
-import { browserStorage } from '@/features/workspace/storage';
 import { StripSheetProvider } from '@/features/workspace/stripSheet';
 import { useIsNarrow } from '@/shared/hooks/useMediaQuery';
+import { browserStorage } from '@/shared/lib/storage';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable';

@@ -7,8 +7,8 @@ import {
   rowOfCells,
   rowsOf,
 } from '@/features/order/layout';
+import { page } from '@/features/pages/fixtures';
 import { findGaps } from '@/features/pages/gaps';
-import { page } from '@/features/workspace/fixtures';
 
 function book(count: number) {
   return Array.from({ length: count }, (_, index) => page(`p${index}`, { position: index }));

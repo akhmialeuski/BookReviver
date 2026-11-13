@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { browserStorage, type WorkspaceStorage } from '@/features/workspace/storage';
+import { browserStorage, type WorkspaceStorage } from '@/shared/lib/storage';
 
 /**
  * Whether the history of a page is open in the panel of a stage, the choice that is remembered for the viewer.

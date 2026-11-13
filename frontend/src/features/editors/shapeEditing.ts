@@ -2,7 +2,7 @@ import type { KonvaEventObject } from 'konva/lib/Node';
 import { type RefObject, useEffect, useRef } from 'react';
 import { nudgeOfKey } from '@/features/editors/line';
 import type { SceneFrame } from '@/features/editors/scene';
-import type { Point } from '@/features/editors/shapes';
+import type { Point } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

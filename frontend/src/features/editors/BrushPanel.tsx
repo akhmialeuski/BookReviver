@@ -5,8 +5,8 @@ import {
   BRUSH_STEP_PERCENT,
   useBrushPercent,
 } from '@/features/editors/brush';
-import type { BrushShape } from '@/features/editors/shapes';
 import type { PanelProps } from '@/features/editors/types';
+import type { BrushShape } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { Slider } from '@/shared/ui/slider';

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type PairPlacement, Side, SourceKind } from '@/features/processing/compare';
 import { CompareStage } from '@/features/processing/compareStage';
-import { CompareMode } from '@/features/workspace/params';
+import { CompareMode } from '@/features/processing/stageParams';
 
 /**
  * Where the compare stage puts its two pictures in the world: as tall as a page at the origin, or one inside the other where

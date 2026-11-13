@@ -1,7 +1,7 @@
 import { WandSparklesIcon } from 'lucide-react';
 import { useState } from 'react';
-import { useEditChanges, useEdits } from '@/features/editors/queries';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
+import { useEditChanges, useEdits } from '@/features/processing/editQueries';
 import { useRunInFlight, useRunStage } from '@/features/processing/queries';
 import {
   autoRecipeOf,
@@ -12,10 +12,10 @@ import {
   SPLIT_PROCESSOR,
   SplitChoice,
 } from '@/features/processing/split';
+import { useActiveJobs } from '@/features/processing/stageQueries';
+import type { StripItem } from '@/features/processing/strip';
 import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
 import type { Processing } from '@/features/processing/useProcessing';
-import { useActiveJobs } from '@/features/workspace/queries';
-import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';

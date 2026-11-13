@@ -10,7 +10,7 @@ import {
   listScansApiV1BooksBookIdScansGetOptions,
   listSourcesApiV1BooksBookIdSourcesGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
-import { jobsOptions } from '@/features/workspace/queries';
+import { jobsOptions } from '@/features/processing/stageQueries';
 
 /**
  * The queries behind the Import stage: every file of the book as one list, the report of the files an import did not

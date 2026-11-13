@@ -1,8 +1,8 @@
 import type { ClientRect, DroppableContainer } from '@dnd-kit/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { carriedBy, collideUnderPointer, dropPlace } from '@/features/order/drag';
+import { page } from '@/features/pages/fixtures';
 import { AnchorSide, movePages } from '@/features/pages/order';
-import { page } from '@/features/workspace/fixtures';
 
 const BOOK = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id, index) => page(id, { position: index }));
 

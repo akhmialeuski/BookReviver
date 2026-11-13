@@ -1,8 +1,8 @@
 import { LineCanvas } from '@/features/editors/LineCanvas';
 import { cutLine } from '@/features/editors/line';
-import type { LineShape, SplitShape } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
 import { readResult } from '@/features/processing/results';
+import type { LineShape, SplitShape } from '@/features/processing/shapes';
 import { PAGES_OF, SplitChoice } from '@/features/processing/split';
 
 /**

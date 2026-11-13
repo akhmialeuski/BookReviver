@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { section } from '@/features/pages/fixtures';
 import { SECTIONS_PAGE_SIZE, sectionsOptions } from '@/features/pages/sections';
-import { section } from '@/features/workspace/fixtures';
 
 /** The sections of a book read as one list, whatever number of requests the server needs to send them. */
 

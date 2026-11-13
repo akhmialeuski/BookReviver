@@ -4,10 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RecipeKind, StageSummarySchema } from '@/api';
 import { listStagesApiV1BooksBookIdStagesGetOptions } from '@/api/@tanstack/react-query.gen';
+import { barStepsOf } from '@/features/processing/barSteps';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
 import { RecipePicker } from '@/features/processing/RecipePicker';
 import { StepBar } from '@/features/workspace/StepBar';
-import { barStepsOf } from '@/features/workspace/steps';
 
 /**
  * The choice of the recipe of a stage: each kind of page with the number of the pages of the book that are of it, and

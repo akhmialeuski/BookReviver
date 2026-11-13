@@ -24,15 +24,15 @@ import { useManifest } from '@/features/pages/manifest';
 import { anchorBody, pageIdsOfSource } from '@/features/pages/order';
 import { useSections } from '@/features/pages/sections';
 import { pruneSelection } from '@/features/pages/selection';
-import { type StageSearch, ViewMode } from '@/features/workspace/params';
-import { useStageRows } from '@/features/workspace/queries';
+import { type StageSearch, ViewMode } from '@/features/processing/stageParams';
+import { useStageRows } from '@/features/processing/stageQueries';
+import { joinRows, thumbnailsOf } from '@/features/processing/strip';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
 import {
   type ClickModifiers,
   type SelectionState,
   selectionAfterClick,
 } from '@/features/workspace/selection';
-import { joinRows, thumbnailsOf } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { ErrorAlert } from '@/shared/ui/error-alert';

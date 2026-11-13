@@ -3,8 +3,8 @@ import { layoutOf, RectFrame, rectData } from '@/features/editors/RectFrame';
 import { nudgeRect } from '@/features/editors/rect';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing, widthValue } from '@/features/editors/shapeEditing';
-import type { RectShape } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
+import type { RectShape } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

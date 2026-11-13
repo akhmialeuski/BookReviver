@@ -1,4 +1,4 @@
-import type { Point } from '@/features/editors/shapes';
+import type { Point } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the rotation handles: the angle a pointer asks for, where a handle stands for an angle, and the

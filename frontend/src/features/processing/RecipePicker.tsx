@@ -1,5 +1,5 @@
+import { useStageSummaries } from '@/features/processing/stageQueries';
 import type { Processing } from '@/features/processing/useProcessing';
-import { useStageSummaries } from '@/features/workspace/queries';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 

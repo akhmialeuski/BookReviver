@@ -1,6 +1,6 @@
 import type { JobSchema, ScanSchema, SourceSchema } from '@/api';
 import type { ImportedSource } from '@/features/import/queries';
-import { images } from '@/features/workspace/fixtures';
+import { images } from '@/features/pages/fixtures';
 
 /**
  * Files, scans and jobs as the tests of the Import stage build them, with every field filled and any of them changed.

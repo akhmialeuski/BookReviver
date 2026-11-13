@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addZone, boundsOf, moveCorner, newZone, removeZone } from '@/features/editors/regions';
-import { readRegions, writeRegions, ZoneMode } from '@/features/editors/shapes';
+import { readRegions, writeRegions, ZoneMode } from '@/features/processing/shapes';
 
 const SIZE = { width: 1000, height: 2000 };
 

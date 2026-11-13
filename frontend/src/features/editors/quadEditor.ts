@@ -1,8 +1,8 @@
 import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { QuadCanvas } from '@/features/editors/QuadCanvas';
 import { quadOf } from '@/features/editors/quad';
-import { type QuadShape, readQuad, writeQuad } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
+import { type QuadShape, readQuad, writeQuad } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

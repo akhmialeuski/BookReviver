@@ -10,6 +10,7 @@ import {
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { waitForDragKeys } from './support/drag';
 import { test } from './support/fixtures';
 import {
   closeStepsWindow,
@@ -72,6 +73,7 @@ async function liftAndMoveUp(
     .focus();
   await page.keyboard.press('Space');
   await announced(page, drag.over(titleAt(0)));
+  await waitForDragKeys(page);
   for (let place = 1; place <= places; place += 1) {
     await page.keyboard.press('ArrowUp');
     await announced(

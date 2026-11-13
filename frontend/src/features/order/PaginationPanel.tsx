@@ -4,9 +4,9 @@ import type { PageSchema, PaginationSectionSchema } from '@/api';
 import { SectionDialog } from '@/features/order/SectionDialog';
 import { draftOf, newSectionDraft } from '@/features/order/sectionDraft';
 import { isSeries, type SectionSpan, sectionName } from '@/features/order/sections';
-import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
+import { PanelHeading } from '@/shared/panel/PanelHeading';
 import { Button } from '@/shared/ui/button';
 
 /**

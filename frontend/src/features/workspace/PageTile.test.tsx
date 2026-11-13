@@ -1,9 +1,9 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { page, row } from '@/features/workspace/fixtures';
+import { page, row } from '@/features/pages/fixtures';
+import { joinRows } from '@/features/processing/strip';
 import { PageTile } from '@/features/workspace/PageTile';
-import { joinRows } from '@/features/workspace/strip';
 
 /** The tile of a page of the strip: the mark of what the page shows stands on its picture, and a reader of a screen hears it. */
 

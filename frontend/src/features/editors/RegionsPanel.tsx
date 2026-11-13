@@ -1,7 +1,7 @@
 import { MinusIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { addZone, newZone, removeZone } from '@/features/editors/regions';
-import { type RegionsShape, ZoneMode } from '@/features/editors/shapes';
 import type { PanelProps } from '@/features/editors/types';
+import { type RegionsShape, ZoneMode } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 

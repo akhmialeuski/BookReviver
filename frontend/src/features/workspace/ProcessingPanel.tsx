@@ -1,19 +1,19 @@
+import { PageTimeline, type TimelineStep } from '@/features/editors/PageTimeline';
 import type { EditorSession } from '@/features/editors/session';
-import { PageTimeline, type TimelineStep } from '@/features/processing/PageTimeline';
-import { RecipeBar } from '@/features/processing/RecipeBar';
+import { type BarStep, hasStepBar } from '@/features/processing/barSteps';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
 import { StepNotes, StepSettings } from '@/features/processing/StepSlots';
+import type { StripItem } from '@/features/processing/strip';
 import { usePageValues } from '@/features/processing/usePageValues';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useStageRun } from '@/features/processing/useStageRun';
-import { useThisPage } from '@/features/processing/useThisPage';
-import { StagePanel } from '@/features/workspace/StagePanel';
-import { type BarStep, hasStepBar } from '@/features/workspace/steps';
-import type { StripItem } from '@/features/workspace/strip';
-import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
+import type { StepWorkspace } from '@/features/processing/useStepWorkspace';
+import { RecipeBar } from '@/features/workspace/RecipeBar';
+import { useThisPage } from '@/features/workspace/useThisPage';
 import { MESSAGES } from '@/shared/messages';
+import { StagePanel } from '@/shared/panel/StagePanel';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**

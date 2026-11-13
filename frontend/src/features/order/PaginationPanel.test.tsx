@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema, PaginationSectionSchema } from '@/api';
 import { PaginationPanel } from '@/features/order/PaginationPanel';
 import { SECTION_TONES, sectionSpans } from '@/features/order/sections';
-import { page, section } from '@/features/workspace/fixtures';
+import { page, section } from '@/features/pages/fixtures';
 import { ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';
 

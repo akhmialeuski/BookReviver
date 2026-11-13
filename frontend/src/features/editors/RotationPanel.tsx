@@ -5,8 +5,8 @@ import {
   formatAngle,
   limitFineAngle,
 } from '@/features/editors/rotation';
-import type { RotationShape } from '@/features/editors/shapes';
 import type { PanelProps } from '@/features/editors/types';
+import type { RotationShape } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { Slider } from '@/shared/ui/slider';

@@ -11,7 +11,14 @@ import {
   writePagesFolder,
 } from './support/account';
 import { test } from './support/fixtures';
-import { changeHeaders, openTimeline, pageIds, RESULT_ROWS, runPages } from './support/page-work';
+import {
+  changeHeaders,
+  openTimeline,
+  pageIds,
+  RESULT_ROWS,
+  readStageRows,
+  runPages,
+} from './support/page-work';
 
 /**
  * The results a page keeps while its old results are collected: the collection that a run queues when it ends deletes the
@@ -70,6 +77,15 @@ test('a collection deletes the results a run replaced and keeps the good and the
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     await runPages(page);
+    // A run with a step that reads the book makes the result of the page twice, as it measures the book and then by
+    // what the book gave, and the list is read again a moment after the server changed. So the list is waited for
+    // until its first row is the result the stage stands on, and not the one the collection has deleted since
+    const [row] = await readStageRows(page);
+    await expect(entries.first().getByTestId(GOOD_MARK)).toHaveAttribute(
+      'data-version',
+      row?.version ?? '',
+      { timeout: RUN_TIMEOUT_MS },
+    );
   };
 
   /** Read what the About tab says a collection would delete, which is the report the dialog is drawn from. */

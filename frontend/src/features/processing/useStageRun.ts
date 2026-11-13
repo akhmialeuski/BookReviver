@@ -9,9 +9,9 @@ import {
   scopeChoices,
 } from '@/features/processing/scope';
 import { undoesSplit } from '@/features/processing/split';
+import { useActiveJobs } from '@/features/processing/stageQueries';
+import type { StripItem } from '@/features/processing/strip';
 import type { Processing } from '@/features/processing/useProcessing';
-import { useActiveJobs } from '@/features/workspace/queries';
-import type { StripItem } from '@/features/workspace/strip';
 
 /**
  * The run of a stage as the foot of the panel asks for it, whole or up to one step: the scopes with the pages each

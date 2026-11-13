@@ -10,6 +10,7 @@ import {
   Side,
   SourceKind,
 } from '@/features/processing/compare';
+import { CompareMode } from '@/features/processing/stageParams';
 import {
   CanvasStage,
   createViewer,
@@ -25,7 +26,6 @@ import {
   PAGE_HEIGHT,
   type WorldRect,
 } from '@/features/viewer/layout';
-import { CompareMode } from '@/features/workspace/params';
 
 /**
  * The OpenSeadragon canvas of the before-and-after compare, which holds the two pictures of a page and shows them as the

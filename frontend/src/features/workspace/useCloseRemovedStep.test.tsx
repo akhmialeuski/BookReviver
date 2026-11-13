@@ -1,8 +1,8 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type BarStep, barStepsOf } from '@/features/processing/barSteps';
 import { recipe, step } from '@/features/processing/fixtures';
-import { type BarStep, barStepsOf } from '@/features/workspace/steps';
 import { useCloseRemovedStep } from '@/features/workspace/useCloseRemovedStep';
 
 /**
