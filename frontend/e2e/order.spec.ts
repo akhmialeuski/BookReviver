@@ -16,6 +16,8 @@ import { test } from './support/fixtures';
  * for gaps in the printed numbers, and added to and deleted from.
  */
 
+/** How long the page is given to set the key listeners of a drag, which dnd-kit does in a timer after the lift. */
+const KEY_LISTENER_DELAY_MS = 100;
 const PAGES = 6;
 const SCENARIO_TIMEOUT_MS = 180_000;
 const SAME_PLACE = 5;
@@ -51,13 +53,18 @@ async function settled(page: Page): Promise<void> {
  * Pick the focused tile up with the space bar, and wait for the announcement that follows the lift: the held page is
  * over itself, which is no place.
  *
- * dnd-kit starts to listen for the arrow keys a moment after the key that lifts, so an arrow pressed in the same
- * instant is lost, which a person never does.
+ * dnd-kit starts to listen for the arrow keys in a timer it sets when the key lifts, after it has announced the lift, so
+ * an arrow pressed the moment the announcement is read is lost, which a person never does. The page is therefore given
+ * the turn of its timers before the next key.
  */
 async function pickUp(page: Page): Promise<void> {
   await page.keyboard.press('Space');
   await expect(page.locator('[aria-live="assertive"]')).toHaveText(
     'Over the pages being moved, which is no place.',
+  );
+  await page.evaluate(
+    (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    KEY_LISTENER_DELAY_MS,
   );
 }
 
