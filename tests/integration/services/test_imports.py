@@ -36,10 +36,12 @@ from bookreviver.domain.sources import DjvuDocumentKind, FileType, RejectionReas
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import VersionInputs, VersionState
 from bookreviver.plugins.split.split_none import SplitNone
+from bookreviver.ports.persistence import BookDatabase
 from bookreviver.ports.runtime import JobControl
 from bookreviver.services.imports import IMPORT_ACTIVE, NO_SOURCE_IMPORTED, ImportRun
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.sources import SOURCE_IMPORTING, SourceService
+from tests.harness.adapters.counting import CountingBookDatabase
 from tests.harness.adapters.imports import (
     BOOK_WINDOW,
     DEFAULT_PARALLEL_SCANS,
@@ -138,6 +140,14 @@ QUEUE_PDF: str = 'queue.pdf'
 CUT_STEP: str = '_cut'
 LONG_BOOK_PAGES: int = 6
 PARALLEL_SCANS: int = 2
+MORE_PAGES: int = 4
+# The imports of the count of write blocks, each with the name of its PDF and its pages: the first one only has the book
+# do what it does once, such as storing the recipes of its stages
+BLOCK_COUNT_IMPORTS: tuple[tuple[str, int], ...] = (
+    ('warm.pdf', 1),
+    ('two.pdf', PARALLEL_SCANS),
+    ('four.pdf', MORE_PAGES),
+)
 SECRET_FAULT: str = 'secret detail of the failure'
 # Names of the uploaded files, each written once so a test compares a name with the one it uploaded
 IMAGE_NAME: str = 'a.jpg'
@@ -931,6 +941,47 @@ class TestRunImport:
             [(by_id[page.scan_id].source_id, by_id[page.scan_id].number) for page in pages if page.scan_id]
             == [(source.id, number) for source in sources for number in range(source.scan_count)]
         )
+        assert_expectations()
+
+    async def test_cutting_a_scan_opens_one_write_block(
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_book: BookId,
+        fx_samples: Path,
+        fx_open_book: BookOpener,
+    ) -> None:
+        """Verify each extra scan of an import costs one change of the book, so the cutters queue once for the writer.
+
+        A PDF of one page, one of two and one of four are imported in turn into one book, whose database counts its
+        changes. The first only has the book do what it does once, such as storing the recipes of its stages. What an
+        import does once is done in both of the others, so the difference of their counts is the cost of the two extra
+        scans. The read of a scan that precedes its write is a read of the book and takes no place in the queue of the
+        writer.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the book.
+        :type fx_owner: Actor
+        :param fx_book: Book of ``fx_owner``.
+        :type fx_book: BookId
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        database = CountingBookDatabase(fx_open_book.databases.open(fx_book))
+        BookDatabase.register(lambda _dir_name: database)
+
+        jobs = []
+        changes = []
+        for name, pages in BLOCK_COUNT_IMPORTS:
+            before = database.changes
+            jobs.append(await _import(fx_rig, fx_owner, fx_book, [pdf_upload(fx_samples, name, pages=pages)]))
+            changes.append(database.changes - before)
+
+        expect(all(job.state is JobState.SUCCEEDED for job in jobs))
+        expect(changes[2] - changes[1] == MORE_PAGES - PARALLEL_SCANS)
         assert_expectations()
 
     async def test_files_of_different_folders_with_one_name_are_two_sources_named_by_their_paths(

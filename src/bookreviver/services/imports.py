@@ -429,22 +429,20 @@ class ImportRun:
         :raises JobCancelledError: If the job was cancelled.
         """
 
-        def start(repos: BookRepositories, book_record: BookRecord) -> tuple[BookRecord, list[Page]]:
-            """Read the record of the book and the pages of the scan.
+        def start(repos: BookRepositories) -> tuple[BookRecord, list[Page]]:
+            """Read the record of the book and the pages of the scan, which takes no place in the queue of the writers.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The record of the book as the change finds it, whose image policy chooses the format of
-                                the scan.
-            :type book_record: BookRecord
-            :returns: The record of the book, and the pages cut from the scan.
+            :returns: The record of the book, whose image policy chooses the format of ``full``, and the pages cut from
+                      the scan.
             :rtype: tuple[BookRecord, list[Page]]
             """
-            return book_record, list(repos.pages.list_for_scan(scan.id))
+            return repos.book_record.get(), list(repos.pages.list_for_scan(scan.id))
 
         # A cancellation stops the run before the next scan is cut
         await self._report()
-        book_record, pages = await self.book.change(start)
+        book_record, pages = await self.book.read(start)
         full = book_record.image_policy.full_format(scan.facts.color_mode)
         ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
         of_scan = partial(BookKeys.scan_rendition, ready)
