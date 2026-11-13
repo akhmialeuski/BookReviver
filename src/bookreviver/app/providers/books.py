@@ -10,10 +10,12 @@ from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book_steps import BookSteps
 from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
-from bookreviver.services.pages import PageImaging, PageService
+from bookreviver.services.pages import PageService
+from bookreviver.services.pages_work import PageKeeping
 from bookreviver.services.pagination import PaginationService
 from bookreviver.services.places import PlaceService
 from bookreviver.services.sources import SourceService
+from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
 
@@ -68,36 +70,49 @@ class BooksProvider(Provider):
         return BaseVersions(tiler=tiler, processors=processors)
 
     @provide(scope=Scope.APP)
-    def page_imaging(
-        self, base_versions: BaseVersions, runner: StepRunner, processors: ProcessorCatalog
-    ) -> PageImaging:
-        """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
+    def page_keeping(
+        self,
+        order_keys: OrderKeys,
+        base_versions: BaseVersions,
+        runner: StepRunner,
+        processors: ProcessorCatalog,
+        records: StageRecords,
+    ) -> PageKeeping:
+        """Build what keeps the pages of the books, which opens them for a transaction and keeps no state of a request.
 
+        :param order_keys: Order keys of the application.
+        :type order_keys: OrderKeys
         :param base_versions: Builder of base versions of the application.
         :type base_versions: BaseVersions
-        :param runner: Runner of processors of the application.
+        :param runner: Runner of processors of the application, which writes the files of base versions.
         :type runner: StepRunner
         :param processors: The processors the application can run, whose plugins may read the whole book.
         :type processors: ProcessorCatalog
-        :returns: The builder of base versions and the runner of their processors.
-        :rtype: PageImaging
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :returns: The keeping of the pages.
+        :rtype: PageKeeping
         """
-        return PageImaging(base_versions=base_versions, runner=runner, book_steps=BookSteps(processors))
+        return PageKeeping(
+            order_keys=order_keys,
+            base_versions=base_versions,
+            runner=runner,
+            book_steps=BookSteps(processors),
+            records=records,
+        )
 
     @provide
-    def pages(self, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> PageService:
+    def pages(self, books: BooksService, keeping: PageKeeping) -> PageService:
         """Build the page service over the request's or job's books service.
 
         :param books: Books service of the current request or job, which opens the books a job runs on.
         :type books: BooksService
-        :param order_keys: Order keys of the application.
-        :type order_keys: OrderKeys
-        :param imaging: The builder of base versions and the runner of their processors.
-        :type imaging: PageImaging
+        :param keeping: What keeps the pages of the books.
+        :type keeping: PageKeeping
         :returns: The page service of the request or job.
         :rtype: PageService
         """
-        return PageService(books=books, order_keys=order_keys, imaging=imaging)
+        return PageService(books=books, keeping=keeping)
 
     @provide(scope=Scope.APP)
     def pagination(self) -> PaginationService:
