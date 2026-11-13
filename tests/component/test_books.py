@@ -769,7 +769,39 @@ class TestUpdateBook:
 
         response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: 'Press'})
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
+        expect(response.status_code == status.HTTP_404_NOT_FOUND)
+        expect(stored.details.publisher == '')
+        expect(stored.updated_at == make_record().updated_at)
+        assert_expectations()
+
+    async def test_answers_no_content_with_an_empty_body(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_catalogue: CatalogueDatabaseFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify a change answers 204 and carries nothing: the client learns the new book from its event.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id = await store_book(
+            fx_catalogue(), make_record(title=TITLE), owner=fx_actor.account_id, databases=fx_databases()
+        )
+
+        response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: 'Press'})
+
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect(response.content == b'')
+        assert_expectations()
 
 
 class TestDeleteBook:
