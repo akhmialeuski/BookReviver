@@ -70,6 +70,18 @@ export function moveStep(
   return from < 0 || to < 0 || from === to ? [...steps] : arrayMove([...steps], from, to);
 }
 
+/**
+ * Give a step another processor in place of its own, which is what the replacement of its type does to the recipe. The
+ * parameters are left to the server, which gives the step those it kept for the type or the defaults.
+ */
+export function retypeStep(
+  steps: readonly StepDraft[],
+  id: string,
+  processor: ProcessorSchema,
+): StepDraft[] {
+  return steps.map((step) => (step.id === id ? { ...step, processorKey: processor.key } : step));
+}
+
 /** Switch a step on or off, which keeps its parameters. */
 export function toggleStep(steps: readonly StepDraft[], id: string): StepDraft[] {
   return steps.map((step) => (step.id === id ? { ...step, enabled: !step.enabled } : step));
