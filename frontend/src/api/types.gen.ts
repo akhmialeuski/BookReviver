@@ -2544,6 +2544,8 @@ export type ProcessorRefSchema = {
  * :ivar after: Processors whose steps its step usually stands after.
  * :ivar before: Processors whose steps its step usually stands before.
  * :ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving.
+ * :ivar book_fields: Names of the settings that the value 0 leaves to the book, so the interface offers the measure
+ * of the book beside them. Empty for a step that needs one page only.
  */
 export type ProcessorSchema = {
     /**
@@ -2588,6 +2590,10 @@ export type ProcessorSchema = {
      * Requires After
      */
     requires_after: Array<OrderRuleSchema>;
+    /**
+     * Book Fields
+     */
+    book_fields: Array<string>;
 };
 
 /**

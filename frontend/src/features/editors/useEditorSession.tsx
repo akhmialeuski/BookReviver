@@ -197,6 +197,7 @@ export function useEditorSession({
           // The server lays the values of the page and of the parts of the book it is in over the step of a preview
           steps: bodyOf(draftOf(recipe)),
           stepIndex: entry.index,
+          bookFields: entry.processor.book_fields,
         }
       : null;
   const foundPreview = usePreview(bookId, stage, previewRequest, wantsFound);

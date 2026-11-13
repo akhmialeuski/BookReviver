@@ -86,9 +86,7 @@ export function setStepParams(
   params: Record<string, unknown>,
 ): StepDraft[] {
   return steps.map((step) =>
-    step.id === id
-      ? { ...step, params: withMarginsSource(step.processorKey, step.params, params) }
-      : step,
+    step.id === id ? { ...step, params: withMarginsSource(step.params, params) } : step,
   );
 }
 

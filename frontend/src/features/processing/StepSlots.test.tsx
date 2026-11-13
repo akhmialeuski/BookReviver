@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deskew,
+  margins,
   pageValues,
   processing,
   processor,
@@ -165,7 +166,8 @@ describe('the slots of the open step', () => {
       processorKey = 'geometry.deskew',
       values: PageValues | undefined = undefined,
     ): void {
-      const found = CATALOGUE.find((entry) => entry.key === processorKey) ?? deskew();
+      const found =
+        [...CATALOGUE, margins()].find((entry) => entry.key === processorKey) ?? deskew();
       render(
         <StepSettings
           processing={processing({ catalogue: CATALOGUE, change })}
@@ -216,7 +218,7 @@ describe('the slots of the open step', () => {
       expect(container.textContent).not.toContain('Settings of the step');
     });
 
-    it('stands the measurement of the book in the settings of the step that places the block, and in no other', () => {
+    it('stands the measurement of the book in the settings of a step that leaves settings to the book, and in no other', () => {
       renderSettings('geometry.normalize');
       expect(find('measure-book')).not.toBeNull();
 

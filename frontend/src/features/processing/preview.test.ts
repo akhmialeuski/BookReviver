@@ -112,6 +112,7 @@ describe('answersPreview for the step that places the content box', () => {
   const ask: PreviewRequest = {
     pageId: 'page',
     stepIndex: 0,
+    bookFields: ['page_width', 'page_height', 'line_height'],
     steps: [
       {
         processor_key: 'geometry.normalize',
@@ -145,9 +146,10 @@ describe('answersPreview for the step that places the content box', () => {
     ).toBe(false);
   });
 
-  it('does not take a size from the book for a step of another processor', () => {
+  it('does not take a size from the book for a step that leaves nothing to the book', () => {
     const other: PreviewRequest = {
       ...ask,
+      bookFields: [],
       steps: [{ processor_key: 'geometry.crop', params: { page_width: 0 } }],
     };
 

@@ -50,7 +50,7 @@ from bookreviver.domain.step_settings import HorizontalAlign, PaperFill, Vertica
 from bookreviver.domain.text_scale import DEFAULT_MAX_SCALE_CHANGE, scale_factor
 from bookreviver.domain.versions import VersionData
 from bookreviver.plugins.geometry.crop import CropParams, FrameSearch, cut_edges_of
-from bookreviver.plugins.geometry.normalize_book import NormalizeBook
+from bookreviver.plugins.geometry.normalize_book import BOOK_FIELDS, NormalizeBook
 from bookreviver.plugins.kit.base import ModelProcessor, Params
 from bookreviver.plugins.kit.cv_image import (
     MANUAL_CONFIDENCE,
@@ -506,6 +506,7 @@ class Normalize(ModelProcessor):
         parameters=NormalizeParams.model_json_schema(),
         editor=EditorKind.CONTENT_BOX,
         by_page_side=True,
+        book_fields=tuple(name.value for name in BOOK_FIELDS),
         after=(
             OrderRule(
                 processor_key='geometry.perspective',
