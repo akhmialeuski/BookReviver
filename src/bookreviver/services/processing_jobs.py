@@ -38,7 +38,6 @@ from bookreviver.domain.runs import RunOutcome
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.version_chains import readers_first
 from bookreviver.domain.versions import VersionState
-from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.stage_jobs import StageRunJob
 from bookreviver.services.version_clearing import VersionClearing
 
@@ -50,9 +49,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.book_measure import BookMeasure
     from bookreviver.services.content_detection import ContentDetector
+    from bookreviver.services.job_starter import JobStarter
     from bookreviver.services.pages import PageService
-    from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.stage_runs import StageRuns
 
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
@@ -77,24 +77,27 @@ class ProcessingJobs:
         *,
         runs: StageRuns,
         detector: ContentDetector,
-        parts: ProcessingParts,
+        measure: BookMeasure,
+        starter: JobStarter,
         pages: PageService,
     ) -> None:
-        """Work over the ports of one job.
+        """Work on the book of each job.
 
         :param runs: What opens the work of a run and of a preview, and runs their steps.
         :type runs: StageRuns
         :param detector: What detects the content of the pages.
         :type detector: ContentDetector
-        :param parts: The recipes, the stage records and the job starter, which work on the book of each job.
-        :type parts: ProcessingParts
+        :param measure: What measures the book and writes the measure into its recipes.
+        :type measure: BookMeasure
+        :param starter: Putter of new jobs on the queue of a book, which queues the collection after a run.
+        :type starter: JobStarter
         :param pages: The page service, which queues the detection of the content of the pages a split made.
         :type pages: PageService
         """
         self._runs = runs
-        self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
         self._detector = detector
-        self._starter = parts.starter
+        self._measure = measure
+        self._starter = starter
         self._pages = pages
 
     async def run_stage(self, book: Book, job: Job, control: JobControl) -> JobEnd:

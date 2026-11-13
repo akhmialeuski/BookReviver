@@ -29,12 +29,13 @@ from bookreviver.services.imports import (
     ImportRuntime,
     ImportService,
 )
+from bookreviver.services.job_starter import JobStarter
 from bookreviver.services.jobs import JobService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.pages import PageService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingParts
+from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.steps import StepRunner
 
 
@@ -146,16 +147,20 @@ class ImportsProvider(Provider):
         return ImportRuntime(order_keys=order_keys, limits=limits)
 
     @provide(scope=Scope.REQUEST)
-    def import_service(self, imaging: ImportImaging, runtime: ImportRuntime, parts: ProcessingParts) -> ImportService:
+    def import_service(
+        self, imaging: ImportImaging, runtime: ImportRuntime, recipes: RecipeBook, starter: JobStarter
+    ) -> ImportService:
         """Build the import service of the request or job.
 
         :param imaging: The imaging ports of the application.
         :type imaging: ImportImaging
         :param runtime: The order keys and limits of the application.
         :type runtime: ImportRuntime
-        :param parts: The recipes and the job starter, with which the split of the imported pages is queued.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the books, whose recipe of the page split says whether imported pages are split.
+        :type recipes: RecipeBook
+        :param starter: Putter of new jobs, with which the split of the imported pages is queued.
+        :type starter: JobStarter
         :returns: The import service.
         :rtype: ImportService
         """
-        return ImportService(imaging=imaging, runtime=runtime, parts=parts)
+        return ImportService(imaging=imaging, runtime=runtime, recipes=recipes, starter=starter)

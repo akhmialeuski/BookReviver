@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, JobId
     from bookreviver.domain.jobs import Job, JobWork
     from bookreviver.domain.pages import Page
-    from bookreviver.services.processing_parts import JobStarter
+    from bookreviver.services.job_starter import JobStarter
     from tests.harness.builders.domain import BookOpener
     from tests.harness.builders.processing import ProcessingKit
 
@@ -251,7 +251,7 @@ class TestRunHandOff:
         :type housekeeping: JobKind
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         blocker = await starter.enqueue(
             await open_book(fx_kit, book_id), housekeeping, params_of(starter, housekeeping)
         )
@@ -301,7 +301,7 @@ class TestFirstInFirstOut:
         :type later: JobKind
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         first = await starter.enqueue(await open_book(fx_kit, book_id), earlier, params_of(starter, earlier))
         second = await starter.enqueue(await open_book(fx_kit, book_id), later, params_of(starter, later))
         expect(second.state is JobState.QUEUED)
@@ -335,7 +335,7 @@ class TestFirstInFirstOut:
         :type fx_kit: ProcessingKit
         """
         _, book_id, page = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         before = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
         after = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
         expect(fx_kit.board.get(before.id).state is JobState.CANCELLED)
@@ -349,7 +349,7 @@ class TestFirstInFirstOut:
         :type fx_kit: ProcessingKit
         """
         _, book_id, page = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP, preview_of(page))
         tiles = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.CUT_TILES, NO_SUCH_TILES)
         expect(fx_kit.board.get(preview.id).state is JobState.QUEUED)
@@ -363,7 +363,7 @@ class TestFirstInFirstOut:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         run = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.RUN_STAGE, StageRun(stage=Stage.GEOMETRY))
         first = starter.queue_collection(await open_book(fx_kit, book_id))
         again = starter.queue_collection(await open_book(fx_kit, book_id))
@@ -378,7 +378,7 @@ class TestFirstInFirstOut:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         first = await starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
         second = await starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
         expect(first is not None and second is not None and first.id != second.id)
@@ -403,7 +403,7 @@ class TestRunTakesTheBookFromAPreview:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         preview = await fx_kit.service().start_preview(fx_open_book(actor, book_id), preview_of(page))
         async with steps_held(fx_kit):
             asked = await starter.enqueue(await open_book(fx_kit, book_id), requested, params_of(starter, requested))
@@ -422,7 +422,7 @@ class TestRunTakesTheBookFromAPreview:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         tiles = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.CUT_TILES, NO_SUCH_TILES)
         preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         run = await starter.enqueue(
@@ -443,7 +443,7 @@ class TestRunTakesTheBookFromAPreview:
         :type fx_open_book: BookOpener
         """
         actor, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         preview = await starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         changes = [event.job for event in fx_kit.events.published if isinstance(event, JobChanged)]
@@ -460,7 +460,7 @@ class TestHousekeepingRequests:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        collection = fx_kit.parts().starter.queue_collection(await open_book(fx_kit, book_id))
+        collection = fx_kit.starter.queue_collection(await open_book(fx_kit, book_id))
         expect(collection is not None and collection.kind is JobKind.COLLECT_VERSIONS)
         expect(fx_kit.board.put_jobs == [collection])
         assert_expectations()
@@ -472,7 +472,7 @@ class TestHousekeepingRequests:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         first = starter.queue_collection(await open_book(fx_kit, book_id))
         second = starter.queue_collection(await open_book(fx_kit, book_id))
         expect(first is not None and second == first)
@@ -486,7 +486,7 @@ class TestHousekeepingRequests:
         :type fx_kit: ProcessingKit
         """
         _, book_id, _ = await prepared_page(fx_kit)
-        asked = await fx_kit.parts().starter.enqueue_tiles(await open_book(fx_kit, book_id), [])
+        asked = await fx_kit.starter.enqueue_tiles(await open_book(fx_kit, book_id), [])
         expect(asked is None)
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
@@ -505,7 +505,7 @@ class TestHousekeepingRequests:
         run = await fx_kit.service().start_run(
             fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
-        tiles = await fx_kit.parts().starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
+        tiles = await fx_kit.starter.enqueue_tiles(await open_book(fx_kit, book_id), [NO_SUCH_VERSION])
         assert tiles is not None
         await fx_kit.work_queue()
         expect(tiles.state is JobState.QUEUED)
@@ -549,7 +549,7 @@ class TestConcurrentRequests:
             :param order: Place of the request, 0 for the first and 1 for the second.
             :type order: int
             """
-            starter = fx_kit.parts().starter
+            starter = fx_kit.starter
             try:
                 outcomes[order] = await starter.enqueue(book, kind, params_of(starter, kind))
             except ConflictError as error:

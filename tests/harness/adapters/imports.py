@@ -36,7 +36,9 @@ from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
+from bookreviver.services.job_starter import JobStarter, ProcessingConfig
+from bookreviver.services.recipe_order import RecipeOrder
+from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.steps import StepRunner
 from tests.harness.adapters.storage import SharedBookDirectories, upload
 from tests.harness.builders.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
@@ -563,13 +565,10 @@ class ImportRig:
         :rtype: ImportService
         """
         catalogue = catalogue or self.open_catalogue()
-        parts = ProcessingParts.build(
-            FakeCatalogue(self.processors),
-            self.defaults,
-            ProcessingConfig(
-                preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
-                preview_long_side_px=PREVIEW_LONG_SIDE_PX,
-            ),
+        processors = FakeCatalogue(self.processors)
+        config = ProcessingConfig(
+            preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
+            preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
         return ImportService(
             imaging=ImportImaging(
@@ -582,7 +581,8 @@ class ImportRig:
                 order_keys=FractionalOrderKeys(),
                 limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
             ),
-            parts=parts,
+            recipes=RecipeBook(processors=processors, defaults=self.defaults, order=RecipeOrder(processors)),
+            starter=JobStarter(config=config),
         )
 
     def stored_job(self, job: Job) -> Job:

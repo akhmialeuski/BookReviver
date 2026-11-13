@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.tracing import Tracer
-    from bookreviver.services.processing_parts import ProcessingConfig
+    from bookreviver.services.job_starter import ProcessingConfig
     from bookreviver.services.steps import StepRunner
 
 

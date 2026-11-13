@@ -73,7 +73,8 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import IncomingFile
     from bookreviver.services.base_versions import BaseVersions
-    from bookreviver.services.processing_parts import ProcessingParts
+    from bookreviver.services.job_starter import JobStarter
+    from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.steps import StepRunner
 
 IMPORT_ACTIVE: str = 'This book is already importing files. Wait for the import to finish, or cancel it.'
@@ -649,7 +650,8 @@ class ImportService:
         *,
         imaging: ImportImaging,
         runtime: ImportRuntime,
-        parts: ProcessingParts,
+        recipes: RecipeBook,
+        starter: JobStarter,
     ) -> None:
         """Build the service over the ports of one request or job.
 
@@ -657,13 +659,15 @@ class ImportService:
         :type imaging: ImportImaging
         :param runtime: The order keys and the limits.
         :type runtime: ImportRuntime
-        :param parts: The recipes and the job starter, with which the split of the new pages is queued.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the book, whose recipe of the page split says whether the new pages are split.
+        :type recipes: RecipeBook
+        :param starter: Putter of new jobs, with which the split of the new pages is queued.
+        :type starter: JobStarter
         """
         self._imaging = imaging
         self._runtime = runtime
-        self._recipes = parts.recipes
-        self._starter = parts.starter
+        self._recipes = recipes
+        self._starter = starter
         self._limits = runtime.limits
 
     async def authorize_upload(self, book: Book) -> None:

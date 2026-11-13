@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.processing_parts import JobStarter
+    from bookreviver.services.job_starter import JobStarter
     from bookreviver.services.stage_records import StageRecords
 
 logger = logging.getLogger(__name__)

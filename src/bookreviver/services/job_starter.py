@@ -1,8 +1,8 @@
-"""The collaborators every processing use case is built from, and the starting of the jobs that do the heavy work.
+"""The starting of the jobs that do the heavy work, and the bounds of processing the settings give.
 
-A use case of processing writes recipes and stage records, follows jobs and starts new ones. ``ProcessingParts`` gathers
-the objects that do these on the book a use case is given, so ``ProcessingService`` and ``ProcessingJobs`` take one
-value for them and are built the same way.
+``JobStarter`` keeps no state of its own and works on the book it is given, so the container builds it once, as it does
+the ``RecipeBook`` and the ``StageRecords`` a use case of processing works with, and each use case declares the ones it
+uses. ``ProcessingConfig`` holds the bounds of processing read from the settings.
 
 A job is what was asked for: a step or a stage, the pages it goes over, and its parameters, as the value of its kind
 (``Job.work``). It is put on the job queue of its book, which runs one job of the book at a time in the order they were
@@ -31,19 +31,14 @@ from attrs import field, frozen, validators
 from bookreviver.domain.errors import JobFinishedError, NotFoundError
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.jobs import Job, JobKind, JobState, TileCut, VersionCollection
-from bookreviver.services.recipe_order import RecipeOrder
-from bookreviver.services.recipes import RecipeBook
-from bookreviver.services.stage_records import StageRecords
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import timedelta
 
     from bookreviver.core.book import Book
-    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.jobs import JobWork
-    from bookreviver.services.recipes import DefaultRecipes
 
 
 @frozen(kw_only=True)
@@ -191,41 +186,3 @@ class JobStarter:
         :rtype: Job
         """
         return Job(id=JobId(uuid4()), kind=kind, work=work, created_at=datetime.now(UTC))
-
-
-@frozen(kw_only=True)
-class ProcessingParts:
-    """The objects a processing use case works through, built for one request or job.
-
-    :ivar recipes: The recipes of the book and the check of their steps.
-    :ivar records: Writer of the stage records.
-    :ivar starter: Putter of new jobs on the queue of a book.
-    """
-
-    recipes: RecipeBook
-    records: StageRecords
-    starter: JobStarter
-
-    @classmethod
-    def build(
-        cls,
-        processors: ProcessorCatalog,
-        defaults: DefaultRecipes,
-        config: ProcessingConfig,
-    ) -> ProcessingParts:
-        """Build the parts of one request or job.
-
-        :param processors: The processors the application can run.
-        :type processors: ProcessorCatalog
-        :param defaults: The recipes a stage starts with.
-        :type defaults: DefaultRecipes
-        :param config: The retention period and the size of a preview.
-        :type config: ProcessingConfig
-        :returns: The parts.
-        :rtype: ProcessingParts
-        """
-        return cls(
-            recipes=RecipeBook(processors=processors, defaults=defaults, order=RecipeOrder(processors)),
-            records=StageRecords(),
-            starter=JobStarter(config=config),
-        )
