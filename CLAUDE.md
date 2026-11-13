@@ -118,6 +118,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book and a
   new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
   service that does each `JobKind`, each taking the book, the job and its control.
+- A job that does the same work for many pages or scans hands it to `WorkerGroup` of `services/worker_group.py`, which
+  does a few at a time. A run of a stage processes as many pages together as the step executor has processes for full
+  runs (`processing.step_processes` less `processing.preview_step_processes`), and the page split one at a time.
 - Every new port gets a fake in `tests/harness/fakes` and a contract test suite that runs against the fake and every adapter.
   `src` holds no code that only tests select. The persistence port has no fake: its tests run on the SQLAlchemy adapter
   over SQLite files in the test's directory, the catalogue and every book copied from a template of its schema built

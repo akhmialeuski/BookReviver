@@ -37,7 +37,6 @@ from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-import anyio
 from attrs import evolve, frozen
 
 from bookreviver.domain.errors import (
@@ -60,6 +59,7 @@ from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.source_labels import SourceLabels
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
+from bookreviver.services.worker_group import WorkerGroup
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -409,23 +409,7 @@ class ImportRun:
             return repos.scans.list_unready(), kinds
 
         scans, kinds = await self.book.read(read)
-        pending = iter(scans)
-
-        async def worker() -> None:
-            """Take scans from the shared iterator until none is left, each one cut before the next is taken."""
-            for scan in pending:
-                await self._cut(kinds[scan.source_id], scan)
-
-        try:
-            async with anyio.create_task_group() as group:
-                for _ in range(min(self._limits.parallel_scans, len(scans))):
-                    group.start_soon(worker)
-        except BaseExceptionGroup as errors:
-            # The group of anyio holds the fault of every cutter, in the order the cutters finished, whether the cutter
-            # raised it before the cancellation of the group reached it or while unwinding from it. A cancellation is
-            # only the job's own state, so it must not hide a fault, which would end the job as cancelled unlogged.
-            _, faults = errors.split(JobCancelledError)
-            raise (faults or errors).exceptions[0] from errors
+        await WorkerGroup(self._limits.parallel_scans).run(scans, lambda scan: self._cut(kinds[scan.source_id], scan))
 
     async def _cut(self, kind: SourceKind, scan: Scan) -> None:
         """Write the four renditions of a scan and the base version of its pages, then mark the scan ready.

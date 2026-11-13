@@ -57,6 +57,8 @@ FAKE_KEY: str = FakeProcessor.spec.key
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 # What another request sets while a job runs: a strength, the identifier of a version, and a comment
 STRENGTH_BY_HAND: int = 7
+# Pages a run of the test processes at the same time, fewer than the pages of its book
+PAGES_RUN_TOGETHER: int = 3
 OTHER_INPUT_ID: str = '00112233445566ff'
 # A version a job of another kind names, which a run is not asked for
 NOT_A_RUN: PageVersionId = PageVersionId('0123456789abcdef')
@@ -81,6 +83,41 @@ async def prepared_page(kit: ProcessingKit, **book_options: ImagePolicy) -> tupl
     page, _ = await kit.seed_scan_page(book_id)
     await kit.seed_base_version(book_id, page)
     return actor, book_id, page
+
+
+class TestRunPagesTogether:
+    """Tests for a ``run-stage`` job that processes several pages at the same time."""
+
+    async def test_pages_run_together_come_out_as_pages_run_one_by_one(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify a run that processes several pages at the same time makes every page current and counts each once.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_kit.seed_book()
+        pages = []
+        for number in range(PAGES_RUN_TOGETHER + 1):
+            page, _ = await fx_kit.seed_scan_page(book_id, order_key=f'a{number}')
+            await fx_kit.seed_base_version(book_id, page)
+            pages.append(page)
+        fx_kit.parallel_pages = PAGES_RUN_TOGETHER
+        job = await fx_kit.service().start_run(
+            fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
+        records = [await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_kit.databases) for page in pages]
+        expect(
+            (stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, len(pages), len(pages))
+        )
+        expect([record.state for record in records] == [StageState.FRESH] * len(pages))
+        expect(all(record.head_version_id is not None for record in records))
+        expect(fx_kit.fake.runs == len(pages))
+        assert_expectations()
 
 
 class TestRunStage:
