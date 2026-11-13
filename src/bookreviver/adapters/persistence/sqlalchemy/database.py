@@ -113,6 +113,9 @@ if TYPE_CHECKING:
     from bookreviver.ports.tracing import StartedSpan, Tracer
 
 SQLITE_DIALECT: str = 'sqlite'
+# The events of a connection round each statement it hands to the driver
+BEFORE_STATEMENT: str = 'before_cursor_execute'
+AFTER_STATEMENT: str = 'after_cursor_execute'
 # The driver name of the synchronous engines, the standard library's sqlite3 module
 SQLITE_DRIVER: str = 'sqlite'
 # The name SQLite gives the error of a statement that waited the busy timeout and then gave up
@@ -186,6 +189,9 @@ class WriteBlock:
                         measured in the writer thread, or None while the block has not begun.
     :ivar commit_seconds: Seconds the commit took, measured in the writer thread, or None for a block that did not
                           commit.
+    :ivar statements: Number of SQL statements the work ran, the flush of its commit included.
+    :ivar sql_seconds: Seconds those statements spent in SQLite, measured in the writer thread.
+    :ivar statement_began_at: Reading of the performance counter when the statement that is running began.
     """
 
     span: StartedSpan
@@ -194,10 +200,41 @@ class WriteBlock:
     waited_seconds: float | None = None
     hold_seconds: float | None = None
     commit_seconds: float | None = None
+    statements: int = 0
+    sql_seconds: float = 0.0
+    statement_began_at: float = 0.0
 
     def had_the_writer(self) -> None:
         """Record that the queue has given the writer to the block."""
         self.waited_seconds = perf_counter() - self.asked_at
+
+    def count_statements_of(self, connection: Connection) -> None:
+        """Count the statements the connection of the block runs and the time they spend in SQLite.
+
+        The listeners live on the connection of this transaction alone, which is given back when the block ends.
+
+        :param connection: The connection the session of the block holds.
+        :type connection: Connection
+        """
+        event.listen(connection, BEFORE_STATEMENT, self._statement_begins)
+        event.listen(connection, AFTER_STATEMENT, self._statement_ended)
+
+    def _statement_begins(self, *_statement: object) -> None:
+        """Note when a statement of the block is handed to SQLite.
+
+        :param _statement: What SQLAlchemy tells of the statement, which the count does not read.
+        :type _statement: object
+        """
+        self.statement_began_at = perf_counter()
+
+    def _statement_ended(self, *_statement: object) -> None:
+        """Count a statement of the block that SQLite has answered.
+
+        :param _statement: What SQLAlchemy tells of the statement, which the count does not read.
+        :type _statement: object
+        """
+        self.statements += 1
+        self.sql_seconds += perf_counter() - self.statement_began_at
 
     def end(self) -> None:
         """Put the measurements on the span and end it, once the block has ended in whichever way.
@@ -209,6 +246,8 @@ class WriteBlock:
         self.span.set_attribute(SpanAttribute.BLOCK_OUTCOME, self.outcome)
         if self.hold_seconds is not None:
             self.span.set_attribute(SpanAttribute.HOLD_MS, self.hold_seconds * MILLISECONDS_PER_SECOND)
+            self.span.set_attribute(SpanAttribute.SQL_COUNT, self.statements)
+            self.span.set_attribute(SpanAttribute.SQL_MS, self.sql_seconds * MILLISECONDS_PER_SECOND)
         if self.commit_seconds is not None:
             self.span.set_attribute(SpanAttribute.COMMIT_MS, self.commit_seconds * MILLISECONDS_PER_SECOND)
         self.span.end()
@@ -456,7 +495,7 @@ class SqlDatabase:
         with self._write_sessions() as session:
             try:
                 # The first use of the session begins its transaction, and with it takes the write lock
-                session.connection()
+                block.count_statements_of(session.connection())
             except OperationalError as error:
                 if isinstance(error.orig, SqliteOperationalError) and error.orig.sqlite_errorname == SQLITE_BUSY:
                     raise BookBusyError from error
