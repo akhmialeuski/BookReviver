@@ -127,7 +127,7 @@ class StepRetyping:
         before = self.type_key
         if processor_key == before:
             return ()
-        book = [page.id for page in self.repos.pages.list_all()]
+        book = self.repos.pages.order().page_ids
         leaving = self._pages_keeping_the_step(book)
         change = self._write(processor_key, order)
         taking = self._pages_keeping_the_step(book)
