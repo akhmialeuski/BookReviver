@@ -10,6 +10,7 @@ from bookreviver.domain.ids import StepId
 from bookreviver.domain.labels import LabeledStrEnum
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
 
     from bookreviver.domain.ids import RecipeId, RecipeProfileId
@@ -146,6 +147,22 @@ class ProfileDraft(RecipeDraft):
     """
 
     name: str = field(validator=validators.min_len(1))
+
+
+@frozen(kw_only=True)
+class StepTypeChange:
+    """The replacement of the type of a step, which every recipe of its stage that holds the step takes.
+
+    :ivar step_id: The step, which keeps its identifier and its place in each recipe.
+    :ivar processor_key: Key of the processor that becomes the type of the step.
+    :ivar params: The parameters the step runs with under the new type in each recipe that holds it, by recipe.
+    :ivar moment: When the type is replaced, which the recipes take as the time they last changed.
+    """
+
+    step_id: StepId
+    processor_key: str = field(validator=validators.min_len(1))
+    params: Mapping[RecipeId, MetadataMap]
+    moment: datetime
 
 
 @frozen

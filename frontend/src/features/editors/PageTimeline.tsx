@@ -147,6 +147,10 @@ export function PageTimeline({
     (name: string) => (schema === undefined ? name : fieldTitleOf(schema, name)),
     [schema],
   );
+  const typeOf = useCallback(
+    (key: string) => catalogue.find((entry) => entry.key === key)?.title ?? key,
+    [catalogue],
+  );
   // An undo of the newest change is never dropped while an earlier one settles: the requests of the book go to the server
   // one at a time in the order they were made, and each takes back the newest change that stands by then
   const takeBack = (changeId: string | null): void => {
@@ -262,6 +266,7 @@ export function PageTimeline({
                   key={`change:${row.id}`}
                   change={row.change}
                   titleOf={titleOf}
+                  typeOf={typeOf}
                   disabled={undo.isPending}
                   onUndo={() => undoTo(row.id)}
                 />

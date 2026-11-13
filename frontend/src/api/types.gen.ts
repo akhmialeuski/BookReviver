@@ -3488,9 +3488,12 @@ export type StepFlag = 'unsure' | 'unusual' | 'by-hand' | 'skipped';
 /**
  * StepLayer
  *
- * One of the three layers a page keeps for a step, which a change of the history names.
+ * What a change of the history of a page changed: one of the three layers a page keeps for a step, or its type.
+ *
+ * The type is no layer of the page: it is the processor the step runs, which the recipe holds, and a change of it
+ * reaches every page that keeps a layer of the step, since what each page keeps belongs to the type it was made for.
  */
-export type StepLayer = 'settings' | 'found' | 'hand';
+export type StepLayer = 'settings' | 'found' | 'hand' | 'type';
 
 /**
  * StepPageSchema

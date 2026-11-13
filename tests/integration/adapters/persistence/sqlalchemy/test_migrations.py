@@ -45,15 +45,18 @@ from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
 from bookreviver.domain.history import ChangeSource, PageHistoryEntry
 from bookreviver.domain.ids import BookId, ChangeBatchId, PageHistoryEntryId, PageId
+from bookreviver.domain.page_steps import StepLayer
 from bookreviver.domain.spans import BlockKind
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.harness.builders.domain import (
+    DESKEW,
     EPOCH,
     directory_of,
     make_book_place,
     make_page,
     make_page_history_entry,
+    make_page_step_state,
     make_recipe,
     make_step_values,
     new_account_id,
@@ -1174,8 +1177,96 @@ class TestStepsRevision:
         expect(indexes == {'geometry': 1, 'cleanup': 0, 'layout': None})
         expect(
             [record.getMessage() for record in caplog.records]
-            == ['1 steps no recipe holds were dropped with the types and origins of every step; rows still name them.']
+            == [
+                TYPES_DROPPED.format(rows=0, changes=0),
+                '1 steps no recipe holds were dropped with the types and origins of every step; rows still name them.',
+            ]
         )
+        assert_expectations()
+
+
+# The revision before the one that keeps what the pages hold for a step under its type
+BEFORE_TYPES: str = 'edca77c509a2'
+# The type the deskew step of that test is given in place of its own
+CROP_KEY: str = 'geometry.crop'
+# What the downgrade of that revision logs
+TYPES_DROPPED: str = (
+    '{rows} rows the pages kept for earlier types of their steps and {changes} changes of those types or of the types '
+    'of the steps were dropped.'
+)
+
+
+async def _typed_book(database: SqlDatabase) -> PageId:
+    """Store a book at the head revision whose deskew step was given the crop type, with rows of both types.
+
+    The page keeps a setting, the even pages a value and the history a change of the deskew type, and then, under the
+    crop type, the page keeps a setting of its own and the history the change of the type.
+
+    :param database: Database of a book with no table.
+    :type database: SqlDatabase
+    :returns: The page of the book.
+    :rtype: PageId
+    """
+    await _migrate(database, database.migrations.upgrade, HEAD)
+    await _commit_book(database)
+    with _session(database) as session, session.begin():
+        page = PageId(UUID(bytes=session.scalars(text('SELECT id FROM pages')).one()))
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
+        repos.page_step_states.save(make_page_step_state(page_id=page, params={'max_angle_deg': 2}))
+        repos.step_values.save(make_step_values())
+        repos.page_history.add(make_page_history_entry(page_id=page, after={'max_angle_deg': 2}))
+    with _session(database) as session, session.begin():
+        session.execute(text('UPDATE steps SET type_key = :key'), {'key': CROP_KEY})
+    with _session(database) as session, session.begin():
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
+        repos.page_step_states.save(make_page_step_state(page_id=page, params={'margin': 4}))
+        change = make_page_history_entry(page_id=page)
+        repos.page_history.add(
+            evolve(
+                change, layer=StepLayer.TYPE, before={'processor_key': DESKEW.key}, after={'processor_key': CROP_KEY}
+            )
+        )
+    return page
+
+
+class TestTypesRevision:
+    """Tests for the revision that keeps what the pages hold for a step under its type."""
+
+    async def test_the_downgrade_keeps_the_active_type_and_the_upgrade_types_every_row(
+        self, fx_empty_book: SqlDatabase, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify the rows of the earlier type and the change of the type go down, and the rest comes back typed.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        :param caplog: The records the revision logs.
+        :type caplog: pytest.LogCaptureFixture
+        """
+        page = await _typed_book(fx_empty_book)
+        with _session(fx_empty_book) as session:
+            typed = sorted(tuple(row) for row in session.execute(text('SELECT type_key, params FROM page_step_states')))
+            shown = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys()).page_history.list_for_page(
+                page
+            )
+        caplog.set_level(logging.WARNING)
+        caplog.clear()
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_TYPES)
+        with _session(fx_empty_book) as session:
+            kept: list[str] = list(session.execute(text('SELECT params FROM page_step_states')).scalars())
+            values = session.scalar(text('SELECT count(*) FROM step_values'))
+            changes = session.scalar(text('SELECT count(*) FROM step_changes'))
+            links = session.scalar(text('SELECT count(*) FROM page_history'))
+        downgrade_log = [record.getMessage() for record in caplog.records]
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            upgraded = [tuple(row) for row in session.execute(text('SELECT type_key, params FROM page_step_states'))]
+
+        expect(typed == [(CROP_KEY, '{"margin": 4}'), (DESKEW.key, '{"max_angle_deg": 2}')])
+        expect([entry.layer for entry in shown] == [StepLayer.TYPE])
+        expect(kept == ['{"margin": 4}'])
+        expect((values, changes, links) == (0, 0, 0))
+        expect(downgrade_log == [TYPES_DROPPED.format(rows=2, changes=2)])
+        expect(upgraded == [(CROP_KEY, '{"margin": 4}')])
         assert_expectations()
 
 
