@@ -1305,6 +1305,15 @@ export const MESSAGES = {
       switchLabel: (title: string) => `Run the ${title} step`,
       remove: (title: string) => `Remove the ${title} step`,
       move: (title: string) => `Move the ${title} step`,
+      type: {
+        open: (title: string) => `Change the type of the ${title} step`,
+        title: 'Change type',
+        hint: 'The step keeps its place. The settings and hand edits of the earlier type are kept and come back with it.',
+        current: 'Current',
+        saveFirst:
+          'The steps have changes that are not saved. Save or discard them, then change a type.',
+        failed: 'The type could not be changed.',
+      },
       showSettings: (title: string) => `Show the settings of the ${title} step`,
       hideSettings: (title: string) => `Hide the settings of the ${title} step`,
       noSettings: 'This step has no settings.',

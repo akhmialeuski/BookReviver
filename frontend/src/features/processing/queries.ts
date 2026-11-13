@@ -34,6 +34,7 @@ import {
   putMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutMutation,
   putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutMutation,
   putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutMutation,
+  replaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutMutation,
   resetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostMutation,
   runImpactApiV1BooksBookIdStagesStageRunImpactPostMutation,
   runStageApiV1BooksBookIdStagesStageRunPostMutation,
@@ -157,6 +158,18 @@ export function useSaveRecipe(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutMutation(),
+    onSettled: () => invalidateAllRecipes(queryClient, bookId),
+  });
+}
+
+/**
+ * Give a step of a recipe another type, in every recipe of the stage that holds it, which marks the pages that run the
+ * step out of date. The settings and edits the pages kept for the earlier type stay with it and come back with it.
+ */
+export function useReplaceStepType(bookId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...replaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutMutation(),
     onSettled: () => invalidateAllRecipes(queryClient, bookId),
   });
 }
