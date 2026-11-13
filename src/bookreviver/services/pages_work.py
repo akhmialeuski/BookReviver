@@ -1,12 +1,14 @@
-"""The pages of a book inside one transaction of a page use case: their overviews, their places and their leaves.
+"""The pages of a book inside one transaction of a page use case: their overviews, and their places.
 
 ``PagesWork`` is opened by ``PageService`` in the work it hands to ``Book.read`` or ``Book.change``. It holds the
 repositories of that transaction and what the service was built with, so nothing below it is handed the repositories
-from call to call. It owns three objects, each reaching the transaction through it:
+from call to call. It owns two objects, each reaching the transaction through it:
 
 - ``PageOverviews`` reads pages as the interface shows them, with their position, image, label and section;
-- ``PagePlaces`` gives pages the order keys of a place of the book, for a page that is added or moved;
-- ``Leaves`` of ``services/leaves.py`` stands a blank leaf in place of the scan of a page.
+- ``PagePlaces`` gives pages the order keys of a place of the book, for a page that is added or moved.
+
+``Leaves`` of ``services/leaves.py`` stands a blank leaf in place of the scan of a page. It belongs to a ``PagesWork``
+and so lies above this module, which never imports it.
 
 The position of a page is not stored: it is computed when a page is read, from the order keys of the book. Moving a
 page writes a new order key to the moved pages alone: the key lies between the key of the page next to the place and
@@ -25,7 +27,6 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.pages import Page, PageOverview
 from bookreviver.domain.pagination import Numbering
 from bookreviver.domain.sides import Side
-from bookreviver.services.leaves import PAGE_OF_BATCH, Leaves
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from bookreviver.services.steps import StepRunner
 
 ANCHOR_NOT_IN_BOOK: str = 'the page it is put next to is not a page of the book.'
+PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
 
 
 @frozen(kw_only=True)
@@ -70,7 +72,6 @@ class PagesWork:
     :ivar repos: Repositories of the transaction.
     :ivar overviews: Reader of the pages as the interface shows them.
     :ivar places: Giver of the order keys of a place of the book.
-    :ivar leaves: What stands a blank leaf in place of the scan of a page.
     """
 
     def __init__(self, parts: PageParts, repos: BookRepositories) -> None:
@@ -85,7 +86,6 @@ class PagesWork:
         self.repos = repos
         self.overviews = PageOverviews(self)
         self.places = PagePlaces(self)
-        self.leaves = Leaves(self)
 
     def settle(self, *, leaving: Sequence[PageId] = ()) -> None:
         """Settle the pagination sections after pages were added, deleted, moved or changed.

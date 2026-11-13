@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.stage_records import StageRecords
-    from bookreviver.services.stage_runs import StageRuntime
+    from bookreviver.services.stage_work import StageRuntime
 
 logger = logging.getLogger(__name__)
 

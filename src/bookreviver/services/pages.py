@@ -4,9 +4,9 @@ A page is addressed by its ``PageId`` and never by its number, because its posit
 
 ``PageService`` holds the use cases, and each is the head of a chain of classes. A use case that reads or writes opens
 ``PagesWork`` of ``services/pages_work.py`` in the work it hands to ``Book.read`` or ``Book.change``: the pages of that
-transaction, with their overviews, their places in the order of the book and their leaves. The ``prepare-pages`` job is
-``PageImages`` of ``services/page_images.py``, which writes the images no request writes, and the jobs of the pages
-are queued by ``PageJobs`` of the same module.
+transaction, with their overviews and their places in the order of the book. ``Leaves`` of ``services/leaves.py`` stands
+the blank leaves of those pages. The ``prepare-pages`` job is ``PageImages`` of ``services/page_images.py``, which
+writes the images no request writes, and the jobs of the pages are queued by ``PageJobs`` of the same module.
 
 Every change of a book is the work of one ``Book.change``, which waits for any other change of that book, and it is
 announced once it committed. The labels the pagination sections give the pages are computed when the pages are read,
@@ -34,6 +34,7 @@ from bookreviver.domain.pages import BlankFill, NewPageOrigin, Page, PageKind, P
 from bookreviver.domain.slices import Slice
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.versions import VersionState
+from bookreviver.services.leaves import Leaves
 from bookreviver.services.page_images import SCAN_NOT_CUT, PageImages, PageJobs
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.pages_work import PageParts, PagesWork
@@ -289,12 +290,13 @@ class PageService:
             :raises ConflictError: If a blank leaf has no size given and no page of the book has one to take.
             """
             pages = self._pages(repos)
-            size = (new_page.size or pages.leaves.size()) if blank else None
+            leaves = self._leaves(pages)
+            size = (new_page.size or leaves.size()) if blank else None
             page = pages.places.new(new_page, datetime.now(UTC))
             with pages.watching_sides():
                 repos.pages.add(page)
             if size is not None:
-                repos.page_versions.add(pages.leaves.added(page, size, book_record))
+                repos.page_versions.add(leaves.added(page, size, book_record))
             pages.settle()
             return pages.overviews.one(page)
 
@@ -342,17 +344,18 @@ class PageService:
             if not new_pages:
                 return []
             pages = self._pages(repos)
-            median = pages.leaves.size_for(new_pages)
+            leaves = self._leaves(pages)
+            median = leaves.size_for(new_pages)
             batch = pages.places.batch(new_pages, datetime.now(UTC))
             with pages.watching_sides():
                 repos.pages.add_many(batch)
 
-            leaves = []
+            added = []
             for page, new_page in zip(batch, new_pages, strict=True):
                 # The median was read above for every blank leaf without a size, so a leaf always has one
                 if new_page.origin is NewPageOrigin.BLANK and (size := new_page.size or median) is not None:
-                    leaves.append(pages.leaves.added(page, size, book_record))
-            repos.page_versions.add_many(leaves)
+                    added.append(leaves.added(page, size, book_record))
+            repos.page_versions.add_many(added)
 
             pages.settle()
             return list(pages.overviews.placed(batch))
@@ -413,7 +416,7 @@ class PageService:
             moment = datetime.now(UTC)
             changed = [evolve(page, blank_fill=fill, updated_at=moment) for page in changing]
             repos.pages.update_many(changed)
-            return self._pages(repos).leaves.stand(changed, book_record)
+            return self._leaves(self._pages(repos)).stand(changed, book_record)
 
         # The job is queued in a ``change`` of its own, so after the transaction that wrote the leaves
         if await book.change(work):
@@ -457,7 +460,7 @@ class PageService:
             :raises ConflictError: If no page of the book has a recorded size to give a leaf.
             """
             pages = [page for page in repos.pages.list_by_ids(page_ids) if page.blank_fill is not BlankFill.SCAN]
-            self._pages(repos).leaves.stand(pages, book_record)
+            self._leaves(self._pages(repos)).stand(pages, book_record)
 
         for book in await self._books.listed():
             page_ids = await book.read(read_pages)
@@ -714,3 +717,14 @@ class PageService:
         :rtype: PagesWork
         """
         return PagesWork(self._parts, repos)
+
+    @staticmethod
+    def _leaves(pages: PagesWork) -> Leaves:
+        """Give the blank leaves of the pages of one transaction.
+
+        :param pages: The pages of the transaction.
+        :type pages: PagesWork
+        :returns: What stands a blank leaf in place of the scan of a page, writing through the transaction of the pages.
+        :rtype: Leaves
+        """
+        return Leaves(pages)

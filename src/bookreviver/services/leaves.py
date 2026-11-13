@@ -22,6 +22,7 @@ from bookreviver.domain.pages import BlankFill, NewPageOrigin, PageKind, RecipeK
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.versions import PageSize, VersionState
+from bookreviver.services.pages_work import PAGE_OF_BATCH
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,7 +37,6 @@ NO_BOOK_IMAGE: str = (
     'No page of the book that is cut from a scan and part of the book has a recorded size, so a blank leaf has no size '
     'to take. Give the size of the leaf.'
 )
-PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
 
 
 class Leaves:
