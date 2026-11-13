@@ -161,6 +161,34 @@ class PageOverviews:
         :returns: The overviews of the pages, in the same order.
         :rtype: Sequence[PageOverview]
         """
+        return self._shown(pages, range(first_position, first_position + len(pages)), numbered=numbered)
+
+    def placed(self, pages: Sequence[Page]) -> Sequence[PageOverview]:
+        """Attach positions, base versions, labels and sections to pages that may stand anywhere in a book.
+
+        The order of the book is read once for the positions of all the pages, and the rest is read once for all of
+        them, as ``of`` reads it, so the pages a batch put in many places cost no read for each place.
+
+        :param pages: Stored pages of one book, in any order.
+        :type pages: Sequence[Page]
+        :returns: The overviews of the pages, in the same order.
+        :rtype: Sequence[PageOverview]
+        """
+        positions = self.work.repos.pages.order().positions()
+        return self._shown(pages, [positions[page.id] for page in pages], numbered=True)
+
+    def _shown(self, pages: Sequence[Page], positions: Sequence[int], *, numbered: bool) -> Sequence[PageOverview]:
+        """Attach the given positions, and the base versions, labels and sections read for all the pages at once.
+
+        :param pages: Pages of one book.
+        :type pages: Sequence[Page]
+        :param positions: Position of each page in the book, in the order of the pages.
+        :type positions: Sequence[int]
+        :param numbered: Whether to give every page its label and its section.
+        :type numbered: bool
+        :returns: The overviews of the pages, in the same order.
+        :rtype: Sequence[PageOverview]
+        """
         repos = self.work.repos
         numbering = self.work.numbering(pages) if numbered and pages else Numbering(labels={}, section_ids={})
         versions = repos.page_versions.list_base_versions([page.id for page in pages])
@@ -172,13 +200,13 @@ class PageOverviews:
         return [
             PageOverview(
                 page=page,
-                position=first_position + index,
+                position=position,
                 image_version=current.get(page.id, newest.get(page.id)),
                 source_id=sources.get(page.scan_id) if page.scan_id is not None else None,
                 section_id=numbering.section_ids.get(page.id),
                 label=numbering.labels.get(page.id, ''),
             )
-            for index, page in enumerate(pages)
+            for page, position in zip(pages, positions, strict=True)
         ]
 
     def one(self, page: Page) -> PageOverview:
@@ -214,18 +242,6 @@ class PageOverviews:
             if head is not None and head.renditions is not None and head.renditions.ready:
                 shown[record.page_id] = head
         return shown
-
-
-@frozen(kw_only=True)
-class PlacedBatch:
-    """The pages of a batch that were given their places.
-
-    :ivar pages: The new pages, in the order they were listed.
-    :ivar runs: The pages of each place, in the order they stand in, every run without a gap.
-    """
-
-    pages: Sequence[Page]
-    runs: Sequence[Sequence[Page]]
 
 
 class PagePlaces:
@@ -286,18 +302,19 @@ class PagePlaces:
         [key] = self.keys_at(new_page.anchor, count=1)
         return self._page(new_page, key, moment)
 
-    def batch(self, new_pages: Sequence[NewPage], moment: datetime) -> PlacedBatch:
+    def batch(self, new_pages: Sequence[NewPage], moment: datetime) -> list[Page]:
         """Build the pages of a batch with their order keys, one call of the key builder for each place.
 
         A page with an anchor goes to that place, and a page without one goes after the page before it in the list, or
-        at the end of the book when it is the first, so it joins that page's place.
+        at the end of the book when it is the first, so it joins that page's place. The order of the book is read once
+        for every place, before any page of the batch is stored, so each place lies between the pages the book had.
 
         :param new_pages: The pages of the batch.
         :type new_pages: Sequence[NewPage]
         :param moment: When the pages are added.
         :type moment: datetime
-        :returns: The new pages in the order listed, and by the place they stand in.
-        :rtype: PlacedBatch
+        :returns: The new pages, in the order listed.
+        :rtype: list[Page]
         :raises ConflictError: If the anchor of a place is not a page of the book, naming the first page of the place.
         """
         places: dict[PageAnchor | None, list[int]] = {}
@@ -306,17 +323,15 @@ class PagePlaces:
             place = new_page.anchor or place
             places.setdefault(place, []).append(index)
 
+        gaps = self.work.repos.pages.order().gaps(places)
         pages: dict[int, Page] = {}
         for anchor, indexes in places.items():
-            try:
-                keys = self.keys_at(anchor, count=len(indexes))
-            except NotFoundError as error:
-                raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK)) from error
+            if anchor not in gaps:
+                raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK))
+            lower, upper = gaps[anchor]
+            keys = self.work.parts.order_keys.spread(lower=lower, upper=upper, count=len(indexes))
             pages.update((i, self._page(new_pages[i], key, moment)) for i, key in zip(indexes, keys, strict=True))
-        return PlacedBatch(
-            pages=[pages[index] for index in range(len(new_pages))],
-            runs=[[pages[index] for index in indexes] for indexes in places.values()],
-        )
+        return [pages[index] for index in range(len(new_pages))]
 
     def moved(self, pages: Sequence[Page], anchor: PageAnchor) -> list[Page]:
         """Give pages new order keys that put them in a run next to the anchor page, in the order given.

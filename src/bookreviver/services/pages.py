@@ -308,9 +308,11 @@ class PageService:
 
         A page with an anchor goes to that place, and a page without one goes after the page before it in the list, or
         at the end of the book when it is the first. The pages that stand in one place are given their keys by one
-        call of the key builder, in the order listed, so the book is read once for each place and never for each page.
-        Two places that lie in the same gap between neighbours are not told apart, and the second is refused by the
-        unique key of the order. The median size of the book is read once, for all the blank leaves without a size.
+        call of the key builder, in the order listed. The order of the book is read once for all the places before the
+        pages are stored, and once for the positions of all the new pages after, so the book is never read for each
+        place or each page. Two places that lie in the same gap between neighbours are not told apart, and the second
+        is refused by the unique key of the order. The median size of the book is read once, for all the blank leaves
+        without a size.
 
         :param book: The open book.
         :type book: Book
@@ -343,20 +345,17 @@ class PageService:
             median = pages.leaves.size_for(new_pages)
             batch = pages.places.batch(new_pages, datetime.now(UTC))
             with pages.watching_sides():
-                repos.pages.add_many(batch.pages)
+                repos.pages.add_many(batch)
 
             leaves = []
-            for page, new_page in zip(batch.pages, new_pages, strict=True):
+            for page, new_page in zip(batch, new_pages, strict=True):
                 # The median was read above for every blank leaf without a size, so a leaf always has one
                 if new_page.origin is NewPageOrigin.BLANK and (size := new_page.size or median) is not None:
                     leaves.append(pages.leaves.added(page, size, book_record))
             repos.page_versions.add_many(leaves)
 
             pages.settle()
-            overviews: dict[PageId, PageOverview] = {}
-            for run in batch.runs:
-                overviews.update((o.page.id, o) for o in pages.overviews.of(run, repos.pages.count_before(run[0])))
-            return [overviews[page.id] for page in batch.pages]
+            return list(pages.overviews.placed(batch))
 
         overviews = await book.change(work)
         if any(new_page.origin is NewPageOrigin.BLANK for new_page in new_pages):

@@ -19,12 +19,12 @@ from attrs import evolve
 from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import contains_eager
 
+from bookreviver.adapters.persistence.sqlalchemy.book_place import SqlAlchemyBookPlaceRepository
 from bookreviver.adapters.persistence.sqlalchemy.book_record import SqlAlchemyBookRecordRepository
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_mappers import LibraryEntryMapper
 from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
-    BookPlaceMapper,
     GroupValuesMapper,
     PageHistoryMapper,
     PageMapper,
@@ -39,7 +39,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
 )
 from bookreviver.adapters.persistence.sqlalchemy.profile_mappers import RecipeProfileMapper
 from bookreviver.adapters.persistence.sqlalchemy.rows import (
-    BookPlaceRows,
     GroupValuesRows,
     LibraryRows,
     PageHistoryRows,
@@ -56,7 +55,6 @@ from bookreviver.adapters.persistence.sqlalchemy.rows import (
     StepValuesRows,
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
-    BOOK_PLACE_ID,
     EMPTY_TEXT,
     GroupValuesRow,
     PageHistoryRow,
@@ -86,7 +84,7 @@ from bookreviver.domain.ids import (
 )
 from bookreviver.domain.library import LibraryEntry
 from bookreviver.domain.page_steps import PageStepKey, PageStepState
-from bookreviver.domain.pages import ContentType, Page, PageOrigin, RecipeKind
+from bookreviver.domain.pages import BookOrder, ContentType, Page, PageOrigin, RecipeKind
 from bookreviver.domain.pagination import PaginationSection
 from bookreviver.domain.recipes import Recipe, RecipeProfile
 from bookreviver.domain.sides import Side
@@ -98,7 +96,6 @@ from bookreviver.domain.step_values import StepValues, ValueScope
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.domain.versions import PageSize, PageVersion, ResultMark, VersionScale, VersionState
 from bookreviver.ports.persistence import (
-    BookPlaceRepository,
     BookRepositories,
     CatalogueRepositories,
     KeyedRepository,
@@ -135,7 +132,6 @@ if TYPE_CHECKING:
         ChangeBatchId,
         PageHistoryEntryId,
     )
-    from bookreviver.domain.places import BookPlace
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.step_values import StepValuesKey
     from bookreviver.domain.versions import ProcessorRef
@@ -580,6 +576,16 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         :rtype: int
         """
         return self._rows.count(PageRow.order_key < page.order_key)
+
+    @override
+    def order(self) -> BookOrder:
+        """Return the order key of every page in the byte order of the keys, read from the unique index of the key.
+
+        :returns: The order of the pages of the book.
+        :rtype: BookOrder
+        """
+        statement = select(PageRow.id, PageRow.order_key).order_by(PageRow.order_key)
+        return BookOrder(keys={PageId(page_id): key for page_id, key in self._rows.session.execute(statement)})
 
     @override
     def last_order_key(self) -> str | None:
@@ -1473,44 +1479,6 @@ class SqlAlchemyPageHistoryRepository(PageHistoryRepository):
         removed = cast('CursorResult[Any]', session.execute(statement)).rowcount
         self._changes.delete_unlinked(reached)
         return removed
-
-
-class SqlAlchemyBookPlaceRepository(BookPlaceRepository):
-    """The one place the reader left the book at, the one row of ``book_places``.
-
-    :ivar _places: The rows of the table, with the upsert the place is written by.
-    :ivar _mapper: Mapper between the place and its row.
-    """
-
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``book_places`` table.
-
-        :param session: Session of the transaction.
-        :type session: Session
-        """
-        self._places = BookPlaceRows(session=session)
-        self._mapper = BookPlaceMapper()
-
-    @override
-    def save(self, place: BookPlace) -> BookPlace:
-        """Store the place whole, replacing the stored one unless that one was written later.
-
-        :param place: Place to store.
-        :type place: BookPlace
-        :returns: The place as stored, which is the stored place when it was written later than ``place``.
-        :rtype: BookPlace
-        """
-        return self._mapper.to_entity(self._places.replace_unless_newer(self._mapper.to_row(place)))
-
-    @override
-    def find(self) -> BookPlace | None:
-        """Return the place of the book.
-
-        :returns: The place, or None when the book has not been worked on yet.
-        :rtype: BookPlace | None
-        """
-        row = self._places.get_one_or_none(id=BOOK_PLACE_ID)
-        return None if row is None else self._mapper.to_entity(row)
 
 
 class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRow], RecipeRepository):

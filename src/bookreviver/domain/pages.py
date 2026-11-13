@@ -5,13 +5,14 @@ from typing import TYPE_CHECKING, ClassVar, Final
 from attrs import field, frozen, validators
 
 from bookreviver.domain.labels import LabeledStrEnum
+from bookreviver.domain.sides import Side
 from bookreviver.domain.step_settings import PaperFill
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
     from datetime import datetime
 
     from bookreviver.domain.ids import PageId, PaginationSectionId, ScanId, SourceId
-    from bookreviver.domain.sides import Side
     from bookreviver.domain.versions import PageSize, PageVersion
 
 
@@ -329,3 +330,57 @@ class PageOverview:
     source_id: SourceId | None = None
     section_id: PaginationSectionId | None = None
     label: str = ''
+
+
+# The bounds of a gap between two pages of a book: the key before it and the key after it, None at either end
+type KeyGap = tuple[str | None, str | None]
+
+
+@frozen(kw_only=True)
+class BookOrder:
+    """The order of the pages of a book, read in one pass: the order key of every page, in book order.
+
+    It answers what the use cases that add many pages at once would otherwise ask the book once for each place or each
+    page: where a page stands, and which keys bound a place.
+
+    :ivar keys: The order key of every page by identifier, in book order, the placeholders and the pages kept out of the
+                book included.
+    """
+
+    keys: Mapping[PageId, str]
+
+    @property
+    def page_ids(self) -> list[PageId]:
+        """The identifiers of the pages, in book order."""
+        return list(self.keys)
+
+    def positions(self) -> dict[PageId, int]:
+        """Give every page its position in the book.
+
+        :returns: The position of every page from zero, counted over every page, by identifier.
+        :rtype: dict[PageId, int]
+        """
+        return {page_id: position for position, page_id in enumerate(self.keys)}
+
+    def gaps(self, anchors: Iterable[PageAnchor | None]) -> dict[PageAnchor | None, KeyGap]:
+        """Find the keys that bound each place, between which the pages put there take their keys.
+
+        A place next to a page lies between that page and its neighbour on that side, and the place None lies after the
+        last page of the book.
+
+        :param anchors: The places, each a page and the side of it, or None for the end of the book.
+        :type anchors: Iterable[PageAnchor | None]
+        :returns: The key before and the key after each place, by place. An anchor that is not a page of the book is
+                  left out.
+        :rtype: dict[PageAnchor | None, KeyGap]
+        """
+        keys = list(self.keys.values())
+        positions = self.positions()
+        gaps: dict[PageAnchor | None, KeyGap] = {}
+        for anchor in anchors:
+            if anchor is None:
+                gaps[anchor] = (keys[-1] if keys else None, None)
+            elif (position := positions.get(anchor.page_id)) is not None:
+                lower = position if anchor.side is Side.AFTER else position - 1
+                gaps[anchor] = (keys[lower] if lower >= 0 else None, keys[lower + 1] if lower + 1 < len(keys) else None)
+        return gaps

@@ -311,4 +311,4 @@ class SideWatch:
         :returns: The identifiers of the pages, by place.
         :rtype: list[PageId]
         """
-        return [page.id for page in self._repos.pages.list_all()]
+        return self._repos.pages.order().page_ids
