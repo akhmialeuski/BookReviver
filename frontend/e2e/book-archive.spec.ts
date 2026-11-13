@@ -71,11 +71,18 @@ test('a downloaded book is imported by another account and opens where it was le
       (response) =>
         response.url().includes('/iiif/') && response.url().endsWith(TILE) && response.ok(),
     );
+    // The client opens the copy by the identifier the import answers with, which is a JSON string
+    const imported = reader.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/v1/books/archive') && response.request().method() === 'POST',
+    );
     await reader.getByLabel('Archive of a book').setInputFiles(archive);
+    const answeredId: unknown = await (await imported).json();
 
     await expect(reader).toHaveURL(/\/stages\/geometry/);
     const copyId = openBookId(reader);
     expect(copyId).not.toBe(bookId);
+    expect(copyId).toBe(answeredId);
     await expect(reader.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(reader.getByTestId('canvas-caption')).toContainText('3 of 6');
     await expect(reader.getByTestId('strip-page').nth(2).locator('img')).toBeVisible();
