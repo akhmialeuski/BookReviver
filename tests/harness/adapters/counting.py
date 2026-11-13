@@ -12,10 +12,11 @@ if TYPE_CHECKING:
 
 
 class CountingBookDatabase(BookDatabase):
-    """Hands every call to another book database, and counts the reads of the book.
+    """Hands every call to another book database, and counts the reads and the changes of the book.
 
     :ivar reads: How many times ``read`` was called, each of which is a thread, a connection and a snapshot of the book
                  in an adapter that has them.
+    :ivar changes: How many times ``change`` was called, each of which waits for the one writer of the book.
     """
 
     def __init__(self, inner: BookDatabase) -> None:
@@ -26,6 +27,7 @@ class CountingBookDatabase(BookDatabase):
         """
         self._inner = inner
         self.reads = 0
+        self.changes = 0
 
     @override
     async def read[T](self, work: Callable[[BookRepositories], T]) -> T:
@@ -41,13 +43,14 @@ class CountingBookDatabase(BookDatabase):
 
     @override
     async def change[T](self, work: Callable[[BookRepositories, BookRecord], T]) -> T:
-        """Run the change of the book on the wrapped book database.
+        """Count the change of the book and run it on the wrapped book database.
 
         :param work: Function over the repositories of the transaction and the record of the book read at its start.
         :type work: Callable[[BookRepositories, BookRecord], T]
         :returns: What the work returns.
         :rtype: T
         """
+        self.changes += 1
         return await self._inner.change(work)
 
     @override
