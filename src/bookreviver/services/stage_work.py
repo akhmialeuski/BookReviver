@@ -1,16 +1,18 @@
 """The work of one job on one book, which the run of a stage and the preview of a step have in common.
 
-``StageWork`` holds what every page and every step of the job needs: the open book, its record, the control of the
-job and the ports, so the ``PageWork`` of a page and the ``StepChain`` of its steps reach them through the work they
-belong to. ``StageRuntime`` is what a job works with apart from the book, and ``BookFields`` the step of a run whose
-plugin reads the book, which the work finds among the steps of a recipe.
+``StageEngine`` is what runs the steps of every job, built once: the runner, the processors, the tracer and the bounds
+of a run, which also tells how many tasks the steps of a page make and which step leaves a field to the book
+(``BookFields``). ``StageWork`` is the work of one job on one book: it belongs to the engine and holds the open book,
+its record and the control of the job, so the ``PageWork`` of a page and the ``StepChain`` of its steps reach the book
+and the ports through the work they belong to.
 
-This module is the lowest of the chain: ``page_work`` and ``step_work`` import it, and it imports neither.
+This module is the lowest of the chain: ``page_work``, ``step_work``, ``spread_splits`` and ``stage_runs`` import it,
+and it imports none of them. ``StageRuns`` of ``stage_runs``, which opens the work of a job, lies on top of them.
 """
 
 from typing import TYPE_CHECKING
 
-from attrs import field, frozen, validators
+from attrs import frozen
 
 from bookreviver.services.book_steps import BookSteps
 
@@ -24,31 +26,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.domain.recipes import Step
     from bookreviver.domain.stages import Stage
-    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.tracing import Tracer
+    from bookreviver.services.processing_parts import ProcessingConfig
     from bookreviver.services.steps import StepRunner
-
-
-@frozen(kw_only=True)
-class StageRuntime:
-    """What a run of a stage works with, apart from the book of the job.
-
-    :ivar runner: Runner of processors and writer of their files.
-    :ivar processors: The processors the application can run.
-    :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
-    :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
-    :ivar tracer: Tracer the runs of pages and their steps are timed with.
-    :ivar parallel_pages: Largest number of pages a run processes at the same time, which is as many as the executor
-                          has places for full runs, so a run of a book uses every one of them.
-    """
-
-    runner: StepRunner
-    processors: ProcessorCatalog
-    order_keys: OrderKeys
-    preview_long_side_px: int
-    tracer: Tracer
-    parallel_pages: int = field(default=1, validator=validators.ge(1))
 
 
 @frozen(kw_only=True)
@@ -65,42 +46,42 @@ class BookFields:
     params: MetadataMap
 
 
-class StageWork:
-    """The work of one job on one book, which a run of a recipe and a preview have in common.
+class StageEngine:
+    """What runs the steps of recipes on the pages of a job, the same for every job, so the container builds it once.
 
-    It holds what every page and every step of the job needs, so the ``PageWork`` of a page and the ``StepWork`` of a
-    step reach it through the work they belong to.
+    It answers what the steps of a run ask of the processors: how many tasks they make on a page, and which of them
+    leaves a field to the book. The ``StageWork`` of a job belongs to it and reaches the runner, the processors and the
+    tracer through it.
 
-    :ivar book: The open book, whose transactions are opened for each version and never held while a step runs.
-    :ivar book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
-    :ivar control: What the job reports through: every step of a page is a task, and the job stops between two.
     :ivar runner: Runner of processors and writer of their files.
     :ivar processors: The processors the application can run.
-    :ivar preview_long_side_px: Longer side of a preview in pixels.
-    :ivar tracer: Tracer the steps are timed with.
+    :ivar tracer: Tracer the runs of pages and their steps are timed with.
+    :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
+    :ivar parallel_pages: Largest number of pages a run processes at the same time, which is as many as the executor
+                          has places for full runs, so a run of a book uses every one of them.
     :ivar book_steps: Finder of the steps whose plugin reads the whole book.
     """
 
-    def __init__(self, *, book: Book, book_record: BookRecord, runtime: StageRuntime, control: JobControl) -> None:
-        """Work over the ports of one job.
+    def __init__(
+        self, *, runner: StepRunner, processors: ProcessorCatalog, tracer: Tracer, config: ProcessingConfig
+    ) -> None:
+        """Run steps through the processors of the application.
 
-        :param book: The open book of the job.
-        :type book: Book
-        :param book_record: Record of the book.
-        :type book_record: BookRecord
-        :param runtime: The runner, the processors and the size of a preview.
-        :type runtime: StageRuntime
-        :param control: What the job reports through.
-        :type control: JobControl
+        :param runner: Runner of processors and writer of their files.
+        :type runner: StepRunner
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
+        :param tracer: Tracer the runs of pages and their steps are timed with.
+        :type tracer: Tracer
+        :param config: The bounds of processing, of which the size of a preview and the pages run together are read.
+        :type config: ProcessingConfig
         """
-        self.book = book
-        self.book_record = book_record
-        self.control = control
-        self.runner = runtime.runner
-        self.processors = runtime.processors
-        self.preview_long_side_px = runtime.preview_long_side_px
-        self.tracer = runtime.tracer
-        self.book_steps = BookSteps(runtime.processors)
+        self.runner = runner
+        self.processors = processors
+        self.tracer = tracer
+        self.preview_long_side_px = config.preview_long_side_px
+        self.parallel_pages = config.parallel_pages
+        self.book_steps = BookSteps(processors)
 
     def task_count(self, steps: Sequence[Step]) -> int:
         """Count the tasks of the steps a run or a preview goes over on one page.
@@ -134,6 +115,36 @@ class StageWork:
         if not book_step.leaves_to_book(params):
             return None
         return BookFields(position=position, book_step=book_step, params=params)
+
+
+class StageWork:
+    """The work of one job on one book, which a run of a recipe and a preview have in common.
+
+    It holds what every page and every step of the job needs, so the ``PageWork`` of a page and the ``StepWork`` of a
+    step reach it through the work they belong to.
+
+    :ivar engine: What runs the steps, through which the runner, the processors and the tracer are reached.
+    :ivar book: The open book, whose transactions are opened for each version and never held while a step runs.
+    :ivar book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
+    :ivar control: What the job reports through: every step of a page is a task, and the job stops between two.
+    """
+
+    def __init__(self, *, engine: StageEngine, book: Book, book_record: BookRecord, control: JobControl) -> None:
+        """Work over the ports of one job.
+
+        :param engine: What runs the steps of the job.
+        :type engine: StageEngine
+        :param book: The open book of the job.
+        :type book: Book
+        :param book_record: Record of the book.
+        :type book_record: BookRecord
+        :param control: What the job reports through.
+        :type control: JobControl
+        """
+        self.engine = engine
+        self.book = book
+        self.book_record = book_record
+        self.control = control
 
     async def refresh(self, page: Page, stage: Stage) -> None:
         """Bring a stale earlier stage of a page up to date before a step reads it; a preview leaves it as it is.

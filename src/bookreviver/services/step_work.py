@@ -114,7 +114,7 @@ class StepChain:
         :rtype: MetadataMap
         """
         work, steps = self.page_work.work, self.steps
-        if (fields := work.book_fields(steps)) is None:
+        if (fields := work.engine.book_fields(steps)) is None:
             return {}
         made = await StepChain(self.page_work, steps[: fields.position + 1]).measure(source)
         fresh = {} if made is None else {self.page_work.page.id: made}
@@ -150,7 +150,7 @@ class StepWork:
     @property
     def processor(self) -> Processor:
         """The processor of the step, from the catalogue of the job."""
-        return self.page_work.work.processors.get(self.step.processor_key)
+        return self.page_work.work.engine.processors.get(self.step.processor_key)
 
     @property
     def skipped(self) -> bool:
@@ -174,7 +174,7 @@ class StepWork:
             SpanAttribute.STEP_SCALE: self.source.scale,
             SpanAttribute.STEP_OUTCOME: StepOutcome.FAILED,
         }
-        with work.tracer.span(SpanName.STEP, attributes) as span:
+        with work.engine.tracer.span(SpanName.STEP, attributes) as span:
             inputs, edit, existing = await work.book.read(self._look)
             if existing is not None and existing.state is VersionState.READY:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.CACHED)
@@ -215,7 +215,7 @@ class StepWork:
         layers, skipped = page_work.layers, self.skipped
         key = PageStepKey(page_work.page.id, page_work.stage, step.step_id)
         state = None if skipped else repos.page_step_states.find(key)
-        reads_book = source.book and page_work.work.book_steps.of(step) is not None
+        reads_book = source.book and page_work.work.engine.book_steps.of(step) is not None
         base = {**step.params, **(source.book or {})} if reads_book else step.params
         laid = base if skipped else layers.lay(repos, step.step_id, base, None if state is None else state.params)
         checked = processor.validate_params(laid)
@@ -304,10 +304,10 @@ class StepWork:
         :raises DomainError: If the step cannot run on its input.
         """
         work = self.page_work.work
-        async with work.runner.execute(work.book, run) as result:
+        async with work.engine.runner.execute(work.book, run) as result:
             if len(result.outputs) != 1:
                 raise ConflictError(WRONG_OUTPUTS.format(key=run.processor_key, count=len(result.outputs)))
-            return await work.runner.store(
+            return await work.engine.runner.store(
                 work.book, version, result.outputs[0], policy=work.book_record.image_policy, tiles=False
             )
 
@@ -341,7 +341,7 @@ class StepWork:
         try:
             await work.book.change(lambda repos, _book_record: store(repos))
         except Exception:
-            await work.runner.discard(work.book, BookKeys.version_directory(made))
+            await work.engine.runner.discard(work.book, BookKeys.version_directory(made))
             raise
         if made.state is VersionState.READY:
             span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)

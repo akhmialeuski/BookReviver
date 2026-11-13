@@ -2,8 +2,11 @@
 
 The classes here and beside them form one chain, each owning the next and holding what its methods share:
 
-- ``StageWork`` (``stage_work``) is the work of one job on one book: the book, its record, the control of the job and
-  the ports. ``RecipeRun`` here is the work of a ``run-stage`` job and ``PreviewRun`` the one of a ``preview-step`` job.
+- ``StageRuns`` here is the top, built once: it holds the ``StageEngine`` of ``stage_work``, which runs the steps, with
+  the recipes, the stage records and the order keys, and opens the work of a job for its book.
+- ``StageWork`` (``stage_work``) is the work of one job on one book: the book, its record and the control of the job,
+  with the engine it belongs to. ``RecipeRun`` here is the work of a ``run-stage`` job and ``PreviewRun`` the one of a
+  ``preview-step`` job.
 - ``PageWork`` (``page_work``) is one stage on one page: the input of the stage. ``PageRun`` here is a page run by its
   recipe, which makes the last version the current one of the stage.
 - ``StepChain`` (``step_work``) is the steps of that page, and ``StepWork`` one of them: it finds the version it made
@@ -53,15 +56,18 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
+    from bookreviver.domain.jobs import StepPreview
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepState
     from bookreviver.domain.recipes import Recipe, Step
     from bookreviver.domain.versions import PageVersion
+    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.processing_parts import ProcessingParts
+    from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.spread_splits import Unsplit
-    from bookreviver.services.stage_work import StageRuntime
+    from bookreviver.services.stage_records import StageRecords
+    from bookreviver.services.stage_work import StageEngine
     from bookreviver.services.step_source import StepSource
 
 NO_PREVIEW_INPUT: str = 'The page has no image to preview a step on.'
@@ -149,7 +155,7 @@ class PageRun(PageWork):
         :returns: The version of the step on the page, or None when the page has no image or a step failed.
         :rtype: PageVersion | None
         """
-        if (fields := self.work.book_fields(self.steps)) is None:
+        if (fields := self.work.engine.book_fields(self.steps)) is None:
             return None
         if (source := await self.source(VersionScale.FULL)) is None:
             return None
@@ -226,7 +232,7 @@ class PageRun(PageWork):
         if version is None or version.state is not VersionState.READY:
             return None
         if version.renditions is not None and not version.tiles_ready:
-            version = await self.work.runner.cut_tiles(self.work.book, version)
+            version = await self.work.engine.runner.cut_tiles(self.work.book, version)
         return version
 
     async def _apply(self, version: PageVersion, basis: RunBasis) -> RunOutcome:
@@ -265,7 +271,7 @@ class PageRun(PageWork):
             stored = repos.page_versions.get(version.id)
             if version.tiles_ready and not stored.tiles_ready:
                 repos.page_versions.update(evolve(stored, tiles_ready=True))
-            run.records.set_head(
+            run.runs.records.set_head(
                 repos, key, head_version_id=version.id, recipe_id=recipe.id, through_step_id=stopped_at
             )
             if undoing is not None:
@@ -335,12 +341,12 @@ class PageRun(PageWork):
             :raises NotFoundError: If the page was deleted meanwhile.
             """
             repos.pages.get(page_id)
-            run.records.mark_failed(repos, page_id, recipe.stage, recipe_id=recipe.id)
+            run.runs.records.mark_failed(repos, page_id, recipe.stage, recipe_id=recipe.id)
 
         try:
             await self.work.book.change(lambda repos, _book_record: fail(repos))
         except NotFoundError:
-            await self.work.runner.discard(self.work.book, BookKeys.page(page_id))
+            await self.work.engine.runner.discard(self.work.book, BookKeys.page(page_id))
             return RunOutcome.SKIPPED
         return RunOutcome.FAILED
 
@@ -348,39 +354,28 @@ class PageRun(PageWork):
 class RecipeRun(StageWork):
     """The work of a ``run-stage`` job: it runs the pages of the job, each by the recipe of its kind.
 
-    :ivar records: Writer of the stage records.
+    :ivar runs: What opened the work, through which the recipes and the stage records are reached.
     :ivar splits: The splitting of a scan into the pages of a spread, and its undoing.
     :ivar books: What the book gives the step that reads it, by recipe, once a run of the whole book worked it out.
     """
 
-    def __init__(
-        self,
-        *,
-        book: Book,
-        book_record: BookRecord,
-        runtime: StageRuntime,
-        control: JobControl,
-        parts: ProcessingParts,
-    ) -> None:
+    def __init__(self, runs: StageRuns, *, book: Book, book_record: BookRecord, control: JobControl) -> None:
         """Work over the ports of one job.
 
+        :param runs: What opened the work, which holds the recipes of the book, by which an earlier stage that is stale
+                     is run again, and the writer of the stage records.
+        :type runs: StageRuns
         :param book: The open book owning the pages, whose transactions are opened for each version and never held
                      while a step runs.
         :type book: Book
         :param book_record: Record of the book owning the pages.
         :type book_record: BookRecord
-        :param runtime: The runner, the processors and the size of a preview.
-        :type runtime: StageRuntime
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl
-        :param parts: The recipes of the book, which an earlier stage that is stale is run again by, and the writer
-                      of the stage records.
-        :type parts: ProcessingParts
         """
-        super().__init__(book=book, book_record=book_record, runtime=runtime, control=control)
-        self._recipes = parts.recipes
-        self.records = parts.records
-        self.splits = SpreadSplit(book=book, book_record=book_record, runtime=runtime, records=parts.records)
+        super().__init__(engine=runs.engine, book=book, book_record=book_record, control=control)
+        self.runs = runs
+        self.splits = runs.splits(self)
         self.books: dict[RecipeId, MetadataMap] = {}
 
     async def run(
@@ -432,7 +427,7 @@ class RecipeRun(StageWork):
         :param through_step_id: The last step the run goes over, or None for every step that is on.
         :type through_step_id: StepId | None
         """
-        fields = self.book_fields([step for _, step in recipe.indexed_steps_through(through_step_id)])
+        fields = self.engine.book_fields([step for _, step in recipe.indexed_steps_through(through_step_id)])
         if fields is not None:
             self.books[recipe.id] = await self.book.read(
                 lambda repos: fields.book_step.from_book(BookContent(repos), recipe.stage, fields.params, fresh),
@@ -451,7 +446,7 @@ class RecipeRun(StageWork):
         :type stage: Stage
         """
         try:
-            recipe = (await self._recipes.for_pages(self.book, stage, [page]))[page.id]
+            recipe = (await self.runs.recipes.for_pages(self.book, stage, [page]))[page.id]
         except NotFoundError:
             # A stage without a recipe, such as the page order, has nothing to run again
             return
@@ -487,7 +482,7 @@ class PreviewRun(StageWork):
         if source is None:
             raise ConflictError(NO_PREVIEW_INPUT)
         enabled = [step for step in steps[: step_index + 1] if step.enabled]
-        self.control.plan(self.task_count(enabled))
+        self.control.plan(self.engine.task_count(enabled))
         chain = StepChain(page_work, enabled)
         version = await chain.make(await chain.with_book(source))
         if version is None:
@@ -495,3 +490,78 @@ class PreviewRun(StageWork):
         if version.state is not VersionState.READY:
             raise ConflictError(version.data[VersionData.ERROR])
         return version
+
+
+class StageRuns:
+    """Opens the work of the jobs that run the steps of recipes on the pages of a book, the same for every job.
+
+    It is the top of the chain of a run: the container builds it once, and a job asks it for the work of its book, a
+    ``RecipeRun`` or a ``PreviewRun``, which belongs to the engine and reaches the recipes and the records through it.
+
+    :ivar engine: What runs the steps: the runner, the processors, the tracer and the bounds of a run.
+    :ivar recipes: The recipes of the book, by which a run goes and an earlier stage that is stale is run again.
+    :ivar records: Writer of the stage records.
+    :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
+    """
+
+    def __init__(
+        self, *, engine: StageEngine, recipes: RecipeBook, records: StageRecords, order_keys: OrderKeys
+    ) -> None:
+        """Open the work of jobs through one engine.
+
+        :param engine: What runs the steps.
+        :type engine: StageEngine
+        :param recipes: The recipes of the book.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :param order_keys: Builder of the order key of the right half of a spread.
+        :type order_keys: OrderKeys
+        """
+        self.engine = engine
+        self.recipes = recipes
+        self.records = records
+        self.order_keys = order_keys
+
+    def recipe_run(self, book: Book, book_record: BookRecord, control: JobControl) -> RecipeRun:
+        """Open the work of a ``run-stage`` job on a book.
+
+        :param book: The open book of the job.
+        :type book: Book
+        :param book_record: Record of the book.
+        :type book_record: BookRecord
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: The work, which runs the pages of the job by their recipes.
+        :rtype: RecipeRun
+        """
+        return RecipeRun(self, book=book, book_record=book_record, control=control)
+
+    async def preview(self, book: Book, preview: StepPreview, control: JobControl) -> PageVersion:
+        """Run a ``preview-step`` job: the steps of a form on the previews of a page, up to one of them.
+
+        :param book: The open book of the job.
+        :type book: Book
+        :param preview: What the job was asked to preview.
+        :type preview: StepPreview
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: The preview version of the last step that is on.
+        :rtype: PageVersion
+        :raises NotFoundError: If the page is gone, before or while the steps ran.
+        :raises ConflictError: If the page has no image to preview on, every step up to the index is off, or a step
+                               failed.
+        """
+        book_record, page = await book.read(lambda repos: (repos.book_record.get(), repos.pages.get(preview.page_id)))
+        work = PreviewRun(engine=self.engine, book=book, book_record=book_record, control=control)
+        return await work.run(page, preview.stage, preview.steps, preview.step_index)
+
+    def splits(self, work: StageWork) -> SpreadSplit:
+        """Open the splitting of scans into the pages of a spread for the work of a job.
+
+        :param work: The work of the job.
+        :type work: StageWork
+        :returns: The splitting, which writes the stage records and gives a new right half its order key.
+        :rtype: SpreadSplit
+        """
+        return SpreadSplit(work, order_keys=self.order_keys, records=self.records)

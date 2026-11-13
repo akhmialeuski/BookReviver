@@ -39,9 +39,7 @@ from bookreviver.domain.stages import Stage
 from bookreviver.domain.version_chains import readers_first
 from bookreviver.domain.versions import VersionState
 from bookreviver.services.book_measure import BookMeasure
-from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.stage_jobs import StageRunJob
-from bookreviver.services.stage_runs import PreviewRun
 from bookreviver.services.version_clearing import VersionClearing
 
 if TYPE_CHECKING:
@@ -52,9 +50,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.content_detection import ContentDetector
     from bookreviver.services.pages import PageService
     from bookreviver.services.processing_parts import ProcessingParts
-    from bookreviver.services.stage_work import StageRuntime
+    from bookreviver.services.stage_runs import StageRuns
 
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
 NO_CONTENT_DETECTED: str = 'The content of no page could be detected. The log of the worker says why.'
@@ -76,23 +75,25 @@ class ProcessingJobs:
     def __init__(
         self,
         *,
-        runtime: StageRuntime,
+        runs: StageRuns,
+        detector: ContentDetector,
         parts: ProcessingParts,
         pages: PageService,
     ) -> None:
         """Work over the ports of one job.
 
-        :param runtime: The runner, the processors and the size of a preview.
-        :type runtime: StageRuntime
+        :param runs: What opens the work of a run and of a preview, and runs their steps.
+        :type runs: StageRuns
+        :param detector: What detects the content of the pages.
+        :type detector: ContentDetector
         :param parts: The recipes, the stage records and the job starter, which work on the book of each job.
         :type parts: ProcessingParts
         :param pages: The page service, which queues the detection of the content of the pages a split made.
         :type pages: PageService
         """
-        self._runtime = runtime
-        self._parts = parts
+        self._runs = runs
         self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
-        self._detector = ContentDetector(runtime=runtime, records=parts.records)
+        self._detector = detector
         self._starter = parts.starter
         self._pages = pages
 
@@ -110,7 +111,7 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            outcomes = await StageRunJob(self._runtime, self._parts, book, job.asked(StageRun)).outcomes(control)
+            outcomes = await StageRunJob(self._runs, book, job.asked(StageRun)).outcomes(control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         done, failed = outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED)
@@ -242,10 +243,7 @@ class ProcessingJobs:
         :raises DomainError: If the parameters are not valid, the page is gone, or a step fails.
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
-        preview = job.asked(StepPreview)
-        book_record, page = await book.read(lambda repos: (repos.book_record.get(), repos.pages.get(preview.page_id)))
-        executor = PreviewRun(book=book, book_record=book_record, runtime=self._runtime, control=control)
-        await executor.run(page, preview.stage, preview.steps, preview.step_index)
+        await self._runs.preview(book, job.asked(StepPreview), control)
 
     async def _cut_version(self, book: Book, version_id: PageVersionId) -> None:
         """Cut the pyramid of one version, and mark the version as cut when it is still as it was read.
@@ -267,7 +265,7 @@ class ProcessingJobs:
             or version.renditions is None
         ):
             return
-        cut_version = await self._runtime.runner.cut_tiles(book, version)
+        cut_version = await self._runs.engine.runner.cut_tiles(book, version)
 
         def mark(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, PageVersion | None]:
             """Store the version with its pyramid cut, when it is still as it was read.

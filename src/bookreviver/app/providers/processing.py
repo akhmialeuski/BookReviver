@@ -5,8 +5,9 @@ application. The catalogue loads the plugins of the pools the settings name when
 that each process of the executor builds its own catalogue from. The executor starts its processes when the container
 first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that serves a
 request or a job is built for it, and works on the book it is given: the parts the use cases share, the service of the
-requests, the jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them
-over, of what a run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes,
+requests and the services of the manual edits, of the settings of pages, of carrying them over, of what a run takes away
+and of the resets of steps. The runner of the steps and the work of the jobs that run them have a provider of their own,
+``RunsProvider``. The IIIF root comes from the mount point of the IIIF routes,
 which only ``api`` knows, as it does for the import.
 """
 
@@ -21,27 +22,20 @@ from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.core.plugins import ProcessorCatalog
-from bookreviver.ports.imaging import RenditionWriter, Tiler
-from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.processing import ProcessorSettings, StepExecutor
-from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
-from bookreviver.services.pages import PageService
 from bookreviver.services.processing import ProcessingService
-from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes
 from bookreviver.services.result_marks import ResultMarksService
 from bookreviver.services.run_plans import RunImpactService
-from bookreviver.services.stage_work import StageRuntime
-from bookreviver.services.steps import StepRunner
 
 
 class ProcessingProvider(Provider):
@@ -136,21 +130,6 @@ class ProcessingProvider(Provider):
             parallel_pages=settings.processing.step_processes - settings.processing.preview_step_processes,
         )
 
-    @provide(scope=Scope.APP)
-    def step_runner(self, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler) -> StepRunner:
-        """Build the runner of processors over the imaging ports.
-
-        :param executor: Executor that runs the steps of the processors.
-        :type executor: StepExecutor
-        :param renditions: Writer of the files of a page version.
-        :type renditions: RenditionWriter
-        :param tiler: Tiler of the application.
-        :type tiler: Tiler
-        :returns: The runner.
-        :rtype: StepRunner
-        """
-        return StepRunner(executor=executor, renditions=renditions, tiler=tiler)
-
     @provide(scope=Scope.REQUEST)
     def processing_parts(
         self,
@@ -196,54 +175,6 @@ class ProcessingProvider(Provider):
         :rtype: RecipeProfiles
         """
         return RecipeProfiles(recipes=parts.recipes, processing=processing)
-
-    @provide(scope=Scope.APP)
-    def stage_runtime(
-        self,
-        runner: StepRunner,
-        processors: ProcessorCatalog,
-        tracer: Tracer,
-        order_keys: OrderKeys,
-        config: ProcessingConfig,
-    ) -> StageRuntime:
-        """Gather what a run of a stage works with, apart from the book.
-
-        :param runner: Runner of processors.
-        :type runner: StepRunner
-        :param processors: The processors the application can run.
-        :type processors: ProcessorCatalog
-        :param tracer: Tracer of the application.
-        :type tracer: Tracer
-        :param order_keys: Order keys of the application.
-        :type order_keys: OrderKeys
-        :param config: The retention period and the size of a preview.
-        :type config: ProcessingConfig
-        :returns: The runtime of a stage run.
-        :rtype: StageRuntime
-        """
-        return StageRuntime(
-            runner=runner,
-            processors=processors,
-            order_keys=order_keys,
-            preview_long_side_px=config.preview_long_side_px,
-            tracer=tracer,
-            parallel_pages=config.parallel_pages,
-        )
-
-    @provide(scope=Scope.REQUEST)
-    def processing_jobs(self, runtime: StageRuntime, parts: ProcessingParts, pages: PageService) -> ProcessingJobs:
-        """Build the work of the processing jobs.
-
-        :param runtime: What a run of a stage works with.
-        :type runtime: StageRuntime
-        :param parts: The parts the processing use cases share.
-        :type parts: ProcessingParts
-        :param pages: The page service of the job, which queues the detection of the content of the pages a split made.
-        :type pages: PageService
-        :returns: The jobs.
-        :rtype: ProcessingJobs
-        """
-        return ProcessingJobs(runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
     def edit_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> EditService:

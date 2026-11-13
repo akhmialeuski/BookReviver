@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.core.book import Book
+    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.jobs import Job
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.stage_records import StageRecords
-    from bookreviver.services.stage_work import StageRuntime
+    from bookreviver.services.steps import StepRunner
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +61,18 @@ class ContentDetector:
     :ivar records: Writer of the stage records, which marks the stages of a page stale.
     """
 
-    def __init__(self, *, runtime: StageRuntime, records: StageRecords) -> None:
-        """Work over the ports of one job.
+    def __init__(self, *, runner: StepRunner, processors: ProcessorCatalog, records: StageRecords) -> None:
+        """Detect content through the processors of the application.
 
-        :param runtime: The runner of the processor that finds the content of an image.
-        :type runtime: StageRuntime
+        :param runner: The runner of the processor that finds the content of an image.
+        :type runner: StepRunner
+        :param processors: The processors the application can run.
+        :type processors: ProcessorCatalog
         :param records: Writer of the stage records, which marks the stages of a page stale.
         :type records: StageRecords
         """
-        self.runner = runtime.runner
-        self.processors = runtime.processors
+        self.runner = runner
+        self.processors = processors
         self.records = records
 
     async def run(self, book: Book, job: Job, control: JobControl) -> tuple[int, int]:
