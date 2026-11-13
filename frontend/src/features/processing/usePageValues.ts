@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { countParts, type PageValues, pageName } from '@/features/processing/pageSettings';
 import { usePageSettings } from '@/features/processing/queries';
+import type { StripItem } from '@/features/processing/strip';
 import type { Processing } from '@/features/processing/useProcessing';
-import type { StripItem } from '@/features/workspace/strip';
 
 /**
  * Gather what the values of a setting for a part of the pages are told from: the open page, what it and its parts have

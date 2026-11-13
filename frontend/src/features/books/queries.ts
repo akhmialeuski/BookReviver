@@ -16,6 +16,7 @@ import {
   listVersionsApiV1BooksBookIdPagesPageIdVersionsGetQueryKey,
   readJobApiV1BooksBookIdJobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
+import type * as sdk from '@/api/sdk.gen';
 import { STAGES } from '@/features/stages/stages';
 
 // A stage to build the key of the recipes of a book with, whose identifier and address alone are kept
@@ -242,4 +243,43 @@ export function invalidateScans(queryClient: QueryClient, bookId: string): Promi
   return queryClient.invalidateQueries({
     queryKey: listScansApiV1BooksBookIdScansGetQueryKey({ path: { book_id: bookId } }),
   });
+}
+
+// The generated client names each query by the function that makes it, so these are checked against the client
+const HISTORY_QUERY: keyof typeof sdk =
+  'listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet';
+const SETTINGS_QUERY: keyof typeof sdk = 'listSettingsApiV1BooksBookIdPagesPageIdSettingsStageGet';
+const EDITS_QUERY: keyof typeof sdk = 'listEditsApiV1BooksBookIdPagesPageIdEditsStageGet';
+
+// What an undo and a carry-over change: the histories, the settings and the edits of the pages
+const UNDONE_QUERIES: ReadonlySet<unknown> = new Set([HISTORY_QUERY, SETTINGS_QUERY, EDITS_QUERY]);
+
+function queryIdOf(key: readonly unknown[]): unknown {
+  const head = key[0];
+  return typeof head === 'object' && head !== null && '_id' in head ? head._id : undefined;
+}
+
+/** Mark the histories of the steps out of date, so the ones on screen are read again. */
+export function invalidateHistory(queryClient: QueryClient): Promise<void> {
+  return queryClient.invalidateQueries({
+    predicate: (query) => queryIdOf(query.queryKey) === HISTORY_QUERY,
+  });
+}
+
+/**
+ * Mark the settings, the edits and the histories of the pages out of date, which a change that reaches several pages
+ * writes to, so the ones on screen are read again.
+ */
+export function invalidatePageLayers(queryClient: QueryClient): Promise<void> {
+  return queryClient.invalidateQueries({
+    predicate: (query) => UNDONE_QUERIES.has(queryIdOf(query.queryKey)),
+  });
+}
+
+/**
+ * The key every preview of a numbering of a book extends, by the body it asks about. A change of the pages of the book
+ * makes every such preview stale.
+ */
+export function numberingPreviewKey(bookId: string): readonly string[] {
+  return ['order', 'numbering-preview', bookId];
 }

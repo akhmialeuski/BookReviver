@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { leafPages, leavesLost } from '@/features/order/leaf';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 describe('leafPages', () => {
   it('keeps the blank pages cut from a scan and leaves out every other page', () => {

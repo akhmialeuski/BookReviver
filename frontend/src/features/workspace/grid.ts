@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { isTypingTarget } from '@/features/viewer/keys';
-import { browserStorage, type WorkspaceStorage } from '@/features/workspace/storage';
+import { browserStorage, type WorkspaceStorage } from '@/shared/lib/storage';
 
 /**
  * The grid over the page of a Geometry step: whether it is shown, the choice that is remembered for the book, and the key

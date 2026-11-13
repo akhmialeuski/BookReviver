@@ -10,7 +10,7 @@ import {
   useGridKey,
   writeGrid,
 } from '@/features/workspace/grid';
-import type { WorkspaceStorage } from '@/features/workspace/storage';
+import type { WorkspaceStorage } from '@/shared/lib/storage';
 
 /** The grid over the page of a Geometry step: the choice kept for a book, which is off until it is made, and the key G. */
 

@@ -1,16 +1,16 @@
 import { useQueries } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 import type { CarryOverSchema, FigureState, StagePageSchema, StepPageSchema } from '@/api';
-import type { Processing } from '@/features/processing/useProcessing';
-import { stepRowOptions, useStepRows } from '@/features/workspace/queries';
 import {
   type BarStep,
   barStepsOf,
   hasStepBar,
   openStepOf,
   type StepStates,
-} from '@/features/workspace/steps';
-import type { StripItem } from '@/features/workspace/strip';
+} from '@/features/processing/barSteps';
+import { stepRowOptions, useStepRows } from '@/features/processing/stageQueries';
+import type { StripItem } from '@/features/processing/strip';
+import type { Processing } from '@/features/processing/useProcessing';
 
 /**
  * The workspace of one step of the open stage: the steps of the recipe for the bar, the step the address names, what that

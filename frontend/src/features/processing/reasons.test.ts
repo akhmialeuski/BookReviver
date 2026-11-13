@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { page, row } from '@/features/pages/fixtures';
 import { processor, recipe, step, version } from '@/features/processing/fixtures';
 import { reasonOf, reasonWithStep } from '@/features/processing/reasons';
-import { page, row } from '@/features/workspace/fixtures';
 
 function item(overrides: Parameters<typeof row>[1] = {}) {
   return { page: page('a'), row: row('a', overrides) };

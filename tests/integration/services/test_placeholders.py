@@ -22,7 +22,7 @@ from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKin
 from bookreviver.domain.sides import Side
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.versions import PageSize, VersionData, VersionState
-from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
+from bookreviver.services.page_images import PAGES_FAILED, UNEXPECTED_FAILURE
 from tests.harness.adapters.imports import stored_book
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.books import IMAGE

@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema } from '@/api';
 import { SelectionPanel } from '@/features/order/SelectionPanel';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 /**
  * What the panel of the Order stage puts in the slots of the layout while no numbering is open: the pagination and the

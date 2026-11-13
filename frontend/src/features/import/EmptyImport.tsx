@@ -11,9 +11,9 @@ import { SkippedFiles } from '@/features/books/upload/FileReview';
 import type { PickedFile, SkippedFile } from '@/features/books/upload/files';
 import { EMPTY_SELECTION, selectionReducer } from '@/features/books/upload/selection';
 import { useUpload } from '@/features/books/upload/useUpload';
-import { StagePanel } from '@/features/workspace/StagePanel';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
+import { StagePanel } from '@/shared/panel/StagePanel';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**

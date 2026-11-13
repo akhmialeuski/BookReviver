@@ -30,12 +30,12 @@ import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
 import type { SuggestedField } from '@/features/about/suggestion';
 import type { OAuthFailure } from '@/features/auth/oauth';
+import type { ContentMark } from '@/features/processing/content';
+import type { PageFilter } from '@/features/processing/stageParams';
 import type { TimelineFilter } from '@/features/processing/timeline';
 import type { FileProblem } from '@/features/profiles/profileFile';
 import type { RoadmapKey } from '@/features/stages/roadmap';
 import type { Phase } from '@/features/stages/stages';
-import type { ContentMark } from '@/features/workspace/content';
-import type { PageFilter } from '@/features/workspace/params';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 

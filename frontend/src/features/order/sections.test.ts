@@ -7,7 +7,7 @@ import {
   sectionSpans,
   spanOfPages,
 } from '@/features/order/sections';
-import { page, section } from '@/features/workspace/fixtures';
+import { page, section } from '@/features/pages/fixtures';
 
 /**
  * What each section covers, read from the section every page names. The server decides which section governs a page, so

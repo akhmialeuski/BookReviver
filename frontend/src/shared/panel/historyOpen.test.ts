@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  HISTORY_OPEN_KEY,
-  readHistoryOpen,
-  writeHistoryOpen,
-} from '@/features/workspace/historyOpen';
-import type { WorkspaceStorage } from '@/features/workspace/storage';
+import type { WorkspaceStorage } from '@/shared/lib/storage';
+import { HISTORY_OPEN_KEY, readHistoryOpen, writeHistoryOpen } from '@/shared/panel/historyOpen';
 
 /** The choice of whether the history of a page is open: kept once for the viewer, and collapsed when storage fails. */
 

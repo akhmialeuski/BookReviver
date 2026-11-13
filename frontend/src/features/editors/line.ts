@@ -1,5 +1,5 @@
-import type { LineShape, Point, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
+import type { LineShape, Point, Size } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the split line: where it starts, how an end moves, and how the arrow keys nudge it.

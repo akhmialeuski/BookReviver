@@ -1,4 +1,4 @@
-import type { PageListFilters } from '@/features/workspace/strip';
+import type { PageListFilters } from '@/features/processing/strip';
 import { MESSAGES } from '@/shared/messages';
 
 /** The words in place of the pages when the filter lists none, for the strip and the grid alike. */

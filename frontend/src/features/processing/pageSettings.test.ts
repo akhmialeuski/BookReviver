@@ -8,7 +8,7 @@ import {
   settingsOf,
   showValue,
 } from '@/features/processing/pageSettings';
-import type { StripItem } from '@/features/workspace/strip';
+import type { StripItem } from '@/features/processing/strip';
 
 /** The values a setting has for parts of the pages, read from the settings the server lists, and the menu that adds one. */
 

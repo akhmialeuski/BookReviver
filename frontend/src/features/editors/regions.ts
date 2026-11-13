@@ -1,5 +1,5 @@
 import { clampToScan } from '@/features/editors/line';
-import type { Point, RegionsShape, Size, ZoneMode, ZoneShape } from '@/features/editors/shapes';
+import type { Point, RegionsShape, Size, ZoneMode, ZoneShape } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the picture zone editor: a new zone, a corner moved, a zone taken away, and the box a zone fills.

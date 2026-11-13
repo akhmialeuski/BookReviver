@@ -1,10 +1,10 @@
 import { BookmarkPlusIcon, SettingsIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { StagePageSchema } from '@/api';
-import { RecipeBar } from '@/features/processing/RecipeBar';
 import { StepList } from '@/features/processing/StepList';
 import type { Processing } from '@/features/processing/useProcessing';
 import { SaveProfileDialog } from '@/features/profiles/SaveProfileDialog';
+import { RecipeBar } from '@/features/workspace/RecipeBar';
 import { ResetSteps } from '@/features/workspace/ResetSteps';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';

@@ -2,16 +2,16 @@ import { TriangleAlertIcon } from 'lucide-react';
 import type { CarryOverSchema, StepPageSchema } from '@/api';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
+import { barStepsOf } from '@/features/processing/barSteps';
 import { type Fact, factsOf } from '@/features/processing/facts';
 import { readChainResult } from '@/features/processing/results';
 import { StepCarry } from '@/features/processing/StepSlots';
+import type { StripItem } from '@/features/processing/strip';
 import { usePageChain } from '@/features/processing/usePageChain';
 import type { Processing } from '@/features/processing/useProcessing';
-import { FactList } from '@/features/workspace/FactList';
-import type { PageSlot } from '@/features/workspace/StagePanel';
-import { barStepsOf } from '@/features/workspace/steps';
-import type { StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
+import { FactList } from '@/shared/panel/FactList';
+import type { PageSlot } from '@/shared/panel/StagePanel';
 
 /**
  * What the stage did to the open page, as the content of the `page` slot of the panel: a note on the state of the page,

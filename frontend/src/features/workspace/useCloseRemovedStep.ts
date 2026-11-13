@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { BarStep } from '@/features/workspace/steps';
+import type { BarStep } from '@/features/processing/barSteps';
 
 /**
  * Close the step workspace when the step the address names has been removed from the recipe.

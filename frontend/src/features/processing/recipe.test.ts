@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { row } from '@/features/pages/fixtures';
 import { deskew, recipe, step } from '@/features/processing/fixtures';
 import {
   addStep,
@@ -11,7 +12,6 @@ import {
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
-import { row } from '@/features/workspace/fixtures';
 
 const TWO_STEPS = recipe('r1', {
   steps: [

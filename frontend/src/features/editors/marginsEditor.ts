@@ -3,8 +3,12 @@ import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { MarginsCanvas } from '@/features/editors/MarginsCanvas';
 import { MarginsPanel } from '@/features/editors/MarginsPanel';
 import { rectEditor } from '@/features/editors/rectEditor';
-import { type ContentBoxShape, readContentBox, writeContentBox } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
+import {
+  type ContentBoxShape,
+  readContentBox,
+  writeContentBox,
+} from '@/features/processing/shapes';
 
 /**
  * The editor of the Margins step: the box of the content of the page, which is the edit, and the border of the page grown

@@ -6,6 +6,7 @@ import type { PageEditSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession } from '@/features/editors/session';
 import { useEditorSession } from '@/features/editors/useEditorSession';
+import { images, page, row } from '@/features/pages/fixtures';
 import { type ImageSource, SourceKind } from '@/features/processing/compare';
 import {
   autoSplit,
@@ -19,8 +20,7 @@ import {
   version,
 } from '@/features/processing/fixtures';
 import { usePageHistory } from '@/features/processing/historyQueries';
-import { images, page, row } from '@/features/workspace/fixtures';
-import { joinRows, type StripItem } from '@/features/workspace/strip';
+import { joinRows, type StripItem } from '@/features/processing/strip';
 import { ProblemError } from '@/shared/http/problem';
 
 /**

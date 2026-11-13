@@ -17,10 +17,10 @@ import { layoutOf, RectFrame, rectData, rectList, screenBox } from '@/features/e
 import { nudgeRect } from '@/features/editors/rect';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing, widthValue } from '@/features/editors/shapeEditing';
-import { type ContentBoxShape, pairOf } from '@/features/editors/shapes';
 import { useStepSettings } from '@/features/editors/stepSettings';
 import type { CanvasProps } from '@/features/editors/types';
 import { MARGIN_SIDES, type MarginSide } from '@/features/processing/results';
+import { type ContentBoxShape, pairOf } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

@@ -1,9 +1,9 @@
 import type { ComponentType } from 'react';
 import type { FigureState, PageSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
-import type { Geometry, RectShape, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
-import type { StripItem } from '@/features/workspace/strip';
+import type { Geometry, RectShape, Size } from '@/features/processing/shapes';
+import type { StripItem } from '@/features/processing/strip';
 
 /**
  * What an editor is made of, and what the registry holds for it.

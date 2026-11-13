@@ -1,6 +1,6 @@
 import { clampToScan } from '@/features/editors/line';
-import type { Point, RectShape, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
+import type { Point, RectShape, Size } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the frame editor: the frame of the content, its eight handles, and how a handle moves it.

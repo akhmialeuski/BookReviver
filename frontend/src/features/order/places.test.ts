@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { placesToCheck } from '@/features/order/places';
+import { page } from '@/features/pages/fixtures';
 import { findGaps } from '@/features/pages/gaps';
-import { page } from '@/features/workspace/fixtures';
 
 describe('placesToCheck', () => {
   const pages = [

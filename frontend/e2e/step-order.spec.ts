@@ -42,6 +42,8 @@ const BUILT_IN_STEPS = [
   { processor: CROP, title: 'Select content' },
   { processor: NORMALIZE, title: 'Margins' },
 ];
+/** How long the page is given to set the key listeners of a drag, which dnd-kit does in a timer after the lift. */
+const KEY_LISTENER_DELAY_MS = 100;
 const BUILT_IN = BUILT_IN_STEPS.map((step) => step.processor);
 const CROP_PLACE = BUILT_IN.indexOf(CROP);
 const drag = MESSAGES.processing.steps.drag;
@@ -72,6 +74,11 @@ async function liftAndMoveUp(
     .focus();
   await page.keyboard.press('Space');
   await announced(page, drag.over(titleAt(0)));
+  // An arrow pressed before the listeners are set is lost, and the list would never announce the place asked for
+  await page.evaluate(
+    (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    KEY_LISTENER_DELAY_MS,
+  );
   for (let place = 1; place <= places; place += 1) {
     await page.keyboard.press('ArrowUp');
     await announced(

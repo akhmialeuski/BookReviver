@@ -6,9 +6,9 @@ import { OrderScreen } from '@/features/order/OrderScreen';
 import type { PlaceAddress } from '@/features/place/address';
 import { loadPlace } from '@/features/place/open';
 import { PlaceWriterContext, useBookPlaceWriter } from '@/features/place/PlaceWriterContext';
+import { parseStageSearch, type StageSearch } from '@/features/processing/stageParams';
 import { parseStage } from '@/features/stages/parse';
 import { parseIdentifier } from '@/features/viewer/params';
-import { parseStageSearch, type StageSearch } from '@/features/workspace/params';
 import { StageScreen } from '@/features/workspace/StageScreen';
 import { MESSAGES } from '@/shared/messages';
 

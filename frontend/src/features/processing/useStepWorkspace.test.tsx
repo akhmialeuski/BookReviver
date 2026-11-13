@@ -3,10 +3,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CarryOverSchema, FigureState, StagePageSchema, StepFlag } from '@/api';
+import { page, row, stepPage } from '@/features/pages/fixtures';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
-import { page, row, stepPage } from '@/features/workspace/fixtures';
-import type { StripItem } from '@/features/workspace/strip';
-import { type StepWorkspace, useStepWorkspace } from '@/features/workspace/useStepWorkspace';
+import type { StripItem } from '@/features/processing/strip';
+import { type StepWorkspace, useStepWorkspace } from '@/features/processing/useStepWorkspace';
 
 /**
  * The workspace of the open step: which step the address names, what that step did on every page of the book, and the

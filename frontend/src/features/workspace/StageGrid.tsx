@@ -1,11 +1,11 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { XIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PageFilter } from '@/features/processing/stageParams';
+import type { PageListProps } from '@/features/processing/strip';
 import { PageTile } from '@/features/workspace/PageTile';
-import { PageFilter } from '@/features/workspace/params';
 import { StripEmpty } from '@/features/workspace/StripEmpty';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type { PageListProps } from '@/features/workspace/strip';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';

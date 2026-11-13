@@ -4,12 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CarryOverSchema, FigureState, StepPageSchema } from '@/api';
 import type { EditorSession } from '@/features/editors/session';
+import { page, row, stepPage } from '@/features/pages/fixtures';
 import { SourceKind } from '@/features/processing/compare';
 import { processing, recipe, step, version } from '@/features/processing/fixtures';
-import { type OpenStep, useThisPage } from '@/features/processing/useThisPage';
-import { page, row, stepPage } from '@/features/workspace/fixtures';
-import { StagePanel } from '@/features/workspace/StagePanel';
-import type { StripItem } from '@/features/workspace/strip';
+import type { StripItem } from '@/features/processing/strip';
+import { type OpenStep, useThisPage } from '@/features/workspace/useThisPage';
+import { StagePanel } from '@/shared/panel/StagePanel';
 
 /**
  * What the stage did to the open page, as the page slot of the panel: the facts the steps found, last in the section, the

@@ -24,5 +24,288 @@
       "suspicious": { "noExplicitAny": "error", "noTsIgnore": "error" },
       "style": { "useImportType": "error", "noNonNullAssertion": "error" }
     }
-  }
+  },
+  // The features form layers, lowest first: auth, stages, books, pages, place, viewer, processing, then editors and
+  // profiles side by side, workspace, about, and order and import side by side. A feature imports only the features
+  // below it, so no two features import each other. A test may put features of any layer together.
+  "overrides": [
+    {
+      "includes": ["src/features/auth/**", "!src/features/auth/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/stages/**", "@/features/books/**", "@/features/pages/**", "@/features/place/**", "@/features/viewer/**", "@/features/processing/**", "@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/stages/**", "!src/features/stages/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/books/**", "@/features/pages/**", "@/features/place/**", "@/features/viewer/**", "@/features/processing/**", "@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/books/**", "!src/features/books/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/pages/**", "@/features/place/**", "@/features/viewer/**", "@/features/processing/**", "@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/pages/**", "!src/features/pages/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/place/**", "@/features/viewer/**", "@/features/processing/**", "@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/place/**", "!src/features/place/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/viewer/**", "@/features/processing/**", "@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/viewer/**", "!src/features/viewer/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/processing/**", "@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/processing/**", "!src/features/processing/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/editors/**", "@/features/profiles/**", "@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/editors/**", "!src/features/editors/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**", "@/features/profiles/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/profiles/**", "!src/features/profiles/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/workspace/**", "@/features/about/**", "@/features/order/**", "@/features/import/**", "@/features/editors/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/workspace/**", "!src/features/workspace/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/about/**", "@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/about/**", "!src/features/about/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/order/**", "@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/order/**", "!src/features/order/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/import/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/features/import/**", "!src/features/import/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/features/order/**"],
+                    "message": "A feature imports only the features below it. Move what is shared down."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      // The texts of the interface are keyed by the values the features define, so the catalogue reads their types
+      "includes": ["src/shared/**", "!src/shared/messages.ts", "!src/shared/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  { "group": ["@/features/**"], "message": "Shared code imports no feature." }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

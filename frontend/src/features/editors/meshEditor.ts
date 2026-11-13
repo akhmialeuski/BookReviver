@@ -2,8 +2,8 @@ import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { MeshCanvas } from '@/features/editors/MeshCanvas';
 import { MeshPanel } from '@/features/editors/MeshPanel';
 import { meshOf } from '@/features/editors/mesh';
-import { type MeshShape, readMesh, writeMesh } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
+import { type MeshShape, readMesh, writeMesh } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

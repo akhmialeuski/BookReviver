@@ -27,10 +27,10 @@ import type { SectionSpan } from '@/features/order/sections';
 import type { LabelGap } from '@/features/pages/gaps';
 import { shortName } from '@/features/pages/names';
 import type { PageAnchor } from '@/features/pages/order';
-import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
+import { PageThumbnail } from '@/shared/ui/page-thumbnail';
 
 /**
  * The grid of the Order stage: every page of the book on a sheet that scrolls, in pages or in spreads, with the cards

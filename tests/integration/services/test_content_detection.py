@@ -18,7 +18,7 @@ from bookreviver.domain.jobs import ContentDetection, JobKind, JobState, StageRu
 from bookreviver.domain.pages import ContentSource, ContentType, PageKind
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.plugins.split.split_none import SplitNone
-from bookreviver.services.content_detection import ContentDetector
+from bookreviver.services.content_detection import PageDetection
 from tests.harness.builders.domain import make_job, make_page, make_page_stage, open_for
 from tests.harness.builders.page_services import make_page_service
 from tests.harness.builders.processing import ProcessingKit, stored_job
@@ -28,13 +28,11 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.core.book import Book
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.pages import Page
-    from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.pages import PageService
     from tests.harness.adapters.database import BookDatabasesFactory, LocatedBookDatabases
@@ -633,25 +631,21 @@ class TestApplyStep:
         """
         kit, _ = fx_probe_kit([ContentType.TEXT])
         actor, book_id, pages = await book_of(kit, [PageKind.TEXT])
-        probe = ContentDetector._probe
+        probe = PageDetection._probe
 
-        async def probe_then_change(self: ContentDetector, book: Book, base: PageVersion) -> ContentType:
+        async def probe_then_change(self: PageDetection) -> ContentType:
             """Probe the image, then let another request change the page before the job writes its answer.
 
-            :param self: The detector that probes.
-            :type self: ContentDetector
-            :param book: The open book owning the page.
-            :type book: Book
-            :param base: The base version of the page.
-            :type base: PageVersion
+            :param self: The detection of the page that probes.
+            :type self: PageDetection
             :returns: What the probe found.
             :rtype: ContentType
             """
-            found = await probe(self, book, base)
+            found = await probe(self)
             await change(book_id, pages[0], kit.databases)
             return found
 
-        monkeypatch.setattr(ContentDetector, '_probe', probe_then_change)
+        monkeypatch.setattr(PageDetection, '_probe', probe_then_change)
 
         job = await detect(kit, actor, book_id)
 

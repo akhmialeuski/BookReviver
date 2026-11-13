@@ -11,7 +11,7 @@ import {
   ZoomInIcon,
   ZoomOutIcon,
 } from 'lucide-react';
-import { CompareMode } from '@/features/workspace/params';
+import { CompareMode } from '@/features/processing/stageParams';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import {

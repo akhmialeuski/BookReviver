@@ -1,8 +1,8 @@
 import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { RotationCanvas } from '@/features/editors/RotationCanvas';
 import { RotationPanel } from '@/features/editors/RotationPanel';
-import { type RotationShape, readRotation, writeRotation } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
+import { type RotationShape, readRotation, writeRotation } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

@@ -1,5 +1,5 @@
 import OpenSeadragon from 'openseadragon';
-import type { Point, Size } from '@/features/editors/shapes';
+import type { Point, Size } from '@/features/processing/shapes';
 
 /**
  * The conversion between the pixels of an image and the pixels of the screen, which keeps an editor on its place on the

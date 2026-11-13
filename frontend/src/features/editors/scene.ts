@@ -1,7 +1,7 @@
 import type OpenSeadragon from 'openseadragon';
 import { useEffect, useState } from 'react';
 import { SceneMapping } from '@/features/editors/mapping';
-import type { Size } from '@/features/editors/shapes';
+import type { Size } from '@/features/processing/shapes';
 
 /**
  * What an editor draws over: the OpenSeadragon viewer and the one picture its edit lies on.
