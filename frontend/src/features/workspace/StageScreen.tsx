@@ -349,9 +349,11 @@ export function StageScreen({
     ? placementOf(workspace.page?.version, workspace.page?.input_version)
     : null;
   // The place comes from the rows of the open step, and until they are read the canvas waits rather than draw both
-  // pictures as tall as each other and move them once the rows arrive. When the read fails they never arrive, and the
+  // pictures as tall as each other and move them once the rows arrive. The step of the address is not open while its
+  // recipe is still being read, and the canvas waits then as well. When the read fails the rows never arrive, and the
   // canvas draws the pair without a place
-  const placementPending = placesPictures && workspace.rowsPending;
+  const placementPending =
+    editing === null && compareMode !== CompareMode.Off && workspace.rowsPending;
   const stepLabels = MESSAGES.workspace.steps.canvas;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);

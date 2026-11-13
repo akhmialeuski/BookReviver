@@ -1,5 +1,8 @@
 """Tests for what only the local storage adapters promise: the directory layout of the uploads, sources and assets."""
 
+import io
+import shutil
+import zipfile
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -34,6 +37,8 @@ PAGE_NAME: str = 'page.png'
 PAGE_CONTENT: bytes = b'page'
 SOURCE_TAKEN: str = 'Another source was published under this identifier first.'
 MAX_BYTES: int = 1024
+ARCHIVED_FILES: tuple[str, ...] = (BookKeys.DATABASE, 'sources/first/page.png')
+DISK_FULL: str = 'No space left on device'
 FILE_KEY: StorageKey = BookKeys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
 
 
@@ -164,3 +169,55 @@ class TestLocalAssetStore:
             await abandon_write(store, key=FILE_KEY, content=PAGE_CONTENT)
 
         assert [path async for path in anyio.Path(tmp_path / BOOK_DIRECTORY / FILE_KEY).parent.iterdir()] == []
+
+
+class TestLocalBookDirectory:
+    """Tests for what LocalBookDirectory does when the disk fails while it unpacks an archive."""
+
+    async def test_a_write_that_fails_while_unpacking_removes_the_new_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify a failure of the disk in the middle of an archive leaves no directory of the new book behind.
+
+        The database is written first, so the failure of the second file finds a directory that already holds one, and
+        the same book takes the archive once the disk writes again.
+
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param monkeypatch: Fixture failing the copy of the second file of the archive.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, 'w') as archive:
+            for name in ARCHIVED_FILES:
+                archive.writestr(name, PAGE_CONTENT)
+        copy, copied = shutil.copyfileobj, []
+
+        def fail_on_the_second_file(source: io.BufferedIOBase, target: io.BufferedIOBase, length: int) -> None:
+            """Copy the first file of the archive, and fail as a full disk does on the next.
+
+            :param source: The file of the archive.
+            :type source: io.BufferedIOBase
+            :param target: The file of the book.
+            :type target: io.BufferedIOBase
+            :param length: Size of a chunk of the copy.
+            :type length: int
+            :raises OSError: On every file after the first.
+            """
+            if copied:
+                raise OSError(DISK_FULL)
+            copied.append(target)
+            copy(source, target, length)
+
+        monkeypatch.setattr(local.shutil, 'copyfileobj', fail_on_the_second_file)
+        directory = LocalBookDirectory(directory_of(BOOK_ID), root=tmp_path)
+
+        with pytest.raises(OSError, match=DISK_FULL):
+            await directory.unpack(content)
+
+        expect(len(copied) == 1)
+        expect(not (tmp_path / BOOK_DIRECTORY).exists())
+        monkeypatch.setattr(local.shutil, 'copyfileobj', copy)
+        await directory.unpack(content)
+        expect((tmp_path / BOOK_DIRECTORY / BookKeys.DATABASE).read_bytes() == PAGE_CONTENT)
+        assert_expectations()
