@@ -12,7 +12,9 @@ from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book_steps import BookSteps
 from bookreviver.services.books import BooksService
-from bookreviver.services.pages import PageImaging, PageService
+from bookreviver.services.pages import PageService
+from bookreviver.services.pages_work import PageKeeping
+from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRunner
 from tests.harness.fakes.in_process_executor import InProcessStepExecutor
 from tests.harness.fakes.processing import FakeCatalogue, FakeRenditionWriter
@@ -124,8 +126,8 @@ def make_page_service(
     catalogue = FakeCatalogue([SplitNone(), BlankPage(), BookSizedProcessor()])
     return PageService(
         books=BooksService(catalogue=stores.catalogue()),
-        order_keys=order_keys or FractionalOrderKeys(),
-        imaging=PageImaging(
+        keeping=PageKeeping(
+            order_keys=order_keys or FractionalOrderKeys(),
             base_versions=BaseVersions(tiler=tiler, processors=catalogue),
             runner=StepRunner(
                 executor=InProcessStepExecutor(catalogue),
@@ -133,5 +135,6 @@ def make_page_service(
                 tiler=tiler,
             ),
             book_steps=BookSteps(catalogue),
+            records=StageRecords(),
         ),
     )

@@ -2,8 +2,9 @@
 
 A page is addressed by its ``PageId`` and never by its number, because its position changes when pages are moved.
 
-``PageService`` holds the use cases, and each is the head of a chain of classes. A use case that reads or writes opens
-``PagesWork`` of ``services/pages_work.py`` in the work it hands to ``Book.read`` or ``Book.change``: the pages of that
+``PageService`` holds the use cases, and each is the head of a chain of classes. A use case that reads or writes asks
+the ``PageKeeping`` of ``services/pages_work.py`` to open ``PagesWork`` in the work it hands to ``Book.read`` or
+``Book.change``: the pages of that
 transaction, with their overviews and their places in the order of the book. ``Leaves`` of ``services/leaves.py`` stands
 the blank leaves of those pages. The ``prepare-pages`` job is ``PageImages`` of ``services/page_images.py``, which
 writes the images no request writes, and the jobs of the pages are queued by ``PageJobs`` of the same module.
@@ -26,19 +27,15 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar
 
-from attrs import evolve, frozen
+from attrs import evolve
 
 from bookreviver.domain.errors import ConflictError, NotAPlaceholderError, NotFoundError, ScanAlreadyInBookError
 from bookreviver.domain.jobs import ContentDetection
 from bookreviver.domain.pages import BlankFill, NewPageOrigin, Page, PageKind, PageOrigin
 from bookreviver.domain.slices import Slice
 from bookreviver.domain.stages import PageStageKey, Stage
-from bookreviver.domain.versions import VersionState
 from bookreviver.services.leaves import Leaves
 from bookreviver.services.page_images import SCAN_NOT_CUT, PageImages, PageJobs
-from bookreviver.services.page_labels import PageLabels
-from bookreviver.services.pages_work import PageParts, PagesWork
-from bookreviver.services.stage_records import StageRecords
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -50,32 +47,15 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job, JobEnd
     from bookreviver.domain.pages import NewPage, PageAnchor, PageOverview
     from bookreviver.domain.slices import SliceRequest
-    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.base_versions import BaseVersions
-    from bookreviver.services.book_steps import BookSteps
     from bookreviver.services.books import BooksService
-    from bookreviver.services.steps import StepRunner
+    from bookreviver.services.pages_work import PageKeeping, PagesWork
 
 NOT_A_CUT_PAGE: str = 'The page {page_id} is not cut from a scan, so it has no scan to keep or to replace.'
 NOT_A_BLANK_PAGE: str = 'The page {page_id} is not a blank page, so no leaf can stand in place of its scan.'
 DETECTION_RUNNING: str = 'The content of the pages is being detected. Wait for it to end, or cancel it.'
 BATCH_TOO_LONG: str = 'A request adds at most {limit} pages. Send the rest in another request.'
-
-
-@frozen(kw_only=True)
-class PageImaging:
-    """What writes the images of base versions.
-
-    :ivar base_versions: Builder of the rows of base versions.
-    :ivar runner: Runner of the processors ``split.none`` and ``pages.blank``, and writer of their files.
-    :ivar book_steps: Finder of the steps whose plugin reads the whole book, one of which may give the size of a leaf.
-    """
-
-    base_versions: BaseVersions
-    runner: StepRunner
-    book_steps: BookSteps
 
 
 class PageService:
@@ -86,26 +66,17 @@ class PageService:
 
     MAX_PAGES_PER_BATCH: ClassVar[int] = 1000
 
-    def __init__(self, *, books: BooksService, order_keys: OrderKeys, imaging: PageImaging) -> None:
+    def __init__(self, *, books: BooksService, keeping: PageKeeping) -> None:
         """Work over the ports of one request or job.
 
         :param books: Books service of the request or job, which opens the books of the library the passes of the
                       start go over.
         :type books: BooksService
-        :param order_keys: Builder of the order keys of moved and new pages.
-        :type order_keys: OrderKeys
-        :param imaging: The builder of base versions and the runner of their processors.
-        :type imaging: PageImaging
+        :param keeping: What keeps the pages of the books, which opens them for a transaction and holds their ports.
+        :type keeping: PageKeeping
         """
         self._books = books
-        self._parts = PageParts(
-            order_keys=order_keys,
-            base_versions=imaging.base_versions,
-            runner=imaging.runner,
-            book_steps=imaging.book_steps,
-            records=StageRecords(),
-            labels=PageLabels(),
-        )
+        self._keeping = keeping
 
     async def manifest(self, book: Book, request: SliceRequest, *, included_only: bool = False) -> Slice[PageOverview]:
         """Return a window of the book's pages in book order, every page with its position and base version.
@@ -191,7 +162,8 @@ class PageService:
             :rtype: PageOverview
             :raises NotFoundError: If the book has no such page.
             """
-            pages, records = self._pages(repos), self._parts.records
+            pages = self._pages(repos)
+            records = pages.keeping.records
             before = repos.pages.get(page_id)
             page = changes.apply_to(before)
             changed = repos.pages.update(evolve(page, updated_at=datetime.now(UTC)))
@@ -445,8 +417,7 @@ class PageService:
             :returns: The identifiers of the pages of the book.
             :rtype: list[PageId]
             """
-            leaf = self._parts.base_versions.blank_leaf
-            return [record.page_id for record in repos.page_stages.list_replaced(leaf.stage, leaf.ref)]
+            return self._pages(repos).replaced_leaves()
 
         def work(page_ids: Sequence[PageId], repos: BookRepositories, book_record: BookRecord) -> None:
             """Give the pages of one book that no longer show their scan the leaf their choice says.
@@ -500,7 +471,7 @@ class PageService:
             return page
 
         page = await book.change(work)
-        await PageImages(self._parts, book).discard([page])
+        await PageImages(self._keeping, book).discard([page])
 
     async def attach_scan(
         self, book: Book, page_id: PageId, scan_id: ScanId, *, take_over: bool = False
@@ -576,13 +547,11 @@ class PageService:
                 updated_at=moment,
             )
             repos.pages.update(page)
-            repos.page_versions.add(
-                self._parts.base_versions.split_none(page=page, scan=scan, state=VersionState.PENDING, moment=moment)
-            )
+            pages.bind_scan(page, scan, moment)
             return pages.overviews.one(page), taken
 
         overview, taken = await book.change(work)
-        await PageImages(self._parts, book).discard(taken)
+        await PageImages(self._keeping, book).discard(taken)
         PageJobs(book).prepare()
         return overview
 
@@ -609,7 +578,7 @@ class PageService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled, which stops it between two versions.
         """
-        return await PageImages(self._parts, book).run(job, control)
+        return await PageImages(self._keeping, book).run(job, control)
 
     async def move(self, book: Book, page_id: PageId, anchor: PageAnchor) -> PageOverview:
         """Put one page before or after another, and renumber the pages whose number the sections now give differently.
@@ -716,7 +685,7 @@ class PageService:
         :returns: The pages of the transaction, with their overviews, their places and their leaves.
         :rtype: PagesWork
         """
-        return PagesWork(self._parts, repos)
+        return self._keeping.open(repos)
 
     @staticmethod
     def _leaves(pages: PagesWork) -> Leaves:
