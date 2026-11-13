@@ -85,27 +85,38 @@ describe('steps a run stopped at', () => {
   const items = joinRows(
     [page('a'), page('b'), page('c'), page('d'), page('e')],
     [
-      row('a', { through_step: 1 }),
-      row('b', { through_step: 0 }),
-      row('c', { through_step: 1 }),
-      row('d', { status: 'failed', through_step: 2 }),
+      row('a', { through_step_id: 'second' }),
+      row('b', { through_step_id: 'first' }),
+      row('c', { through_step_id: 'second' }),
+      row('d', { status: 'failed', through_step_id: 'third' }),
       row('e'),
     ],
   );
 
   it('lists the steps with the pages of each, the first step first, and leaves out failed pages', () => {
-    expect(stopOptions(items)).toEqual([
-      { step: 0, pages: 1 },
-      { step: 1, pages: 2 },
+    expect(stopOptions(items, ['first', 'second', 'third'])).toEqual([
+      { step: 'first', pages: 1 },
+      { step: 'second', pages: 2 },
+    ]);
+  });
+
+  it('follows the order of the steps of the recipe, and puts a step it no longer holds last', () => {
+    expect(stopOptions(items, ['second', 'first'])).toEqual([
+      { step: 'second', pages: 2 },
+      { step: 'first', pages: 1 },
+    ]);
+    expect(stopOptions(items, ['second'])).toEqual([
+      { step: 'second', pages: 2 },
+      { step: 'first', pages: 1 },
     ]);
   });
 
   it('lists none for a stage no run stopped short', () => {
-    expect(stopOptions(joinRows([page('a')], [row('a')]))).toEqual([]);
+    expect(stopOptions(joinRows([page('a')], [row('a')]), ['first'])).toEqual([]);
   });
 
   it('keeps the pages that stopped at a step, and every page for no step', () => {
-    expect(applyStopped(items, 1).map((item) => item.page.id)).toEqual(['a', 'c']);
+    expect(applyStopped(items, 'second').map((item) => item.page.id)).toEqual(['a', 'c']);
     expect(applyStopped(items, null)).toHaveLength(5);
   });
 });

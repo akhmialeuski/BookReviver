@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
@@ -89,7 +90,9 @@ def fx_book_parts(fx_directories: SharedBookDirectories, fx_books: BookRegistry)
     :rtype: Iterator[RecordingEventBus]
     """
     BookDirectory.register(fx_directories.open)
-    BookDatabase.register(lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books))
+    BookDatabase.register(
+        lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books, order_keys=FractionalOrderKeys())
+    )
     with RecordingEventBus().installed() as bus:
         BookJobs.register(FakeJobBoard(runner=ScriptedRunner()).open)
         yield bus

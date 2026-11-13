@@ -27,6 +27,7 @@ from bookreviver.domain.stages import Stage
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, NoChangeOpenError
 from tests.harness.builders.domain import (
+    DESKEW_STEP_ID,
     EPOCH,
     directory_of,
     make_book_place,
@@ -403,11 +404,13 @@ async def fx_book_rows(fx_databases: BookDatabasesFactory, fx_book: Book) -> dic
         'page_versions': Row(
             version, evolve(version, comment='Checked'), make_page_version(page_id=page.id, minutes=1), version.id
         ),
-        'page_stages': Row(stage, evolve(stage, through_step=1), evolve(stage, stage=Stage.CLEANUP), stage.key),
+        'page_stages': Row(
+            stage, evolve(stage, through_step_id=DESKEW_STEP_ID), evolve(stage, stage=Stage.CLEANUP), stage.key
+        ),
         'page_step_states': Row(
             state,
             evolve(state, updated_at=state.updated_at + ONE_MINUTE),
-            evolve(state, stage=Stage.CLEANUP),
+            make_page_step_state(page_id=page.id, stage=Stage.CLEANUP),
             state.key,
         ),
         'step_values': Row(

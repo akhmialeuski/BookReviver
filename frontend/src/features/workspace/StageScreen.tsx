@@ -231,11 +231,15 @@ export function StageScreen({
           onSelect: (kind) => setKindPick({ stage, kind }),
         };
   // The steps a run stopped at narrow the list too; the choice belongs to one stage, like the kind of page
-  const [stopPick, setStopPick] = useState<{ stage: Stage; step: number | null }>({
+  const [stopPick, setStopPick] = useState<{ stage: Stage; step: string | null }>({
     stage,
     step: null,
   });
-  const stopOptionList = useMemo(() => stopOptions(items), [items]);
+  const stepOrder = useMemo(
+    () => (processing.recipe?.steps ?? []).map((step) => step.step_id),
+    [processing.recipe],
+  );
+  const stopOptionList = useMemo(() => stopOptions(items, stepOrder), [items, stepOrder]);
   const stopStep =
     stopPick.stage === stage && stopOptionList.some((option) => option.step === stopPick.step)
       ? stopPick.step
@@ -245,8 +249,10 @@ export function StageScreen({
       ? undefined
       : {
           options: stopOptionList,
-          titleOf: (index) =>
-            barStepsOf(processing.recipe, processing.catalogue)[index]?.title ?? '',
+          titleOf: (stepId) =>
+            barStepsOf(processing.recipe, processing.catalogue).find(
+              (step) => step.stepId === stepId,
+            )?.title ?? '',
           selected: stopStep,
           onSelect: (step) => setStopPick({ stage, step }),
         };

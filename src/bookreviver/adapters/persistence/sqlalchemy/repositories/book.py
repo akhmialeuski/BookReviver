@@ -29,6 +29,8 @@ from bookreviver.ports.persistence import BookRepositories
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from bookreviver.ports.ordering import OrderKeys
+
 
 class SqlAlchemyBookRepositories(BookRepositories):
     """Every repository of a book, bound to the session of one transaction of the file of the book.
@@ -52,11 +54,13 @@ class SqlAlchemyBookRepositories(BookRepositories):
     :ivar book_places: Book place repository bound to the session.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, *, order_keys: OrderKeys) -> None:
         """Bind every repository of a book to ``session``.
 
         :param session: Session of the transaction, owned and closed by the database that runs the work.
         :type session: Session
+        :param order_keys: The order keys that place the steps of a recipe.
+        :type order_keys: OrderKeys
         """
         self.groups = PageGroups(session)
         self.book_record = SqlAlchemyBookRecordRepository(session)
@@ -69,6 +73,6 @@ class SqlAlchemyBookRepositories(BookRepositories):
         self.page_step_states = SqlAlchemyPageStepStateRepository(session)
         self.page_history = SqlAlchemyPageHistoryRepository(session, self.groups)
         self.step_values = SqlAlchemyStepValuesRepository(session, self.groups)
-        self.recipes = SqlAlchemyRecipeRepository(session)
+        self.recipes = SqlAlchemyRecipeRepository(session, order_keys)
         self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

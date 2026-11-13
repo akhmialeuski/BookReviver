@@ -62,12 +62,12 @@ class StepTally:
     """The pages of one stage of one book that a run stopped at one step of their recipe, as a repository counts them.
 
     :ivar stage: The stage.
-    :ivar through_step: Index in the recipe of the last step the pages were run through.
+    :ivar through_step_id: The last step the pages were run through.
     :ivar pages: Pages with an image, not failed, whose record of the stage stopped at that step.
     """
 
     stage: Stage
-    through_step: int = field(validator=validators.ge(0))
+    through_step_id: StepId
     pages: int = field(validator=validators.ge(1))
 
 
@@ -187,17 +187,29 @@ class StageSummary:
             ),
         )
 
-    def with_stopped(self, stopped: Sequence[StepTally]) -> Self:
+    def with_stopped(self, stopped: Sequence[StepTally], recipes: Sequence[Recipe]) -> Self:
         """Add how many pages stopped at each step, the first step first.
+
+        A step stands where the first recipe of the stage that holds it puts it, and a step no recipe holds any more
+        stands after the others. Steps at the same place keep the order of their identifiers.
 
         :param stopped: The counts of the steps of this stage.
         :type stopped: Sequence[StepTally]
+        :param recipes: The recipes of this stage, which give each step its place.
+        :type recipes: Sequence[Recipe]
         :returns: The summary with its steps. A stage done by hand has none, whatever the counts say.
         :rtype: Self
         """
         if self.manual:
             return self
-        return evolve(self, stopped=tuple(sorted(stopped, key=lambda one: one.through_step)))
+        places: dict[StepId, int] = {}
+        for recipe in recipes:
+            for index, step in enumerate(recipe.steps):
+                places.setdefault(step.step_id, index)
+        ordered = sorted(
+            stopped, key=lambda one: (places.get(one.through_step_id, len(places)), str(one.through_step_id))
+        )
+        return evolve(self, stopped=tuple(ordered))
 
     def status(self, *, running: bool) -> StageStatus:
         """Give the status of the stage in the book.
@@ -417,8 +429,8 @@ class StageRow:
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
     :ivar head_version: The current version of the stage on the page, or None when there is none.
-    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
-                        that is on, or None.
+    :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+                           is on, or None.
     :ivar review_processor: Key of the processor of the first step of the stage that marked the page for review, or None
                             when the page is not marked or an earlier stage marked it.
     :ivar step: The page at the step the row was asked for, or None for a row of the stage as a whole.
@@ -434,7 +446,7 @@ class StageRow:
     recipe_id: RecipeId | None = None
     kind: RecipeKind
     head_version: PageVersion | None = None
-    through_step: int | None = None
+    through_step_id: StepId | None = None
     review_processor: str | None = None
     step: StepRow | None = None
     picture: PageVersion | None = None

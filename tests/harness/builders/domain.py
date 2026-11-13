@@ -3,7 +3,7 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from attrs import frozen
 
@@ -379,6 +379,9 @@ def make_recipe(
 ) -> Recipe:
     """Build a recipe of one deskew step, created ``minutes`` after the epoch.
 
+    A step belongs to one stage, so the step of a recipe of the geometry stage is ``DESKEW_STEP_ID``, and the step of
+    a recipe of another stage has an identifier of that stage, the same in every recipe of it.
+
     :param stage: Stage the recipe processes.
     :type stage: Stage
     :param kind: Kind of the pages the recipe processes.
@@ -393,10 +396,21 @@ def make_recipe(
         id=RecipeId(uuid4()),
         stage=stage,
         kind=kind,
-        steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
+        steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=step_of_stage(stage)),),
         created_at=moment,
         updated_at=moment,
     )
+
+
+def step_of_stage(stage: Stage) -> StepId:
+    """Give the identifier of the step a recipe of a stage that ``make_recipe`` builds holds.
+
+    :param stage: The stage.
+    :type stage: Stage
+    :returns: ``DESKEW_STEP_ID`` for the geometry stage, and an identifier of its own for any other stage.
+    :rtype: StepId
+    """
+    return DESKEW_STEP_ID if stage is Stage.GEOMETRY else StepId(uuid5(DESKEW_STEP_ID, stage.value))
 
 
 def make_recipe_profile(
@@ -495,7 +509,9 @@ def make_page_edit(*, page_id: PageId, stage: Stage = Stage.GEOMETRY, degrees: f
     :returns: An edit saved at the epoch.
     :rtype: PageEdit
     """
-    return make_geometry_edit(page_id=page_id, geometry=Rotation(degrees=degrees), stage=stage, step_id=DESKEW_STEP_ID)
+    return make_geometry_edit(
+        page_id=page_id, geometry=Rotation(degrees=degrees), stage=stage, step_id=step_of_stage(stage)
+    )
 
 
 def make_geometry_edit(
@@ -529,7 +545,7 @@ def make_page_step_state(
     *,
     page_id: PageId,
     stage: Stage = Stage.GEOMETRY,
-    step_id: StepId = DESKEW_STEP_ID,
+    step_id: StepId | None = None,
     params: MetadataMap | None = None,
     edit: PageEdit | None = None,
 ) -> PageStepState:
@@ -539,8 +555,8 @@ def make_page_step_state(
     :type page_id: PageId
     :param stage: Stage of the step.
     :type stage: Stage
-    :param step_id: The step of a recipe.
-    :type step_id: StepId
+    :param step_id: The step of a recipe, or None for the step ``make_recipe`` gives a recipe of the stage.
+    :type step_id: StepId | None
     :param params: The fields the page changes, or None for none.
     :type params: MetadataMap | None
     :param edit: The manual edit of the step, or None.
@@ -551,7 +567,7 @@ def make_page_step_state(
     return PageStepState(
         page_id=page_id,
         stage=stage,
-        step_id=step_id,
+        step_id=step_of_stage(stage) if step_id is None else step_id,
         params={} if params is None else params,
         edit=edit,
         updated_at=EPOCH,
@@ -585,7 +601,7 @@ def make_page_history_entry(
         id=PageHistoryEntryId(uuid4()),
         page_id=page_id,
         stage=stage,
-        step_id=DESKEW_STEP_ID,
+        step_id=step_of_stage(stage),
         layer=StepLayer.SETTINGS,
         before=before,
         after=after,
@@ -598,25 +614,28 @@ def make_step_values(
     *,
     scope: ValueScope = ValueScope.EVEN,
     group_label: str = '',
-    step_id: StepId = DESKEW_STEP_ID,
+    step_id: StepId | None = None,
     params: MetadataMap | None = None,
+    stage: Stage = Stage.GEOMETRY,
 ) -> StepValues:
-    """Build the values of a step of the geometry stage for a part of the pages, by default the deskew step, even pages.
+    """Build the values of a step for a part of the pages, by default the deskew step of the geometry, even pages.
 
     :param scope: The odd pages, the even pages or a group.
     :type scope: ValueScope
     :param group_label: Label of the group, for the scope of a group.
     :type group_label: str
-    :param step_id: The step of a recipe.
-    :type step_id: StepId
+    :param step_id: The step of a recipe, or None for the step ``make_recipe`` gives a recipe of the stage.
+    :type step_id: StepId | None
     :param params: The fields the part changes, or None for one field.
     :type params: MetadataMap | None
+    :param stage: Stage of the step.
+    :type stage: Stage
     :returns: Values saved at the epoch.
     :rtype: StepValues
     """
     return StepValues(
-        stage=Stage.GEOMETRY,
-        step_id=step_id,
+        stage=stage,
+        step_id=step_of_stage(stage) if step_id is None else step_id,
         scope=scope,
         group_label=group_label,
         params={'max_angle_deg': 3} if params is None else params,

@@ -3,17 +3,20 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.pages import RecipeKind
-from bookreviver.domain.recipes import ProfileDraft, Step
+from bookreviver.domain.recipes import ProfileDraft, RecipeDraft, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from tests.harness.builders.domain import make_page_stage, make_recipe_profile
-from tests.harness.fakes.processors import FakeProcessor
+from tests.harness.fakes.processors import STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.core.book import Book
     from bookreviver.domain.recipes import RecipeProfile
     from tests.harness.builders.domain import BookOpener
@@ -32,6 +35,20 @@ REORDERED: tuple[Step, ...] = (
     Step(processor_key=FAKE_KEY, params={STRENGTH: 3}, enabled=False),
     Step(processor_key=FAKE_KEY, params={STRENGTH: 2}),
 )
+
+
+def as_made_from(steps: Sequence[Step]) -> tuple[Step, ...]:
+    """Give the steps of a recipe as the steps of the profile they were made from, each under the identifier of its origin.
+
+    :param steps: Steps a profile made in a recipe.
+    :type steps: Sequence[Step]
+    :returns: The steps, each named by the step of the profile it names as its origin.
+    :rtype: tuple[Step, ...]
+    """
+    return tuple(
+        evolve(step, step_id=step.step_id if step.origin_step_id is None else step.origin_step_id, origin_step_id=None)
+        for step in steps
+    )
 
 
 async def store_profile(book: Book, profile: RecipeProfile) -> RecipeProfile:
@@ -147,7 +164,7 @@ class TestChangeProfile:
         applied = await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(book, profile.id)
         kept = await book.read(lambda repos: repos.recipes.get(applied.recipe.id))
-        assert kept.steps == profile.steps
+        assert as_made_from(kept.steps) == profile.steps
         assert (await fx_kit.profiles().library(book, None, SliceRequest())).total == 0
 
 
@@ -170,11 +187,57 @@ class TestApplyProfile:
         applied = await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.BW_PICTURE)
         picture = await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
         text = await fx_kit.recipe_of(actor, book_id, Stage.GEOMETRY)
-        expect(applied.recipe.steps == profile.steps)
+        expect(as_made_from(applied.recipe.steps) == profile.steps)
         expect(applied.recipe.kind is RecipeKind.BW_PICTURE)
         expect(applied.missing_processors == ())
         expect((picture.id, picture.profile_id) == (applied.recipe.id, profile.id))
         expect(text.steps != profile.steps)
+        assert_expectations()
+
+    async def test_two_recipes_made_from_one_profile_have_steps_of_their_own(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify a profile applied to two recipes gives each new steps, unique in the book, that name the same origin.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_kit.seed_book()
+        book = fx_open_book(actor, book_id)
+        profile = await saved(fx_kit, book)
+        text = (await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.TEXT)).recipe
+        blank = (await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.BLANK)).recipe
+        origins = [step.step_id for step in profile.steps]
+        expect([step.origin_step_id for step in text.steps] == origins)
+        expect([step.origin_step_id for step in blank.steps] == origins)
+        ids = [step.step_id for step in (*text.steps, *blank.steps, *profile.steps)]
+        expect(len(set(ids)) == len(ids))
+        assert_expectations()
+
+    async def test_a_profile_applied_again_keeps_the_steps_it_made(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify applying a profile to a recipe again finds the steps it made by their origin and keeps them.
+
+        The steps keep their identifiers after the user moved them and changed their parameters, so what the pages
+        keep for them stays theirs, and the recipe takes the order and the parameters of the profile again.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_kit.seed_book()
+        book = fx_open_book(actor, book_id)
+        profile = await saved(fx_kit, book)
+        first = (await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.TEXT)).recipe
+        changed = [evolve(step, params={**step.params, STRENGTH_PARAMETER: 1}) for step in reversed(first.steps)]
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=changed))
+        again = (await fx_kit.profiles().apply(book, profile.id, kind=RecipeKind.TEXT)).recipe
+        expect([step.step_id for step in again.steps] == [step.step_id for step in first.steps])
+        expect(as_made_from(again.steps) == profile.steps)
         assert_expectations()
 
     async def test_applying_a_profile_marks_the_pages_of_the_recipe_stale(

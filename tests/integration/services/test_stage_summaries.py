@@ -25,7 +25,7 @@ from bookreviver.domain.stages import (
     StepFlag,
 )
 from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionState
-from tests.harness.builders.domain import make_page, make_page_stage, make_page_version, open_for
+from tests.harness.builders.domain import make_page, make_page_stage, make_page_version, make_recipe, open_for
 from tests.harness.builders.page_batches import PageValues
 from tests.harness.builders.spreads import run_stage
 from tests.harness.builders.stage_reads import book_summaries, books_with_progress, stage_rows
@@ -78,12 +78,12 @@ class GeometrySeed(NamedTuple):
 
     :ivar state: State of the record.
     :ivar review: Why the version asks for a review, or None.
-    :ivar through_step: Index of the last step the run went through, or None for the whole recipe.
+    :ivar through_step_id: The last step the run went through, or None for the whole recipe.
     """
 
     state: StageState
     review: ReviewReason | None = None
-    through_step: int | None = None
+    through_step_id: StepId | None = None
 
 
 async def seed_geometry(book_id: BookId, page: Page, seed: GeometrySeed, *, databases: LocatedBookDatabases) -> None:
@@ -117,9 +117,24 @@ async def seed_geometry(book_id: BookId, page: Page, seed: GeometrySeed, *, data
         """
         repos.page_versions.add(version)
         record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=seed.state)
-        repos.page_stages.save(evolve(record, through_step=seed.through_step))
+        repos.page_stages.save(evolve(record, through_step_id=seed.through_step_id))
 
     await databases.open(book_id).change(work)
+
+
+async def seed_two_steps(book_id: BookId, *, databases: LocatedBookDatabases) -> tuple[StepId, StepId]:
+    """Commit a recipe of the geometry stage with two steps, which records can name as the step they stopped at.
+
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :returns: The identifiers of the two steps, in their order.
+    :rtype: tuple[StepId, StepId]
+    """
+    recipe = evolve(make_recipe(), steps=(Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)))
+    await databases.open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
+    return recipe.steps[0].step_id, recipe.steps[1].step_id
 
 
 async def mark_version(
@@ -278,18 +293,19 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, book_id, pages = await seed_book(fx_kit)
+        first, second = await seed_two_steps(book_id, databases=fx_kit.databases)
         await seed_geometry(
-            book_id, pages[0], GeometrySeed(StageState.FRESH, through_step=0), databases=fx_kit.databases
+            book_id, pages[0], GeometrySeed(StageState.FRESH, through_step_id=second), databases=fx_kit.databases
         )
         await seed_geometry(
-            book_id, pages[1], GeometrySeed(StageState.FRESH, through_step=1), databases=fx_kit.databases
+            book_id, pages[1], GeometrySeed(StageState.FRESH, through_step_id=first), databases=fx_kit.databases
         )
         await seed_geometry(book_id, pages[2], GeometrySeed(StageState.FRESH), databases=fx_kit.databases)
         geometry = (await summaries_of(fx_kit, book_id))[Stage.GEOMETRY]
         expect((geometry.fresh, geometry.partial, geometry.not_run) == (3, 2, 0))
         expect(
-            [(one.stage, one.through_step, one.pages) for one in geometry.stopped]
-            == [(Stage.GEOMETRY, 0, 1), (Stage.GEOMETRY, 1, 1)]
+            [(one.stage, one.through_step_id, one.pages) for one in geometry.stopped]
+            == [(Stage.GEOMETRY, first, 1), (Stage.GEOMETRY, second, 1)]
         )
         expect(geometry.status(running=False) is StageStatus.WAITING)
         assert_expectations()
@@ -301,8 +317,9 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, book_id, pages = await seed_book(fx_kit)
+        first, _ = await seed_two_steps(book_id, databases=fx_kit.databases)
         await seed_geometry(
-            book_id, pages[0], GeometrySeed(StageState.FAILED, through_step=0), databases=fx_kit.databases
+            book_id, pages[0], GeometrySeed(StageState.FAILED, through_step_id=first), databases=fx_kit.databases
         )
         geometry = (await summaries_of(fx_kit, book_id))[Stage.GEOMETRY]
         assert (geometry.partial, geometry.stopped) == (0, ())
@@ -392,12 +409,13 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, book_id, pages = await seed_book(fx_kit)
+        _, second = await seed_two_steps(book_id, databases=fx_kit.databases)
         await seed_geometry(
-            book_id, pages[0], GeometrySeed(StageState.FRESH, through_step=1), databases=fx_kit.databases
+            book_id, pages[0], GeometrySeed(StageState.FRESH, through_step_id=second), databases=fx_kit.databases
         )
         await seed_geometry(book_id, pages[1], GeometrySeed(StageState.FRESH), databases=fx_kit.databases)
         rows = await stage_rows(fx_kit, book_id, Stage.GEOMETRY, SliceRequest())
-        assert [row.through_step for row in rows.items] == [1, None, None]
+        assert [row.through_step_id for row in rows.items] == [second, None, None]
 
     async def test_a_marked_row_names_the_processor_of_the_step_that_marked_it(self, fx_kit: ProcessingKit) -> None:
         """Verify the mark a step passed on is traced back to the first step that made it.

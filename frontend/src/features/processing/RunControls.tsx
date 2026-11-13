@@ -124,14 +124,19 @@ export function RunControls({
   const lastIndex = steps.findLastIndex((step) => step.enabled);
   const canStopAtOpen =
     openIndex !== undefined && steps.length > 1 && canRunThrough(steps, openIndex);
-  const throughStep = through === Through.Open && canStopAtOpen ? openIndex : undefined;
+  const throughIndex = through === Through.Open && canStopAtOpen ? openIndex : undefined;
+  const throughStepId = throughIndex === undefined ? undefined : steps[throughIndex]?.step_id;
   const titleOf = (index: number | undefined): string => {
     const key = index === undefined ? undefined : steps[index]?.processor_key;
     return key === undefined ? '' : (catalogue.find((entry) => entry.key === key)?.title ?? key);
   };
 
   // The pages that have work of their own are counted by the server, over the pages and the steps of this choice
-  const request = { scope: chosen?.scope ?? RunScope.Attention, group: chosen?.group, throughStep };
+  const request = {
+    scope: chosen?.scope ?? RunScope.Attention,
+    group: chosen?.group,
+    throughStepId,
+  };
   const own = useOwnWork(bookId, stage, menuOpen || ownMode !== 'keep' ? run.bodyOf(request) : null)
     .data?.own_pages;
   const mode: RunMode = own === 0 ? 'keep' : ownMode;
@@ -156,7 +161,7 @@ export function RunControls({
   const buttonText = menu.button(
     chosen?.items.some(hasResult) ?? false,
     pagesText(),
-    titleOf(throughStep ?? lastIndex),
+    titleOf(throughIndex ?? lastIndex),
   );
 
   return (
@@ -246,7 +251,7 @@ export function RunControls({
                   {menu.throughLabel}
                 </DropdownMenuLabel>
                 <DropdownMenuRadioGroup
-                  value={throughStep === undefined ? Through.Stage : Through.Open}
+                  value={throughStepId === undefined ? Through.Stage : Through.Open}
                   onValueChange={(next) =>
                     setThrough(next === Through.Open ? Through.Open : Through.Stage)
                   }

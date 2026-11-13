@@ -27,6 +27,7 @@ from bookreviver.domain.stages import PageStageKey, ReviewReason, Stage, StageSt
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionScale, VersionState
 from tests.harness.builders.domain import (
+    DESKEW,
     DESKEW_STEP_ID,
     EPOCH,
     make_page,
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
+    from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.versions import PageVersion
@@ -145,6 +147,31 @@ async def _store_page(
     page = make_page()
     book_id = await store_book(catalogue_factory(), make_record(), page, owner=await new_owner(), databases=databases)
     return book_id, page.id
+
+
+async def _new_step(
+    book_id: BookId,
+    *,
+    databases: LocatedBookDatabases,
+    stage: Stage = Stage.GEOMETRY,
+    kind: RecipeKind = RecipeKind.BLANK,
+) -> StepId:
+    """Store a recipe of one kind of a stage holding a new step, which the rows of a page can name.
+
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :param stage: Stage of the recipe and of the step.
+    :type stage: Stage
+    :param kind: Kind of the recipe, which no other recipe of the stage in the book may have.
+    :type kind: RecipeKind
+    :returns: The identifier of the new step.
+    :rtype: StepId
+    """
+    recipe = evolve(make_recipe(stage=stage, kind=kind), steps=(Step(processor_key=DESKEW.key),))
+    await databases.open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
+    return recipe.steps[0].step_id
 
 
 def _blank_page(order_key: str) -> Page:
@@ -371,6 +398,176 @@ class TestRecipeRepository:
         await fx_databases().delete_book(book_id)
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
+
+
+def _three_steps() -> Recipe:
+    """Build a recipe of the geometry stage with three steps of the deskew processor, which differ by their angle.
+
+    :returns: The recipe.
+    :rtype: Recipe
+    """
+    steps = tuple(Step(processor_key=DESKEW.key, params={MAX_ANGLE: angle}) for angle in range(1, 4))
+    return evolve(make_recipe(), steps=steps)
+
+
+class TestRecipeSteps:
+    """Tests for the steps of a recipe, each of which is a step of the book that the recipe places in its order."""
+
+    async def test_a_moved_step_keeps_its_identifier_and_its_parameters(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify a recipe whose steps are reordered reads back in the new order, every step as it was.
+
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        recipe = _three_steps()
+        first, second, third = recipe.steps
+        moved = evolve(recipe, steps=(third, first, second))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.update(moved))
+        moved_back = evolve(recipe, steps=(first, third, second))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.update(moved_back))
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
+        assert stored == moved_back
+
+    async def test_a_removed_step_keeps_what_the_pages_hold_for_it(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify a step taken out of its recipe stays a step of the book, whose settings, values and history remain.
+
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        recipe = _three_steps()
+        gone = recipe.steps[1].step_id
+        state = make_page_step_state(page_id=page_id, step_id=gone, params={MAX_ANGLE: 4})
+        values = make_step_values(step_id=gone, scope=ValueScope.ODD)
+
+        def add_with_state(repos: BookRepositories, _book_record: BookRecord) -> None:
+            """Store the recipe and what the page keeps for its second step.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
+            """
+            repos.recipes.add(recipe)
+            repos.page_step_states.save(state)
+
+        await fx_databases().open(book_id).change(add_with_state)
+        shorter = evolve(recipe, steps=(recipe.steps[0], recipe.steps[2]))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.update(shorter))
+        # The step left every recipe, and the book still takes rows that name it
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.step_values.save(values))
+        stored, kept, listed = (
+            await fx_databases()
+            .open(book_id)
+            .read(
+                lambda repos: (
+                    repos.recipes.get(recipe.id),
+                    repos.page_step_states.find(state.key),
+                    repos.step_values.list_for_step(gone),
+                )
+            )
+        )
+        expect(stored == shorter)
+        expect(kept == state)
+        expect(listed == [values])
+        assert_expectations()
+
+    async def test_a_returned_step_is_found_again_with_what_the_pages_hold_for_it(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify a step put back into its recipe under its identifier is the step it was, with its new parameters.
+
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        recipe = _three_steps()
+        first, second, third = recipe.steps
+        state = make_page_step_state(page_id=page_id, step_id=second.step_id, params={MAX_ANGLE: 4})
+
+        def add_with_state(repos: BookRepositories, _book_record: BookRecord) -> None:
+            """Store the recipe and what the page keeps for its second step.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
+            """
+            repos.recipes.add(recipe)
+            repos.page_step_states.save(state)
+
+        await fx_databases().open(book_id).change(add_with_state)
+        shorter = evolve(recipe, steps=(first, third))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.update(shorter))
+        returned = evolve(recipe, steps=(first, third, evolve(second, params={MAX_ANGLE: 9}, enabled=False)))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.update(returned))
+        stored, kept = (
+            await fx_databases()
+            .open(book_id)
+            .read(lambda repos: (repos.recipes.get(recipe.id), repos.page_step_states.find(state.key)))
+        )
+        expect(stored == returned)
+        expect(kept == state)
+        assert_expectations()
+
+    async def test_a_step_of_one_stage_is_refused_in_a_recipe_of_another(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify a step belongs to the stage of the recipe that first held it, and no recipe of another stage holds it.
+
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        geometry = _three_steps()
+        cleanup = evolve(make_recipe(stage=Stage.CLEANUP), steps=(geometry.steps[0],))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(geometry))
+        with pytest.raises(NotFoundError):
+            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(cleanup))
+
+    async def test_a_step_two_recipes_of_a_stage_hold_stays_in_the_one_that_keeps_it(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify recipes of two kinds may hold one step, each with its own parameters, and one may let it go.
+
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
+        text = _three_steps()
+        shared = text.steps[0]
+        blank = evolve(make_recipe(kind=RecipeKind.BLANK, minutes=1), steps=(evolve(shared, params={MAX_ANGLE: 7}),))
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add_many([text, blank]))
+        without = evolve(text, steps=text.steps[1:])
+        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.update(without))
+        stored = await fx_databases().open(book_id).read(lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
+        assert list(stored) == [without, blank]
 
 
 class TestPageStageRepository:
@@ -823,16 +1020,16 @@ class TestPageStageRepository:
         )
         other_id = await store_book(catalogue, make_record(), elsewhere, owner=owner_id, databases=fx_databases())
         stopped = [
-            evolve(make_page_stage(page_id=page.id, state=state), through_step=through_step)
-            for page, through_step, state in (
-                (first, 0, StageState.FRESH),
-                (second, 0, StageState.STALE),
+            evolve(make_page_stage(page_id=page.id, state=state), through_step_id=through_step_id)
+            for page, through_step_id, state in (
+                (first, DESKEW_STEP_ID, StageState.FRESH),
+                (second, DESKEW_STEP_ID, StageState.STALE),
                 (whole, None, StageState.FRESH),
-                (failed, 1, StageState.FAILED),
-                (placeholder, 0, StageState.FRESH),
+                (failed, DESKEW_STEP_ID, StageState.FAILED),
+                (placeholder, DESKEW_STEP_ID, StageState.FRESH),
             )
         ]
-        elsewhere_stopped = evolve(make_page_stage(page_id=elsewhere.id), through_step=0)
+        elsewhere_stopped = evolve(make_page_stage(page_id=elsewhere.id), through_step_id=DESKEW_STEP_ID)
         await fx_databases().open(book_id).change(partial(_save_records, records=stopped))
         await (
             fx_databases().open(other_id).change(lambda repos, _book_record: repos.page_stages.save(elsewhere_stopped))
@@ -842,7 +1039,7 @@ class TestPageStageRepository:
             .open(book_id)
             .read(lambda repos: (repos.page_stages.tally(), repos.page_stages.step_tally()))
         )
-        assert steps == [StepTally(stage=Stage.GEOMETRY, through_step=0, pages=2)]
+        assert steps == [StepTally(stage=Stage.GEOMETRY, through_step_id=DESKEW_STEP_ID, pages=2)]
         assert tally.partial == 2
 
     async def test_deleting_the_head_version_leaves_the_record_without_it(
@@ -1015,7 +1212,7 @@ class TestPageStepStateRepository:
         edit = PageEdit(
             page_id=page_id,
             stage=Stage.PAGE_SPLIT,
-            step_id=StepId(uuid4()),
+            step_id=await _new_step(book_id, databases=fx_databases(), stage=Stage.PAGE_SPLIT),
             kind=geometry.editor,
             geometry=geometry,
             mask_key=None,
@@ -1040,7 +1237,7 @@ class TestPageStepStateRepository:
         """
         book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         geometry = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 3})
-        cleanup = evolve(geometry, stage=Stage.CLEANUP)
+        cleanup = make_page_step_state(page_id=page_id, stage=Stage.CLEANUP, params={MAX_ANGLE: 3})
 
         def save_both(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Save the state of the later stage first.
@@ -1080,7 +1277,8 @@ class TestPageStepStateRepository:
         """
         book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         first = make_page_step_state(page_id=page_id, params={MAX_ANGLE: 1})
-        second = make_page_step_state(page_id=page_id, step_id=StepId(uuid4()), params={MAX_ANGLE: 2})
+        other = await _new_step(book_id, databases=fx_databases())
+        second = make_page_step_state(page_id=page_id, step_id=other, params={MAX_ANGLE: 2})
 
         def save_both(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Save the states of the two steps.
@@ -1117,7 +1315,8 @@ class TestPageStepStateRepository:
         second_record, second_page = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         on_first = make_page_step_state(page_id=first_page, params={MAX_ANGLE: 1})
         on_second = make_page_step_state(page_id=second_page, params={MAX_ANGLE: 2})
-        other_step = make_page_step_state(page_id=first_page, step_id=StepId(uuid4()), params={MAX_ANGLE: 3})
+        other = await _new_step(first_record, databases=fx_databases())
+        other_step = make_page_step_state(page_id=first_page, step_id=other, params={MAX_ANGLE: 3})
 
         def save_first_book(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Save the two states of the first book.
@@ -1285,9 +1484,10 @@ class TestStepValuesRepository:
         book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         other_book_id, _ = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
         mine = make_step_values()
-        other_step = make_step_values(step_id=StepId(uuid4()))
-        other_stage = evolve(make_step_values(step_id=StepId(uuid4())), stage=Stage.CLEANUP)
-        other_book = make_step_values(step_id=StepId(uuid4()))
+        other_step = make_step_values(step_id=await _new_step(book_id, databases=fx_databases()))
+        cleanup_step = await _new_step(book_id, databases=fx_databases(), stage=Stage.CLEANUP)
+        other_stage = evolve(make_step_values(step_id=cleanup_step), stage=Stage.CLEANUP)
+        other_book = make_step_values(step_id=await _new_step(other_book_id, databases=fx_databases()))
         await fx_databases().open(book_id).change(partial(_save_values, values=[mine, other_step, other_stage]))
         await fx_databases().open(other_book_id).change(lambda repos, _book_record: repos.step_values.save(other_book))
         listed = (
@@ -1670,7 +1870,9 @@ class TestPageHistoryRepository:
         carried = evolve(
             make_page_history_entry(page_id=page_id), source=ChangeSource.CARRY_OVER, batch_id=ChangeBatchId(uuid4())
         )
-        other_step = evolve(make_page_history_entry(page_id=page_id), step_id=StepId(uuid4()))
+        other_step = evolve(
+            make_page_history_entry(page_id=page_id), step_id=await _new_step(book_id, databases=fx_databases())
+        )
         other_stage = make_page_history_entry(page_id=page_id, stage=Stage.CLEANUP)
         elsewhere = make_page_history_entry(page_id=other_page.id)
 
@@ -1742,7 +1944,7 @@ class TestPageHistoryRepository:
         :type fx_databases: BookDatabasesFactory
         """
         book_id, page_id = await _store_page(fx_catalogue, fx_new_owner, databases=fx_databases())
-        other_step = StepId(uuid4())
+        other_step = await _new_step(book_id, databases=fx_databases())
         written = [
             make_page_history_entry(page_id=page_id),
             evolve(make_page_history_entry(page_id=page_id), step_id=other_step),

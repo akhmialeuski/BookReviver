@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepState
     from bookreviver.domain.recipes import Recipe, Step
@@ -190,7 +190,7 @@ class PageRun(PageWork):
     :ivar steps: The steps the run goes over: the ones that are on, up to the step it stops at.
     """
 
-    def __init__(self, run: RecipeRun, page: Page, recipe: Recipe, *, through_step: int | None = None) -> None:
+    def __init__(self, run: RecipeRun, page: Page, recipe: Recipe, *, through_step_id: StepId | None = None) -> None:
         """Run a page by a recipe for a job.
 
         :param run: The work of the ``run-stage`` job the page belongs to.
@@ -199,14 +199,14 @@ class PageRun(PageWork):
         :type page: Page
         :param recipe: Recipe of the stage to run.
         :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step to run, or None for every step that is on.
+        :type through_step_id: StepId | None
         """
         super().__init__(run, page, recipe.stage)
         self._run = run
-        self._through_step = through_step
+        self._through_step_id = through_step_id
         self.recipe = recipe
-        self.steps = [step for _, step in recipe.indexed_steps_through(through_step)]
+        self.steps = [step for _, step in recipe.indexed_steps_through(through_step_id)]
 
     async def run(self, *, confirmed: bool = False) -> RunOutcome:
         """Run the steps of the recipe on the page, and make the version of the last one current.
@@ -347,7 +347,7 @@ class PageRun(PageWork):
         :raises NotFoundError: If the page or the version was deleted meanwhile.
         """
         run, key = self._run, PageStageKey(self.page.id, self.stage)
-        recipe, stopped_at = self.recipe, self.recipe.stopped_at(self._through_step)
+        recipe, stopped_at = self.recipe, self.recipe.stopped_at(self._through_step_id)
 
         def apply(repos: BookRepositories) -> tuple[bool, Unsplit | None]:
             """Make the version current, unless what the run went by changed meanwhile.
@@ -364,7 +364,9 @@ class PageRun(PageWork):
             stored = repos.page_versions.get(version.id)
             if version.tiles_ready and not stored.tiles_ready:
                 repos.page_versions.update(evolve(stored, tiles_ready=True))
-            run.records.set_head(repos, key, head_version_id=version.id, recipe_id=recipe.id, through_step=stopped_at)
+            run.records.set_head(
+                repos, key, head_version_id=version.id, recipe_id=recipe.id, through_step_id=stopped_at
+            )
             if undoing is not None:
                 run.splits.unsplit(repos, undoing)
             return True, undoing
@@ -486,7 +488,7 @@ class RecipeRun(StageWork):
         recipe: Recipe,
         *,
         confirmed: bool = False,
-        through_step: int | None = None,
+        through_step_id: StepId | None = None,
     ) -> RunOutcome:
         """Run the steps of the recipe on the page, and make the version of the last one current.
 
@@ -496,29 +498,29 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
         :type confirmed: bool
-        :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step to run, or None for every step that is on.
+        :type through_step_id: StepId | None
         :returns: Whether the page was processed, failed, or skipped, as ``PageRun.run`` tells.
         :rtype: RunOutcome
         """
-        return await PageRun(self, page, recipe, through_step=through_step).run(confirmed=confirmed)
+        return await PageRun(self, page, recipe, through_step_id=through_step_id).run(confirmed=confirmed)
 
-    async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> PageVersion | None:
+    async def measure(self, page: Page, recipe: Recipe, *, through_step_id: StepId | None = None) -> PageVersion | None:
         """Make the steps of the recipe up to the step that reads the book, and give the version that step made.
 
         :param page: Page to measure.
         :type page: Page
         :param recipe: Recipe of the stage the page is run by.
         :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step the run goes over, or None for every step that is on.
+        :type through_step_id: StepId | None
         :returns: The version of the step on the page, or None when the page has no image or a step failed.
         :rtype: PageVersion | None
         """
-        return await PageRun(self, page, recipe, through_step=through_step).measured()
+        return await PageRun(self, page, recipe, through_step_id=through_step_id).measured()
 
     async def settle_book(
-        self, recipe: Recipe, fresh: Mapping[PageId, PageVersion], *, through_step: int | None = None
+        self, recipe: Recipe, fresh: Mapping[PageId, PageVersion], *, through_step_id: StepId | None = None
     ) -> None:
         """Work out what the book gives the step that reads it, for every page run by the recipe.
 
@@ -526,10 +528,10 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param fresh: The versions of the step on the pages the run has just taken as far as it.
         :type fresh: Mapping[PageId, PageVersion]
-        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step the run goes over, or None for every step that is on.
+        :type through_step_id: StepId | None
         """
-        fields = self.book_fields([step for _, step in recipe.indexed_steps_through(through_step)])
+        fields = self.book_fields([step for _, step in recipe.indexed_steps_through(through_step_id)])
         if fields is not None:
             self.books[recipe.id] = await self.book.read(
                 lambda repos: fields.book_step.from_book(BookContent(repos), recipe.stage, fields.params, fresh),

@@ -232,8 +232,8 @@ describe('RunControls', () => {
             partial: 77,
             recipes: [{ kind: 'text', recipe_id: 'r1', pages: 80 }],
             stopped: [
-              { through_step: 0, pages: 1 },
-              { through_step: 1, pages: 76 },
+              { through_step_id: 'id-geometry.deskew', pages: 1 },
+              { through_step_id: 'id-geometry.normalize', pages: 76 },
             ],
           },
         ],
@@ -506,13 +506,16 @@ describe('RunControls', () => {
       expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
     });
 
-    it('stops at the step that is open when asked, counting the steps from zero', async () => {
+    it('stops at the step that is open when asked, naming it by its identifier', async () => {
       render(state(), new Set(), ITEMS, { ...OPEN_SECOND_STEP, index: 0, number: 1 });
 
       await choose('run-through-open');
       await start();
 
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'], through_step: 0 });
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
+        page_ids: ['b', 'c'],
+        through_step_id: 'id-geometry.deskew',
+      });
     });
 
     it('offers nothing to choose for a recipe of one step', async () => {

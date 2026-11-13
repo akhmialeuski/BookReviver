@@ -1798,8 +1798,8 @@ export type PageSchema = {
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar head_version_id: The current version of the stage, or None.
  * :ivar state: Whether the current version matches the inputs of the stage.
- * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
- * that is on, so the page is not ready for the next stage, or None.
+ * :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+ * is on, so the page is not ready for the next stage, or None.
  * :ivar updated_at: When the record last changed.
  */
 export type PageStageSchema = {
@@ -1818,9 +1818,9 @@ export type PageStageSchema = {
     head_version_id: string | null;
     state: StageState;
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step: number | null;
+    through_step_id: string | null;
     /**
      * Updated At
      */
@@ -3278,8 +3278,8 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
  * :ivar version: The current version of the stage on the page with its data and images, or None.
- * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
- * that is on, so the page is not ready for the next stage, or None.
+ * :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+ * is on, so the page is not ready for the next stage, or None.
  * :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
  * :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
  * :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
@@ -3306,9 +3306,9 @@ export type StagePageSchema = {
     kind: RecipeKind;
     version: PageVersionSchema | null;
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step: number | null;
+    through_step_id: string | null;
     /**
      * Review Processor
      */
@@ -3342,9 +3342,9 @@ export type StageProgressSchema = {
  * :ivar page_ids: Pages to run it on, or omitted for every page with an image.
  * :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
  * run that would do so leaves that page failed.
- * :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
- * that is on. The steps before it come from the cache of versions when their inputs did not
- * change.
+ * :ivar through_step_id: The last step to run, which the recipe of every page of the run must hold, or omitted to run
+ * through the last step that is on. The steps before it come from the cache of versions when
+ * their inputs did not change.
  * :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they
  * read: it keeps them, which is the usual run, or takes the edits or the settings away first.
  * :ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without
@@ -3360,9 +3360,9 @@ export type StageRunBody = {
      */
     confirm_unsplit?: boolean;
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step?: number | null;
+    through_step_id?: string | null;
     mode?: RunMode;
     /**
      * Confirm Overwrite
@@ -3467,6 +3467,8 @@ export type StageSummarySchema = {
  * :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
  * :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
  * omitted for a step that is added, which gets a new one.
+ * :ivar origin_step_id: The step of a profile the step is made from, which a recipe keeps for a step it stores for
+ * the first time, or omitted. A profile keeps no origin of its steps.
  */
 export type StepBody = {
     /**
@@ -3487,6 +3489,10 @@ export type StepBody = {
      * Step Id
      */
     step_id?: string | null;
+    /**
+     * Origin Step Id
+     */
+    origin_step_id?: string | null;
 };
 
 /**
@@ -3539,14 +3545,14 @@ export type StepPageSchema = {
  *
  * How many pages of a stage a run stopped at one step.
  *
- * :ivar through_step: Index in the recipe of the last step the pages were run through, from zero.
+ * :ivar through_step_id: The last step the pages were run through.
  * :ivar pages: Pages with an image, not failed, that stopped at the step.
  */
 export type StepPagesSchema = {
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step: number;
+    through_step_id: string;
     /**
      * Pages
      */
@@ -3586,6 +3592,8 @@ export type StepPreviewBody = {
  * :ivar params: Parameters of the step, with the defaults of the processor filled in.
  * :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
  * :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
+ * :ivar origin_step_id: The step of a profile the step was made from, by which the step is matched with the profile,
+ * or None.
  */
 export type StepSchema = {
     /**
@@ -3606,6 +3614,10 @@ export type StepSchema = {
      * Step Id
      */
     step_id: string;
+    /**
+     * Origin Step Id
+     */
+    origin_step_id?: string | null;
 };
 
 /**

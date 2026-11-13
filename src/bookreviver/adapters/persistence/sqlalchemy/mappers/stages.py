@@ -8,6 +8,7 @@ from bookreviver.domain.ids import (
     PageId,
     PageVersionId,
     RecipeId,
+    StepId,
 )
 from bookreviver.domain.stages import PageStage
 
@@ -30,7 +31,7 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
             recipe_id=None if row.recipe_id is None else RecipeId(row.recipe_id),
             head_version_id=None if row.head_version_id is None else PageVersionId(row.head_version_id),
             state=row.state,
-            through_step=row.through_step,
+            through_step_id=None if row.through_step_id is None else StepId(row.through_step_id),
             updated_at=row.updated_at,
         )
 
@@ -49,6 +50,6 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
             recipe_id=entity.recipe_id,
             head_version_id=entity.head_version_id,
             state=entity.state,
-            through_step=entity.through_step,
+            through_step_id=entity.through_step_id,
             updated_at=entity.updated_at,
         )

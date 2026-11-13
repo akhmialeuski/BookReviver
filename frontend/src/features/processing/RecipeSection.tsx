@@ -37,7 +37,7 @@ export function RecipeSection({
     run === undefined
       ? undefined
       : {
-          passed: (index) => passedPages(rows, recipe.id, index),
+          passed: (index) => passedPages(rows, recipe, index),
           total: run.total,
         };
 

@@ -184,7 +184,7 @@ class PageWork:
             record, readable = await self._earlier(earlier)
             if record is None or record.head_version_id is None:
                 continue
-            if record.state is StageState.STALE or record.through_step is not None:
+            if record.state is StageState.STALE or record.through_step_id is not None:
                 record, readable = await self._brought_up_to_date(earlier)
             # Stages further back are not brought up to date once a nearer one has a result to read
             if record.head_version_id is not None and readable:

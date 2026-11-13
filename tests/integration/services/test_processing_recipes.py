@@ -7,6 +7,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
@@ -589,7 +590,7 @@ class ReadGate:
             :returns: The database of the book.
             :rtype: BookDatabase
             """
-            database = SqlAlchemyBookDatabase(dir_name, books=books)
+            database = SqlAlchemyBookDatabase(dir_name, books=books, order_keys=FractionalOrderKeys())
             self._hold_first_read(database, monkeypatch)
             return database
 
@@ -649,7 +650,9 @@ class TestDefaultRecipesInChanges:
         gate = ReadGate(parties=TASKS)
         BookDatabase.register(gate.opener(fx_books, monkeypatch))
         books = [await open_book(fx_kit, book_id) for _ in range(TASKS)]
-        BookDatabase.register(lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books))
+        BookDatabase.register(
+            lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books, order_keys=FractionalOrderKeys())
+        )
         stored_sets: list[int] = []
         add_many = SqlAlchemyRecipeRepository.add_many
 

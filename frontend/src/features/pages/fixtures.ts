@@ -79,7 +79,7 @@ export function row(id: string, overrides: Partial<StagePageSchema> = {}): Stage
     recipe_id: null,
     kind: 'text',
     version: null,
-    through_step: null,
+    through_step_id: null,
     review_processor: null,
     step: null,
     marked_bad: false,

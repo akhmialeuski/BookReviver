@@ -292,7 +292,16 @@ class TestApplyProfile:
         after = await _text_recipe(fx_client, fx_book)
         expect(response.status_code == status.HTTP_201_CREATED)
         expect((applied.recipe.kind, applied.recipe.profile_id) == (RecipeKind.BLANK, profile.id))
-        expect(applied.recipe.steps == profile.steps)
+        # Each step is a step of its own, made from the step of the profile it names
+        expect([step.origin_step_id for step in applied.recipe.steps] == [step.step_id for step in profile.steps])
+        expect({step.step_id for step in applied.recipe.steps}.isdisjoint(step.step_id for step in profile.steps))
+        expect(
+            [
+                step.model_copy(update={'step_id': step.origin_step_id, 'origin_step_id': None})
+                for step in applied.recipe.steps
+            ]
+            == profile.steps
+        )
         expect(applied.missing_processors == [])
         expect(after == before)
         assert_expectations()

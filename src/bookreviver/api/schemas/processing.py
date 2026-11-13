@@ -110,12 +110,15 @@ class StepSchema(ResponseModel):
     :ivar params: Parameters of the step, with the defaults of the processor filled in.
     :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
     :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
+    :ivar origin_step_id: The step of a profile the step was made from, by which the step is matched with the profile,
+                          or None.
     """
 
     processor_key: str
     params: dict[str, Any]
     enabled: bool
     step_id: StepId
+    origin_step_id: StepId | None = None
 
 
 class OrderIssueSchema(ResponseModel):
@@ -184,20 +187,28 @@ class StepBody(RequestModel):
     :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
     :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
                    omitted for a step that is added, which gets a new one.
+    :ivar origin_step_id: The step of a profile the step is made from, which a recipe keeps for a step it stores for
+                          the first time, or omitted. A profile keeps no origin of its steps.
     """
 
     processor_key: ProcessorKeyText
     params: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     step_id: StepId | None = None
+    origin_step_id: StepId | None = None
 
     def to_step(self) -> Step:
         """Return the step as the domain states it.
 
-        :returns: The step, with the identifier it came with or a new one.
+        :returns: The step, with the identifier it came with or a new one, and its origin.
         :rtype: Step
         """
-        step = Step(processor_key=self.processor_key, params=self.params, enabled=self.enabled)
+        step = Step(
+            processor_key=self.processor_key,
+            params=self.params,
+            enabled=self.enabled,
+            origin_step_id=self.origin_step_id,
+        )
         return step if self.step_id is None else evolve(step, step_id=self.step_id)
 
 
@@ -227,9 +238,9 @@ class StageRunBody(RequestModel):
     :ivar page_ids: Pages to run it on, or omitted for every page with an image.
     :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
                            run that would do so leaves that page failed.
-    :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
-                        that is on. The steps before it come from the cache of versions when their inputs did not
-                        change.
+    :ivar through_step_id: The last step to run, which the recipe of every page of the run must hold, or omitted to run
+                           through the last step that is on. The steps before it come from the cache of versions when
+                           their inputs did not change.
     :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they
                 read: it keeps them, which is the usual run, or takes the edits or the settings away first.
     :ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without
@@ -238,7 +249,7 @@ class StageRunBody(RequestModel):
 
     page_ids: PageIdList | None = None
     confirm_unsplit: bool = False
-    through_step: Annotated[int, Field(ge=0, lt=RECIPE_STEPS_MAX_LENGTH)] | None = None
+    through_step_id: StepId | None = None
     mode: RunMode = RunMode.KEEP
     confirm_overwrite: bool = False
 
@@ -254,7 +265,7 @@ class StageRunBody(RequestModel):
             stage=stage,
             page_ids=None if self.page_ids is None else tuple(self.page_ids),
             confirm_unsplit=self.confirm_unsplit,
-            through_step=self.through_step,
+            through_step_id=self.through_step_id,
             mode=self.mode,
             confirm_overwrite=self.confirm_overwrite,
         )
@@ -335,8 +346,8 @@ class PageStageSchema(ResponseModel):
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar head_version_id: The current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
-    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
-                        that is on, so the page is not ready for the next stage, or None.
+    :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+                           is on, so the page is not ready for the next stage, or None.
     :ivar updated_at: When the record last changed.
     """
 
@@ -345,7 +356,7 @@ class PageStageSchema(ResponseModel):
     recipe_id: RecipeId | None
     head_version_id: PageVersionId | None
     state: StageState
-    through_step: int | None
+    through_step_id: StepId | None
     updated_at: datetime
 
     @classmethod

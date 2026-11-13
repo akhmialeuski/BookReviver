@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, ForeignKeyConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import enum_by_value
@@ -13,6 +13,8 @@ from bookreviver.adapters.persistence.sqlalchemy.tables.base import (
     GROUP_ID_COLUMN,
     PARITY_SCOPE,
     STAGE_COLUMN,
+    STEP_KEY_OF_STAGE,
+    STEP_OF_STAGE,
     BookTable,
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables.pages import PageGroupRow
@@ -23,8 +25,8 @@ from bookreviver.domain.step_values import ValueScope
 class StepValuesRow(BookTable):
     """Row of the values of one step for the odd pages or the even pages.
 
-    The step is named by the identifier its recipe gives it, with no foreign key, as in ``page_step_states``. The values
-    of a group are rows of ``group_values``, whose key names the group in place of the scope.
+    The step is named by a key of the step and the stage, as in ``page_step_states``. The values of a group are rows of
+    ``group_values``, whose key names the group in place of the scope.
 
     :ivar step_id: Identifier of the step.
     :ivar scope: The odd pages or the even pages, stored by value.
@@ -34,7 +36,12 @@ class StepValuesRow(BookTable):
     """
 
     __tablename__ = 'step_values'
-    __table_args__ = (Index(None, STAGE_COLUMN), CheckConstraint(PARITY_SCOPE, name='parity_scope'))
+    __table_args__ = (
+        Index(None, STAGE_COLUMN),
+        Index(None, *STEP_OF_STAGE),
+        ForeignKeyConstraint(STEP_OF_STAGE, STEP_KEY_OF_STAGE),
+        CheckConstraint(PARITY_SCOPE, name='parity_scope'),
+    )
 
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
     scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), primary_key=True)
@@ -46,7 +53,7 @@ class StepValuesRow(BookTable):
 class GroupValuesRow(BookTable):
     """Row of the values of one step for the pages of one group.
 
-    The step is named by its identifier with no foreign key, as in ``step_values``.
+    The step is named by a key of the step and the stage, as in ``step_values``.
 
     :ivar step_id: Identifier of the step.
     :ivar group_id: The group the values are for.
@@ -56,7 +63,12 @@ class GroupValuesRow(BookTable):
     """
 
     __tablename__ = 'group_values'
-    __table_args__ = (Index(None, STAGE_COLUMN), Index(None, GROUP_ID_COLUMN))
+    __table_args__ = (
+        Index(None, STAGE_COLUMN),
+        Index(None, GROUP_ID_COLUMN),
+        Index(None, *STEP_OF_STAGE),
+        ForeignKeyConstraint(STEP_OF_STAGE, STEP_KEY_OF_STAGE),
+    )
 
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
     group_id: Mapped[int] = mapped_column(ForeignKey(PageGroupRow.id), primary_key=True)
