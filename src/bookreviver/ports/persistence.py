@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         StepId,
     )
     from bookreviver.domain.library import BookOverview
-    from bookreviver.domain.pages import RecipeKind
+    from bookreviver.domain.pages import BookOrder, RecipeKind
     from bookreviver.domain.places import BookPlace
     from bookreviver.domain.sides import Side
     from bookreviver.domain.slices import Slice, SliceRequest
@@ -455,6 +455,16 @@ class PageRepository(Repository[Page, PageId]):
         :type page: Page
         :returns: The number of the book's pages whose order key is smaller than the page's, from zero.
         :rtype: int
+        """
+
+    @abstractmethod
+    def order(self) -> BookOrder:
+        """Return the order key of every page of the book in book order, in one read of the keys alone.
+
+        Every page counts, whether it is included in the book or not, as in ``count_before``.
+
+        :returns: The order of the pages of the book, empty for a book without pages.
+        :rtype: BookOrder
         """
 
     @abstractmethod
