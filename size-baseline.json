@@ -3,9 +3,7 @@
     "src/bookreviver/adapters/persistence/sqlalchemy/mappers.py": 575,
     "src/bookreviver/adapters/persistence/sqlalchemy/repositories.py": 770,
     "src/bookreviver/services/imports.py::ImportRun._import_source": 84,
-    "src/bookreviver/services/pages.py": 549,
-    "src/bookreviver/services/pagination.py::PaginationService._plan": 63,
-    "src/bookreviver/services/spread_splits.py::SpreadSplit.split": 54
+    "src/bookreviver/services/pagination.py::PaginationService._plan": 63
   },
   "version": 1
 }
