@@ -103,19 +103,26 @@ test.describe('a book of a thousand pages in the Order grid', () => {
           return settled;
         })
         .toBe(true);
-      // The page held under the pointer covers the tile, so the tile is found by its box and not by the pointer
-      const overText = await tiles.evaluateAll((all, point) => {
-        const hit = all.find((tile) => {
+      // The page held under the pointer covers the tile, so the tile is found by its box and not by the pointer. The
+      // grid stops wherever its scroll left it, so the pointer may be over the gap between two tiles: the pointer goes
+      // to the middle of the tile nearest to it, which is still far from the edges where the grid scrolls
+      const over = await tiles.evaluateAll((all, point) => {
+        const middles = all.map((tile) => {
           const box = tile.getBoundingClientRect();
-          return (
-            box.left <= point.x &&
-            point.x <= box.right &&
-            box.top <= point.y &&
-            point.y <= box.bottom
-          );
+          return {
+            text: tile.textContent,
+            x: box.left + box.width / 2,
+            y: box.top + box.height / 2,
+          };
         });
-        return hit?.textContent ?? null;
+        const distance = (middle: { x: number; y: number }) =>
+          Math.hypot(middle.x - point.x, middle.y - point.y);
+        return middles.reduce((nearest, middle) =>
+          distance(middle) < distance(nearest) ? middle : nearest,
+        );
       }, centre);
+      await page.mouse.move(over.x, over.y, { steps: 5 });
+      const overText = over.text;
       landedAfter = positionOf(overText);
       expect(landedAfter).toBeGreaterThan(tilesAtStart);
       await page.mouse.up();
