@@ -191,7 +191,8 @@ class TestLocalBookDirectory:
         with zipfile.ZipFile(content, 'w') as archive:
             for name in ARCHIVED_FILES:
                 archive.writestr(name, PAGE_CONTENT)
-        copy, copied = shutil.copyfileobj, []
+        copy = shutil.copyfileobj
+        copied: list[io.BufferedIOBase] = []
 
         def fail_on_the_second_file(source: io.BufferedIOBase, target: io.BufferedIOBase, length: int) -> None:
             """Copy the first file of the archive, and fail as a full disk does on the next.
