@@ -660,7 +660,7 @@ class TestRunThroughStep:
         await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY, through_step_id=step_ids[0]))
         first = await head_of(fx_kit, book_id, page, Stage.GEOMETRY)
         edit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
-        recipe = await fx_kit.parts().recipes.of_kind(await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
+        recipe = await fx_kit.recipes.of_kind(await open_book(fx_kit, book_id), Stage.GEOMETRY, RecipeKind.TEXT)
         key = PageStepKey(page.id, Stage.GEOMETRY, recipe.steps[-1].step_id)
         await fx_kit.edits().save(fx_open_book(actor, book_id), key, edit, None)
         await run_stage(fx_kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))

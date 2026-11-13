@@ -50,7 +50,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.processing_parts import ProcessingParts
+    from bookreviver.services.job_starter import JobStarter
+    from bookreviver.services.recipes import RecipeBook
+    from bookreviver.services.stage_records import StageRecords
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
 NOT_READY: str = 'it is not ready'
@@ -76,19 +78,25 @@ class ProcessingService:
         self,
         *,
         processors: ProcessorCatalog,
-        parts: ProcessingParts,
+        recipes: RecipeBook,
+        records: StageRecords,
+        starter: JobStarter,
     ) -> None:
-        """Work over the ports of one request.
+        """Work on the book of each request.
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The recipes, the stage records and the job starter, which work on the book of each request.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the book and the check of their steps.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :param starter: Putter of new jobs on the queue of a book.
+        :type starter: JobStarter
         """
         self._processors = processors
-        self._recipes = parts.recipes
-        self._records = parts.records
-        self._starter = parts.starter
+        self._recipes = recipes
+        self._records = records
+        self._starter = starter
 
     def processors(self) -> Sequence[ProcessorSpec]:
         """List what every processor of the catalogue says about itself.

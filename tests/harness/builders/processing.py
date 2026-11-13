@@ -31,15 +31,18 @@ from bookreviver.plugins.pages.blank import BlankPage
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.runtime import BookJobs
+from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.edits import EditService
+from bookreviver.services.job_starter import JobStarter, ProcessingConfig
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
+from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
-from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
+from bookreviver.services.recipes import DefaultRecipes, RecipeBook, RecipeTemplate
+from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.stage_runs import StageRuns
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.stage_work import StageEngine
@@ -175,18 +178,9 @@ class ProcessingKit:
             renditions=self.writer,
             tiler=self.tiler,
         )
-
-    def parts(self) -> ProcessingParts:
-        """Build the shared parts of one request or job.
-
-        :returns: The parts.
-        :rtype: ProcessingParts
-        """
-        config = ProcessingConfig(
-            preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
-            preview_long_side_px=PREVIEW_LONG_SIDE_PX,
-        )
-        return ProcessingParts.build(self.processors, self._defaults, config)
+        self.recipes = RecipeBook(processors=self.processors, defaults=defaults, order=RecipeOrder(self.processors))
+        self.records = StageRecords()
+        self.starter = JobStarter(config=self._config())
 
     def service(self) -> ProcessingService:
         """Build the processing service over a new catalogue database.
@@ -194,7 +188,9 @@ class ProcessingKit:
         :returns: The service.
         :rtype: ProcessingService
         """
-        return ProcessingService(processors=self.processors, parts=self.parts())
+        return ProcessingService(
+            processors=self.processors, recipes=self.recipes, records=self.records, starter=self.starter
+        )
 
     def profiles(self) -> RecipeProfiles:
         """Build the service of the recipe profiles.
@@ -202,9 +198,7 @@ class ProcessingKit:
         :returns: The service, which applies a profile through a processing service.
         :rtype: RecipeProfiles
         """
-        parts = self.parts()
-        processing = ProcessingService(processors=self.processors, parts=parts)
-        return RecipeProfiles(recipes=parts.recipes, processing=processing)
+        return RecipeProfiles(recipes=self.recipes, processing=self.service())
 
     async def recipe_of(
         self, actor: Actor, book_id: BookId, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
@@ -273,20 +267,25 @@ class ProcessingKit:
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        parts = self.parts()
-        config = ProcessingConfig(
+        engine = StageEngine(runner=self._runner, processors=self.processors, tracer=self.tracer, config=self._config())
+        return ProcessingJobs(
+            runs=StageRuns(engine=engine, recipes=self.recipes, records=self.records, order_keys=FractionalOrderKeys()),
+            detector=ContentDetector(runner=self._runner, processors=self.processors, records=self.records),
+            measure=BookMeasure(recipes=self.recipes, records=self.records),
+            starter=self.starter,
+            pages=self._pages(),
+        )
+
+    def _config(self) -> ProcessingConfig:
+        """Give the bounds of processing of the kit, with the pages a run processes together as the test set them.
+
+        :returns: The bounds of processing.
+        :rtype: ProcessingConfig
+        """
+        return ProcessingConfig(
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             parallel_pages=self.parallel_pages,
-        )
-        engine = StageEngine(runner=self._runner, processors=self.processors, tracer=self.tracer, config=config)
-        return ProcessingJobs(
-            runs=StageRuns(
-                engine=engine, recipes=parts.recipes, records=parts.records, order_keys=FractionalOrderKeys()
-            ),
-            detector=ContentDetector(runner=self._runner, processors=self.processors, records=parts.records),
-            parts=parts,
-            pages=self._pages(),
         )
 
     async def work_queue(self) -> None:
@@ -332,7 +331,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: EditService
         """
-        return EditService(processors=self.processors, records=self.parts().records)
+        return EditService(processors=self.processors, records=self.records)
 
     def page_settings(self) -> PageSettingsService:
         """Build the page settings service over a new catalogue database.
@@ -340,7 +339,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageSettingsService
         """
-        return PageSettingsService(processors=self.processors, records=self.parts().records)
+        return PageSettingsService(processors=self.processors, records=self.records)
 
     def page_history(self) -> PageHistoryService:
         """Build the page history service over a new catalogue database.
@@ -348,8 +347,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageHistoryService
         """
-        parts = self.parts()
-        return PageHistoryService(records=parts.records, starter=parts.starter)
+        return PageHistoryService(records=self.records, starter=self.starter)
 
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
@@ -367,7 +365,7 @@ class ProcessingKit:
         :returns: The key of the edit of that step.
         :rtype: PageStepKey
         """
-        recipe = await self.parts().recipes.of_kind(await open_book(self, book_id), stage, page.recipe_kind)
+        recipe = await self.recipes.of_kind(await open_book(self, book_id), stage, page.recipe_kind)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 

@@ -334,9 +334,7 @@ class TestChooseVersion:
         actor, book_id, page, first = await ran_geometry(fx_kit)
         second = await add_second_version(fx_kit, book_id, first)
         before = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
-        earlier = await fx_kit.parts().starter.enqueue(
-            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY)
-        )
+        earlier = await fx_kit.starter.enqueue(await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY))
         job = await queued_choice(fx_kit, actor, book_id, page, second.id)
         waiting = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
         await fx_kit.work_queue()
@@ -358,7 +356,7 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
-        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
+        preview = await fx_kit.starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
         queued = len(fx_kit.board.put_jobs)
         with pytest.raises(ConflictError, match=OTHER_STAGE_REASON):
             await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.CLEANUP, first.id)

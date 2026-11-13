@@ -1,8 +1,8 @@
 """Provider of the runs of steps: the runner of processors, the engine and the opener of runs, and the work of the jobs.
 
-The runner, the engine that runs the steps of a job and the detector of the content of pages keep no state of a job, so
-one of each serves the whole application. What opens the work of a run and the work of the processing jobs are built
-for each job, and work on the book they are given.
+The runner, the engine that runs the steps of a job, what opens the work of a run, the detector of the content of pages
+and the measure of a book keep no state of a job, so one of each serves the whole application. The work of the
+processing jobs is built for each job, and works on the book it is given.
 """
 
 from dishka import Provider, Scope, provide
@@ -12,10 +12,13 @@ from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.tracing import Tracer
+from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.content_detection import ContentDetector
+from bookreviver.services.job_starter import JobStarter, ProcessingConfig
 from bookreviver.services.pages import PageService
 from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
+from bookreviver.services.recipes import RecipeBook
+from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.stage_runs import StageRuns
 from bookreviver.services.stage_work import StageEngine
 from bookreviver.services.steps import StepRunner
@@ -58,41 +61,63 @@ class RunsProvider(Provider):
         """
         return StageEngine(runner=runner, processors=processors, tracer=tracer, config=config)
 
-    @provide(scope=Scope.REQUEST)
-    def stage_runs(self, engine: StageEngine, parts: ProcessingParts, order_keys: OrderKeys) -> StageRuns:
-        """Build what opens the work of the runs and the previews of a job.
+    @provide(scope=Scope.APP)
+    def stage_runs(
+        self, engine: StageEngine, recipes: RecipeBook, records: StageRecords, order_keys: OrderKeys
+    ) -> StageRuns:
+        """Build what opens the work of the runs and the previews of a job, which keeps no state of a job.
 
         :param engine: What runs the steps.
         :type engine: StageEngine
-        :param parts: The parts the processing use cases share, of which the recipes and the stage records are used.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the books.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
         :returns: The opener of the work of the runs.
         :rtype: StageRuns
         """
-        return StageRuns(engine=engine, recipes=parts.recipes, records=parts.records, order_keys=order_keys)
+        return StageRuns(engine=engine, recipes=recipes, records=records, order_keys=order_keys)
 
-    @provide(scope=Scope.REQUEST)
+    @provide(scope=Scope.APP)
     def content_detector(
-        self, runner: StepRunner, processors: ProcessorCatalog, parts: ProcessingParts
+        self, runner: StepRunner, processors: ProcessorCatalog, records: StageRecords
     ) -> ContentDetector:
-        """Build the detection of the content of the pages.
+        """Build the detection of the content of the pages, which keeps no state of a job.
 
         :param runner: Runner of processors.
         :type runner: StepRunner
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The parts the processing use cases share, of which the stage records are used.
-        :type parts: ProcessingParts
+        :param records: Writer of the stage records.
+        :type records: StageRecords
         :returns: The detector.
         :rtype: ContentDetector
         """
-        return ContentDetector(runner=runner, processors=processors, records=parts.records)
+        return ContentDetector(runner=runner, processors=processors, records=records)
+
+    @provide(scope=Scope.APP)
+    def book_measure(self, recipes: RecipeBook, records: StageRecords) -> BookMeasure:
+        """Build the measure of a book, which keeps no state of a job.
+
+        :param recipes: The recipes of the books, into which the measure is written.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :returns: The measure.
+        :rtype: BookMeasure
+        """
+        return BookMeasure(recipes=recipes, records=records)
 
     @provide(scope=Scope.REQUEST)
     def processing_jobs(
-        self, runs: StageRuns, detector: ContentDetector, parts: ProcessingParts, pages: PageService
+        self,
+        runs: StageRuns,
+        detector: ContentDetector,
+        measure: BookMeasure,
+        starter: JobStarter,
+        pages: PageService,
     ) -> ProcessingJobs:
         """Build the work of the processing jobs.
 
@@ -100,11 +125,13 @@ class RunsProvider(Provider):
         :type runs: StageRuns
         :param detector: The detection of the content of the pages.
         :type detector: ContentDetector
-        :param parts: The parts the processing use cases share.
-        :type parts: ProcessingParts
+        :param measure: The measure of a book.
+        :type measure: BookMeasure
+        :param starter: Putter of new jobs, which queues the collection after a run.
+        :type starter: JobStarter
         :param pages: The page service of the job, which queues the detection of the content of the pages a split made.
         :type pages: PageService
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        return ProcessingJobs(runs=runs, detector=detector, parts=parts, pages=pages)
+        return ProcessingJobs(runs=runs, detector=detector, measure=measure, starter=starter, pages=pages)

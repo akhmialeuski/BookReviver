@@ -241,9 +241,7 @@ class TestRecipes:
         stored_pages = await fx_cv_kit.databases.open(book_id).read(
             lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
-        picked = await fx_cv_kit.parts().recipes.for_pages(
-            await open_book(fx_cv_kit, book_id), Stage.CLEANUP, stored_pages
-        )
+        picked = await fx_cv_kit.recipes.for_pages(await open_book(fx_cv_kit, book_id), Stage.CLEANUP, stored_pages)
         assert [picked[page.id].kind for page in pages] == [
             RecipeKind.TEXT,
             RecipeKind.COLOR_PICTURE,
@@ -526,7 +524,7 @@ class TestStartRun:
         """
         actor, book_id = await fx_kit.seed_book()
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         collection = starter.queue_collection(await open_book(fx_kit, book_id))
         expect(collection.state is JobState.QUEUED)
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE, JobKind.COLLECT_VERSIONS])
@@ -678,7 +676,7 @@ class TestDefaultRecipesInChanges:
             :param book: The open book of the task.
             :type book: Book
             """
-            answers.append(await fx_kit.parts().recipes.recipes(book, Stage.GEOMETRY))
+            answers.append(await fx_kit.recipes.recipes(book, Stage.GEOMETRY))
 
         async with anyio.create_task_group() as tasks:
             for book in books:
