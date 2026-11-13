@@ -13536,10 +13536,11 @@
         "enum": [
           "settings",
           "found",
-          "hand"
+          "hand",
+          "type"
         ],
         "title": "StepLayer",
-        "description": "One of the three layers a page keeps for a step, which a change of the history names."
+        "description": "What a change of the history of a page changed: one of the three layers a page keeps for a step, or its type.\n\nThe type is no layer of the page: it is the processor the step runs, which the recipe holds, and a change of it\nreaches every page that keeps a layer of the step, since what each page keeps belongs to the type it was made for."
       },
       "StepPageSchema": {
         "properties": {

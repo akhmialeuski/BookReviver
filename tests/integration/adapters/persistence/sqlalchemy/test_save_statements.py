@@ -37,11 +37,12 @@ pytestmark = pytest.mark.anyio
 BATCH: int = 5
 # The label the updated pages get
 UPDATED_LABEL: str = '[4]'
-# The keyed saves, by the table they write: each builds an entity of the page and calls the save of its repository
-SAVES: dict[str, Callable[[BookRepositories, Page], object]] = {
-    'page stage': lambda repos, page: repos.page_stages.save(make_page_stage(page_id=page.id)),
-    'step state': lambda repos, page: repos.page_step_states.save(make_page_step_state(page_id=page.id)),
-    'step values': lambda repos, page: repos.step_values.save(make_step_values()),
+# The keyed saves, by the table they write: each builds an entity of the page and calls the save of its repository, and
+# a save of what the pages keep for a step reads the active type of the step once in a transaction, the first time
+SAVES: dict[str, tuple[Callable[[BookRepositories, Page], object], int]] = {
+    'page stage': (lambda repos, page: repos.page_stages.save(make_page_stage(page_id=page.id)), 0),
+    'step state': (lambda repos, page: repos.page_step_states.save(make_page_step_state(page_id=page.id)), 1),
+    'step values': (lambda repos, page: repos.step_values.save(make_step_values()), 1),
 }
 
 
@@ -110,18 +111,20 @@ async def _statements_of(
 class TestKeyedSave:
     """Tests for the statements ``save`` and ``save_many`` of the keyed repositories send."""
 
-    @pytest.mark.parametrize('save', SAVES.values(), ids=SAVES.keys())
+    @pytest.mark.parametrize(('save', 'type_reads'), SAVES.values(), ids=SAVES.keys())
     async def test_save_sends_one_statement_whether_the_key_is_new_or_stored(
         self,
         fx_books: BookRegistry,
         fx_stored_book: tuple[BookId, list[Page]],
         save: Callable[[BookRepositories, Page], object],
+        type_reads: int,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the first save of a key and the second, which replaces it, are one statement each.
 
         A save that read the key first and then inserted or updated it would send two statements for a new key and
-        three for a stored one.
+        three for a stored one. A save of what a page keeps for a step reads the type of the step before its first
+        save in the transaction, and never again.
 
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookRegistry
@@ -129,6 +132,8 @@ class TestKeyedSave:
         :type fx_stored_book: tuple[BookId, list[Page]]
         :param save: Function that saves an entity of the page in the repository under test.
         :type save: Callable[[BookRepositories, Page], object]
+        :param type_reads: How many reads of the type of a step the first save sends before it.
+        :type type_reads: int
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
@@ -141,7 +146,7 @@ class TestKeyedSave:
             databases=fx_databases(),
         )
 
-        assert counts == [1, 1]
+        assert counts == [1 + type_reads, 1]
 
     async def test_save_many_sends_one_statement_for_five_records(
         self, fx_books: BookRegistry, fx_stored_book: tuple[BookId, list[Page]], fx_databases: BookDatabasesFactory

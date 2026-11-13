@@ -22,11 +22,16 @@ if TYPE_CHECKING:
 
 
 class StepLayer(LabeledStrEnum):
-    """One of the three layers a page keeps for a step, which a change of the history names."""
+    """What a change of the history of a page changed: one of the three layers a page keeps for a step, or its type.
+
+    The type is no layer of the page: it is the processor the step runs, which the recipe holds, and a change of it
+    reaches every page that keeps a layer of the step, since what each page keeps belongs to the type it was made for.
+    """
 
     SETTINGS = 'settings', 'Settings of the page'
     FOUND = 'found', 'Found by the automatic run'
     HAND = 'hand', 'Set by hand'
+    TYPE = 'type', 'Type of the step'
 
 
 class CarryScope(LabeledStrEnum):
@@ -88,7 +93,7 @@ class NewPageEdit:
             raise ValueError(err_msg)
 
 
-LAYER_NOT_KEPT: str = 'The layer {layer} of a step is not kept on the page yet.'
+LAYER_NOT_KEPT: str = 'The layer {layer} of a step is not kept on the page.'
 
 
 # The names of the fields of a manual edit as the history keeps it and of its shape as the hash of the edit reads it
@@ -236,14 +241,15 @@ class PageStepState:
         :type layer: StepLayer
         :returns: The fields the page changes, or the snapshot of the manual edit, or None for an empty layer.
         :rtype: dict[str, Any] | None
-        :raises ConflictError: For the layer of what the automatic run found, which no state keeps yet.
+        :raises ConflictError: For the layer of what the automatic run found, which no state keeps yet, and for the type
+                               of the step, which the recipe keeps.
         """
         match layer:
             case StepLayer.SETTINGS:
                 return dict(self.params) or None
             case StepLayer.HAND:
                 return None if self.edit is None else self.edit.to_snapshot()
-            case StepLayer.FOUND:
+            case StepLayer.FOUND | StepLayer.TYPE:
                 raise ConflictError(LAYER_NOT_KEPT.format(layer=layer.label))
 
     def with_layer(self, layer: StepLayer, content: MetadataMap | None, updated_at: datetime) -> Self:
@@ -257,7 +263,8 @@ class PageStepState:
         :type updated_at: datetime
         :returns: The state with the layer set.
         :rtype: Self
-        :raises ConflictError: For the layer of what the automatic run found, which no state keeps yet.
+        :raises ConflictError: For the layer of what the automatic run found, which no state keeps yet, and for the type
+                               of the step, which the recipe keeps.
         """
         match layer:
             case StepLayer.SETTINGS:
@@ -265,5 +272,5 @@ class PageStepState:
             case StepLayer.HAND:
                 edit = None if content is None else PageEdit.from_snapshot(self.key, content, updated_at)
                 return evolve(self, edit=edit, updated_at=updated_at)
-            case StepLayer.FOUND:
+            case StepLayer.FOUND | StepLayer.TYPE:
                 raise ConflictError(LAYER_NOT_KEPT.format(layer=layer.label))

@@ -1589,6 +1589,7 @@ export const MESSAGES = {
         settings: 'Settings of the page',
         found: 'Found by the automatic run',
         hand: 'Set by hand',
+        type: 'Type of the step',
       },
       sources: {
         user: 'You',

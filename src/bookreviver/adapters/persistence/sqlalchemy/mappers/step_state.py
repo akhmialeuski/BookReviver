@@ -28,10 +28,24 @@ from bookreviver.domain.step_values import StepValues, ValueScope
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
+    from bookreviver.adapters.persistence.sqlalchemy.step_types import StepTypes
 
 
 class PageStepStateMapper(RowMapper[PageStepState, PageStepStateRow]):
-    """Translation of the state of a step on a page, whose manual edit is spread over columns, its shape as JSON."""
+    """Translation of the state of a step on a page, whose manual edit is spread over columns, its shape as JSON.
+
+    A state is written under the active type of its step, which the domain does not name.
+
+    :ivar _types: The active types of the steps of the book.
+    """
+
+    def __init__(self, types: StepTypes) -> None:
+        """Create the mapper over the types of the steps of the book of the session.
+
+        :param types: The active types of the steps, which a row is written under.
+        :type types: StepTypes
+        """
+        self._types = types
 
     @override
     def to_entity(self, row: PageStepStateRow) -> PageStepState:
@@ -77,6 +91,7 @@ class PageStepStateMapper(RowMapper[PageStepState, PageStepStateRow]):
             page_id=entity.page_id,
             stage=entity.stage,
             step_id=entity.step_id,
+            type_key=self._types.of(entity.step_id),
             params=dict(entity.params),
             kind=None if edit is None else edit.kind,
             geometry=None if edit is None or edit.geometry is None else edit.geometry.to_data(),
@@ -91,18 +106,23 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
     """Translation of a change as the history of one page names it: the row of the history and the change it links.
 
     A change that reaches several pages is one row of ``step_changes`` and a row of ``page_history`` for each page, and
-    one entry of the domain for each page, which share the identifier of the change.
+    one entry of the domain for each page, which share the identifier of the change. A change is written under the
+    type its step has once it is made.
 
     :ivar _groups: The groups of the book.
+    :ivar _types: The active types of the steps of the book.
     """
 
-    def __init__(self, groups: PageGroups) -> None:
-        """Create the mapper over the groups of the book of the session.
+    def __init__(self, groups: PageGroups, types: StepTypes) -> None:
+        """Create the mapper over the groups and the types of the steps of the book of the session.
 
         :param groups: The groups of the book, which translate a label into the key of its row and back.
         :type groups: PageGroups
+        :param types: The active types of the steps, which a change is written under.
+        :type types: StepTypes
         """
         self._groups = groups
+        self._types = types
 
     @override
     def to_entity(self, row: PageHistoryRow) -> PageHistoryEntry:
@@ -154,6 +174,7 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
             id=entity.id,
             stage=entity.stage,
             step_id=entity.step_id,
+            type_key=self._types.of(entity.step_id),
             layer=entity.layer,
             scope=entity.scope,
             group_id=self._groups.key_of(entity.group_label),
@@ -167,7 +188,20 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
 
 
 class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
-    """Translation of the values of a step for the odd or the even pages, whose fields are stored as a JSON object."""
+    """Translation of the values of a step for the odd or the even pages, whose fields are stored as a JSON object.
+
+    The values are written under the active type of their step, which the domain does not name.
+
+    :ivar _types: The active types of the steps of the book.
+    """
+
+    def __init__(self, types: StepTypes) -> None:
+        """Create the mapper over the types of the steps of the book of the session.
+
+        :param types: The active types of the steps, which a row is written under.
+        :type types: StepTypes
+        """
+        self._types = types
 
     @override
     def to_entity(self, row: StepValuesRow) -> StepValues:
@@ -193,6 +227,7 @@ class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
         """
         return StepValuesRow(
             step_id=entity.step_id,
+            type_key=self._types.of(entity.step_id),
             scope=entity.scope,
             stage=entity.stage,
             params=dict(entity.params),
@@ -203,16 +238,22 @@ class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
 class GroupValuesMapper(RowMapper[StepValues, GroupValuesRow]):
     """Translation of the values of a step for a group, whose group is named by its key.
 
+    The values are written under the active type of their step, as those of the odd and the even pages are.
+
     :ivar _groups: The groups of the book.
+    :ivar _types: The active types of the steps of the book.
     """
 
-    def __init__(self, groups: PageGroups) -> None:
-        """Create the mapper over the groups of the book of the session.
+    def __init__(self, groups: PageGroups, types: StepTypes) -> None:
+        """Create the mapper over the groups and the types of the steps of the book of the session.
 
         :param groups: The groups of the book, which translate a label into the key of its row and back.
         :type groups: PageGroups
+        :param types: The active types of the steps, which a row is written under.
+        :type types: StepTypes
         """
         self._groups = groups
+        self._types = types
 
     @override
     def to_entity(self, row: GroupValuesRow) -> StepValues:
@@ -243,6 +284,7 @@ class GroupValuesMapper(RowMapper[StepValues, GroupValuesRow]):
         """
         return GroupValuesRow(
             step_id=entity.step_id,
+            type_key=self._types.of(entity.step_id),
             group_id=self._groups.key_of(entity.group_label),
             stage=entity.stage,
             params=dict(entity.params),

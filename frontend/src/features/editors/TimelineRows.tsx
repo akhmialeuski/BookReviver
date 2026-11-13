@@ -28,12 +28,15 @@ const META = 'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-for
 export function ChangeRow({
   change,
   titleOf,
+  typeOf,
   disabled,
   onUndo,
 }: {
   change: PageHistoryEntrySchema;
   /** Gives the title a field of the settings in the change is worded by. */
   titleOf: (name: string) => string;
+  /** Gives the title of a processor, which a change of the type of the step is worded by. */
+  typeOf: (key: string) => string;
   /** Whether an undo is on its way, which holds the buttons back. */
   disabled: boolean;
   /** Take back this change and every change after it. */
@@ -47,8 +50,8 @@ export function ChangeRow({
         ? values.groupOf(change.group_label)
         : values.scopes[change.scope];
   const what = labels.what(layer, labels.sources[change.source]);
-  const before = describeContent(change.layer, change.before, titleOf) ?? labels.nothing;
-  const after = describeContent(change.layer, change.after, titleOf) ?? labels.nothing;
+  const before = describeContent(change.layer, change.before, titleOf, typeOf) ?? labels.nothing;
+  const after = describeContent(change.layer, change.after, titleOf, typeOf) ?? labels.nothing;
   return (
     <li
       className={cn(ROW, 'flex items-start gap-2')}

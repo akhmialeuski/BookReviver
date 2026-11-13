@@ -24,6 +24,7 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories.step_state import 
     SqlAlchemyStepValuesRepository,
 )
 from bookreviver.adapters.persistence.sqlalchemy.repositories.versions import SqlAlchemyPageVersionRepository
+from bookreviver.adapters.persistence.sqlalchemy.step_types import StepTypes
 from bookreviver.ports.persistence import BookRepositories
 
 if TYPE_CHECKING:
@@ -70,9 +71,10 @@ class SqlAlchemyBookRepositories(BookRepositories):
         self.pagination_sections = SqlAlchemyPaginationSectionRepository(session)
         self.page_versions = SqlAlchemyPageVersionRepository(session)
         self.page_stages = SqlAlchemyPageStageRepository(session)
-        self.page_step_states = SqlAlchemyPageStepStateRepository(session)
-        self.page_history = SqlAlchemyPageHistoryRepository(session, self.groups)
-        self.step_values = SqlAlchemyStepValuesRepository(session, self.groups)
+        types = StepTypes(session)
+        self.page_step_states = SqlAlchemyPageStepStateRepository(session, types)
+        self.page_history = SqlAlchemyPageHistoryRepository(session, self.groups, types)
+        self.step_values = SqlAlchemyStepValuesRepository(session, self.groups, types)
         self.recipes = SqlAlchemyRecipeRepository(session, order_keys)
         self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

@@ -28,10 +28,13 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from sqlalchemy.orm import Session
 
+    from bookreviver.domain.ids import StepId
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.recipes import StepTypeChange
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.ordering import OrderKeys
 
@@ -147,6 +150,30 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
         """
         recipes = self._with_steps(self._rows.get_many(order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()]))
         return sorted(recipes, key=lambda recipe: recipe.stage.position)
+
+    @override
+    def kept_params(self, step_id: StepId, processor_key: str) -> Mapping[RecipeId, MetadataMap]:
+        """Return the parameters a step had under a type in the recipes that hold it, as each recipe kept them.
+
+        :param step_id: The step.
+        :type step_id: StepId
+        :param processor_key: Key of the processor the step had, or has, as its type.
+        :type processor_key: str
+        :returns: The parameters of each recipe that holds the step and kept parameters of that type, by recipe.
+        :rtype: Mapping[RecipeId, MetadataMap]
+        """
+        kept = self._steps.kept_params(step_id, processor_key)
+        return {RecipeId(recipe_id): params for recipe_id, params in kept.items()}
+
+    @override
+    def replace_type(self, change: StepTypeChange) -> None:
+        """Give a step another type in every recipe that holds it, each recipe with its parameters of the new type.
+
+        :param change: The step, its new type and the parameters each recipe that holds it runs it with.
+        :type change: StepTypeChange
+        :raises NotFoundError: If the book has no such step, or a recipe of the parameters does not hold it.
+        """
+        self._steps.replace_type(change)
 
     def _with_steps(self, rows: Sequence[RecipeRow]) -> list[Recipe]:
         """Build the recipes of some rows, each with its steps in order.

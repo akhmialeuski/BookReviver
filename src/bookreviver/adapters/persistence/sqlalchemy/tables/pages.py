@@ -262,16 +262,18 @@ class PageStageRow(BookTable):
 
 
 class PageStepStateRow(BookTable):
-    """Row of what one page keeps for one step of a recipe, keyed by the page, the stage and the step.
+    """Row of what one page keeps for one step of a recipe of one type, keyed by the page, the stage, the step and type.
 
     The step is a row of ``steps`` of the same stage, which a key of the step and the stage names. A step that is
     taken out of every recipe keeps its row, marked removed, so its state stays and finds the step again if it is put
-    back. The columns of the manual edit are null while the page has no edit of the step, and the settings are an empty
-    object while it changes no field.
+    back. The row of the active type of the step, ``steps.type_key``, is the one a run reads, and the rows of the types
+    the step had before stay, unread, until the type comes back. The columns of the manual edit are null while the page
+    has no edit of the step, and the settings are an empty object while it changes no field.
 
     :ivar page_id: Page the state belongs to.
     :ivar stage: Stage of the step, stored by value.
     :ivar step_id: Identifier of the step.
+    :ivar type_key: Key of the processor the step had as its type when the state was written.
     :ivar params: The fields of the parameters of the step that this page changes, as a JSON object.
     :ivar kind: Editor that made the edit, stored by value, or null for a page without an edit.
     :ivar geometry: The shape the user drew, as JSON, or null for an edit that is only a mask or for no edit.
@@ -288,6 +290,7 @@ class PageStepStateRow(BookTable):
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
+    type_key: Mapped[str] = mapped_column(primary_key=True)
     params: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=EMPTY_OBJECT)
     kind: Mapped[EditorKind | None] = mapped_column(enum_by_value(EditorKind))
     geometry: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -305,12 +308,14 @@ class StepChangeRow(BookTable):
     A change of the page's own layer reaches that page, and a change of the values of the odd pages, the even pages or
     a group reaches every page that took them, so the change is stored once and ``page_history`` links it to each page.
     The step is named by a key of the step and the stage, as in ``page_step_states``, and a step that is removed from
-    its recipe keeps its row, so the change outlives it. The values are the whole layer before and after the change, as
-    JSON objects.
+    its recipe keeps its row, so the change outlives it. A change of a layer belongs to the type the step had when it
+    was made, and the history of a page shows it while the step has that type again. A change of the type itself is
+    shown whatever the type. The values are the whole layer before and after the change, as JSON objects.
 
     :ivar id: Change identifier, assigned by the domain.
     :ivar stage: Stage of the step, stored by value.
     :ivar step_id: Identifier of the step.
+    :ivar type_key: Key of the processor the step had as its type after the change.
     :ivar layer: The layer that changed, stored by value.
     :ivar scope: Whose settings the layer holds, the page's own or a part of the pages it takes, stored by value.
     :ivar group_id: The group for the scope of a group, or null.
@@ -335,6 +340,7 @@ class StepChangeRow(BookTable):
     id: Mapped[UUID] = mapped_column(primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     step_id: Mapped[UUID]
+    type_key: Mapped[str]
     layer: Mapped[StepLayer] = mapped_column(enum_by_value(StepLayer))
     scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope))
     group_id: Mapped[int | None] = mapped_column(ForeignKey(PageGroupRow.id))

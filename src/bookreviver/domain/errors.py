@@ -75,6 +75,21 @@ class AnchorInsideMovedPagesError(ConflictError):
         super().__init__('The place chosen is one of the pages being moved. Choose a page that stays where it is.')
 
 
+class StepTypeChangedError(ConflictError):
+    """A recipe is saved with a step it keeps under another processor, which only the replacement of the type changes.
+
+    The replacement keeps what the pages hold for the earlier type and writes the history, which a save does not, so a
+    save that changes the processor of a step is refused. The message is a sentence for the person saving the recipe,
+    which the API sends as the detail of the problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__(
+            'A recipe keeps the type of each of its steps. Change the type of a step with the replacement of its type.'
+        )
+
+
 class BookBusyError(DomainError):
     """Another change of the same book held it for longer than a change waits, so this one did not start.
 

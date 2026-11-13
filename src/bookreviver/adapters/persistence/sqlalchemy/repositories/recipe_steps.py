@@ -6,7 +6,8 @@ is new to the book gets a row, and one that comes back has the mark taken off. A
 when it stands in the same order relative to the steps that keep theirs, which the longest run of places in rising
 order gives, so moving one step rewrites the key of that step alone and a new step takes a key between its neighbours.
 The switch of a step is a column of its place, and its parameters a row of its active type, each written only when it
-changed.
+changed. A write keeps the type of a step that has one, and refuses a recipe that names another: the type is replaced by
+:meth:`RecipeSteps.replace_type` alone, which keeps the parameters of the earlier type in their rows.
 """
 
 from collections import defaultdict
@@ -16,7 +17,8 @@ from sqlalchemy import and_, delete, select, update
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers.recipes import RecipeStepMapper
 from bookreviver.adapters.persistence.sqlalchemy.rows import RecipeStepParamsRows, RecipeStepRows, StepRows
-from bookreviver.adapters.persistence.sqlalchemy.tables import RecipeStepParamsRow, RecipeStepRow, StepRow
+from bookreviver.adapters.persistence.sqlalchemy.tables import RecipeRow, RecipeStepParamsRow, RecipeStepRow, StepRow
+from bookreviver.domain.errors import StepTypeChangedError
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -25,7 +27,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from bookreviver.domain.recipes import Recipe, Step
+    from bookreviver.domain.metadata import MetadataMap
+    from bookreviver.domain.recipes import Recipe, Step, StepTypeChange
     from bookreviver.ports.ordering import OrderKeys
 
 
@@ -110,6 +113,42 @@ class RecipeSteps:
         """
         StepsWrite(self, recipe).apply()
 
+    def kept_params(self, step_id: UUID, type_key: str) -> dict[UUID, MetadataMap]:
+        """Read the parameters a step has under a type in the recipes that hold it.
+
+        :param step_id: The step.
+        :type step_id: UUID
+        :param type_key: Key of the processor of the type.
+        :type type_key: str
+        :returns: The parameters of each recipe that kept parameters of the type, by recipe.
+        :rtype: dict[UUID, MetadataMap]
+        """
+        rows = self.params.get_many(RecipeStepParamsRow.step_id == step_id, RecipeStepParamsRow.type_key == type_key)
+        return {row.recipe_id: row.params for row in rows}
+
+    def replace_type(self, change: StepTypeChange) -> None:
+        """Give a step another type, store its parameters of that type in each recipe and mark those recipes changed.
+
+        :param change: The step, its new type and the parameters of each recipe that holds it.
+        :type change: StepTypeChange
+        :raises NotFoundError: If the book has no such step, or a recipe of the parameters does not hold it.
+        """
+        self.steps.get(change.step_id).type_key = change.processor_key
+        self.params.replace_many(
+            [
+                RecipeStepParamsRow(
+                    recipe_id=recipe_id, step_id=change.step_id, type_key=change.processor_key, params=dict(params)
+                )
+                for recipe_id, params in change.params.items()
+            ]
+        )
+        self.session.execute(
+            update(RecipeRow)
+            .where(RecipeRow.id.in_(list(change.params)))
+            .values(updated_at=change.moment)
+            .execution_options(synchronize_session='fetch')
+        )
+
     def held_by(self, recipe_id: UUID) -> list[UUID]:
         """List the steps a recipe holds, in no order.
 
@@ -175,7 +214,12 @@ class StepsWrite:
         self._steps.release(gone, self._recipe.updated_at)
 
     def _hold_steps(self) -> None:
-        """Store a row for each step that has none, and give one that has a row back its place and its type."""
+        """Store a row for each step that has none, and give one that has a row back its place.
+
+        A step that rows name and no recipe held was kept with no type, which the recipe gives it.
+
+        :raises StepTypeChangedError: If the recipe names a step under another type than the one it has.
+        """
         rows = self._steps.steps.get_many_in(StepRow.id, [step.step_id for step in self._recipe.steps])
         stored = {row.id: row for row in rows}
         new: list[StepRow] = []
@@ -184,6 +228,8 @@ class StepsWrite:
             if row is None:
                 new.append(self._steps.mapper.step_row(self._recipe, step, self._recipe.updated_at))
                 continue
+            if row.type_key and row.type_key != step.processor_key:
+                raise StepTypeChangedError
             row.removed_at = None
             row.type_key = step.processor_key
         if new:
