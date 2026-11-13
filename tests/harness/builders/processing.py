@@ -347,7 +347,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(records=self.records, starter=self.starter)
+        return PageHistoryService(recipes=self.recipes, records=self.records, starter=self.starter)
 
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.

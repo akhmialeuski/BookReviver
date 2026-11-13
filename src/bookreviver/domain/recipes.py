@@ -166,6 +166,20 @@ class StepTypeChange:
 
 
 @frozen
+class RecipeStepKey:
+    """The address of a step in a recipe: the stage, the recipe and the step, which a use case takes as one value.
+
+    :ivar stage: The stage of the recipe and of the step.
+    :ivar recipe_id: Identifier of the recipe.
+    :ivar step_id: Identifier of the step.
+    """
+
+    stage: Stage
+    recipe_id: RecipeId
+    step_id: StepId
+
+
+@frozen
 class RecipeKey:
     """The address of a recipe: the stage it belongs to and its identifier, which a use case takes as one value.
 

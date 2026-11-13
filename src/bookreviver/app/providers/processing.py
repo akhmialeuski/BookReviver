@@ -248,9 +248,13 @@ class ProcessingProvider(Provider):
         return CarryOverService(records=records)
 
     @provide(scope=Scope.REQUEST)
-    def page_history_service(self, records: StageRecords, starter: JobStarter) -> PageHistoryService:
+    def page_history_service(
+        self, recipes: RecipeBook, records: StageRecords, starter: JobStarter
+    ) -> PageHistoryService:
         """Build the page history service of a request.
 
+        :param recipes: The recipes of the books, which the undo of a replacement of the type of a step asks.
+        :type recipes: RecipeBook
         :param records: Writer of the stage records.
         :type records: StageRecords
         :param starter: Putter of new jobs, which queues the clear of a step.
@@ -258,7 +262,7 @@ class ProcessingProvider(Provider):
         :returns: The page history service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(records=records, starter=starter)
+        return PageHistoryService(recipes=recipes, records=records, starter=starter)
 
     @provide(scope=Scope.REQUEST)
     def result_marks_service(self) -> ResultMarksService:

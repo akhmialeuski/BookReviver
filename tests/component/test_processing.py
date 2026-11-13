@@ -5,7 +5,7 @@ written by libvips as they are for a user, and a test waits until the jobs a req
 """
 
 import io
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
@@ -30,11 +30,13 @@ from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ResultMark, VersionOrigin, VersionScale
 from tests.harness.builders.domain import make_page, make_scan, make_source, new_account_id
 from tests.harness.builders.processing import ProcessingFakesProvider
-from tests.harness.builders.seeding import (
-    BookLayout,
-    ScanLayout,
-    SourceLayout,
-    seed_book,
+from tests.harness.http.processing import (
+    ITEMS,
+    SCAN_SIZE_PX,
+    recipes_of,
+    scanned_book,
+    set_strength,
+    store_scan_images,
 )
 
 if TYPE_CHECKING:
@@ -45,14 +47,13 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
     from bookreviver.domain.sources import Scan
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.storage import AssetStore
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.adapters.storage import SharedBookDirectories
     from tests.harness.concurrency.board_idle import JobsIdle
+    from tests.harness.http.processing import Book
 
 pytestmark = pytest.mark.anyio
 
@@ -64,35 +65,12 @@ CONTENT_TYPE_HEADER: str = 'content-type'
 FAKE_KEY: str = 'geometry.fake'
 # The field of the body of a run that names the last step to run
 THROUGH_STEP_ID: str = 'through_step_id'
-SCAN_SIZE_PX: tuple[int, int] = (120, 160)
-ITEMS: str = 'items'
 # The ends of a preview that a change put after it leaves: cancelled, or ended before the change was put
 PREVIEW_OUT_OF_THE_WAY: frozenset[str] = frozenset({str(JobState.CANCELLED), str(JobState.SUCCEEDED)})
 # An old version of the page that nothing needs, and the bytes of its one file
 OLD_VERSION_ID: str = 'abcdefabcdefabcd'
 OLD_VERSION_CONTENT: bytes = b'an old picture' * 100
 COLLECTABLE_PATH: str = '/versions/collectable'
-
-
-class Book(NamedTuple):
-    """A book of the signed-in account with one page cut from a scan whose image is stored.
-
-    :ivar book_id: Identifier of the book.
-    :ivar page: The page the import made of the scan.
-    """
-
-    book_id: BookId
-    page: Page
-
-    @property
-    def path(self) -> str:
-        """The path of the book."""
-        return f'{BOOKS_PATH}/{self.book_id}'
-
-    @property
-    def page_path(self) -> str:
-        """The path of the page."""
-        return f'{self.path}/pages/{self.page.id}'
 
 
 @pytest.fixture
@@ -125,43 +103,9 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    layout = BookLayout.scanned(SourceLayout.of(1, scan=ScanLayout(ready=True)))
-    book = await seed_book(fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases())
-    await store_scan_images(fx_directories.assets(book.book_id), book.scans[0])
-    return Book(book_id=book.book_id, page=book.pages[0])
-
-
-async def store_scan_images(asset_store: AssetStore, scan: Scan) -> None:
-    """Store the full image and the preview of a scan as real JPEGs.
-
-    :param asset_store: Asset store of the book owning the scan, the application's own.
-    :type asset_store: AssetStore
-    :param scan: The scan, whose renditions are ready.
-    :type scan: Scan
-    """
-    buffer = io.BytesIO()
-    Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
-    for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-        async with asset_store.writable(BookKeys.scan_rendition(scan, rendition)) as path:
-            path.write_bytes(buffer.getvalue())
-
-
-async def set_strength(client: httpx.AsyncClient, book: Book, step_id: str, value: int) -> httpx.Response:
-    """Set the strength of a step for the page of the book.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: Book of the signed-in account.
-    :type book: Book
-    :param step_id: Identifier of the step.
-    :type step_id: str
-    :param value: The strength the page uses.
-    :type value: int
-    :returns: The answer.
-    :rtype: httpx.Response
-    """
-    body = {'scope': 'pages', 'page_ids': [str(book.page.id)], 'value': value}
-    return await client.put(f'{book.path}/stages/geometry/steps/{step_id}/values/strength', json=body)
+    return await scanned_book(
+        catalogue=fx_catalogue, directories=fx_directories, actor=fx_actor, databases=fx_databases
+    )
 
 
 async def run_stage(client: httpx.AsyncClient, idle: JobsIdle, book: Book, stage: str) -> JobSchema:
@@ -233,22 +177,6 @@ class TestProcessors:
             all(processor.parameters.get('type') == 'object' for processor in listed if processor.key == 'split.none')
         )
         assert_expectations()
-
-
-async def recipes_of(client: httpx.AsyncClient, book: Book, stage: str) -> dict[RecipeKind, RecipeSchema]:
-    """List the recipes of a stage through the API, by the kind of page.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: Book of the signed-in account.
-    :type book: Book
-    :param stage: The stage.
-    :type stage: str
-    :returns: The recipe of each kind.
-    :rtype: dict[RecipeKind, RecipeSchema]
-    """
-    listed = await client.get(f'{book.path}/stages/{stage}/recipes')
-    return {recipe.kind: recipe for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS])}
 
 
 class TestRecipes:

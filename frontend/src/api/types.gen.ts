@@ -3605,6 +3605,25 @@ export type StepSchema = {
 };
 
 /**
+ * StepTypeBody
+ *
+ * The type a step of a recipe is given in place of the one it has.
+ *
+ * :ivar processor_key: Key of the processor that becomes the type of the step, which must belong to the stage of the
+ * recipe.
+ * :ivar order: ``usual`` refuses a type that would stand where it cannot work at the place of the step in a recipe
+ * that holds it, with the reason as the detail of a 422, and ``free`` gives it and reports it in the
+ * answer.
+ */
+export type StepTypeBody = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    order?: OrderMode;
+};
+
+/**
  * StepValuesSchema
  *
  * The fields of the parameters of a step that the odd pages, the even pages or a group change.
@@ -5512,6 +5531,62 @@ export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses = {
 };
 
 export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponse = PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses[keyof PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses];
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutData = {
+    body: StepTypeBody;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+        /**
+         * Step Id
+         *
+         * Identifier of the step
+         */
+        step_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/steps/{step_id}/type';
+};
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutError = ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutErrors[keyof ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutErrors];
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponse = ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponses[keyof ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponses];
 
 export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostData = {
     body?: never;
