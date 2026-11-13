@@ -3989,7 +3989,7 @@
           "processing"
         ],
         "summary": "Choose Version",
-        "description": "Make a version the current one of a stage of a page, which marks the later stages of the page stale.\n\nThe version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.",
+        "description": "Make a version the current one of a stage of a page in the background, and answer with the queued job.\n\nThe job marks the later stages of the page stale. The version must be ready and made by a full run of this page in\nthis stage: the answer is 409 for one that is not, and nothing is queued then. A book runs one job at a time in the\norder they were asked for, so a choice asked for while a run, a measure of the book, a tile cutting or a collection\nis queued or running waits behind it, and the job fails with nothing written when the version stopped being one\nthat can be chosen by its turn. A preview of the book is cancelled.",
         "operationId": "choose_version_api_v1_books__book_id__pages__page_id__stages__stage__put",
         "parameters": [
           {
@@ -4038,12 +4038,12 @@
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageStageSchema"
+                  "$ref": "#/components/schemas/JobSchema"
                 }
               }
             }
@@ -6611,7 +6611,7 @@
           "page-history"
         ],
         "summary": "Clear History",
-        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer\nis 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and\n404 when no recipe of the stage has the step.",
+        "description": "Return a step to its initial state on a page in the background, and answer with the queued job.\n\nThe job deletes the history of the step on the page, its settings, its edit and its results: the versions the step\nmade on the page and the versions that read them, with their files and their marks. The stage of the page stands\non the version the step read, marked stale, and has no current version when the step is the first of its recipe.\nThe clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages\nstay. A book runs one job at a time in the order they were asked for, so a clear asked for while a run, a measure\nof the book, a tile cutting or a collection is queued or running waits behind it. A preview of the book is\ncancelled. The answer is 404 when no recipe of the stage has the step, and nothing is queued then.",
         "operationId": "clear_history_api_v1_books__book_id__pages__page_id__history__stage___step_id__delete",
         "parameters": [
           {
@@ -6662,12 +6662,12 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClearedSchema"
+                  "$ref": "#/components/schemas/JobSchema"
                 }
               }
             }
@@ -9784,25 +9784,6 @@
         "title": "ChangeSource",
         "description": "What made a change of a layer of a step on a page."
       },
-      "ClearedSchema": {
-        "properties": {
-          "changes": {
-            "type": "integer",
-            "title": "Changes"
-          },
-          "versions": {
-            "type": "integer",
-            "title": "Versions"
-          }
-        },
-        "type": "object",
-        "required": [
-          "changes",
-          "versions"
-        ],
-        "title": "ClearedSchema",
-        "description": "What clearing a step on a page deleted.\n\n:ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.\n:ivar versions: How many versions were deleted: the results of the step on the page and the results that read them."
-      },
       "CollectionReportSchema": {
         "properties": {
           "versions": {
@@ -10164,7 +10145,9 @@
           "cut-tiles",
           "collect-versions",
           "measure-book",
-          "detect-content"
+          "detect-content",
+          "clear-step",
+          "choose-version"
         ],
         "title": "JobKind",
         "description": "What a background job does."

@@ -1317,9 +1317,13 @@ export const listPageStagesApiV1BooksBookIdPagesPageIdStagesGetInfiniteOptions =
 /**
  * Choose Version
  *
- * Make a version the current one of a stage of a page, which marks the later stages of the page stale.
+ * Make a version the current one of a stage of a page in the background, and answer with the queued job.
  *
- * The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
+ * The job marks the later stages of the page stale. The version must be ready and made by a full run of this page in
+ * this stage: the answer is 409 for one that is not, and nothing is queued then. A book runs one job at a time in the
+ * order they were asked for, so a choice asked for while a run, a measure of the book, a tile cutting or a collection
+ * is queued or running waits behind it, and the job fails with nothing written when the version stopped being one
+ * that can be chosen by its turn. A preview of the book is cancelled.
  */
 export const chooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutMutation = (options?: Partial<Options<ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutData>>): UseMutationOptions<ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponse, ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutError, Options<ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutData>> => {
     const mutationOptions: UseMutationOptions<ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponse, ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutError, Options<ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutData>> = {
@@ -1946,14 +1950,15 @@ export const putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutMutation
 /**
  * Clear History
  *
- * Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
+ * Return a step to its initial state on a page in the background, and answer with the queued job.
  *
- * The results are the versions the step made on the page and the versions that read them, with their files and their
- * marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
- * step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
- * changes of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer
- * is 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and
- * 404 when no recipe of the stage has the step.
+ * The job deletes the history of the step on the page, its settings, its edit and its results: the versions the step
+ * made on the page and the versions that read them, with their files and their marks. The stage of the page stands
+ * on the version the step read, marked stale, and has no current version when the step is the first of its recipe.
+ * The clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages
+ * stay. A book runs one job at a time in the order they were asked for, so a clear asked for while a run, a measure
+ * of the book, a tile cutting or a collection is queued or running waits behind it. A preview of the book is
+ * cancelled. The answer is 404 when no recipe of the stage has the step, and nothing is queued then.
  */
 export const clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteMutation = (options?: Partial<Options<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData>>): UseMutationOptions<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData>> => {
     const mutationOptions: UseMutationOptions<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData>> = {

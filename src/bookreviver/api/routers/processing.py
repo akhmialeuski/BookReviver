@@ -4,7 +4,8 @@ A stage has one recipe for each kind of page, and a page is processed by the rec
 the pages it processed stale and runs nothing. A run and a preview are jobs:
 the route records the job and answers 202 with it, and the result reaches the browser as events, since a request
 handler never blocks on CPU-bound work. A page keeps every version it was ever given, a stage points at the current
-one, and the user may make another ready version the current one.
+one, and the user may make another ready version the current one, which is a job as well, so it waits behind the jobs
+that may read the versions.
 """
 
 from dataclasses import dataclass
@@ -337,16 +338,20 @@ async def list_page_stages(
     return pager.page(await processing.page_stages(book, address.page_id, pager.request))
 
 
-@router.put('/{book_id}/pages/{page_id}/stages/{stage}')
+@router.put('/{book_id}/pages/{page_id}/stages/{stage}', status_code=status.HTTP_202_ACCEPTED)
 async def choose_version(
     access: AccessDep,
     address: Annotated[PageStagePath, Depends()],
     body: HeadChoice,
     processing: FromDishka[ProcessingService],
-) -> PageStageSchema:
-    """Make a version the current one of a stage of a page, which marks the later stages of the page stale.
+) -> JobSchema:
+    """Make a version the current one of a stage of a page in the background, and answer with the queued job.
 
-    The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
+    The job marks the later stages of the page stale. The version must be ready and made by a full run of this page in
+    this stage: the answer is 409 for one that is not, and nothing is queued then. A book runs one job at a time in the
+    order they were asked for, so a choice asked for while a run, a measure of the book, a tile cutting or a collection
+    is queued or running waits behind it, and the job fails with nothing written when the version stopped being one
+    that can be chosen by its turn. A preview of the book is cancelled.
 
     \N{FORM FEED}
     :param access: Access of the signed-in account, which opens the book the path names.
@@ -357,12 +362,13 @@ async def choose_version(
     :type body: HeadChoice
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The record of the stage in its new state.
-    :rtype: PageStageSchema
+    :returns: The queued job.
+    :rtype: JobSchema
     """
     book = await access.book(address.book_id)
-    chosen = await processing.choose_version(book, address.page_id, address.stage, body.version_id)
-    return PageStageSchema.of(chosen)
+    return JobSchema.model_validate(
+        await processing.choose_version(book, address.page_id, address.stage, body.version_id)
+    )
 
 
 @router.get('/{book_id}/pages/{page_id}/versions')

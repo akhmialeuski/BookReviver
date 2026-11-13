@@ -30,7 +30,9 @@ from bookreviver.services.imports import (
     ImportService,
 )
 from bookreviver.services.jobs import JobService
+from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.pages import PageService
+from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingParts
 from bookreviver.services.steps import StepRunner
@@ -40,7 +42,14 @@ class ImportsProvider(Provider):
     """Builds the job board and the job service once per application, and the import service per request or job."""
 
     @provide(scope=Scope.REQUEST)
-    def workers(self, imports: ImportService, pages: PageService, processing: ProcessingJobs) -> JobWorkers:
+    def workers(
+        self,
+        imports: ImportService,
+        pages: PageService,
+        processing: ProcessingJobs,
+        choices: ProcessingService,
+        history: PageHistoryService,
+    ) -> JobWorkers:
         """Name the worker of every kind of job for the request scope one job runs in.
 
         :param imports: Import service of the scope.
@@ -49,10 +58,14 @@ class ImportsProvider(Provider):
         :type pages: PageService
         :param processing: The work of the processing jobs of the scope.
         :type processing: ProcessingJobs
+        :param choices: Processing service of the scope, which makes a chosen version current.
+        :type choices: ProcessingService
+        :param history: Page history service of the scope, which clears a step on a page.
+        :type history: PageHistoryService
         :returns: The workers by the kind of job.
         :rtype: JobWorkers
         """
-        return job_workers(imports, pages, processing)
+        return job_workers(imports, pages, processing, choices, history)
 
     @provide(scope=Scope.APP)
     async def job_board(self, settings: Settings, container: AsyncContainer) -> AsyncIterator[InMemoryJobBoard]:

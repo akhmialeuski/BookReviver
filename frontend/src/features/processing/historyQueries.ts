@@ -10,7 +10,7 @@ import {
   listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetInfiniteOptions,
   undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { invalidatePageLayers, invalidateVersions } from '@/features/books/queries';
+import { invalidateJobs, invalidatePageLayers } from '@/features/books/queries';
 
 /**
  * The history of a step on a page, the undo that takes its changes back and the clear that deletes it.
@@ -80,18 +80,16 @@ export function useUndo(bookId: string) {
 /**
  * Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
  *
- * The clear joins the mutation scope of the edits of the book like an undo, and reads again what an undo does, and
- * the results of the page too, since the server deleted the results of the step and the ones that read them.
+ * The clear is a job of the book, which waits behind the jobs the book has queued or running, so the answer is the job
+ * and the list of jobs is read again. The clear joins the mutation scope of the edits of the book like an undo, so it
+ * reaches the server after the edit saved just before it. The history, the settings and the results of the page follow
+ * the `book-changed` event the job sends when it has deleted them.
  */
 export function useClearHistory(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteMutation(),
     scope: { id: `page-edits:${bookId}` },
-    onSettled: (_cleared, _error, { path }) =>
-      Promise.all([
-        invalidatePageLayers(queryClient),
-        invalidateVersions(queryClient, bookId, path.page_id),
-      ]),
+    onSettled: () => invalidateJobs(queryClient, bookId),
   });
 }

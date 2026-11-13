@@ -120,8 +120,8 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   book runs one job at a time in the order they were put, first in, first out, and `JobStarter` refuses nothing
   because the book is busy: a second run waits behind the first and reads what it made. A job that follows from the
   running one, such as the split of the pages an import made or the detection of their content, is put `next_up`,
-  ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book and a
-  new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
+  ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book, a
+  clear of a step, the choice of a version and a new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
   service that does each `JobKind`, each taking the book, the job and its control.
 - A job that does the same work for many pages or scans hands it to `WorkerGroup` of `services/worker_group.py`, which
   does a few at a time. A run of a stage processes as many pages together as the step executor has processes for full

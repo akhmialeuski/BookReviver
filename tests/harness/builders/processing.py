@@ -308,6 +308,10 @@ class ProcessingKit:
         book = Book(dir_name)
         if job.kind is JobKind.PREPARE_PAGES:
             return await self._pages().prepare_images(book, job, control)
+        if job.kind is JobKind.CLEAR_STEP:
+            return await self.page_history().clear_step(book, job, control)
+        if job.kind is JobKind.CHOOSE_VERSION:
+            return await self.service().make_current(book, job, control)
         return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(book, job, control))
 
     def _pages(self) -> PageService:
@@ -524,6 +528,22 @@ def stored_job(kit: ProcessingKit, job_id: JobId) -> Job:
     :rtype: Job
     """
     return kit.board.get(job_id)
+
+
+def started_after(kit: ProcessingKit, later_id: JobId, earlier_id: JobId) -> bool:
+    """Tell whether a job of the board started only once another one had ended, as a job queued behind it does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param later_id: Identifier of the job expected to start later.
+    :type later_id: JobId
+    :param earlier_id: Identifier of the job expected to end first.
+    :type earlier_id: JobId
+    :returns: Whether both jobs ran and the later one started no sooner than the earlier one ended.
+    :rtype: bool
+    """
+    started, ended = stored_job(kit, later_id).started_at, stored_job(kit, earlier_id).finished_at
+    return started is not None and ended is not None and started >= ended
 
 
 async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:

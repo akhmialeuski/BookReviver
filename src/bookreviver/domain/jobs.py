@@ -13,9 +13,10 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.ids import JobId, PageId, PageVersionId, StepId
+    from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.domain.recipes import Step
     from bookreviver.domain.sources import SourceFile
-    from bookreviver.domain.stages import Stage
+    from bookreviver.domain.stages import PageStageKey, Stage
 
 
 class JobKind(LabeledStrEnum):
@@ -29,33 +30,46 @@ class JobKind(LabeledStrEnum):
     COLLECT_VERSIONS = 'collect-versions', 'Collect old versions'
     MEASURE_BOOK = 'measure-book', 'Measure the book'
     DETECT_CONTENT = 'detect-content', 'Detect the content of pages'
+    CLEAR_STEP = 'clear-step', 'Clear a step on a page'
+    CHOOSE_VERSION = 'choose-version', 'Choose the current version of a page'
 
     @classmethod
     def processing(cls) -> frozenset[JobKind]:
         """Return the kinds of job that read and write the versions of pages.
 
         A book runs one job at a time, in the order the jobs were put, so two of them never overlap. A change the user
-        makes to what is current, such as choosing another version of a page, is refused while one of them is queued or
-        running, since the job would read or write over it.
+        makes to what is current, such as choosing another version of a page or clearing a step on a page, is a job of
+        this kind as well: it waits behind the jobs that are queued or running, and so never reads or writes over them.
 
-        :returns: A run, a preview, a measure of the book, a tile cutting and a collection of old versions.
+        :returns: A run, a preview, a measure of the book, a tile cutting, a collection of old versions, a clear of a
+                  step and a choice of a version.
         :rtype: frozenset[JobKind]
         """
-        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK, cls.CUT_TILES, cls.COLLECT_VERSIONS})
+        return frozenset(
+            {
+                cls.RUN_STAGE,
+                cls.PREVIEW_STEP,
+                cls.MEASURE_BOOK,
+                cls.CUT_TILES,
+                cls.COLLECT_VERSIONS,
+                cls.CLEAR_STEP,
+                cls.CHOOSE_VERSION,
+            }
+        )
 
     @classmethod
     def replacing_previews(cls) -> frozenset[JobKind]:
         """Return the kinds of job that cancel the previews of the book when they are asked for.
 
-        A preview is a look at one page that changes nothing that is current. A run and a measure of the book are what
-        the reader pressed a button for, so a preview in their way gives the book up, and a new preview takes the place
-        of the one before it, since the editor shows the latest look only. A tile cutting or a collection waits its
-        turn and cancels nothing.
+        A preview is a look at one page that changes nothing that is current. A run, a measure of the book, a clear of a
+        step and a choice of a version are what the reader pressed a button for, so a preview in their way gives the
+        book up, and a new preview takes the place of the one before it, since the editor shows the latest look only.
+        A tile cutting or a collection waits its turn and cancels nothing.
 
-        :returns: A run, a measure of the book and a preview.
+        :returns: A run, a measure of the book, a clear of a step, a choice of a version and a preview.
         :rtype: frozenset[JobKind]
         """
-        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK, cls.PREVIEW_STEP})
+        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK, cls.CLEAR_STEP, cls.CHOOSE_VERSION, cls.PREVIEW_STEP})
 
 
 class JobState(LabeledStrEnum):
@@ -220,8 +234,39 @@ class VersionCollection:
     previews_older_than: datetime
 
 
+@frozen(kw_only=True)
+class StepClearing:
+    """What a ``clear-step`` job clears: one step on one page, back to the state it had before it first ran there.
+
+    :ivar key: The page, the stage and the step.
+    """
+
+    key: PageStepKey
+
+
+@frozen(kw_only=True)
+class VersionChoice:
+    """What a ``choose-version`` job makes current: one version of a page, as the current one of a stage.
+
+    :ivar key: The page and the stage.
+    :ivar version_id: The version to make current.
+    """
+
+    key: PageStageKey
+    version_id: PageVersionId
+
+
 # What a job was asked to do: the value of its kind, which says the step or the stage, the pages and the parameters
-type JobWork = ImportRequest | StageRun | StepPreview | TileCut | ContentDetection | VersionCollection
+type JobWork = (
+    ImportRequest
+    | StageRun
+    | StepPreview
+    | TileCut
+    | ContentDetection
+    | VersionCollection
+    | StepClearing
+    | VersionChoice
+)
 
 
 @frozen(kw_only=True)

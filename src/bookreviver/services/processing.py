@@ -1,9 +1,10 @@
 """Use cases of the processing framework a request makes: recipes, runs, previews and page versions.
 
 A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. The use cases here
-change a recipe or the current version of a stage, which writes rows in one ``Book.change`` and marks the pages
-they affect stale, or start heavy work, a run, a preview, a cut of tiles, a collection or a measure of the book, which
-records a job with its parameters, queues it and answers at once, since a request handler never blocks on CPU-bound
+change a recipe, which writes rows in one ``Book.change`` and marks the pages it affects stale, or start a job: heavy
+work, a run, a preview, a cut of tiles, a collection or a measure of the book, or the choice of the current version of
+a stage, which waits behind the jobs that may read the versions. Starting one records a job with its parameters,
+queues it and answers at once, since a request handler never blocks on CPU-bound
 work. A use case that starts heavy work holds no transaction itself: it finds the recipes, which opens a ``Book.change``
 of its own when the stage has none, and then the job starter records the job in a ``change`` of its own. Neither runs
 a processor. The workers do, through ``ProcessingJobs``, and the files of a step are written by ``StepRunner``.
@@ -21,8 +22,8 @@ from typing import TYPE_CHECKING
 
 from bookreviver.core.content import BookContent
 from bookreviver.core.pages import BookPage
-from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.jobs import JobKind, StepPreview, TileCut
+from bookreviver.domain.errors import ConflictError, DomainError, InvalidParametersError, NotFoundError
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StepPreview, TileCut, VersionChoice
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.recipes import OrderMode
 from bookreviver.domain.runs import RunMode
@@ -30,7 +31,6 @@ from bookreviver.domain.slices import Slice
 from bookreviver.domain.stages import PageStageKey
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.domain.versions import CollectionReport, VersionScale, VersionState
-from bookreviver.services.processing_parts import BOOK_BUSY
 from bookreviver.services.run_plans import RunPlan
 
 if TYPE_CHECKING:
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage, Stage
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.processing_parts import ProcessingParts
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
@@ -269,18 +270,13 @@ class ProcessingService:
         records = await book.read(work)
         return Slice(items=records[request.offset : request.offset + request.limit], total=len(records))
 
-    async def choose_version(self, book: Book, page_id: PageId, stage: Stage, version_id: PageVersionId) -> PageStage:
-        """Make a version the current one of a stage of a page, and mark the later stages stale.
+    async def choose_version(self, book: Book, page_id: PageId, stage: Stage, version_id: PageVersionId) -> Job:
+        """Queue a job that makes a version the current one of a stage of a page, behind the jobs the book has.
 
-        The version must be ready, made by a full run of this page in this stage. If its tile pyramid is not cut yet, a
-        job is queued to cut it, since the viewer opens the current version.
-
-        A preview of the book, queued or running, is cancelled first, since the reader asked for the choice and a
-        preview is disposable: the editor of a step asks for one by itself, so a choice made a moment later would
-        otherwise be refused by a job the reader never started. A request for a version that cannot be chosen is
-        refused before any preview is cancelled. The version is checked again inside the transaction that makes it
-        current, since the cancelling is a transaction of its own, and a version that stopped being choosable meanwhile
-        is refused with nothing written.
+        The version must be ready, made by a full run of this page in this stage. It is checked first, so a request for
+        a version that cannot be chosen queues nothing and cancels nothing. A preview of the book, queued or running,
+        is cancelled when the job is put, since the reader asked for the choice and a preview is disposable: the editor
+        of a step asks for one by itself.
 
         :param book: The open book.
         :type book: Book
@@ -290,42 +286,64 @@ class ProcessingService:
         :type stage: Stage
         :param version_id: Identifier of the version.
         :type version_id: PageVersionId
-        :returns: The record of the stage in its new state.
-        :rtype: PageStage
+        :returns: The queued job.
+        :rtype: Job
         :raises NotFoundError: If the book has no such page, or the page has no such version.
-        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage, or a run, a
-                               measure of the book, a tile cutting or a collection of the book is queued or
-                               running, which may be reading or deleting the versions the choice depends on.
+        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
         """
         await book.read(lambda repos: self._choosable(repos, repos.pages.get(page_id), stage, version_id))
-        if await self._starter.free_of_previews(book):
-            raise ConflictError(BOOK_BUSY)
-        key = PageStageKey(page_id, stage)
+        choice = VersionChoice(key=PageStageKey(page_id, stage), version_id=version_id)
+        return await self._starter.enqueue(book, JobKind.CHOOSE_VERSION, choice)
 
-        def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[PageVersion, PageStage]:
-            """Check the version again, and make it the current one of the stage.
+    async def make_current(self, book: Book, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``choose-version`` job: make the version current and mark the later stages of the page stale.
 
-            :param repos: Repositories of the transaction.
-            :type repos: BookRepositories
-            :param _book_record: The record of the book as the change finds it, which the check of the version reads
-                                 again.
-            :type _book_record: BookRecord
-            :returns: The version, and the record of the stage in its new state.
-            :rtype: tuple[PageVersion, PageStage]
-            :raises NotFoundError: If the book has no such page, or the page has no
-                                   such version.
-            :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
-            """
-            version = self._choosable(repos, repos.pages.get(page_id), stage, version_id)
-            previous = repos.page_stages.find(key)
-            return version, self._records.set_head(
-                repos, key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
-            )
+        The job runs when the jobs put before it have ended, so the version is checked again inside the transaction
+        that makes it current, and a version that stopped being choosable meanwhile, or is gone, fails the job with
+        nothing written. A version whose tile pyramid is not cut yet gets its cutting put next up, since the viewer
+        opens the current version.
 
-        version, record = await book.change(work)
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after its task.
+        :type control: JobControl
+        :returns: How the job ended: failed with the reason when the version cannot be made current or the job is not
+                  valid, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled while its task ran.
+        """
+        control.plan(1)
+        try:
+            choice = job.asked(VersionChoice)
+            version = await book.change(lambda repos, _book_record: self._set_head(repos, choice))
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
         if version.renditions is not None and not version.tiles_ready:
-            await self._starter.enqueue_tiles(book, [version_id])
-        return record
+            await self._starter.enqueue_tiles(book, [version.id])
+        await control.task_done()
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    def _set_head(self, repos: BookRepositories, choice: VersionChoice) -> PageVersion:
+        """Check the version of a choice again, and make it the current one of the stage, in the transaction of the job.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :param choice: The page, the stage and the version.
+        :type choice: VersionChoice
+        :returns: The version made current.
+        :rtype: PageVersion
+        :raises NotFoundError: If the book has no such page, or the page has no such version.
+        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
+        """
+        key = choice.key
+        version = self._choosable(repos, repos.pages.get(key.page_id), key.stage, choice.version_id)
+        previous = repos.page_stages.find(key)
+        self._records.set_head(
+            repos, key, head_version_id=version.id, recipe_id=None if previous is None else previous.recipe_id
+        )
+        return version
 
     async def versions(
         self,
