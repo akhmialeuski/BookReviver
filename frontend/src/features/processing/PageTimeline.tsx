@@ -255,7 +255,7 @@ export function PageTimeline({
             </p>
           ) : null
         ) : (
-          <ol className="grid min-w-0 grid-cols-1 gap-2" data-testid="page-history-list">
+          <ol className="grid min-w-0 grid-cols-1 divide-y" data-testid="page-history-list">
             {rows.map((row) =>
               row.kind === 'change' ? (
                 <ChangeRow

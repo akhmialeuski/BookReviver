@@ -122,7 +122,7 @@ export function ProcessingPanel({
       available
       bar={
         processing.recipe === undefined ? undefined : (
-          <RecipeBar processing={processing} rows={rows} />
+          <RecipeBar processing={processing} rows={rows} picker={step === undefined} />
         )
       }
       recipe={
