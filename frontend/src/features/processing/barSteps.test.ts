@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { row } from '@/features/pages/fixtures';
+import { barStepsOf, defaultStepOf, hasStepBar, openStepOf } from '@/features/processing/barSteps';
 import { deskew, processor, recipe, step } from '@/features/processing/fixtures';
-import { row } from '@/features/workspace/fixtures';
-import { barStepsOf, defaultStepOf, hasStepBar, openStepOf } from '@/features/workspace/steps';
 
 /** The steps of the open recipe as the bar reads them, and the step a stage opens on. */
 

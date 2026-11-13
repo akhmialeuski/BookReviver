@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { BrushShape, Point, Size, StrokeShape } from '@/features/editors/shapes';
+import type { BrushShape, Point, Size, StrokeShape } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

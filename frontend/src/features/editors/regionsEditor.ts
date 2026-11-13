@@ -1,9 +1,9 @@
 import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { RegionsCanvas } from '@/features/editors/RegionsCanvas';
 import { RegionsPanel } from '@/features/editors/RegionsPanel';
-import { type RegionsShape, readRegions, writeRegions } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
+import { type RegionsShape, readRegions, writeRegions } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

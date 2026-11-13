@@ -6,15 +6,15 @@ import { updateBookApiV1BooksBookIdPatchMutation } from '@/api/@tanstack/react-q
 import { planSave, toFields } from '@/features/about/fields';
 import { SuggestionBox } from '@/features/about/SuggestionBanners';
 import { planSuggestion } from '@/features/about/suggestion';
-import { DeleteSourceDialog } from '@/features/books/DeleteSourceDialog';
+import { DeleteSourceDialog } from '@/features/import/DeleteSourceDialog';
 import { formatRuns, pageRunsOf, resolutionOf } from '@/features/import/facts';
 import type { ImportedSource } from '@/features/import/queries';
-import { FactList } from '@/features/workspace/FactList';
-import { PanelHeading } from '@/features/workspace/PanelHeading';
-import { StagePanel } from '@/features/workspace/StagePanel';
 import { describeError } from '@/shared/http/problem';
 import { formatBytes, formatDateTime } from '@/shared/lib/format';
 import { MESSAGES } from '@/shared/messages';
+import { FactList } from '@/shared/panel/FactList';
+import { PanelHeading } from '@/shared/panel/PanelHeading';
+import { StagePanel } from '@/shared/panel/StagePanel';
 import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 

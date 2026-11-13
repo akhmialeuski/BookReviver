@@ -136,8 +136,12 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - The work of a use case is a chain of classes, each owning the next and holding what its methods share, so a value
   is given once to the class it belongs to and never handed down from call to call. The run of a stage is the model:
   `StageWork` is one job on one book, `PageWork` one stage on one page of it, `StepWork` one step on that page, and
-  each reaches the book and the ports through the one it belongs to. A group of methods that pass the same three
-  values on is a class that is missing.
+  each reaches the book and the ports through the one it belongs to. The other use cases follow it: `PagesWork` is the
+  pages of one transaction with their `PageOverviews`, `PagePlaces` and `Leaves`, `PageImages` the prepare-pages job
+  with a `BaseVersionWork` for each version, `StepOnPage` a step on a page with its `StepUndo` and `StepClear`,
+  `DetectionWork` a detect-content job with a `PageDetection` for a page, `StageRunJob` a run-stage job with the
+  `PagesRun` of its pages, and `PageSplit` the split of a scan with the `MadeSplit` of its result. A group of methods
+  that pass the same three values on is a class that is missing.
 
 - Closed value sets are `StrEnum` or `IntEnum` in `domain`, each carrying its own label.
 - Data travelling together is a frozen `attrs` class in `domain`, changed with `attrs.evolve`. Identifiers are
@@ -170,6 +174,12 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   one whose fixtures its level refuses, such as a unit test taking `tmp_path`. Code the tests share lives in
   `tests/harness`, and a fixture lives in the `conftest.py` of the lowest directory covering its users, or in
   `tests/harness/fixtures` when tests of several levels take it.
+- The features of the frontend in `frontend/src/features/` form layers, lowest first: `auth`, `stages`, `books`,
+  `pages`, `place`, `viewer`, `processing`, then `editors` and `profiles` side by side, `workspace`, `about`, and
+  `order` and `import` side by side. A feature imports only the features below it, and `frontend/src/shared/` imports
+  no feature but for the types `messages.ts` is keyed by. Biome's `noRestrictedImports` in `frontend/biome.jsonc`
+  enforces it, and a failure is fixed by moving what is shared down, never by editing the rule. A test may put
+  features of any layer together.
 - The frontend client in `frontend/src/api/` is generated from the committed OpenAPI schema and never edited by hand.
   Every text the interface shows is in `frontend/src/shared/messages.ts`, and TypeScript runs without `any` or
   suppressions.

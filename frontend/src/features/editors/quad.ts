@@ -1,6 +1,6 @@
 import { clampToScan } from '@/features/editors/line';
-import type { Point, QuadShape, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
+import type { Point, QuadShape, Size } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the sheet editor: the four corners of the paper, where they start, and how a corner moves.

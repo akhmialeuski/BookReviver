@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { extendStroke, paintMask, radiusOf, startStroke } from '@/features/editors/brush';
-import { readBrush, writeBrush } from '@/features/editors/shapes';
+import { readBrush, writeBrush } from '@/features/processing/shapes';
 
 describe('radiusOf', () => {
   it('is half of a share of the width of the page, so the brush covers the same part at any resolution', () => {

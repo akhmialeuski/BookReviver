@@ -1,7 +1,7 @@
 import { Undo2Icon } from 'lucide-react';
 import type { PageHistoryEntrySchema, ProcessorSchema } from '@/api';
+import { describeContent, stands } from '@/features/editors/pageHistory';
 import { factsOf } from '@/features/processing/facts';
-import { describeContent, stands } from '@/features/processing/pageHistory';
 import { ResultNote } from '@/features/processing/ResultNote';
 import { describeParams, type HistoryEntry, readResult } from '@/features/processing/results';
 import { formatDateTime } from '@/shared/lib/format';

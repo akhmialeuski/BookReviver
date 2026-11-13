@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import type { PageVersionSchema, RecipeSchema } from '@/api';
-import { stepChain } from '@/features/editors/chain';
+import { stepChain } from '@/features/processing/chain';
 import { useVersions } from '@/features/processing/queries';
+import type { StripItem } from '@/features/processing/strip';
 import type { Processing } from '@/features/processing/useProcessing';
-import type { StripItem } from '@/features/workspace/strip';
 
 /**
  * The versions that made the current result of the stage on the open page, and the recipe they were made by.

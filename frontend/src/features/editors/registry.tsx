@@ -7,7 +7,6 @@ import { quadEditor } from '@/features/editors/quadEditor';
 import { rectEditor } from '@/features/editors/rectEditor';
 import { regionsEditor } from '@/features/editors/regionsEditor';
 import { rotationEditor } from '@/features/editors/rotationEditor';
-import { type EditableKind, type EditorShapes, recordOf } from '@/features/editors/shapes';
 import { splitEditor } from '@/features/editors/splitEditor';
 import type {
   EditorDefinition,
@@ -15,6 +14,7 @@ import type {
   GeometryPanelProps,
   RegisteredEditor,
 } from '@/features/editors/types';
+import { type EditableKind, type EditorShapes, recordOf } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

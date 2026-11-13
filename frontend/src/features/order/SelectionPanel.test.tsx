@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema } from '@/api';
 import { SelectionPanel } from '@/features/order/SelectionPanel';
-import { images, page } from '@/features/workspace/fixtures';
+import { images, page } from '@/features/pages/fixtures';
 
 /**
  * The thumbnails of the selected pages in the panel of the Order stage: the picture of each page at the stage, which the

@@ -8,7 +8,7 @@ import {
   numberingBody,
   pagesInRange,
 } from '@/features/order/numbering';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 const BOOK = ['a', 'b', 'c', 'd', 'e'].map((id, index) => page(id, { position: index }));
 

@@ -1,14 +1,14 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CompareCanvas } from '@/features/processing/CompareCanvas';
+import { CompareCanvas } from '@/features/editors/CompareCanvas';
 import {
   type ComparePair,
   type PairPlacement,
   Side,
   SourceKind,
 } from '@/features/processing/compare';
-import { CompareMode } from '@/features/workspace/params';
+import { CompareMode } from '@/features/processing/stageParams';
 
 /**
  * The canvas of the compare around its OpenSeadragon stage: what it puts on the stage and when, what it draws over it for

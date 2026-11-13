@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NumberingPanel } from '@/features/order/NumberingPanel';
 import { newDraft } from '@/features/order/numbering';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 /**
  * What the panel of the Order stage puts in the slots of the layout while pages are numbered: the title of the numbering

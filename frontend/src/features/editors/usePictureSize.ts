@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { Size } from '@/features/editors/shapes';
 import { type ImageSource, SourceKind } from '@/features/processing/compare';
+import type { Size } from '@/features/processing/shapes';
 
 /**
  * The size of a picture in its own pixels, read from the image information document of its tile pyramid.

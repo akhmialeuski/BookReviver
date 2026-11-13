@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyChanges } from '@/features/pages/edits';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 describe('applyChanges', () => {
   const original = page('a', { label: '12', kind: 'text', included: true, notes: 'old' });

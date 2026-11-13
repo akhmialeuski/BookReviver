@@ -2,9 +2,9 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FigureState } from '@/api';
+import { barStepsOf, type StepStates } from '@/features/processing/barSteps';
 import { binarize, deskew, processor, recipe, step } from '@/features/processing/fixtures';
 import { StepBar } from '@/features/workspace/StepBar';
-import { barStepsOf, type StepStates } from '@/features/workspace/steps';
 
 /**
  * The bar of the steps under the row above the canvas: the steps in order with their numbers, a

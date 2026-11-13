@@ -41,10 +41,10 @@ import {
 import {
   invalidateAllRecipes,
   invalidateJobs,
+  invalidatePageLayers,
   invalidateStageRows,
   invalidateVersions,
 } from '@/features/books/queries';
-import { invalidatePageLayers } from '@/features/processing/historyQueries';
 
 /**
  * The queries and changes behind the processing workspace: the catalogue of processors, the recipes of a stage, the

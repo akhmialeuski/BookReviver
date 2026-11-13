@@ -1,7 +1,7 @@
 import type { Stage } from '@/api';
-import { HistoryFrame } from '@/features/workspace/HistoryFrame';
-import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { MESSAGES } from '@/shared/messages';
+import { HistoryFrame } from '@/shared/panel/HistoryFrame';
+import { PanelHeading } from '@/shared/panel/PanelHeading';
 import { Badge } from '@/shared/ui/badge';
 
 /**

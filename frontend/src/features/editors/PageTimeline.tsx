@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PageHistoryEntrySchema, PageVersionSchema } from '@/api';
-import { stepChain } from '@/features/editors/chain';
+import { lastStanding, stands } from '@/features/editors/pageHistory';
+import { ChangeRow, ResultRow } from '@/features/editors/TimelineRows';
+import { stepChain } from '@/features/processing/chain';
 import { useClearHistory, usePageHistory, useUndo } from '@/features/processing/historyQueries';
-import { lastStanding, stands } from '@/features/processing/pageHistory';
 import { useChooseVersion, useVersions } from '@/features/processing/queries';
 import type { StepDraft } from '@/features/processing/recipe';
 import { historyOf } from '@/features/processing/results';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
-import { ChangeRow, ResultRow } from '@/features/processing/TimelineRows';
 import { TIMELINE_FILTERS, TimelineFilter, timelineOf } from '@/features/processing/timeline';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useUndoKey } from '@/features/processing/useUndoKey';
-import { HistoryFrame } from '@/features/workspace/HistoryFrame';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
+import { HistoryFrame } from '@/shared/panel/HistoryFrame';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,

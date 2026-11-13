@@ -1,6 +1,7 @@
 import { keepPreviousData, type UseQueryResult, useQuery } from '@tanstack/react-query';
 import type { PageSchema } from '@/api';
 import { previewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPost } from '@/api';
+import { numberingPreviewKey } from '@/features/books/queries';
 import { type NumberingDraft, numberingBody, pagesInRange } from '@/features/order/numbering';
 
 /**
@@ -11,11 +12,6 @@ import { type NumberingDraft, numberingBody, pagesInRange } from '@/features/ord
  * is on its way, so the numbers do not blink as the reader types. A change of the pages of the book makes every answer
  * stale, so the `book-changed` event of the pages marks them under {@link numberingPreviewKey}.
  */
-
-/** The key every preview of a numbering of a book extends, by the body it asks about. */
-export function numberingPreviewKey(bookId: string): readonly string[] {
-  return ['order', 'numbering-preview', bookId];
-}
 
 /**
  * Ask for the preview of a numbering.

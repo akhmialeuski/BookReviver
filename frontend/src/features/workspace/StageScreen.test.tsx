@@ -2,13 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { page, row } from '@/features/pages/fixtures';
+import { type BarStep, barStepsOf } from '@/features/processing/barSteps';
 import { processing, recipe, version } from '@/features/processing/fixtures';
+import { CompareMode } from '@/features/processing/stageParams';
 import type { Processing } from '@/features/processing/useProcessing';
-import { page, row } from '@/features/workspace/fixtures';
-import { CompareMode } from '@/features/workspace/params';
+import type { StepWorkspace } from '@/features/processing/useStepWorkspace';
 import { StageScreen } from '@/features/workspace/StageScreen';
-import { type BarStep, barStepsOf } from '@/features/workspace/steps';
-import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 
 /**
  * What the screen of a stage tells the compare canvas about the rows of the open step: the canvas waits for the place of
@@ -44,7 +44,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   listStagePagesApiV1BooksBookIdStagesStagePagesGet: sdk.rows,
   listStagesApiV1BooksBookIdStagesGet: sdk.stages,
 }));
-vi.mock('@/features/processing/CompareCanvas', () => ({
+vi.mock('@/features/editors/CompareCanvas', () => ({
   CompareCanvas: (props: CanvasProps) => {
     mocks.compareCanvas(props);
     return null;
@@ -59,7 +59,7 @@ vi.mock('@/features/processing/useProcessing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/processing/useProcessing')>()),
   useProcessing: () => mocks.processing,
 }));
-vi.mock('@/features/workspace/useStepWorkspace', () => ({
+vi.mock('@/features/processing/useStepWorkspace', () => ({
   useStepWorkspace: () => mocks.workspace,
 }));
 vi.mock('@/features/editors/useEditorSession', () => ({ useEditorSession: () => null }));

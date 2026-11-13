@@ -2,11 +2,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { row } from '@/features/pages/fixtures';
 import { processing, recipe, step } from '@/features/processing/fixtures';
-import { RecipeBar } from '@/features/processing/RecipeBar';
 import { setStepParams, toggleStep } from '@/features/processing/recipe';
 import { profilePage } from '@/features/profiles/fixtures';
-import { row } from '@/features/workspace/fixtures';
+import { RecipeBar } from '@/features/workspace/RecipeBar';
 
 /**
  * The bar of the profile and the recipe, which the top of the panel and the window of the gear both draw: one row with the

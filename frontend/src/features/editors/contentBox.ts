@@ -1,6 +1,6 @@
 import { rectOf } from '@/features/editors/rect';
-import type { Point, RectShape, Size } from '@/features/editors/shapes';
 import { MARGIN_SIDES, type MarginSide, type PageResult } from '@/features/processing/results';
+import type { Point, RectShape, Size } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the Margins editor: the box of the content, the border of the page grown from it by the margins, and how

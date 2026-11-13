@@ -8,18 +8,19 @@ import {
   invalidateBook,
   invalidateBookList,
   invalidateCollectable,
+  invalidateHistory,
   invalidateJobs,
+  invalidatePageLayers,
   invalidatePages,
   invalidateProfiles,
   invalidateScans,
   invalidateSections,
   invalidateSources,
   invalidateStageSummary,
+  numberingPreviewKey,
   type VersionReady,
   versionReadyKey,
 } from '@/features/books/queries';
-import { numberingPreviewKey } from '@/features/order/usePreviewLabels';
-import { invalidateHistory, invalidatePageLayers } from '@/features/processing/historyQueries';
 import { Coalescer } from '@/shared/lib/coalescer';
 
 /**

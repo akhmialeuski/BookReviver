@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { row } from '@/features/pages/fixtures';
 import { processing, recipe, step } from '@/features/processing/fixtures';
 import { RecipeSection } from '@/features/processing/RecipeSection';
-import { row } from '@/features/workspace/fixtures';
 
 /**
  * The content of the recipe slot of the panel on a stage that has no step bar: the steps as cards, with the plus button of

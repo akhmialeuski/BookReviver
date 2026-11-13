@@ -1,7 +1,7 @@
 import { LineCanvas } from '@/features/editors/LineCanvas';
 import { cutLine } from '@/features/editors/line';
-import { type LineShape, readLine, writeLine } from '@/features/editors/shapes';
 import { type EditorDefinition, type PageContext, Picture } from '@/features/editors/types';
+import { type LineShape, readLine, writeLine } from '@/features/processing/shapes';
 import { isSplit, pagesOfScan } from '@/features/processing/split';
 import { MESSAGES } from '@/shared/messages';
 

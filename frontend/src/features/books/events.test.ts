@@ -5,8 +5,7 @@ import {
   collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey,
   readJobApiV1BooksBookIdJobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
-import { pagesScope, versionReadyKey } from '@/features/books/queries';
-import { numberingPreviewKey } from '@/features/order/usePreviewLabels';
+import { numberingPreviewKey, pagesScope, versionReadyKey } from '@/features/books/queries';
 import { STAGES } from '@/features/stages/stages';
 import {
   applyBookEvent,

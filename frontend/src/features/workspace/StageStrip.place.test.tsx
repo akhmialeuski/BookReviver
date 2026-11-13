@@ -2,13 +2,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BookPlaceBody, BookPlaceSchema } from '@/api';
+import { page, row } from '@/features/pages/fixtures';
 import type { PlaceAddress } from '@/features/place/address';
 import { PlaceWriterContext } from '@/features/place/PlaceWriterContext';
 import { PlaceWriter } from '@/features/place/writer';
-import { page, row } from '@/features/workspace/fixtures';
-import { PageFilter } from '@/features/workspace/params';
+import { PageFilter } from '@/features/processing/stageParams';
+import { countFilters, joinRows } from '@/features/processing/strip';
 import { StageStrip } from '@/features/workspace/StageStrip';
-import { countFilters, joinRows } from '@/features/workspace/strip';
 
 /**
  * The strip keeps the place of the reader: the first page in sight goes to the writer, and a strip that opens at the

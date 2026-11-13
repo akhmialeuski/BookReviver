@@ -2,10 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { page, row } from '@/features/pages/fixtures';
 import { processing, recipe, scan, step } from '@/features/processing/fixtures';
 import { StageBanners } from '@/features/processing/StageBanners';
-import { page, row } from '@/features/workspace/fixtures';
-import { joinRows } from '@/features/workspace/strip';
+import { joinRows } from '@/features/processing/strip';
 
 /**
  * The banners above the canvas: the one for results that are out of date, which offers a run on exactly those pages, and

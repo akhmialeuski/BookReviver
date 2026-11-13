@@ -6,8 +6,8 @@ import { HANDLE_STYLE } from '@/features/editors/handles';
 import { CORNER_ORDER, moveCorner, QuadCorner } from '@/features/editors/quad';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing, widthValue } from '@/features/editors/shapeEditing';
-import { dashed, pairOf, type QuadShape } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
+import { dashed, pairOf, type QuadShape } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

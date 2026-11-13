@@ -1,5 +1,5 @@
 import type { PageStepSettingsSchema, RecipeKind, Stage, ValueForm } from '@/api';
-import type { StripItem } from '@/features/workspace/strip';
+import type { StripItem } from '@/features/processing/strip';
 import { MESSAGES } from '@/shared/messages';
 
 /**

@@ -6,7 +6,6 @@ import { useMovePages, useMoveSourcePages } from '@/features/pages/actions';
 import { describePageError } from '@/features/pages/errors';
 import { shortName } from '@/features/pages/names';
 import { AnchorSide, anchorBody, readingWindow } from '@/features/pages/order';
-import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
@@ -21,6 +20,7 @@ import {
 } from '@/shared/ui/dialog';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 import { Input } from '@/shared/ui/input';
+import { PageThumbnail } from '@/shared/ui/page-thumbnail';
 
 /**
  * Asks where a page, a group of pages or all the pages of a source should go, and moves them.

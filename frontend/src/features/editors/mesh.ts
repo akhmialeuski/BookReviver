@@ -1,6 +1,6 @@
 import { clampToScan } from '@/features/editors/line';
-import type { MeshShape, Point, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
+import type { MeshShape, Point, Size } from '@/features/processing/shapes';
 
 /**
  * The arithmetic of the curves editor: the two curves a page starts from, the full grid, and how a node moves.

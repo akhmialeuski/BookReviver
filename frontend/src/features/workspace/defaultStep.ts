@@ -1,10 +1,10 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { redirect } from '@tanstack/react-router';
+import { barStepsOf, defaultStepOf, hasStepBar } from '@/features/processing/barSteps';
 import { processorsOptions, recipesOptions } from '@/features/processing/queries';
+import { stageRowsOptions } from '@/features/processing/stageQueries';
 import { shownRecipe } from '@/features/processing/useProcessing';
 import { parseStage } from '@/features/stages/parse';
-import { stageRowsOptions } from '@/features/workspace/queries';
-import { barStepsOf, defaultStepOf, hasStepBar } from '@/features/workspace/steps';
 
 /**
  * Sends the address of a stage with a step bar that names no step to the step the stage opens on.

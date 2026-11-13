@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { pictureOf } from '@/features/editors/picture';
 import { Picture } from '@/features/editors/types';
+import { images } from '@/features/pages/fixtures';
 import { SourceKind } from '@/features/processing/compare';
 import { scan, version } from '@/features/processing/fixtures';
-import { images } from '@/features/workspace/fixtures';
 
 /** The picture an editor lies on: the scan for the split line, the picture the step reads for the rotation. */
 

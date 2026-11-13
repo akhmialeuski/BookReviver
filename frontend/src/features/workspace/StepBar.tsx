@@ -1,5 +1,5 @@
 import type { FigureState } from '@/api';
-import type { BarStep, StepStates } from '@/features/workspace/steps';
+import type { BarStep, StepStates } from '@/features/processing/barSteps';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 

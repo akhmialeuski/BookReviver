@@ -1,12 +1,12 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { page, row, stepPage } from '@/features/pages/fixtures';
+import { barStepsOf } from '@/features/processing/barSteps';
 import { deskew, processing, recipe, version } from '@/features/processing/fixtures';
-import { ProcessingPanel } from '@/features/processing/ProcessingPanel';
-import { page, row, stepPage } from '@/features/workspace/fixtures';
-import { barStepsOf } from '@/features/workspace/steps';
-import { joinRows } from '@/features/workspace/strip';
-import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
+import { joinRows } from '@/features/processing/strip';
+import type { StepWorkspace } from '@/features/processing/useStepWorkspace';
+import { ProcessingPanel } from '@/features/workspace/ProcessingPanel';
 
 /**
  * What the panel of a stage puts in each slot of the layout: the bar of the profile and the recipe above everything else,
@@ -29,8 +29,8 @@ vi.mock('@/features/processing/StepSlots', () => ({
 }));
 vi.mock('@/features/processing/SplitSection', () => ({ SplitSection: stub('split-section') }));
 vi.mock('@/features/processing/RecipeSection', () => ({ RecipeSection: stub('recipe-section') }));
-vi.mock('@/features/processing/RecipeBar', () => ({ RecipeBar: stub('recipe-bar') }));
-vi.mock('@/features/processing/useThisPage', () => ({
+vi.mock('@/features/workspace/RecipeBar', () => ({ RecipeBar: stub('recipe-bar') }));
+vi.mock('@/features/workspace/useThisPage', () => ({
   useThisPage: (_processing: unknown, item: { page: { label: string } } | undefined) =>
     item === undefined
       ? undefined
@@ -43,7 +43,7 @@ vi.mock('@/features/processing/useThisPage', () => ({
 vi.mock('@/features/processing/RunControls', () => ({ RunControls: stub('run-controls') }));
 vi.mock('@/features/processing/useStageRun', () => ({ useStageRun: () => ({}) }));
 vi.mock('@/features/processing/usePageValues', () => ({ usePageValues: () => undefined }));
-vi.mock('@/features/processing/PageTimeline', () => ({
+vi.mock('@/features/editors/PageTimeline', () => ({
   PageTimeline: ({
     step,
     pageId,

@@ -17,7 +17,7 @@ import {
 import { ScanGrid } from '@/features/import/ScanGrid';
 import { ScanViewer } from '@/features/import/ScanViewer';
 import { useManifest } from '@/features/pages/manifest';
-import type { StageSearch } from '@/features/workspace/params';
+import type { StageSearch } from '@/features/processing/stageParams';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';

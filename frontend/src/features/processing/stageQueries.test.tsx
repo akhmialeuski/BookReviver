@@ -4,8 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StagePageSchema } from '@/api';
 import { invalidateStageRows } from '@/features/books/queries';
-import { row, stepPage } from '@/features/workspace/fixtures';
-import { useStepRows } from '@/features/workspace/queries';
+import { row, stepPage } from '@/features/pages/fixtures';
+import { useStepRows } from '@/features/processing/stageQueries';
 
 /**
  * The rows of a step: a step that opens again shows no rows until the server answers, since the rows it had when it was
