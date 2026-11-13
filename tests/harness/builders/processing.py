@@ -31,6 +31,7 @@ from bookreviver.plugins.pages.blank import BlankPage
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.runtime import BookJobs
+from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
@@ -39,8 +40,9 @@ from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
+from bookreviver.services.stage_runs import StageRuns
 from bookreviver.services.stage_summaries import StageSummaries
-from bookreviver.services.stage_work import StageRuntime
+from bookreviver.services.stage_work import StageEngine
 from bookreviver.services.steps import StepRunner
 from tests.harness.builders.domain import (
     EPOCH,
@@ -271,17 +273,19 @@ class ProcessingKit:
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        runtime = StageRuntime(
-            runner=self._runner,
-            processors=self.processors,
-            order_keys=FractionalOrderKeys(),
+        parts = self.parts()
+        config = ProcessingConfig(
+            preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
-            tracer=self.tracer,
             parallel_pages=self.parallel_pages,
         )
+        engine = StageEngine(runner=self._runner, processors=self.processors, tracer=self.tracer, config=config)
         return ProcessingJobs(
-            runtime=runtime,
-            parts=self.parts(),
+            runs=StageRuns(
+                engine=engine, recipes=parts.recipes, records=parts.records, order_keys=FractionalOrderKeys()
+            ),
+            detector=ContentDetector(runner=self._runner, processors=self.processors, records=parts.records),
+            parts=parts,
             pages=self._pages(),
         )
 

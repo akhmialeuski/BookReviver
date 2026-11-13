@@ -8,10 +8,11 @@ step that leaves a field to the book, such as the page size, is run twice over: 
 step, then its plugin is asked once what the book gives, from what the step found on all of them, and the pages are run
 by it, so every page comes out of one size without a press of the button of the measure.
 
-The work is a chain of classes. ``StageRunJob`` is one job on one book: it reads what the job goes over and plans its
-tasks. ``PagesRun`` is the pages of the job with the recipe of each, which measures the book and runs the pages, and
-below it ``RecipeRun`` of ``services/stage_runs.py`` runs a recipe on a page, a ``PageWork``, a ``StepChain`` and a
-``StepWork`` at a time. A page that fails is recorded as failed and the job goes on to the next.
+The work is a chain of classes. ``StageRunJob`` is one job on one book, which belongs to the ``StageRuns`` of
+``services/stage_runs.py``: it reads what the job goes over and plans its tasks. ``PagesRun`` is the pages of the job
+with the recipe of each, which measures the book and runs the pages, and below it the ``RecipeRun`` that ``StageRuns``
+opens for the job runs a recipe on a page, a ``PageWork``, a ``StepChain`` and a ``StepWork`` at a time. A page that
+fails is recorded as failed and the job goes on to the next.
 """
 
 import logging
@@ -24,7 +25,6 @@ from bookreviver.domain.runs import RunOutcome
 from bookreviver.domain.spans import SpanAttribute, SpanName
 from bookreviver.domain.stages import Stage
 from bookreviver.services.run_plans import RunPlan
-from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.worker_group import WorkerGroup
 
 if TYPE_CHECKING:
@@ -39,8 +39,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.processing_parts import ProcessingParts
-    from bookreviver.services.stage_work import StageRuntime
+    from bookreviver.services.stage_runs import RecipeRun, StageRuns
 
 logger = logging.getLogger(__name__)
 
@@ -48,26 +47,23 @@ logger = logging.getLogger(__name__)
 class StageRunJob:
     """One ``run-stage`` job on one book.
 
-    :ivar runtime: The runner, the processors and how many pages are processed together.
-    :ivar parts: The recipes, the stage records and the job starter.
+    :ivar runs: What opens the work of the job, through which the recipes, the stage records and the engine that runs
+                the steps are reached.
     :ivar book: The open book of the job.
     :ivar run: What the job was asked to run.
     """
 
-    def __init__(self, runtime: StageRuntime, parts: ProcessingParts, book: Book, run: StageRun) -> None:
+    def __init__(self, runs: StageRuns, book: Book, run: StageRun) -> None:
         """Work on a run of a stage of a book.
 
-        :param runtime: The runner, the processors and how many pages are processed together.
-        :type runtime: StageRuntime
-        :param parts: The recipes, the stage records and the job starter.
-        :type parts: ProcessingParts
+        :param runs: What opens the work of the job.
+        :type runs: StageRuns
         :param book: The open book.
         :type book: Book
         :param run: What the job was asked to run.
         :type run: StageRun
         """
-        self.runtime = runtime
-        self.parts = parts
+        self.runs = runs
         self.book = book
         self.run = run
 
@@ -81,19 +77,17 @@ class StageRunJob:
         :raises DomainError: If the recipe or a page the job names is gone.
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
-        run, recipes_of_book = self.run, self.parts.recipes
+        run, recipes_of_book, engine = self.run, self.runs.recipes, self.runs.engine
         book_record = await self.book.read(lambda repos: BookContent(repos).record)
         plan = RunPlan(recipes=recipes_of_book, book=self.book, run=run)
         pages = await plan.pages()
-        executor = RecipeRun(
-            book=self.book, book_record=book_record, runtime=self.runtime, control=control, parts=self.parts
-        )
+        executor = self.runs.recipe_run(self.book, book_record, control)
         recipes = await plan.recipes()
         # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
         await plan.apply_mode()
         control.plan(
             sum(
-                executor.task_count([step for _, step in recipes[page.id].indexed_steps_through(run.through_step_id)])
+                engine.task_count([step for _, step in recipes[page.id].indexed_steps_through(run.through_step_id)])
                 for page in pages
             )
         )
@@ -107,7 +101,7 @@ class StageRunJob:
         )
         # A split puts the right half of a spread into the book right after the left, at a place it reads from the
         # pages round it, so the pages of the page split are cut one after the other
-        workers = WorkerGroup(1 if run.stage is Stage.PAGE_SPLIT else self.runtime.parallel_pages)
+        workers = WorkerGroup(1 if run.stage is Stage.PAGE_SPLIT else engine.parallel_pages)
         return await workers.run(pages, pages_run.page)
 
 
@@ -148,7 +142,7 @@ class PagesRun:
             return
         recipes, through_step_id = self.recipes, self.job.run.through_step_id
         made: dict[RecipeId, dict[PageId, PageVersion]] = {}
-        versions = await WorkerGroup(self.job.runtime.parallel_pages).run(pages, self._measured)
+        versions = await WorkerGroup(self.job.runs.engine.parallel_pages).run(pages, self._measured)
         for page, version in zip(pages, versions, strict=True):
             if version is not None:
                 made.setdefault(recipes[page.id].id, {})[page.id] = version
@@ -169,7 +163,7 @@ class PagesRun:
         """
         run, recipe = self.job.run, self.recipes[page.id]
         attributes = {SpanAttribute.PAGE: str(page.id), SpanAttribute.STAGE: recipe.stage}
-        with self.job.runtime.tracer.span(SpanName.RUN_PAGE, attributes) as span:
+        with self.job.runs.engine.tracer.span(SpanName.RUN_PAGE, attributes) as span:
             try:
                 outcome = await self.executor.run(
                     page, recipe, confirmed=run.confirm_unsplit, through_step_id=run.through_step_id
@@ -213,4 +207,4 @@ class PagesRun:
         except NotFoundError:
             logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
             return
-        self.job.parts.records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
+        self.job.runs.records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)

@@ -1,9 +1,9 @@
 """The work of one stage on one page of a job: what the stage reads on the page.
 
 ``PageWork`` holds the page and the stage, so the methods that find the input of the stage take only what differs from
-call to call. It belongs to the ``StageWork`` of its job (``stage_work``), through which it reaches the book, the runner
-and the processors. The steps of the stage on the page are made by the ``StepChain`` of ``step_work``, which belongs to
-a ``PageWork`` and so lies above this module.
+call to call. It belongs to the ``StageWork`` of its job (``stage_work``), through which it reaches the book and the
+engine that runs the steps. The steps of the stage on the page are made by the ``StepChain`` of ``step_work``, which
+belongs to a ``PageWork`` and so lies above this module.
 
 A stage reads the current version of the nearest earlier stage of the page, or the scan itself for the page split. An
 earlier stage that is stale, or stopped short of its last step, is brought up to date first, which a run does by its
@@ -76,7 +76,7 @@ class PageWork:
         read = await self.work.book.read(lambda repos: BookContent(repos).pages.inputs(stage, [page_id]).get(page_id))
         if read is None:
             return None
-        return StepSource.of_version(read, scale, self.work.preview_long_side_px)
+        return StepSource.of_version(read, scale, self.work.engine.preview_long_side_px)
 
     async def _refresh_earlier(self) -> None:
         """Bring the earlier stages of the page up to date, nearest first, as far back as the one that can be read.
@@ -154,4 +154,4 @@ class PageWork:
         scan = await self.work.book.read(lambda repos: repos.scans.get(scan_id))
         if not scan.renditions.ready:
             return None
-        return StepSource.of_scan(scan, scale, self.work.preview_long_side_px)
+        return StepSource.of_scan(scan, scale, self.work.engine.preview_long_side_px)
