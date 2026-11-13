@@ -66,6 +66,8 @@ FAKE_KEY: str = 'geometry.fake'
 THROUGH_STEP_ID: str = 'through_step_id'
 SCAN_SIZE_PX: tuple[int, int] = (120, 160)
 ITEMS: str = 'items'
+# The ends of a preview that a change put after it leaves: cancelled, or ended before the change was put
+PREVIEW_OUT_OF_THE_WAY: frozenset[str] = frozenset({str(JobState.CANCELLED), str(JobState.SUCCEEDED)})
 # An old version of the page that nothing needs, and the bytes of its one file
 OLD_VERSION_ID: str = 'abcdefabcdefabcd'
 OLD_VERSION_CONTENT: bytes = b'an old picture' * 100
@@ -539,7 +541,11 @@ class TestRunAndVersions:
     async def test_choosing_a_version_while_a_preview_is_active_cancels_it_and_makes_the_version_current(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify PUT on a stage answers 202 while a preview is queued, which it cancels.
+        """Verify PUT on a stage answers 202 while a preview is queued, and the preview does not hold the choice up.
+
+        The preview is cancelled unless it ended before the choice was put, which a fast machine allows, so either end
+        of it is right here. That a preview still active is cancelled is tested with jobs held still in
+        ``tests/integration/services/test_processing_versions.py``.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -556,7 +562,7 @@ class TestRunAndVersions:
         job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
         expect(preview.status_code == status.HTTP_202_ACCEPTED)
         expect(chosen.status_code == status.HTTP_202_ACCEPTED)
-        expect(job.json()['state'] == JobState.CANCELLED.value)
+        expect(job.json()['state'] in PREVIEW_OUT_OF_THE_WAY, f'The preview ended as {job.json()["state"]}.')
         expect(await head_of(fx_client, fx_book, Stage.PAGE_SPLIT) == version_id)
         assert_expectations()
 
@@ -1106,7 +1112,7 @@ class TestPageHistory:
         expect(preview.status_code == status.HTTP_202_ACCEPTED)
         expect(cleared.status_code == status.HTTP_202_ACCEPTED)
         expect(listed.json()['total'] == 0)
-        expect(job.json()['state'] == JobState.CANCELLED.value)
+        expect(job.json()['state'] in PREVIEW_OUT_OF_THE_WAY, f'The preview ended as {job.json()["state"]}.')
         assert_expectations()
 
     async def test_clear_of_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
