@@ -4,27 +4,31 @@ The stores, the imaging adapters and the in-memory job board are the application
 ``prepare-pages`` job as it is for a user, and a test waits until the jobs of the book have finished.
 """
 
-import io
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
-from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
-from PIL import Image
 
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.jobs import JobKind, JobState
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import BlankFill, PageKind
 from bookreviver.domain.stages import Stage
-from bookreviver.domain.versions import VersionState
-from tests.harness.builders.domain import EPOCH, make_page, make_page_stage, make_record, make_scan, make_source
-from tests.harness.builders.page_services import make_base_versions
-from tests.harness.builders.seeding import store_book
+from tests.harness.builders.domain import make_page_stage
+from tests.harness.builders.seeding import (
+    BaseVersion,
+    BookLayout,
+    PageLayout,
+    ScanLayout,
+    SourceLayout,
+    seed_book,
+)
+from tests.harness.http.pages import read_page
+from tests.harness.images.documents import gray_jpeg
 
 if TYPE_CHECKING:
     import httpx
@@ -89,17 +93,6 @@ class Book(NamedTuple):
         return [str(self.pages[index].id) for index in indexes]
 
 
-def _jpeg() -> bytes:
-    """Encode a small gray page as a JPEG.
-
-    :returns: The bytes of the JPEG.
-    :rtype: bytes
-    """
-    buffer = io.BytesIO()
-    Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
-    return buffer.getvalue()
-
-
 @pytest.fixture
 async def fx_book(
     fx_catalogue: CatalogueDatabaseFactory,
@@ -120,36 +113,18 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    source = make_source()
+    image = gray_jpeg(SCAN_SIZE_PX)
     kinds = [PageKind.TEXT, PageKind.BLANK, PageKind.BLANK]
-    scans = [
-        evolve(
-            make_scan(source=source, number=number),
-            renditions=Renditions(ready=True),
-            facts=evolve(
-                make_scan(source=source, number=number).facts, width_px=SCAN_SIZE_PX[0], height_px=SCAN_SIZE_PX[1]
-            ),
-        )
-        for number in range(len(kinds))
-    ]
-    pages = [
-        make_page(order_key=f'a{number}', scan=scan, kind=kind)
-        for number, (scan, kind) in enumerate(zip(scans, kinds, strict=True))
-    ]
-    versions = [
-        make_base_versions().split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
-        for page, scan in zip(pages, scans, strict=True)
-    ]
-    book_id = await store_book(
-        fx_catalogue(),
-        make_record(),
-        *pages,
-        owner=fx_actor.account_id,
-        sources=[source],
-        scans=scans,
-        versions=versions,
-        databases=fx_databases(),
+    layout = BookLayout(
+        sources=(SourceLayout.of(len(kinds), scan=ScanLayout(size=(*SCAN_SIZE_PX, None), ready=True, image=image)),),
+        pages=tuple(
+            PageLayout(kind=kind, scan=(0, number), version=BaseVersion.CUT) for number, kind in enumerate(kinds)
+        ),
     )
+    book = await seed_book(
+        fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases(), files=fx_directories
+    )
+    book_id, pages, versions = book.book_id, book.pages, book.versions
 
     def save_heads(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Make the base version of each page the current version of the page split, as the import does.
@@ -163,29 +138,11 @@ async def fx_book(
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
     await fx_databases().open(book_id).change(save_heads)
-    for scan in scans:
-        async with fx_directories.assets(book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
-            path.write_bytes(_jpeg())
     for version in versions:
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with fx_directories.assets(book_id).writable(BookKeys.version_rendition(version, rendition)) as path:
-                path.write_bytes(_jpeg())
+                path.write_bytes(gray_jpeg(SCAN_SIZE_PX))
     return Book(book_id=book_id, pages=pages)
-
-
-async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema:
-    """Read one page of the book.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: The book.
-    :type book: Book
-    :param index: Index of the page in the book.
-    :type index: int
-    :returns: The page.
-    :rtype: PageSchema
-    """
-    return PageSchema.model_validate_json((await client.get(f'{book.pages_path}/{book.pages[index].id}')).content)
 
 
 class TestFillBlankPages:
@@ -203,12 +160,12 @@ class TestFillBlankPages:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        before = await _page(fx_client, fx_book, 1)
+        before = await read_page(fx_client, fx_book.book_id, fx_book.pages[1].id)
 
         response = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
         await fx_idle(fx_book.book_id)
 
-        leaf = await _page(fx_client, fx_book, 1)
+        leaf = await read_page(fx_client, fx_book.book_id, fx_book.pages[1].id)
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(response.content == b'')
         expect(before.blank_fill is BlankFill.SCAN)
@@ -220,7 +177,7 @@ class TestFillBlankPages:
         back = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: SCAN})
         await fx_idle(fx_book.book_id)
 
-        shown = await _page(fx_client, fx_book, 1)
+        shown = await read_page(fx_client, fx_book.book_id, fx_book.pages[1].id)
         expect(back.status_code == status.HTTP_204_NO_CONTENT)
         expect(shown.blank_fill is BlankFill.SCAN)
         expect(shown.images is not None and SCAN_STAGE in shown.images.full)
@@ -262,7 +219,7 @@ class TestFillBlankPages:
         response = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1, 2), FILL_FIELD: PAPER})
         await fx_idle(fx_book.book_id)
 
-        pages = [await _page(fx_client, fx_book, index) for index in range(3)]
+        pages = [await read_page(fx_client, fx_book.book_id, fx_book.pages[index].id) for index in range(3)]
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect([page.blank_fill for page in pages] == [BlankFill.SCAN, BlankFill.PAPER, BlankFill.PAPER])
         expect(all(page.images is not None and LEAF_STAGE in page.images.full for page in pages[1:]))
@@ -283,7 +240,7 @@ class TestFillBlankPages:
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect('not a blank page' in response.json()[DETAIL_FIELD])
-        expect((await _page(fx_client, fx_book, 1)).blank_fill is BlankFill.SCAN)
+        expect((await read_page(fx_client, fx_book.book_id, fx_book.pages[1].id)).blank_fill is BlankFill.SCAN)
         assert_expectations()
 
     @pytest.mark.parametrize(

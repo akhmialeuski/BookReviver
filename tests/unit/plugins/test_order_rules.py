@@ -7,18 +7,14 @@ wrong key is found here. The processors that need OpenCV are checked where the o
 from graphlib import TopologicalSorter
 from typing import TYPE_CHECKING
 
-import pytest
-
-from bookreviver.app.plugins import EntryPointCatalog
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import ProcessingSettings
-from bookreviver.domain.processors import WorkerPool
 from bookreviver.domain.recipes import Step
 from bookreviver.domain.stages import Stage
 from bookreviver.services.recipe_order import RecipeOrder
-from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
+    from bookreviver.app.plugins import EntryPointCatalog
     from bookreviver.domain.processors import ProcessorSpec
 
 MARGINS_KEY: str = 'geometry.normalize'
@@ -26,17 +22,6 @@ CROP_KEY: str = 'geometry.crop'
 DESPECKLE_KEY: str = 'cleanup.despeckle'
 BINARIZE_KEY: str = 'cleanup.binarize'
 THICKNESS_KEY: str = 'cleanup.thickness'
-
-
-@pytest.fixture
-def fx_processors() -> EntryPointCatalog:
-    """Load the built-in processors, which need OpenCV for the most part.
-
-    :returns: The catalogue of the processors the project registers.
-    :rtype: EntryPointCatalog
-    """
-    pytest.importorskip('cv2', reason=CV_MISSING)
-    return EntryPointCatalog(pools=set(WorkerPool))
 
 
 def spec_of(processors: EntryPointCatalog, key: str) -> ProcessorSpec:

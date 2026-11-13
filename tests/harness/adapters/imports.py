@@ -29,6 +29,7 @@ from bookreviver.app.settings import ImagingSettings
 from bookreviver.core.book import Book
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.sources import UploadedSource
 from bookreviver.plugins.pages.blank import BlankPage
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job, JobEnd
     from bookreviver.domain.pages import Page
     from bookreviver.domain.pagination import PaginationSection
-    from bookreviver.domain.sources import Scan, Source, SourceAnalysis, SourceKind, UploadedSource
+    from bookreviver.domain.sources import FileType, Scan, Source, SourceAnalysis, SourceKind
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.recipes import DefaultRecipes
@@ -593,3 +594,31 @@ class ImportRig:
         :rtype: Job
         """
         return self.fakes.board.get(job.id)
+
+
+async def stored_sections(book_id: BookId, *, databases: LocatedBookDatabases) -> list[PaginationSection]:
+    """Read the pagination sections of a book as committed, in the order they were made.
+
+    :param book_id: Book owning the sections.
+    :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :returns: The sections.
+    :rtype: list[PaginationSection]
+    """
+    return (await stored_book(book_id, databases=databases)).sections
+
+
+def uploaded_source(kind: SourceKind, file_type: FileType, *names: str) -> UploadedSource:
+    """Return the source a reader is expected to group the named files into.
+
+    :param kind: Kind of the source.
+    :type kind: SourceKind
+    :param file_type: Type of the main file.
+    :type file_type: FileType
+    :param names: Names of the files, the main file first.
+    :type names: str
+    :returns: The source as the reader must group it.
+    :rtype: UploadedSource
+    """
+    return UploadedSource(kind=kind, file_type=file_type, names=list(names))

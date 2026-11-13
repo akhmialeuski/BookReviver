@@ -72,7 +72,9 @@ async def _stage(
     return await stores(directory_of(book_id)).sources.stage(job_id, files, max_bytes=UNLIMITED_BYTES)
 
 
-async def _import(stores: DirectoryOpener, source_id: SourceId, *files: UploadFile, book_id: BookId = BOOK_ID) -> None:
+async def _import_files(
+    stores: DirectoryOpener, source_id: SourceId, *files: UploadFile, book_id: BookId = BOOK_ID
+) -> None:
     """Stage the files under a new import job and promote all of them to one source.
 
     :param stores: Opens the source store of the book.
@@ -106,7 +108,7 @@ async def _staged(stores: DirectoryOpener, job_id: JobId, *, book_id: BookId = B
         return {name: path.read_bytes() for name, path in paths.items()}
 
 
-async def _source(stores: DirectoryOpener, source_id: SourceId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
+async def _source_files(stores: DirectoryOpener, source_id: SourceId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
     """Return the files of a source by name.
 
     :param stores: Opens the source store of the book.
@@ -206,12 +208,12 @@ class TestStage:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: DirectoryOpener
         """
-        await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import_files(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=NEW_CONTENT))
 
         expect(await _staged(fx_stores, JOB_ID) == {OLD_NAME: NEW_CONTENT})
-        expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
+        expect(await _source_files(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         assert_expectations()
 
     @pytest.mark.parametrize(
@@ -315,8 +317,8 @@ class TestPromote:
         await fx_stores(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
         await fx_stores(directory_of(BOOK_ID)).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[NEW_NAME])
 
-        expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
-        expect(await _source(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT})
+        expect(await _source_files(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
+        expect(await _source_files(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT})
         expect(await _staged(fx_stores, JOB_ID) == {})
         assert_expectations()
 
@@ -330,7 +332,7 @@ class TestPromote:
 
         await fx_stores(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME, NEW_NAME])
 
-        assert await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT, NEW_NAME: NEW_CONTENT}
+        assert await _source_files(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT, NEW_NAME: NEW_CONTENT}
 
     async def test_source_keeps_a_file_under_its_base_name_and_the_others_stay_staged(
         self, fx_stores: DirectoryOpener
@@ -350,8 +352,8 @@ class TestPromote:
         await fx_stores(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
         await fx_stores(directory_of(BOOK_ID)).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[SECOND_VOLUME_PAGE])
 
-        expect(await _source(fx_stores, SOURCE_ID) == {'001.tif': OLD_CONTENT})
-        expect(await _source(fx_stores, OTHER_SOURCE_ID) == {'001.tif': NEW_CONTENT})
+        expect(await _source_files(fx_stores, SOURCE_ID) == {'001.tif': OLD_CONTENT})
+        expect(await _source_files(fx_stores, OTHER_SOURCE_ID) == {'001.tif': NEW_CONTENT})
         expect(await _staged(fx_stores, JOB_ID) == {})
         assert_expectations()
 
@@ -377,7 +379,7 @@ class TestPromote:
 
         expect(await _staged(fx_stores, JOB_ID) == {FIRST_VOLUME_PAGE: OLD_CONTENT, SECOND_VOLUME_PAGE: NEW_CONTENT})
         with pytest.raises(NotFoundError):
-            await _source(fx_stores, SOURCE_ID)
+            await _source_files(fx_stores, SOURCE_ID)
         assert_expectations()
 
     @pytest.mark.parametrize(NAMES_ARG, [(PAGE_NAME,), (OLD_NAME, PAGE_NAME), ('../escape.pdf',)])
@@ -398,7 +400,7 @@ class TestPromote:
 
         assert await _staged(fx_stores, JOB_ID) == {OLD_NAME: OLD_CONTENT}
         with pytest.raises(NotFoundError):
-            await _source(fx_stores, SOURCE_ID)
+            await _source_files(fx_stores, SOURCE_ID)
 
     async def test_job_without_upload_raises_not_found(self, fx_stores: DirectoryOpener) -> None:
         """Reject a promotion from a job that has staged nothing.
@@ -415,13 +417,13 @@ class TestPromote:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: DirectoryOpener
         """
-        await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import_files(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         with pytest.raises(ConflictError):
             await fx_stores(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[NEW_NAME])
 
-        expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
+        expect(await _source_files(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _staged(fx_stores, JOB_ID) == {NEW_NAME: NEW_CONTENT})
         assert_expectations()
 
@@ -431,7 +433,7 @@ class TestPromote:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: DirectoryOpener
         """
-        await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import_files(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, JOB_ID, upload(FIRST_VOLUME_PAGE, content=NEW_CONTENT))
 
         with pytest.raises(ConflictError):
@@ -495,7 +497,7 @@ class TestDiscardAllStaged:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: DirectoryOpener
         """
-        await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import_files(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
         await _stage(fx_stores, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
         await _stage(fx_stores, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT), book_id=OTHER_BOOK_ID)
@@ -505,7 +507,7 @@ class TestDiscardAllStaged:
         for job_id in (JOB_ID, OTHER_JOB_ID):
             with pytest.raises(NotFoundError):
                 await _staged(fx_stores, job_id)
-        expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
+        expect(await _source_files(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _staged(fx_stores, OTHER_JOB_ID, book_id=OTHER_BOOK_ID) == {NEW_NAME: NEW_CONTENT})
         assert_expectations()
 
@@ -538,7 +540,7 @@ class TestSourceFiles:
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         with pytest.raises(NotFoundError):
-            await _source(fx_stores, SOURCE_ID)
+            await _source_files(fx_stores, SOURCE_ID)
 
 
 class TestDeleteSource:
@@ -550,14 +552,14 @@ class TestDeleteSource:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: DirectoryOpener
         """
-        await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
-        await _import(fx_stores, OTHER_SOURCE_ID, upload(NEW_NAME, content=NEW_CONTENT))
+        await _import_files(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import_files(fx_stores, OTHER_SOURCE_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         await fx_stores(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
-        assert await _source(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT}
+        assert await _source_files(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT}
         with pytest.raises(NotFoundError):
-            await _source(fx_stores, SOURCE_ID)
+            await _source_files(fx_stores, SOURCE_ID)
 
     async def test_missing_source_is_not_an_error(self, fx_stores: DirectoryOpener) -> None:
         """Verify deleting a source twice succeeds, so a failed deletion can be repeated.
@@ -565,10 +567,10 @@ class TestDeleteSource:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: DirectoryOpener
         """
-        await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import_files(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await fx_stores(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
         await fx_stores(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
         with pytest.raises(NotFoundError):
-            await _source(fx_stores, SOURCE_ID)
+            await _source_files(fx_stores, SOURCE_ID)

@@ -40,7 +40,7 @@ from tests.harness.builders.domain import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Collection, Sequence
+    from collections.abc import Callable, Collection, Sequence
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
@@ -234,21 +234,6 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         second=second,
         labelled=pages[1].id,
     )
-
-
-@pytest.fixture
-async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open the catalogue of the settings, a file that does not exist yet, which the split builds and fills.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :returns: Iterator yielding the catalogue and disposing of its engines afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
-    database = SqlDatabase(fx_settings.resolved_catalogue_url, schema=Schema.CATALOGUE, tracer=NullTracer())
-    yield database
-    await database.dispose()
 
 
 @pytest.fixture

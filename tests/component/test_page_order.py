@@ -9,11 +9,10 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.errors import AnchorInsideMovedPagesError
-from tests.harness.builders.domain import make_page, make_record, make_scan, make_source, new_account_id
-from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_page, make_record, new_account_id
+from tests.harness.builders.seeding import BookLayout, SourceLayout, commit_record, seed_book, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,6 +35,10 @@ CONTENT_TYPE_HEADER: str = 'content-type'
 DETAIL_FIELD: str = 'detail'
 FIRST_SOURCE_PAGES: int = 3
 SECOND_SOURCE_PAGES: int = 2
+# A book of two sources whose pages stand one after the other in the order of their upload
+LAYOUT: BookLayout = BookLayout.scanned(
+    SourceLayout.of(FIRST_SOURCE_PAGES, name='part1.pdf'), SourceLayout.of(SECOND_SOURCE_PAGES, name='part2.pdf')
+)
 
 
 class Book(NamedTuple):
@@ -81,26 +84,9 @@ async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_da
     :returns: The stored book.
     :rtype: Book
     """
-    first, second = (
-        make_source(name='part1.pdf'),
-        make_source(name='part2.pdf'),
-    )
-    scans = [
-        *(make_scan(source=first, number=number) for number in range(FIRST_SOURCE_PAGES)),
-        *(make_scan(source=second, number=number) for number in range(SECOND_SOURCE_PAGES)),
-    ]
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
-    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    book_id = await store_book(
-        fx_catalogue(),
-        make_record(),
-        *pages,
-        owner=fx_actor.account_id,
-        sources=[first, second],
-        scans=scans,
-        databases=fx_databases(),
-    )
-    return Book(book_id=book_id, first=first, second=second, pages=pages)
+    book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_databases())
+    first, second = book.sources
+    return Book(book_id=book.book_id, first=first, second=second, pages=book.pages)
 
 
 async def _manifest(client: httpx.AsyncClient, book: Book, **params: Any) -> Page[PageSchema]:

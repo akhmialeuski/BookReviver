@@ -51,15 +51,11 @@ from tests.harness.builders.domain import (
     make_book_place,
     make_page,
     make_page_history_entry,
-    make_page_version,
-    make_record,
-    make_scan,
-    make_source,
     make_step_values,
     new_account_id,
     new_book_id,
 )
-from tests.harness.builders.seeding import commit_account
+from tests.harness.builders.seeding import BaseVersion, BookLayout, PageLayout, SourceLayout, commit_account
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
@@ -185,7 +181,7 @@ BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (BookRecordRow, SourceRow
 
 
 @pytest.fixture
-async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
+async def fx_bare_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
     """Yield the application's container with its own database provider, with no schema created for it.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
@@ -196,21 +192,6 @@ async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
     container = build_container(fx_settings)
     yield container
     await container.close()
-
-
-@pytest.fixture
-async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open a catalogue with no table, at the URL the settings name.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :returns: Iterator yielding the catalogue and disposing of its engine afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    fx_settings.data_dir.mkdir(parents=True)
-    database = SqlDatabase(fx_settings.resolved_catalogue_url, schema=Schema.CATALOGUE, tracer=NullTracer())
-    yield database
-    await database.dispose()
 
 
 @pytest.fixture
@@ -353,10 +334,9 @@ async def _commit_book(database: SqlDatabase) -> None:
     :param database: Migrated database of a book to commit into.
     :type database: SqlDatabase
     """
-    book_record = make_record()
-    source = make_source()
-    scan = make_scan(source=source, number=0)
-    page = make_page(scan=scan)
+    book = BookLayout(
+        sources=(SourceLayout.of(1),), pages=(PageLayout(scan=(0, 0), version=BaseVersion.RECORDED),)
+    ).build()
 
     def store(session: Session) -> None:
         """Store the book in the order its keys need.
@@ -365,11 +345,11 @@ async def _commit_book(database: SqlDatabase) -> None:
         :type session: Session
         """
         repos = SqlAlchemyBookRepositories(session)
-        repos.book_record.add(book_record)
-        repos.sources.add(source)
-        repos.scans.add(scan)
-        repos.pages.add(page)
-        repos.page_versions.add(make_page_version(page_id=page.id))
+        repos.book_record.add(book.record)
+        repos.sources.add_many(book.sources)
+        repos.scans.add_many(book.scans)
+        repos.pages.add_many(book.pages)
+        repos.page_versions.add_many(book.versions)
 
     await database.write(store, kind=BlockKind.BOOK, book=None, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
 
@@ -469,26 +449,26 @@ class TestBaseline:
 class TestDatabaseProvider:
     """Tests for DatabaseProvider.database, which opens the catalogue only at the head revision."""
 
-    async def test_refuses_a_catalogue_no_revision_was_applied_to(self, fx_container: AsyncContainer) -> None:
+    async def test_refuses_a_catalogue_no_revision_was_applied_to(self, fx_bare_container: AsyncContainer) -> None:
         """Verify the application does not start on an unmigrated catalogue and names the command that migrates it.
 
-        :param fx_container: The application's container, with no schema.
-        :type fx_container: AsyncContainer
+        :param fx_bare_container: The application's container, with no schema.
+        :type fx_bare_container: AsyncContainer
         """
         head = ScriptDirectory(str(Schema.CATALOGUE.migrations)).get_current_head()
         expected = f'{SCHEMA_AT} none, code expects {head}{RUN}{MIGRATE_COMMAND}`'
         with pytest.raises(RuntimeError, match=re.escape(expected)):
-            await fx_container.get(SqlDatabase)
+            await fx_bare_container.get(SqlDatabase)
 
     async def test_refuses_a_catalogue_migrated_by_code_it_does_not_ship(
-        self, fx_container: AsyncContainer, fx_empty_catalogue: SqlDatabase, tmp_path: Path
+        self, fx_bare_container: AsyncContainer, fx_empty_catalogue: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify a catalogue migrated on another branch is refused with the downgrade that returns it, not an upgrade.
 
         ``upgrade head`` cannot help here: Alembic cannot locate the revision the catalogue records.
 
-        :param fx_container: The application's container.
-        :type fx_container: AsyncContainer
+        :param fx_bare_container: The application's container.
+        :type fx_bare_container: AsyncContainer
         :param fx_empty_catalogue: The same catalogue, which the test migrates with a revision the code does not ship.
         :type fx_empty_catalogue: SqlDatabase
         :param tmp_path: Temporary directory of the test, holding the migrations of the other branch.
@@ -503,20 +483,20 @@ class TestDatabaseProvider:
             f'or restore the copy of the data directory made before migrating'
         )
         with pytest.raises(RuntimeError, match=re.escape(expected)):
-            await fx_container.get(SqlDatabase)
+            await fx_bare_container.get(SqlDatabase)
 
     async def test_opens_a_catalogue_at_the_head_revision(
-        self, fx_container: AsyncContainer, fx_empty_catalogue: SqlDatabase
+        self, fx_bare_container: AsyncContainer, fx_empty_catalogue: SqlDatabase
     ) -> None:
         """Verify the application starts once the migrations are applied, and leaves the schema as they left it.
 
-        :param fx_container: The application's container.
-        :type fx_container: AsyncContainer
+        :param fx_bare_container: The application's container.
+        :type fx_bare_container: AsyncContainer
         :param fx_empty_catalogue: The same catalogue, which the test migrates first.
         :type fx_empty_catalogue: SqlDatabase
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, HEAD)
-        database = await fx_container.get(SqlDatabase)
+        database = await fx_bare_container.get(SqlDatabase)
         assert (await database.schema_revisions()).is_current
 
 

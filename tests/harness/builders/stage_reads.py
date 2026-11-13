@@ -3,7 +3,9 @@
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.slices import SliceRequest
+from bookreviver.services.stage_summaries import StageSummaries
 from tests.harness.builders.processing import open_book
+from tests.harness.fakes.processing import FakeCatalogue
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, StepId
@@ -72,3 +74,12 @@ async def books_with_progress(kit: ProcessingKit, *books: BookId) -> list[BookOv
         return await stages.overview(await open_book(kit, book_id))
 
     return [await overview_of(book_id) for book_id in books]
+
+
+def unprocessed_stages() -> StageSummaries:
+    """Build the stage sums over a catalogue with no processors, for books whose queues hold no jobs.
+
+    :returns: The stage summaries.
+    :rtype: StageSummaries
+    """
+    return StageSummaries(processors=FakeCatalogue([]))

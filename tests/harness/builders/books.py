@@ -1,23 +1,22 @@
 """A book of two sources with scans and a page, stored in the database and the stores as an import would have left it."""
 
 from typing import TYPE_CHECKING, NamedTuple
-from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.ids import JobId
-from bookreviver.domain.images import Rendition, Renditions
+from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from tests.harness.adapters.storage import book_directory, upload
-from tests.harness.builders.domain import (
-    make_page,
-    make_page_version,
-    make_record,
-    make_scan,
-    make_source,
-    new_account_id,
+from tests.harness.adapters.storage import book_directory
+from tests.harness.builders.domain import new_account_id
+from tests.harness.builders.seeding import (
+    BaseVersion,
+    BookLayout,
+    PageLayout,
+    ScanLayout,
+    SourceLayout,
+    ensure_account,
+    seed_book,
 )
-from tests.harness.builders.seeding import commit_record
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
 
 SCANS_PER_SOURCE: int = 3
 IMAGE: bytes = b'jpeg'
-MAX_UPLOAD_BYTES: int = 1024
 
 
 class Book(NamedTuple):
@@ -69,39 +67,25 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
     :returns: The stored book.
     :rtype: Book
     """
-    # Each source holds the scans made for it below, which is the number a read of the source counts
-    first = evolve(make_source(name='part1.pdf'), scan_count=SCANS_PER_SOURCE)
-    second = evolve(make_source(name='part2.pdf', minutes=1), scan_count=SCANS_PER_SOURCE)
-    ready = Renditions(ready=True)
-    scans = [
-        evolve(make_scan(source=source, number=number), renditions=ready)
-        for source in (first, second)
-        for number in range(SCANS_PER_SOURCE)
-    ]
-    page = make_page(scan=scans[0])
-    version = evolve(make_page_version(page_id=page.id), renditions=ready)
-    owner_id = new_account_id() if owner is None else owner.account_id
-    book_id = await commit_record(
-        database,
-        stores.catalogue(),
-        make_record(),
-        page,
-        owner=owner_id,
-        sources=[first, second],
-        scans=scans,
-        versions=[version],
-        databases=stores.databases,
+    scan = ScanLayout(ready=True, image=IMAGE)
+    sources = (
+        SourceLayout.of(SCANS_PER_SOURCE, name='part1.pdf', scan=scan, counted=True, uploaded=True),
+        evolve(SourceLayout.of(SCANS_PER_SOURCE, name='part2.pdf', scan=scan, counted=True, uploaded=True), minutes=1),
     )
-    sources, assets = stores.files.sources(book_id), stores.files.assets(book_id)
-    for source in (first, second):
-        job_id = JobId(uuid4())
-        await sources.stage(job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
-        await sources.promote(job_id, source.id, names=[source.file_name])
-    images = [BookKeys.scan_rendition(scan, Rendition.FULL_JPEG) for scan in scans]
-    for key in [*images, BookKeys.version_rendition(version, Rendition.FULL_JPEG)]:
-        async with assets.writable(key) as path:
-            path.write_bytes(IMAGE)
-    return Book(book_id=book_id, first=first, second=second, scans=scans, page=page, version=version)
+    page = PageLayout(scan=(0, 0), version=BaseVersion.RENDERED, version_image=IMAGE)
+    owner_id = new_account_id() if owner is None else owner.account_id
+    await ensure_account(database, owner_id)
+    book = await seed_book(
+        stores.catalogue(),
+        BookLayout(sources=sources, pages=(page,)),
+        owner=owner_id,
+        databases=stores.databases,
+        files=stores.files,
+    )
+    first, second = book.sources
+    return Book(
+        book_id=book.book_id, first=first, second=second, scans=book.scans, page=book.pages[0], version=book.versions[0]
+    )
 
 
 def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:

@@ -569,3 +569,16 @@ def xmp_packet(dublin_core: str) -> str:
         f'{dublin_core}'
         '</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>'
     )
+
+
+def gray_jpeg(size_px: tuple[int, int], *, tone: int = 200) -> bytes:
+    """Encode a small page of one gray tone as a JPEG.
+
+    :param size_px: Width and height of the page in pixels.
+    :type size_px: tuple[int, int]
+    :param tone: Gray tone of the page.
+    :type tone: int
+    :returns: The bytes of the JPEG.
+    :rtype: bytes
+    """
+    return encode_image(Image.new('L', size_px, color=tone), image_format='JPEG')

@@ -18,11 +18,17 @@ from tests.harness.builders.domain import (
     make_page,
     make_page_version,
     make_record,
-    make_scan,
-    make_source,
     new_account_id,
 )
-from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.builders.seeding import (
+    BaseVersion,
+    BookLayout,
+    PageLayout,
+    SourceLayout,
+    commit_record,
+    seed_book,
+    store_book,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -83,26 +89,16 @@ async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_da
     :returns: The stored book.
     :rtype: Book
     """
-    source = make_source()
-    scans = [make_scan(source=source, number=number) for number in range(2)]
-    shown = [scans[0], None, scans[1]]
-    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)]
-    pages[2] = evolve(pages[2], included=False)
-    versions = [
-        evolve(make_page_version(page_id=pages[0].id), renditions=Renditions(ready=True)),
-        make_page_version(page_id=pages[2].id),
-    ]
-    book_id = await store_book(
-        fx_catalogue(),
-        make_record(),
-        *pages,
-        owner=fx_actor.account_id,
-        sources=[source],
-        scans=scans,
-        versions=versions,
-        databases=fx_databases(),
+    layout = BookLayout(
+        sources=(SourceLayout.of(2),),
+        pages=(
+            PageLayout(scan=(0, 0), order_key=STORED_KEYS[0], version=BaseVersion.RENDERED),
+            PageLayout(order_key=STORED_KEYS[1]),
+            PageLayout(scan=(0, 1), order_key=STORED_KEYS[2], included=False, version=BaseVersion.RECORDED),
+        ),
     )
-    return Book(book_id, pages, versions)
+    book = await seed_book(fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases())
+    return Book(book.book_id, book.pages, book.versions)
 
 
 async def _list_pages(client: httpx.AsyncClient, path: str, **params: int) -> httpx.Response:

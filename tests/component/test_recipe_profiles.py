@@ -85,7 +85,7 @@ def _step(key: str, **params: object) -> Step:
     return Step(processor_key=key, params=params)
 
 
-def _body(name: str = PROFILE_NAME) -> dict[str, object]:
+def _profile_body(name: str = PROFILE_NAME) -> dict[str, object]:
     """Build the body that saves two steps of the geometry stage, the first of them switched off.
 
     :param name: Name of the profile.
@@ -170,7 +170,7 @@ def fx_profiles_path(fx_book: BookId) -> str:
     return f'{BOOKS_PATH}/{fx_book}/recipe-profiles'
 
 
-async def _store(databases: BookDatabasesFactory, book_id: BookId, profile: RecipeProfile) -> RecipeProfile:
+async def _store_profile(databases: BookDatabasesFactory, book_id: BookId, profile: RecipeProfile) -> RecipeProfile:
     """Commit a profile in the database of a book as an earlier request would have.
 
     :param databases: Function opening a new opener of the databases of the books of the test.
@@ -198,7 +198,7 @@ class TestProfiles:
         :param fx_profiles_path: Path of the recipe profiles of the book of the signed-in account.
         :type fx_profiles_path: str
         """
-        created = await fx_client.post(fx_profiles_path, json=_body())
+        created = await fx_client.post(fx_profiles_path, json=_profile_body())
         profile = RecipeProfileSchema.model_validate_json(created.content)
         renamed = await fx_client.patch(f'{fx_profiles_path}/{profile.id}', json={NAME_FIELD: OTHER_NAME})
         listed = await fx_client.get(fx_profiles_path)
@@ -221,7 +221,7 @@ class TestProfiles:
         :param fx_profiles_path: Path of the recipe profiles of the book of the signed-in account.
         :type fx_profiles_path: str
         """
-        await fx_client.post(fx_profiles_path, json=_body())
+        await fx_client.post(fx_profiles_path, json=_profile_body())
         listed = await fx_client.get(fx_profiles_path, params={STAGE_FIELD: Stage.CLEANUP})
         expect(listed.status_code == status.HTTP_200_OK)
         expect(listed.json()[TOTAL_FIELD] == 0)
@@ -237,7 +237,7 @@ class TestProfiles:
         :param fx_profiles_path: Path of the recipe profiles of the book of the signed-in account.
         :type fx_profiles_path: str
         """
-        body = _body() | {STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {'unknown': 1}}]}
+        body = _profile_body() | {STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {'unknown': 1}}]}
         response = await fx_client.post(fx_profiles_path, json=body)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -258,7 +258,7 @@ class TestProfiles:
         responses = [
             await fx_client.patch(path, json={NAME_FIELD: OTHER_NAME}),
             await fx_client.put(
-                path, json={key: value for key, value in _body(OTHER_NAME).items() if key != STAGE_FIELD}
+                path, json={key: value for key, value in _profile_body(OTHER_NAME).items() if key != STAGE_FIELD}
             ),
             await fx_client.put(_link_path(fx_book, recipe.id), json={PROFILE_ID_FIELD: str(MISSING_PROFILE)}),
             await fx_client.delete(path),
@@ -284,7 +284,7 @@ class TestApplyProfile:
         :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         before = await _text_recipe(fx_client, fx_book)
         response = await fx_client.post(_apply_path(fx_book, profile.id), json={'kind': 'blank'})
@@ -310,7 +310,7 @@ class TestApplyProfile:
         :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         bodies = [{}, {'kind': 'plates'}, {'kind': 'text', 'activate': True, 'page_ids': []}]
         responses = [await fx_client.post(_apply_path(fx_book, profile.id), json=body) for body in bodies]
@@ -332,7 +332,7 @@ class TestApplyProfile:
         :param fx_book: A book of the signed-in account.
         :type fx_book: BookId
         """
-        profile = await _store(
+        profile = await _store_profile(
             fx_databases,
             fx_book,
             make_recipe_profile(steps=(_step(MISSING_KEY), _step(FAKE_KEY, strength=2))),
@@ -358,9 +358,11 @@ class TestOrderOfProfile:
         :param fx_profiles_path: Path of the recipe profiles of the book of the signed-in account.
         :type fx_profiles_path: str
         """
-        usual = RecipeProfileSchema.model_validate_json((await fx_client.post(fx_profiles_path, json=_body())).content)
+        usual = RecipeProfileSchema.model_validate_json(
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
+        )
         free = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body(OTHER_NAME) | {ORDER_FIELD: FREE_ORDER})).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body(OTHER_NAME) | {ORDER_FIELD: FREE_ORDER})).content
         )
         listed = await fx_client.get(fx_profiles_path)
         expect((usual.order, free.order) == ('usual', FREE_ORDER))
@@ -378,7 +380,7 @@ class TestOrderOfProfile:
         :type fx_profiles_path: str
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         body = {
             NAME_FIELD: OTHER_NAME,
@@ -408,9 +410,9 @@ class TestOrderOfProfile:
         :type fx_profiles_path: str
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
-        body = _body() | {STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {'unknown': 1}}]}
+        body = _profile_body() | {STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {'unknown': 1}}]}
         response = await fx_client.put(f'{fx_profiles_path}/{profile.id}', json=body)
         listed = await fx_client.get(fx_profiles_path)
         expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
@@ -434,7 +436,7 @@ class TestLinkRecipeToProfile:
         :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         applied = AppliedProfileSchema.model_validate_json(
             (await fx_client.post(_apply_path(fx_book, profile.id), json={'kind': 'text'})).content
@@ -469,7 +471,7 @@ class TestLinkRecipeToProfile:
         :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         before = await _text_recipe(fx_client, fx_book)
         path = _link_path(fx_book, before.id)
@@ -519,7 +521,7 @@ class TestLinkRecipeToProfile:
         :type fx_book: BookId
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         await fx_client.post(_apply_path(fx_book, profile.id), json={'kind': 'text'})
         await fx_client.delete(f'{fx_profiles_path}/{profile.id}')
@@ -559,7 +561,7 @@ class TestLibrary:
         :type fx_profiles_path: str
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         response = await fx_client.post(f'{fx_profiles_path}/{profile.id}/duplicate')
         copy = RecipeProfileSchema.model_validate_json(response.content)
@@ -584,7 +586,7 @@ class TestLibrary:
         :type fx_profiles_path: str
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         response = await fx_client.get(f'{fx_profiles_path}/{profile.id}/{EXPORT_SUFFIX}')
         exported = ProfileFileSchema.model_validate_json(response.content)
@@ -607,7 +609,7 @@ class TestLibrary:
         :type fx_profiles_path: str
         """
         profile = RecipeProfileSchema.model_validate_json(
-            (await fx_client.post(fx_profiles_path, json=_body())).content
+            (await fx_client.post(fx_profiles_path, json=_profile_body())).content
         )
         exported = await fx_client.get(f'{fx_profiles_path}/{profile.id}/{EXPORT_SUFFIX}')
         response = await fx_client.post(f'{fx_profiles_path}/import', json=exported.json())

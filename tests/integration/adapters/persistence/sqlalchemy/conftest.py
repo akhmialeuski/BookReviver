@@ -13,6 +13,7 @@ from attrs import evolve
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.core.book import Book
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from tests.harness.adapters.database import (
@@ -344,3 +345,18 @@ async def fx_book(
     )
     fx_tracer.finished.clear()
     return book_id
+
+
+@pytest.fixture
+async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
+    """Open the catalogue of the settings, a file that does not exist yet and has no table.
+
+    :param fx_settings: Settings pointing at a fresh data directory of the test.
+    :type fx_settings: Settings
+    :returns: Iterator yielding the catalogue and disposing of its engines afterwards.
+    :rtype: AsyncIterator[SqlDatabase]
+    """
+    fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
+    database = SqlDatabase(fx_settings.resolved_catalogue_url, schema=Schema.CATALOGUE, tracer=NullTracer())
+    yield database
+    await database.dispose()
