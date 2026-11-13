@@ -2,11 +2,15 @@
 
 The classes here and beside them form one chain, each owning the next and holding what its methods share:
 
-- ``StageWork`` is the work of one job on one book: the book, its record, the control of the job and the ports.
-  ``RecipeRun`` is the work of a ``run-stage`` job and ``PreviewRun`` the one of a ``preview-step`` job.
-- ``PageWork`` (``page_work``) is one stage on one page: the input of the stage and the chain of its steps.
-  ``PageRun`` is a page run by its recipe, which makes the last version the current one of the stage.
-- ``StepWork`` (``step_work``) is one step on that page: it finds the version it made before, or makes it.
+- ``StageWork`` (``stage_work``) is the work of one job on one book: the book, its record, the control of the job and
+  the ports. ``RecipeRun`` here is the work of a ``run-stage`` job and ``PreviewRun`` the one of a ``preview-step`` job.
+- ``PageWork`` (``page_work``) is one stage on one page: the input of the stage. ``PageRun`` here is a page run by its
+  recipe, which makes the last version the current one of the stage.
+- ``StepChain`` (``step_work``) is the steps of that page, and ``StepWork`` one of them: it finds the version it made
+  before, or makes it.
+
+Each module imports the module of its owner and never the reverse, so this module, which makes the chain run, lies on
+top of ``stage_work``, ``page_work``, ``step_work`` and ``spread_splits``.
 
 A run reads the current version of the nearest earlier stage of the page, or the scan itself for the page split, and
 makes one version for each step of the recipe, each reading the one before. ``PageRun`` ends a page's run by making the
@@ -28,7 +32,7 @@ cancelled, which is no failure of the page, so it passes every handler that reco
 
 from typing import TYPE_CHECKING, override
 
-from attrs import evolve, field, frozen, validators
+from attrs import evolve, frozen
 
 from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
@@ -37,30 +41,28 @@ from bookreviver.domain.pages import Page
 from bookreviver.domain.runs import RunOutcome
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.versions import VersionData, VersionScale, VersionState
-from bookreviver.services.book_steps import BookSteps
-from bookreviver.services.page_work import BookFields, PageWork
+from bookreviver.services.page_work import PageWork
 from bookreviver.services.spread_splits import SpreadSplit
+from bookreviver.services.stage_work import StageWork
+from bookreviver.services.step_work import StepChain
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
     from bookreviver.core.book import Book
-    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepState
     from bookreviver.domain.recipes import Recipe, Step
     from bookreviver.domain.versions import PageVersion
-    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.tracing import Tracer
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.spread_splits import Unsplit
-    from bookreviver.services.step_work import StepSource
-    from bookreviver.services.steps import StepRunner
+    from bookreviver.services.stage_work import StageRuntime
+    from bookreviver.services.step_source import StepSource
 
 NO_PREVIEW_INPUT: str = 'The page has no image to preview a step on.'
 NO_STEP_TO_PREVIEW: str = 'Every step up to this one is switched off, so there is nothing to preview.'
@@ -80,107 +82,6 @@ class RunBasis:
     recipe_updated_at: datetime
     states: tuple[PageStepState, ...]
     undoing: Unsplit | None
-
-
-@frozen(kw_only=True)
-class StageRuntime:
-    """What a run of a stage works with, apart from the book of the job.
-
-    :ivar runner: Runner of processors and writer of their files.
-    :ivar processors: The processors the application can run.
-    :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
-    :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
-    :ivar tracer: Tracer the runs of pages and their steps are timed with.
-    :ivar parallel_pages: Largest number of pages a run processes at the same time, which is as many as the executor
-                          has places for full runs, so a run of a book uses every one of them.
-    """
-
-    runner: StepRunner
-    processors: ProcessorCatalog
-    order_keys: OrderKeys
-    preview_long_side_px: int
-    tracer: Tracer
-    parallel_pages: int = field(default=1, validator=validators.ge(1))
-
-
-class StageWork:
-    """The work of one job on one book, which a run of a recipe and a preview have in common.
-
-    It holds what every page and every step of the job needs, so the ``PageWork`` of a page and the ``StepWork`` of a
-    step reach it through the work they belong to.
-
-    :ivar book: The open book, whose transactions are opened for each version and never held while a step runs.
-    :ivar book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
-    :ivar control: What the job reports through: every step of a page is a task, and the job stops between two.
-    :ivar runner: Runner of processors and writer of their files.
-    :ivar processors: The processors the application can run.
-    :ivar preview_long_side_px: Longer side of a preview in pixels.
-    :ivar tracer: Tracer the steps are timed with.
-    :ivar book_steps: Finder of the steps whose plugin reads the whole book.
-    """
-
-    def __init__(self, *, book: Book, book_record: BookRecord, runtime: StageRuntime, control: JobControl) -> None:
-        """Work over the ports of one job.
-
-        :param book: The open book of the job.
-        :type book: Book
-        :param book_record: Record of the book.
-        :type book_record: BookRecord
-        :param runtime: The runner, the processors and the size of a preview.
-        :type runtime: StageRuntime
-        :param control: What the job reports through.
-        :type control: JobControl
-        """
-        self.book = book
-        self.book_record = book_record
-        self.control = control
-        self.runner = runtime.runner
-        self.processors = runtime.processors
-        self.preview_long_side_px = runtime.preview_long_side_px
-        self.tracer = runtime.tracer
-        self.book_steps = BookSteps(runtime.processors)
-
-    def task_count(self, steps: Sequence[Step]) -> int:
-        """Count the tasks of the steps a run or a preview goes over on one page.
-
-        Every step is a task. A page with a step that leaves a field to the book is also taken as far as that step once
-        more, for the plugin to read what the step found on it, so those steps are tasks again.
-
-        :param steps: The steps the run goes over, which are on.
-        :type steps: Sequence[Step]
-        :returns: The number of tasks the page makes.
-        :rtype: int
-        """
-        fields = self.book_fields(steps)
-        return len(steps) + (0 if fields is None else fields.position + 1)
-
-    def book_fields(self, steps: Sequence[Step]) -> BookFields | None:
-        """Find the first step among steps whose plugin reads the book, when its parameters leave a field to the book.
-
-        :param steps: The steps a run or a preview goes over.
-        :type steps: Sequence[Step]
-        :returns: The place of the step, the half of its plugin that reads the book and its parameters with the
-                  defaults filled in, or None when no step reads the book, or every field of it has a value.
-        :rtype: BookFields | None
-        """
-        position = self.book_steps.position(steps)
-        book_step = None if position is None else self.book_steps.of(steps[position])
-        if position is None or book_step is None:
-            return None
-        step = steps[position]
-        params = self.processors.get(step.processor_key).validate_params(step.params)
-        if not book_step.leaves_to_book(params):
-            return None
-        return BookFields(position=position, book_step=book_step, params=params)
-
-    async def refresh(self, page: Page, stage: Stage) -> None:
-        """Bring a stale earlier stage of a page up to date before a step reads it; a preview leaves it as it is.
-
-        :param page: Page whose earlier stage is stale.
-        :type page: Page
-        :param stage: The stale stage.
-        :type stage: Stage
-        """
 
 
 class PageRun(PageWork):
@@ -252,7 +153,7 @@ class PageRun(PageWork):
             return None
         if (source := await self.source(VersionScale.FULL)) is None:
             return None
-        return await self.measure(self.steps[: fields.position + 1], source)
+        return await StepChain(self, self.steps[: fields.position + 1]).measure(source)
 
     async def _split(self, source: StepSource, *, confirmed: bool) -> RunOutcome:
         """Split the page by the recipe, which is a task of the job like any step.
@@ -321,7 +222,7 @@ class PageRun(PageWork):
         :rtype: PageVersion | None
         :raises DomainError: If a processor is missing, its parameters do not fit, or the pyramid cannot be cut.
         """
-        version = await self.chain(self.steps, source)
+        version = await StepChain(self, self.steps).make(source)
         if version is None or version.state is not VersionState.READY:
             return None
         if version.renditions is not None and not version.tiles_ready:
@@ -413,7 +314,7 @@ class PageRun(PageWork):
         :rtype: MetadataMap
         """
         worked = self._run.books.get(self.recipe.id)
-        return worked if worked is not None else await self.book_of(self.steps, source)
+        return worked if worked is not None else await StepChain(self, self.steps).book_of(source)
 
     async def _fail(self) -> RunOutcome:
         """Record that the stage failed on the page, or that the page is gone.
@@ -587,7 +488,8 @@ class PreviewRun(StageWork):
             raise ConflictError(NO_PREVIEW_INPUT)
         enabled = [step for step in steps[: step_index + 1] if step.enabled]
         self.control.plan(self.task_count(enabled))
-        version = await page_work.chain(enabled, await page_work.with_book(enabled, source))
+        chain = StepChain(page_work, enabled)
+        version = await chain.make(await chain.with_book(source))
         if version is None:
             raise ConflictError(NO_STEP_TO_PREVIEW)
         if version.state is not VersionState.READY:

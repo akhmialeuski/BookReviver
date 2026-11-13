@@ -39,8 +39,8 @@ from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
-from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
+from bookreviver.services.stage_work import StageRuntime
 from bookreviver.services.steps import StepRunner
 from tests.harness.builders.domain import (
     EPOCH,

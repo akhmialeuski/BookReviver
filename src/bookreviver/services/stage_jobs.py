@@ -10,8 +10,8 @@ by it, so every page comes out of one size without a press of the button of the 
 
 The work is a chain of classes. ``StageRunJob`` is one job on one book: it reads what the job goes over and plans its
 tasks. ``PagesRun`` is the pages of the job with the recipe of each, which measures the book and runs the pages, and
-below it ``RecipeRun`` of ``services/stage_runs.py`` runs a recipe on a page, a ``PageWork`` and a ``StepWork`` at a
-time. A page that fails is recorded as failed and the job goes on to the next.
+below it ``RecipeRun`` of ``services/stage_runs.py`` runs a recipe on a page, a ``PageWork``, a ``StepChain`` and a
+``StepWork`` at a time. A page that fails is recorded as failed and the job goes on to the next.
 """
 
 import logging
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.processing_parts import ProcessingParts
-    from bookreviver.services.stage_runs import StageRuntime
+    from bookreviver.services.stage_work import StageRuntime
 
 logger = logging.getLogger(__name__)
 

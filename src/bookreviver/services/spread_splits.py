@@ -64,8 +64,8 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import StepOutput
     from bookreviver.services.stage_records import StageRecords
-    from bookreviver.services.stage_runs import StageRuntime
-    from bookreviver.services.step_work import StepSource
+    from bookreviver.services.stage_work import StageRuntime
+    from bookreviver.services.step_source import StepSource
 
 UNSPLIT_NOT_CONFIRMED: str = (
     'Undoing the split deletes page {page_id}, the right half of the spread, with its versions. Confirm it to go on.'

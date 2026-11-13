@@ -1,12 +1,14 @@
-"""The pages of a book inside one transaction of a page use case: their overviews, their places and their leaves.
+"""The pages of a book inside one transaction of a page use case: their overviews, and their places.
 
 ``PagesWork`` is opened by ``PageService`` in the work it hands to ``Book.read`` or ``Book.change``. It holds the
-repositories of that transaction and the service, through which it reaches what the service was built with, so nothing
-below it is handed the repositories from call to call. It owns three objects, each reaching the transaction through it:
+repositories of that transaction and what the service was built with, so nothing below it is handed the repositories
+from call to call. It owns two objects, each reaching the transaction through it:
 
 - ``PageOverviews`` reads pages as the interface shows them, with their position, image, label and section;
-- ``PagePlaces`` gives pages the order keys of a place of the book, for a page that is added or moved;
-- ``Leaves`` of ``services/leaves.py`` stands a blank leaf in place of the scan of a page.
+- ``PagePlaces`` gives pages the order keys of a place of the book, for a page that is added or moved.
+
+``Leaves`` of ``services/leaves.py`` stands a blank leaf in place of the scan of a page. It belongs to a ``PagesWork``
+and so lies above this module, which never imports it.
 
 The position of a page is not stored: it is computed when a page is read, from the order keys of the book. Moving a
 page writes a new order key to the moved pages alone: the key lies between the key of the page next to the place and
@@ -25,43 +27,65 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.pages import Page, PageOverview
 from bookreviver.domain.pagination import Numbering
 from bookreviver.domain.sides import Side
-from bookreviver.services.leaves import PAGE_OF_BATCH, Leaves
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.domain.pages import NewPage, PageAnchor
     from bookreviver.domain.versions import PageVersion
+    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.pages import PageService
-    from bookreviver.services.stage_records import SideWatch
+    from bookreviver.services.base_versions import BaseVersions
+    from bookreviver.services.book_steps import BookSteps
+    from bookreviver.services.page_labels import PageLabels
+    from bookreviver.services.stage_records import SideWatch, StageRecords
+    from bookreviver.services.steps import StepRunner
 
 ANCHOR_NOT_IN_BOOK: str = 'the page it is put next to is not a page of the book.'
+PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
+
+
+@frozen(kw_only=True)
+class PageParts:
+    """What the use cases of the pages are built with, the same for every transaction and job of a service.
+
+    :ivar order_keys: Builder of the order keys of moved and new pages.
+    :ivar base_versions: Builder of the rows of base versions.
+    :ivar runner: Runner of the processors ``split.none`` and ``pages.blank``, and writer of their files.
+    :ivar book_steps: Finder of the steps whose plugin reads the whole book, one of which may give the size of a leaf.
+    :ivar records: Writer of the records of the stages of a page.
+    :ivar labels: Keeper of the labels the pagination sections give the pages.
+    """
+
+    order_keys: OrderKeys
+    base_versions: BaseVersions
+    runner: StepRunner
+    book_steps: BookSteps
+    records: StageRecords
+    labels: PageLabels
 
 
 class PagesWork:
     """The pages of a book inside one transaction of a page use case.
 
-    :ivar service: The service of the use case, through which the key builder, the records and the labels are reached.
+    :ivar parts: What the use cases of the pages are built with.
     :ivar repos: Repositories of the transaction.
     :ivar overviews: Reader of the pages as the interface shows them.
     :ivar places: Giver of the order keys of a place of the book.
-    :ivar leaves: What stands a blank leaf in place of the scan of a page.
     """
 
-    def __init__(self, service: PageService, repos: BookRepositories) -> None:
+    def __init__(self, parts: PageParts, repos: BookRepositories) -> None:
         """Open the pages of a book for the work of one transaction.
 
-        :param service: The service of the use case.
-        :type service: PageService
+        :param parts: What the use cases of the pages are built with.
+        :type parts: PageParts
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
         """
-        self.service = service
+        self.parts = parts
         self.repos = repos
         self.overviews = PageOverviews(self)
         self.places = PagePlaces(self)
-        self.leaves = Leaves(self)
 
     def settle(self, *, leaving: Sequence[PageId] = ()) -> None:
         """Settle the pagination sections after pages were added, deleted, moved or changed.
@@ -69,7 +93,7 @@ class PagesWork:
         :param leaving: Pages that are about to be deleted, whose sections are handed on.
         :type leaving: Sequence[PageId]
         """
-        self.service.labels.settle(self.repos, leaving=leaving)
+        self.parts.labels.settle(self.repos, leaving=leaving)
 
     def numbering(self, pages: Sequence[Page]) -> Numbering:
         """Work out the labels and the sections the pagination gives pages.
@@ -79,7 +103,7 @@ class PagesWork:
         :returns: The labels and the sections of the pages.
         :rtype: Numbering
         """
-        return self.service.labels.numbering(self.repos, pages)
+        return self.parts.labels.numbering(self.repos, pages)
 
     def watching_sides(self) -> SideWatch:
         """Mark stale the pages that turn over to the other side of the book while the block changes the order.
@@ -87,7 +111,7 @@ class PagesWork:
         :returns: The block inside which pages are added, deleted or moved.
         :rtype: SideWatch
         """
-        return self.service.records.watching_sides(self.repos)
+        return self.parts.records.watching_sides(self.repos)
 
     def found(self, page_id: PageId) -> Page | None:
         """Read a page that may have been deleted since a job looked at it.
@@ -262,7 +286,7 @@ class PagePlaces:
             lower, upper = (
                 (neighbour, target.order_key) if anchor.side is Side.BEFORE else (target.order_key, neighbour)
             )
-        return self.work.service.order_keys.spread(lower=lower, upper=upper, count=count)
+        return self.work.parts.order_keys.spread(lower=lower, upper=upper, count=count)
 
     def new(self, new_page: NewPage, moment: datetime) -> Page:
         """Build the stored form of a page the user adds, at its place of the book.

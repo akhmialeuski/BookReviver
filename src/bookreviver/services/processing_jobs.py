@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from bookreviver.services.processing_parts import ProcessingParts
-    from bookreviver.services.stage_runs import StageRuntime
+    from bookreviver.services.stage_work import StageRuntime
 
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
 NO_CONTENT_DETECTED: str = 'The content of no page could be detected. The log of the worker says why.'

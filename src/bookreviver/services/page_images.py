@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.pages import PageService
+    from bookreviver.services.pages_work import PageParts
 
 SCAN_NOT_CUT: str = 'The scan has no image yet. Bind it after its import has cut it.'
 SCAN_DELETED: str = 'The scan of the page was deleted, so its image cannot be copied.'
@@ -152,21 +152,20 @@ class PageJobs:
 class PageImages:
     """One ``prepare-pages`` job on one book, and the files of its pages.
 
-    :ivar service: The service of the job, through which the runner, the records and the builder of base versions are
-                   reached.
+    :ivar parts: What the use cases of the pages are built with.
     :ivar book: The open book of the job.
     :ivar jobs: The jobs the pages of the book queue.
     """
 
-    def __init__(self, service: PageService, book: Book) -> None:
+    def __init__(self, parts: PageParts, book: Book) -> None:
         """Work on the images of the pages of a book.
 
-        :param service: The service of the job.
-        :type service: PageService
+        :param parts: What the use cases of the pages are built with.
+        :type parts: PageParts
         :param book: The open book.
         :type book: Book
         """
-        self.service = service
+        self.parts = parts
         self.book = book
         self.jobs = PageJobs(book)
 
@@ -220,7 +219,7 @@ class PageImages:
         :returns: The versions the job has to make.
         :rtype: Sequence[PageVersion]
         """
-        prepared = self.service.base_versions.prepared_keys
+        prepared = self.parts.base_versions.prepared_keys
         return await self.book.read(lambda repos: repos.page_versions.list_to_prepare(prepared))
 
 
@@ -285,7 +284,7 @@ class BaseVersionWork:
         :returns: The page, or None when it is gone.
         :rtype: Page | None
         """
-        return PagesWork(self.images.service, repos).found(self.version.page_id)
+        return PagesWork(self.images.parts, repos).found(self.version.page_id)
 
     def _outdated(self, page: Page) -> bool:
         """Tell whether the version is a leaf whose fill is not the choice of its page any longer.
@@ -299,7 +298,7 @@ class BaseVersionWork:
         """
         version = self.version
         return bool(
-            version.processor == self.images.service.base_versions.blank_leaf.ref
+            version.processor == self.images.parts.base_versions.blank_leaf.ref
             and page.origin is PageOrigin.SCAN
             and page.blank_fill.value != version.params.get(BlankParam.FILL, PaperFill.WHITE.value)
         )
@@ -336,7 +335,7 @@ class BaseVersionWork:
         :returns: True when the version is stored, and False when its page is gone or the leaf is outdated.
         :rtype: bool
         """
-        records = self.images.service.records
+        records = self.images.parts.records
 
         def work(repos: BookRepositories, book_record: BookRecord) -> tuple[bool, bool]:
             """Store the version unless its page is gone or no longer chooses the leaf.
@@ -379,7 +378,7 @@ class BaseVersionWork:
         :raises ConflictError: If the scan to copy is deleted or not cut yet.
         :raises ValueError: If the version is neither a copy of a scan nor a leaf, or has no size to make.
         """
-        book, runner = self.images.book, self.images.service.runner
+        book, runner = self.images.book, self.images.parts.runner
         book_record, run = await book.read(lambda repos: (repos.book_record.get(), self._run(repos, page)))
         async with runner.execute(book, run) as result:
             return await runner.store(
@@ -398,7 +397,7 @@ class BaseVersionWork:
         :raises ConflictError: If the scan to copy is deleted or not cut yet.
         :raises ValueError: If the version is neither a copy of a scan nor a leaf, or has no size to make.
         """
-        version, base_versions = self.version, self.images.service.base_versions
+        version, base_versions = self.version, self.images.parts.base_versions
         if version.processor == base_versions.scan_copy.ref:
             if page.scan_id is None:
                 raise ConflictError(SCAN_DELETED)

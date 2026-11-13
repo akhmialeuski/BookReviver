@@ -1,66 +1,39 @@
-"""The work of one stage on one page of a job: what the stage reads on the page, and the chain of its steps.
+"""The work of one stage on one page of a job: what the stage reads on the page.
 
-``PageWork`` holds the page and the stage, so the methods that find the input of the stage, make the versions of its
-steps and ask the book what it gives a step take only what differs from call to call. It belongs to the ``StageWork``
-of its job, through which it reaches the book, the runner and the processors, and it owns a ``StepWork`` for each step
-it makes.
+``PageWork`` holds the page and the stage, so the methods that find the input of the stage take only what differs from
+call to call. It belongs to the ``StageWork`` of its job (``stage_work``), through which it reaches the book, the runner
+and the processors. The steps of the stage on the page are made by the ``StepChain`` of ``step_work``, which belongs to
+a ``PageWork`` and so lies above this module.
 
 A stage reads the current version of the nearest earlier stage of the page, or the scan itself for the page split. An
 earlier stage that is stale, or stopped short of its last step, is brought up to date first, which a run does by its
 own recipe and a preview leaves as it is.
-
-A step whose plugin has a half that reads the book (``BookStep``) may leave some of its parameters to the book, such as
-the page size every page is placed on, which no page alone knows. What the book gives is laid over the parameters of
-the step: a page that is run or previewed alone is taken as far as the step first, and the plugin is asked with the
-version that made, beside what the other pages hold.
 """
 
 from typing import TYPE_CHECKING
-
-from attrs import evolve, frozen
 
 from bookreviver.core.content import BookContent
 from bookreviver.core.pages import BookPage
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.pages import PageOrigin
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
-from bookreviver.domain.versions import VersionState
 from bookreviver.services.step_params import PageLayers
-from bookreviver.services.step_work import StepSource, StepWork
+from bookreviver.services.step_source import StepSource
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from bookreviver.core.plugins import BookStep
-    from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.pages import Page
-    from bookreviver.domain.recipes import Step
     from bookreviver.domain.stages import PageStage
-    from bookreviver.domain.versions import PageVersion, VersionScale
+    from bookreviver.domain.versions import VersionScale
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.stage_runs import StageWork
+    from bookreviver.services.stage_work import StageWork
 
 EARLIER_STAGE_FAILED: str = (
     'The {stage} stage of the page is out of date and could not be run again, so a later stage cannot read it.'
 )
 
 
-@frozen(kw_only=True)
-class BookFields:
-    """The step of a run that reads the book, whose parameters leave a field to the book.
-
-    :ivar position: Place of the step among the steps the run goes over.
-    :ivar book_step: The half of the plugin of the step that reads the book.
-    :ivar params: Parameters of the step with the defaults of the processor filled in.
-    """
-
-    position: int
-    book_step: BookStep
-    params: MetadataMap
-
-
 class PageWork:
-    """One stage on one page of a job: the input of the stage, the chain of its steps and what the book gives them.
+    """One stage on one page of a job: the input of the stage and what it needs of the book to read it.
 
     :ivar work: The work of the job the page belongs to, through which the book and its ports are reached.
     :ivar page: The page being processed.
@@ -104,73 +77,6 @@ class PageWork:
         if read is None:
             return None
         return StepSource.of_version(read, scale, self.work.preview_long_side_px)
-
-    async def chain(self, steps: Sequence[Step], source: StepSource) -> PageVersion | None:
-        """Make the version of each step, each reading the one before, on the scale of the source.
-
-        :param steps: The steps to make, in order.
-        :type steps: Sequence[Step]
-        :param source: What the first step reads, whose scale is the scale of every version made and whose book
-                       is laid over the step that takes one.
-        :type source: StepSource
-        :returns: The version of the last step, or the one that failed, which ends the chain, or None for no step.
-        :rtype: PageVersion | None
-        :raises DomainError: If a processor is missing or its parameters do not fit.
-        """
-        version: PageVersion | None = None
-        for step in steps:
-            version = await StepWork(self, step, source).make()
-            # A task is done whether the version was made, found made, or failed, and no transaction is open here
-            await self.work.control.task_done()
-            if version.state is not VersionState.READY:
-                return version
-            source = source.after(version)
-        return version
-
-    async def measure(self, steps: Sequence[Step], source: StepSource) -> PageVersion | None:
-        """Make the steps up to the one that reads the book as they stand, and give the version that step made.
-
-        :param steps: The steps a run or a preview goes over, as far as the one that reads the book.
-        :type steps: Sequence[Step]
-        :param source: What the first step reads.
-        :type source: StepSource
-        :returns: The version of the step on the page, or None when a step failed on the way.
-        :rtype: PageVersion | None
-        """
-        version = await self.chain(steps, source)
-        return None if version is None or version.state is not VersionState.READY else version
-
-    async def book_of(self, steps: Sequence[Step], source: StepSource) -> MetadataMap:
-        """Work out what the book gives the step that reads it, on a page that is run or previewed alone.
-
-        :param steps: The steps a run or a preview goes over.
-        :type steps: Sequence[Step]
-        :param source: What the first step reads.
-        :type source: StepSource
-        :returns: The fields of the step that are by the book with their values, none when the step has no field by the
-                  book or no page has a result of it.
-        :rtype: MetadataMap
-        """
-        if (fields := self.work.book_fields(steps)) is None:
-            return {}
-        made = await self.measure(steps[: fields.position + 1], source)
-        fresh = {} if made is None else {self.page.id: made}
-        stage = self.stage
-        return await self.work.book.read(
-            lambda repos: fields.book_step.from_book(BookContent(repos), stage, fields.params, fresh)
-        )
-
-    async def with_book(self, steps: Sequence[Step], source: StepSource) -> StepSource:
-        """Give the source with what the book gives the step that reads it, worked out for this page alone.
-
-        :param steps: The steps a run or a preview goes over.
-        :type steps: Sequence[Step]
-        :param source: What the first step reads.
-        :type source: StepSource
-        :returns: The source the chain of the steps starts from.
-        :rtype: StepSource
-        """
-        return evolve(source, book=await self.book_of(steps, source))
 
     async def _refresh_earlier(self) -> None:
         """Bring the earlier stages of the page up to date, nearest first, as far back as the one that can be read.

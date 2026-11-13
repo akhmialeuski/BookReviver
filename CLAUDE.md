@@ -141,7 +141,8 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   with a `BaseVersionWork` for each version, `StepOnPage` a step on a page with its `StepUndo` and `StepClear`,
   `DetectionWork` a detect-content job with a `PageDetection` for a page, `StageRunJob` a run-stage job with the
   `PagesRun` of its pages, and `PageSplit` the split of a scan with the `MadeSplit` of its result. A group of methods
-  that pass the same three values on is a class that is missing.
+  that pass the same three values on is a class that is missing. A class of a chain lives in a module that imports the
+  module of its owner and never the reverse, which the `acyclic_siblings` contract on `services` enforces.
 
 - Closed value sets are `StrEnum` or `IntEnum` in `domain`, each carrying its own label.
 - Data travelling together is a frozen `attrs` class in `domain`, changed with `attrs.evolve`. Identifiers are

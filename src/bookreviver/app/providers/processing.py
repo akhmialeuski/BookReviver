@@ -40,7 +40,7 @@ from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipes import DefaultRecipes
 from bookreviver.services.result_marks import ResultMarksService
 from bookreviver.services.run_plans import RunImpactService
-from bookreviver.services.stage_runs import StageRuntime
+from bookreviver.services.stage_work import StageRuntime
 from bookreviver.services.steps import StepRunner
 
 
