@@ -35,10 +35,13 @@ from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions
-from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
+from bookreviver.services.imports import ImportLimits, ImportService
 from bookreviver.services.job_starter import JobStarter, ProcessingConfig
+from bookreviver.services.processing import ProcessingService
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipes import RecipeBook
+from bookreviver.services.scan_cuts import ScanCutter
+from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRunner
 from tests.harness.adapters.storage import SharedBookDirectories, upload
 from tests.harness.builders.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
@@ -570,19 +573,23 @@ class ImportRig:
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
+        records = StageRecords()
         return ImportService(
-            imaging=ImportImaging(
-                inspector=self.inspector,
+            inspector=self.inspector,
+            cutter=ScanCutter(
                 rasterizer=self.rasterizer,
                 base_versions=BaseVersions(tiler=self.tiler, processors=FakeCatalogue([SplitNone(), BlankPage()])),
                 runner=self.runner(),
+                records=records,
             ),
-            runtime=ImportRuntime(
-                order_keys=FractionalOrderKeys(),
-                limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
+            order_keys=FractionalOrderKeys(),
+            limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
+            processing=ProcessingService(
+                processors=processors,
+                recipes=RecipeBook(processors=processors, defaults=self.defaults, order=RecipeOrder(processors)),
+                records=records,
+                starter=JobStarter(config=config),
             ),
-            recipes=RecipeBook(processors=processors, defaults=self.defaults, order=RecipeOrder(processors)),
-            starter=JobStarter(config=config),
         )
 
     def stored_job(self, job: Job) -> Job:
