@@ -7,7 +7,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.books import BookResource
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.errors import ConflictError, NotFoundError, ReversedRangeError
@@ -17,8 +16,9 @@ from bookreviver.domain.pagination import NumberDisplay, NumberedPage, PageNumbe
 from bookreviver.domain.sides import Side
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.services.page_labels import PageLabels
-from tests.harness.builders.domain import make_page, make_record, new_account_id
-from tests.harness.builders.seeding import ensure_account, store_book
+from tests.harness.adapters.imports import stored_sections
+from tests.harness.builders.domain import new_account_id
+from tests.harness.builders.seeding import BookLayout, ensure_account, seed_book
 from tests.harness.concurrency.book_hold import hold_book_in_thread
 
 if TYPE_CHECKING:
@@ -29,8 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page
-    from bookreviver.domain.pagination import PaginationSection
-    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
     from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
@@ -89,54 +88,7 @@ NUMBERING_CASES: list[NumberingCase] = [
 ]
 
 
-async def _commit_book(
-    catalogue: CatalogueDatabase,
-    owner: Actor,
-    *layout: tuple[PageKind, bool],
-    databases: LocatedBookDatabases,
-    label: str = '',
-) -> tuple[BookId, list[Page]]:
-    """Commit a book of pages of the given kinds and inclusion, all labelled by hand with ``label`` when it is given.
-
-    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
-    :type catalogue: CatalogueDatabase
-    :param owner: Account owning the book.
-    :type owner: Actor
-    :param layout: Kind and inclusion of each page in book order.
-    :type layout: tuple[PageKind, bool]
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :param label: Label every page gets as an exception, or empty for pages that are not labelled.
-    :type label: str
-    :returns: The book and its pages in book order.
-    :rtype: tuple[BookRecord, list[Page]]
-    """
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(layout))
-    pages = [
-        evolve(
-            make_page(order_key=key),
-            kind=kind,
-            included=included,
-            manual_label=label or None,
-        )
-        for key, (kind, included) in zip(keys, layout, strict=True)
-    ]
-    book_id = await store_book(catalogue, make_record(), *pages, owner=owner.account_id, databases=databases)
-    return book_id, pages
-
-
-def _text_book(count: int) -> tuple[tuple[PageKind, bool], ...]:
-    """Describe a book of ``count`` included text pages.
-
-    :param count: Number of pages.
-    :type count: int
-    :returns: The kind and inclusion of each page.
-    :rtype: tuple[tuple[PageKind, bool], ...]
-    """
-    return ((TEXT, True),) * count
-
-
-async def _labels(book_id: BookId, pages: list[Page], *, databases: LocatedBookDatabases) -> list[str]:
+async def _labels_on_read(book_id: BookId, pages: list[Page], *, databases: LocatedBookDatabases) -> list[str]:
     """Read the labels pages show, as the sections and the manual labels committed give them on read.
 
     :param book_id: Identifier of the book of the pages.
@@ -162,20 +114,6 @@ async def _labels(book_id: BookId, pages: list[Page], *, databases: LocatedBookD
         return [labels[page.id] for page in pages]
 
     return await databases.open(book_id).read(read)
-
-
-async def _sections(book_id: BookId, *, databases: LocatedBookDatabases) -> list[PaginationSection]:
-    """Read the committed sections of a book in the order they were made.
-
-    :param book_id: The identifier of the book.
-    :type book_id: BookId
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The sections of the book.
-    :rtype: list[PaginationSection]
-    """
-    found = await databases.open(book_id).read(lambda repos: repos.pagination_sections.list_all())
-    return sorted(found, key=lambda section: (section.created_at, section.id))
 
 
 def _draft(page: Page, **fields: Any) -> PaginationSectionDraft:
@@ -216,14 +154,23 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(5),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
 
         fx_book_changes.published.clear()
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, ROMAN_3, ROMAN_4, 'v'])
+        expect(
+            await _labels_on_read(book_id, pages, databases=fx_open_book.databases)
+            == ['i', ROMAN_2, ROMAN_3, ROMAN_4, 'v']
+        )
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, '1', '2', '3'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, '1', '2', '3'])
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True, True])
         assert_expectations()
 
@@ -245,7 +192,13 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(5),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
 
         await fx_pagination().add(
             fx_open_book(fx_actor, book_id),
@@ -253,7 +206,7 @@ class TestSections:
         )
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[3]))
 
-        assert await _labels(book_id, pages, databases=fx_open_book.databases) == [
+        assert await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == [
             '[i]',
             '[ii]',
             '[iii]',
@@ -279,12 +232,18 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
 
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], display=NumberDisplay.NOT_COUNTED))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
-        assert await _labels(book_id, pages, databases=fx_open_book.databases) == ['', '', '1', '2']
+        assert await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['', '', '1', '2']
 
     async def test_plates_get_their_own_series_without_breaking_the_text_count(
         self,
@@ -305,7 +264,10 @@ class TestSections:
         :type fx_open_book: BookOpener
         """
         layout = [(kind, True) for kind in (PageKind.FRONTISPIECE, TEXT, TEXT, PageKind.PLATE, TEXT, PageKind.PLATE)]
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *layout, databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(), BookLayout.of_kinds(*layout), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        book_id, pages = seeded.book_id, seeded.pages
 
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(
@@ -313,7 +275,7 @@ class TestSections:
             _draft(pages[0], style=LabelStyle.ROMAN_UPPER, prefix=PLATE_PREFIX, kinds=PLATES),
         )
 
-        assert await _labels(book_id, pages, databases=fx_open_book.databases) == [
+        assert await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == [
             'Plate I',
             '1',
             '2',
@@ -343,7 +305,13 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(3),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(pages[1], manual_label=HAND_WRITTEN)),
         )
@@ -351,7 +319,7 @@ class TestSections:
 
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['1', HAND_WRITTEN, '3'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['1', HAND_WRITTEN, '3'])
         # The numbers of the section are computed on read, so making it writes no page
         expect(fx_page_writes.page_ids == set())
         assert_expectations()
@@ -377,14 +345,20 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(3),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         fx_page_writes.start()
 
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], kinds=PLATES))
 
         expect(fx_page_writes.page_ids == set())
-        expect(len(await _sections(book_id, databases=fx_open_book.databases)) == 2)
+        expect(len(await stored_sections(book_id, databases=fx_open_book.databases)) == 2)
         assert_expectations()
 
     async def test_removing_a_section_gives_its_pages_to_the_section_before_it(
@@ -405,18 +379,26 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         preface = await fx_pagination().add(
             fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
         )
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
         await fx_pagination().remove(fx_open_book(fx_actor, book_id), body.id)
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, ROMAN_3, ROMAN_4])
+        expect(
+            await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, ROMAN_3, ROMAN_4]
+        )
         await fx_pagination().remove(fx_open_book(fx_actor, book_id), preface.id)
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == [''] * len(pages))
-        expect(await _sections(book_id, databases=fx_open_book.databases) == [])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == [''] * len(pages))
+        expect(await stored_sections(book_id, databases=fx_open_book.databases) == [])
         assert_expectations()
 
     async def test_updating_a_section_changes_its_first_page_and_its_rule(
@@ -437,7 +419,13 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(5),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
@@ -445,7 +433,9 @@ class TestSections:
             fx_open_book(fx_actor, book_id), body.id, _draft(pages[3], start=5, name=SECTION_NAME)
         )
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, ROMAN_3, '5', '6'])
+        expect(
+            await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, ROMAN_3, '5', '6']
+        )
         expect(
             (updated.id, updated.first_page_id, updated.start, updated.name) == (body.id, pages[3].id, 5, SECTION_NAME)
         )
@@ -469,7 +459,13 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(3),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], kinds=PLATES))
 
@@ -480,7 +476,7 @@ class TestSections:
                 fx_open_book(fx_actor, book_id), _draft(pages[0], kinds=frozenset({PageKind.PLATE}))
             )
 
-        assert len(await _sections(book_id, databases=fx_open_book.databases)) == 2
+        assert len(await stored_sections(book_id, databases=fx_open_book.databases)) == 2
 
     async def test_a_section_cannot_be_made_from_a_page_or_book_that_is_not_the_actors(
         self,
@@ -503,12 +499,22 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(2), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(2),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         owner = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, owner.account_id)
-        stranger, strangers_pages = await _commit_book(
-            fx_catalogue(), owner, *_text_book(1), databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(1),
+            owner=owner.account_id,
+            databases=fx_open_book.databases,
         )
+        stranger, strangers_pages = seeded.book_id, seeded.pages
         own = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
 
         with pytest.raises(NotFoundError):
@@ -520,7 +526,7 @@ class TestSections:
         with pytest.raises(NotFoundError):
             await fx_pagination().remove(fx_open_book(fx_actor, stranger), own.id)
 
-        assert await _sections(book_id, databases=fx_open_book.databases) == [own]
+        assert await stored_sections(book_id, databases=fx_open_book.databases) == [own]
 
     async def test_sections_are_listed_in_book_order_with_the_main_flow_first(
         self,
@@ -540,7 +546,13 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         late = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[3]))
         series = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], kinds=PLATES))
         flow = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
@@ -571,7 +583,13 @@ class TestSections:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(3),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
 
         with pytest.raises(ConflictError, match=str(ROMAN_LIMIT + 1)):
             await fx_pagination().add(
@@ -579,8 +597,8 @@ class TestSections:
                 _draft(pages[0], style=LabelStyle.ROMAN_UPPER, start=ROMAN_LIMIT - 1),
             )
 
-        expect(await _sections(book_id, databases=fx_open_book.databases) == [])
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == [''] * len(pages))
+        expect(await stored_sections(book_id, databases=fx_open_book.databases) == [])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == [''] * len(pages))
         assert_expectations()
 
 
@@ -613,9 +631,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         numbering = PageNumbering(
             first_page_id=pages[0].id,
             last_page_id=pages[-1].id,
@@ -629,7 +651,7 @@ class TestNumberPages:
 
         # The cover, the plate and the page kept out keep their label; the other four pages take 10 to 13
         first, second, third, fourth = case.labels
-        assert await _labels(book_id, pages, databases=fx_open_book.databases) == [
+        assert await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == [
             STALE_LABEL,
             first,
             second,
@@ -657,7 +679,10 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(), BookLayout.of_kinds(*LAYOUT), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         skipped = frozenset({PageKind.COVER, PageKind.PLATE})
 
         await fx_pagination().number(
@@ -672,7 +697,7 @@ class TestNumberPages:
         )
 
         flow, series = sorted(
-            await _sections(book_id, databases=fx_open_book.databases), key=lambda section: section.is_series
+            await stored_sections(book_id, databases=fx_open_book.databases), key=lambda section: section.is_series
         )
         expect(
             (flow.first_page_id, flow.style, flow.display, flow.kinds)
@@ -704,9 +729,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_open_book.catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_open_book.catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
@@ -716,13 +745,14 @@ class TestNumberPages:
         )
 
         expect(
-            await _labels(book_id, pages, databases=fx_open_book.databases)
+            await _labels_on_read(book_id, pages, databases=fx_open_book.databases)
             == [STALE_LABEL, STALE_LABEL, '1', '2', '3', STALE_LABEL, STALE_LABEL]
         )
         expect(fx_page_writes.page_ids == {pages[2].id, pages[3].id, pages[4].id})
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         by_page = {
-            section.first_page_id: section for section in await _sections(book_id, databases=fx_open_book.databases)
+            section.first_page_id: section
+            for section in await stored_sections(book_id, databases=fx_open_book.databases)
         }
         closing = by_page[pages[5].id]
         expect(set(by_page) == {pages[2].id, pages[5].id})
@@ -749,7 +779,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         first = PageNumbering(first_page_id=pages[0].id, last_page_id=pages[-1].id, style=LabelStyle.ROMAN_LOWER)
         await fx_pagination().number(fx_open_book(fx_actor, book_id), first)
         await fx_open_book.databases.open(book_id).change(
@@ -762,8 +798,8 @@ class TestNumberPages:
             fx_open_book(fx_actor, book_id), evolve(first, style=LabelStyle.ARABIC, start=FIRST_NUMBER)
         )
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['10', '11', '12', '13'])
-        expect(len(await _sections(book_id, databases=fx_open_book.databases)) == 1)
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['10', '11', '12', '13'])
+        expect(len(await stored_sections(book_id, databases=fx_open_book.databases)) == 1)
         stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
@@ -788,7 +824,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(6), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(6),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         before = await fx_pagination().add(
             fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
         )
@@ -799,9 +841,12 @@ class TestNumberPages:
             PageNumbering(first_page_id=pages[2].id, last_page_id=pages[-1].id, style=LabelStyle.ARABIC),
         )
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['i', ROMAN_2, '1', '2', '3', '4'])
-        expect(before in await _sections(book_id, databases=fx_open_book.databases))
-        expect(len(await _sections(book_id, databases=fx_open_book.databases)) == 2)
+        expect(
+            await _labels_on_read(book_id, pages, databases=fx_open_book.databases)
+            == ['i', ROMAN_2, '1', '2', '3', '4']
+        )
+        expect(before in await stored_sections(book_id, databases=fx_open_book.databases))
+        expect(len(await stored_sections(book_id, databases=fx_open_book.databases)) == 2)
         assert_expectations()
 
     async def test_a_range_of_one_page_numbers_that_page(
@@ -822,16 +867,20 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
 
         await fx_pagination().number(
             fx_open_book(fx_actor, book_id),
             PageNumbering(first_page_id=pages[4].id, last_page_id=pages[4].id, style=LabelStyle.ROMAN_LOWER, start=7),
         )
 
-        assert (await _labels(book_id, pages, databases=fx_open_book.databases))[4] == 'vii'
+        assert (await _labels_on_read(book_id, pages, databases=fx_open_book.databases))[4] == 'vii'
 
     async def test_range_that_runs_backwards_conflicts_and_changes_nothing(
         self,
@@ -854,9 +903,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
 
         fx_book_changes.published.clear()
         with pytest.raises(ReversedRangeError, match='from a later page to an earlier one'):
@@ -865,8 +918,10 @@ class TestNumberPages:
                 PageNumbering(first_page_id=pages[4].id, last_page_id=pages[1].id, style=LabelStyle.ARABIC),
             )
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == [STALE_LABEL] * len(pages))
-        expect((await _sections(book_id, databases=fx_open_book.databases), fx_book_changes.published) == ([], []))
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == [STALE_LABEL] * len(pages))
+        expect(
+            (await stored_sections(book_id, databases=fx_open_book.databases), fx_book_changes.published) == ([], [])
+        )
         assert_expectations()
 
     async def test_numbers_past_the_roman_limit_conflict_and_change_nothing(
@@ -890,9 +945,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         fx_page_writes.start()
 
         with pytest.raises(ConflictError, match=str(ROMAN_LIMIT + 1)):
@@ -907,7 +966,7 @@ class TestNumberPages:
             )
 
         expect(fx_page_writes.page_ids == set())
-        expect(await _sections(book_id, databases=fx_open_book.databases) == [])
+        expect(await stored_sections(book_id, databases=fx_open_book.databases) == [])
         assert_expectations()
 
     async def test_page_of_another_book_is_not_found(
@@ -928,8 +987,18 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
-        _, others = await _commit_book(fx_catalogue(), fx_actor, *LAYOUT, databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(), BookLayout.of_kinds(*LAYOUT), owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        book_id, pages = seeded.book_id, seeded.pages
+        others = (
+            await seed_book(
+                fx_catalogue(),
+                BookLayout.of_kinds(*LAYOUT),
+                owner=fx_actor.account_id,
+                databases=fx_open_book.databases,
+            )
+        ).pages
 
         with pytest.raises(NotFoundError):
             await fx_pagination().number(
@@ -937,7 +1006,7 @@ class TestNumberPages:
                 PageNumbering(first_page_id=pages[0].id, last_page_id=others[-1].id, style=LabelStyle.ARABIC),
             )
 
-        assert await _sections(book_id, databases=fx_open_book.databases) == []
+        assert await stored_sections(book_id, databases=fx_open_book.databases) == []
 
     async def test_the_preview_gives_the_labels_the_numbering_stores_and_writes_nothing(
         self,
@@ -960,9 +1029,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_open_book.catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_open_book.catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         fx_page_writes.start()
         numbering = PageNumbering(
             first_page_id=pages[0].id,
@@ -975,11 +1048,13 @@ class TestNumberPages:
         fx_book_changes.published.clear()
         previewed = await fx_pagination().preview_numbers(fx_open_book(fx_actor, book_id), numbering)
         expect(fx_page_writes.page_ids == set())
-        expect((await _sections(book_id, databases=fx_open_book.databases), fx_book_changes.published) == ([], []))
+        expect(
+            (await stored_sections(book_id, databases=fx_open_book.databases), fx_book_changes.published) == ([], [])
+        )
         await fx_pagination().number(fx_open_book(fx_actor, book_id), numbering)
 
         counted = [pages[1], pages[2], pages[4], pages[6]]
-        labels = await _labels(book_id, counted, databases=fx_open_book.databases)
+        labels = await _labels_on_read(book_id, counted, databases=fx_open_book.databases)
         expect(
             previewed
             == [NumberedPage(page_id=page.id, label=label) for page, label in zip(counted, labels, strict=True)]
@@ -1012,9 +1087,13 @@ class TestNumberPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_catalogue(), fx_actor, *LAYOUT, label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_kinds(*LAYOUT, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         numbering = PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC)
         fx_page_writes.start()
 
@@ -1068,7 +1147,13 @@ class TestRecomputeInPageUseCases:
         :returns: The book and its pages in book order, numbered.
         :rtype: tuple[BookRecord, list[Page]]
         """
-        book_id, pages = await _commit_book(stores.catalogue(), owner, *_text_book(count), databases=stores.databases)
+        seeded = await seed_book(
+            stores.catalogue(),
+            BookLayout.of_placeholders(count),
+            owner=owner.account_id,
+            databases=stores.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await pagination().add(stores(owner, book_id), _draft(pages[0], **section))
         return book_id, pages
 
@@ -1106,7 +1191,7 @@ class TestRecomputeInPageUseCases:
         )
 
         expect(added.label == '3')
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['1', '2', '4', '5'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['1', '2', '4', '5'])
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
 
@@ -1143,7 +1228,7 @@ class TestRecomputeInPageUseCases:
         )
 
         expect((added.label, added.page.manual_label) == (HAND_WRITTEN, HAND_WRITTEN))
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['1', '2', '4'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['1', '2', '4'])
         assert_expectations()
 
     async def test_deleting_a_page_renumbers_the_pages_after_it(
@@ -1173,7 +1258,8 @@ class TestRecomputeInPageUseCases:
         await fx_service().delete(fx_open_book(fx_actor, book_id), pages[1].id)
 
         expect(
-            await _labels(book_id, [pages[0], pages[2], pages[3]], databases=fx_open_book.databases) == ['1', '2', '3']
+            await _labels_on_read(book_id, [pages[0], pages[2], pages[3]], databases=fx_open_book.databases)
+            == ['1', '2', '3']
         )
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
@@ -1199,15 +1285,21 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(5),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
         await fx_service().delete(fx_open_book(fx_actor, book_id), pages[2].id)
 
         survivors = [pages[0], pages[1], pages[3], pages[4]]
-        expect(await _labels(book_id, survivors, databases=fx_open_book.databases) == ['i', ROMAN_2, '1', '2'])
-        sections = {section.id: section for section in await _sections(book_id, databases=fx_open_book.databases)}
+        expect(await _labels_on_read(book_id, survivors, databases=fx_open_book.databases) == ['i', ROMAN_2, '1', '2'])
+        sections = {section.id: section for section in await stored_sections(book_id, databases=fx_open_book.databases)}
         expect(sections[body.id].first_page_id == pages[3].id)
         assert_expectations()
 
@@ -1232,13 +1324,19 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(3), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(3),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         kept = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2], style=LabelStyle.ROMAN_LOWER))
 
         await fx_service().delete(fx_open_book(fx_actor, book_id), pages[2].id)
 
-        assert await _sections(book_id, databases=fx_open_book.databases) == [kept]
+        assert await stored_sections(book_id, databases=fx_open_book.databases) == [kept]
 
     async def test_a_section_handed_to_a_page_where_another_starts_gives_way_to_it(
         self,
@@ -1261,18 +1359,24 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         doomed = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2], start=FIRST_NUMBER))
         body = await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[3]))
 
         await fx_service().delete(fx_open_book(fx_actor, book_id), pages[2].id)
 
-        sections = {section.id: section for section in await _sections(book_id, databases=fx_open_book.databases)}
+        sections = {section.id: section for section in await stored_sections(book_id, databases=fx_open_book.databases)}
         expect(doomed.id not in sections)
         expect(sections[body.id].first_page_id == pages[3].id)
         expect(
-            await _labels(book_id, [pages[0], pages[1], pages[3]], databases=fx_open_book.databases)
+            await _labels_on_read(book_id, [pages[0], pages[1], pages[3]], databases=fx_open_book.databases)
             == ['i', ROMAN_2, '1']
         )
         assert_expectations()
@@ -1298,9 +1402,13 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_open_book.catalogue(), fx_actor, *_text_book(5), databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_open_book.catalogue(),
+            BookLayout.of_placeholders(5),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_open_book.databases.open(book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(pages[1], manual_label=HAND_WRITTEN)),
         )
@@ -1312,7 +1420,10 @@ class TestRecomputeInPageUseCases:
         )
 
         order = [pages[0], pages[4], pages[1], pages[2], pages[3]]
-        expect(await _labels(book_id, order, databases=fx_open_book.databases) == ['1', '2', HAND_WRITTEN, '4', '5'])
+        expect(
+            await _labels_on_read(book_id, order, databases=fx_open_book.databases)
+            == ['1', '2', HAND_WRITTEN, '4', '5']
+        )
         expect(moved.label == '2')
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
@@ -1344,7 +1455,9 @@ class TestRecomputeInPageUseCases:
         )
 
         # The section starts at the first page of the book once more, which is page 3 now, where it began at page 1
-        assert await _labels(book_id, [pages[2], pages[3], pages[0], pages[1]], databases=fx_open_book.databases) == [
+        assert await _labels_on_read(
+            book_id, [pages[2], pages[3], pages[0], pages[1]], databases=fx_open_book.databases
+        ) == [
             '',
             '',
             '1',
@@ -1372,7 +1485,13 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[2]))
 
@@ -1380,7 +1499,9 @@ class TestRecomputeInPageUseCases:
             fx_open_book(fx_actor, book_id), pages[2].id, PageAnchor(page_id=pages[3].id, side=Side.AFTER)
         )
 
-        assert await _labels(book_id, [pages[0], pages[1], pages[3], pages[2]], databases=fx_open_book.databases) == [
+        assert await _labels_on_read(
+            book_id, [pages[0], pages[1], pages[3], pages[2]], databases=fx_open_book.databases
+        ) == [
             'i',
             ROMAN_2,
             ROMAN_3,
@@ -1408,7 +1529,13 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, *_text_book(4), databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(4),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0]))
         await fx_pagination().add(fx_open_book(fx_actor, book_id), _draft(pages[0], prefix=PLATE_PREFIX, kinds=PLATES))
 
@@ -1417,7 +1544,7 @@ class TestRecomputeInPageUseCases:
         )
 
         expect(updated.label == FIRST_PLATE)
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['1', FIRST_PLATE, '2', '3'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['1', FIRST_PLATE, '2', '3'])
         assert_expectations()
 
     async def test_a_page_kept_out_of_the_book_takes_no_number(
@@ -1441,10 +1568,10 @@ class TestRecomputeInPageUseCases:
         book_id, pages = await self._numbered_book(fx_pagination, fx_open_book, fx_actor, 3)
 
         await fx_service().update(fx_open_book(fx_actor, book_id), pages[1].id, PageChanges(included=False))
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['1', '', '2'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['1', '', '2'])
         await fx_service().update(fx_open_book(fx_actor, book_id), pages[1].id, PageChanges(included=True))
 
-        expect(await _labels(book_id, pages, databases=fx_open_book.databases) == ['1', '2', '3'])
+        expect(await _labels_on_read(book_id, pages, databases=fx_open_book.databases) == ['1', '2', '3'])
         assert_expectations()
 
     async def test_a_typed_label_is_an_exception_and_clearing_it_gives_the_page_back_to_its_section(
@@ -1470,11 +1597,14 @@ class TestRecomputeInPageUseCases:
         typed = await fx_service().update(fx_open_book(fx_actor, book_id), pages[1].id, PageChanges(label=HAND_WRITTEN))
         await fx_service().delete(fx_open_book(fx_actor, book_id), pages[0].id)
         expect((typed.label, typed.page.manual_label) == (HAND_WRITTEN, HAND_WRITTEN))
-        expect(await _labels(book_id, [pages[1], pages[2]], databases=fx_open_book.databases) == [HAND_WRITTEN, '2'])
+        expect(
+            await _labels_on_read(book_id, [pages[1], pages[2]], databases=fx_open_book.databases)
+            == [HAND_WRITTEN, '2']
+        )
         cleared = await fx_service().update(fx_open_book(fx_actor, book_id), pages[1].id, PageChanges(label=''))
 
         expect((cleared.label, cleared.page.manual_label) == ('1', None))
-        expect(await _labels(book_id, [pages[1], pages[2]], databases=fx_open_book.databases) == ['1', '2'])
+        expect(await _labels_on_read(book_id, [pages[1], pages[2]], databases=fx_open_book.databases) == ['1', '2'])
         assert_expectations()
 
     async def test_a_book_without_sections_keeps_every_label_it_has(
@@ -1498,9 +1628,13 @@ class TestRecomputeInPageUseCases:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(
-            fx_catalogue(), fx_actor, *_text_book(3), label=STALE_LABEL, databases=fx_open_book.databases
+        seeded = await seed_book(
+            fx_catalogue(),
+            BookLayout.of_placeholders(3, manual_label=STALE_LABEL),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
         )
+        book_id, pages = seeded.book_id, seeded.pages
         fx_page_writes.start()
 
         await fx_service().move(
@@ -1508,6 +1642,8 @@ class TestRecomputeInPageUseCases:
         )
         await fx_service().delete(fx_open_book(fx_actor, book_id), pages[1].id)
 
-        expect(await _labels(book_id, [pages[0], pages[2]], databases=fx_open_book.databases) == [STALE_LABEL] * 2)
+        expect(
+            await _labels_on_read(book_id, [pages[0], pages[2]], databases=fx_open_book.databases) == [STALE_LABEL] * 2
+        )
         expect(fx_page_writes.page_ids == {pages[2].id})
         assert_expectations()

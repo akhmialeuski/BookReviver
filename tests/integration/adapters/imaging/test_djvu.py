@@ -19,8 +19,9 @@ from bookreviver.adapters.imaging.djvu import HEADER_LAYOUT
 from bookreviver.domain.books import Contributor, ContributorRole
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.images import ColorMode, Rendition
-from bookreviver.domain.sources import DjvuDocumentKind, FileType, ScanFacts, SourceKind, UploadedSource
+from bookreviver.domain.sources import DjvuDocumentKind, FileType, ScanFacts, SourceKind
 from bookreviver.ports.imaging import SourceInspector
+from tests.harness.adapters.imports import uploaded_source
 from tests.harness.images.documents import (
     DjvuPage,
     edit_djvu,
@@ -482,17 +483,6 @@ def _named(root: Path, files: Sequence[Path]) -> dict[str, Path]:
     return {path.relative_to(root).as_posix(): path for path in files}
 
 
-def _source(*names: str) -> UploadedSource:
-    """Return an expected DjVu source made of the named files.
-
-    :param names: Names of the files, the main file first.
-    :type names: str
-    :returns: The source as the reader must group it.
-    :rtype: UploadedSource
-    """
-    return UploadedSource(kind=SourceKind.DJVU, file_type=FileType.DJVU, names=list(names))
-
-
 class TestGroup:
     """Tests for SourceInspector.group() of DjVu files, served by DjvuFormat."""
 
@@ -511,7 +501,9 @@ class TestGroup:
 
         sources = await fx_inspector.group(_named(tmp_path, files[::-1]))
 
-        assert list(sources) == [_source(INDEX_NAME, 'p0001.djvu', 'p0002.djvu', 'p0003.djvu')]
+        assert list(sources) == [
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, INDEX_NAME, 'p0001.djvu', 'p0002.djvu', 'p0003.djvu')
+        ]
 
     @requires_djvulibre
     async def test_joins_an_index_only_with_the_files_of_its_own_folder(
@@ -532,8 +524,8 @@ class TestGroup:
         sources = await fx_inspector.group(_named(tmp_path, [*second, *first]))
 
         assert list(sources) == [
-            _source('vol2/index.djvu', 'vol2/p0001.djvu', 'vol2/p0002.djvu'),
-            _source('vol1/index.djvu', 'vol1/p0001.djvu', 'vol1/p0002.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'vol2/index.djvu', 'vol2/p0001.djvu', 'vol2/p0002.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'vol1/index.djvu', 'vol1/p0001.djvu', 'vol1/p0002.djvu'),
         ]
 
     @requires_djvulibre
@@ -563,12 +555,12 @@ class TestGroup:
         sources = await fx_inspector.group(_named(tmp_path, upload))
 
         assert list(sources) == [
-            _source('e-notes.djvu'),
-            _source('d0002.djvu'),
-            _source('d0001.djvu'),
-            _source('c-book.djvu'),
-            _source('b-index.djvu', 'b0001.djvu', 'b0002.djvu'),
-            _source('a-index.djvu', 'a0001.djvu', 'a0002.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'e-notes.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'd0002.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'd0001.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'c-book.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'b-index.djvu', 'b0001.djvu', 'b0002.djvu'),
+            uploaded_source(SourceKind.DJVU, FileType.DJVU, 'a-index.djvu', 'a0001.djvu', 'a0002.djvu'),
         ]
 
     @requires_djvulibre
@@ -586,7 +578,7 @@ class TestGroup:
 
         sources = await fx_inspector.group(_named(tmp_path, [index, first]))
 
-        assert list(sources) == [_source(INDEX_NAME, 'p0001.djvu')]
+        assert list(sources) == [uploaded_source(SourceKind.DJVU, FileType.DJVU, INDEX_NAME, 'p0001.djvu')]
 
     def test_leaves_every_file_a_source_of_its_own_without_the_tools(self) -> None:
         """Verify grouping needs no tools when there are none, since it then joins nothing."""

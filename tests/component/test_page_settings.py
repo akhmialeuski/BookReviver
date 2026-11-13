@@ -4,16 +4,19 @@ from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 import pytest
-from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 
 from bookreviver.api.schemas.processing import RecipeSchema
-from bookreviver.domain.images import Renditions
 from bookreviver.domain.pages import RecipeKind
-from tests.harness.builders.domain import make_page, make_record, make_scan, make_source
 from tests.harness.builders.processing import ProcessingFakesProvider
-from tests.harness.builders.seeding import store_book
+from tests.harness.builders.seeding import (
+    BookLayout,
+    PageLayout,
+    ScanLayout,
+    SourceLayout,
+    seed_book,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -113,18 +116,14 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    sources = [make_source(name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
-    scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
-    pages = [make_page(order_key=order_key, scan=scan) for order_key, scan in zip(ORDER_KEYS, scans, strict=True)]
-    book_id = await store_book(
-        fx_catalogue(),
-        make_record(),
-        *pages,
-        owner=fx_actor.account_id,
-        sources=sources,
-        scans=scans,
-        databases=fx_databases(),
+    layout = BookLayout(
+        sources=tuple(
+            SourceLayout.of(1, name=f'{order_key}.pdf', scan=ScanLayout(ready=True)) for order_key in ORDER_KEYS
+        ),
+        pages=tuple(PageLayout(scan=(index, 0), order_key=order_key) for index, order_key in enumerate(ORDER_KEYS)),
     )
+    seeded = await seed_book(fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases())
+    book_id, pages = seeded.book_id, seeded.pages
     listed = await fx_client.get(f'{BOOKS_PATH}/{book_id}/stages/geometry/recipes')
     recipe = next(
         recipe

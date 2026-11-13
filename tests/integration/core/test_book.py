@@ -14,11 +14,10 @@ from bookreviver.core.book import Book
 from bookreviver.domain.changes import BookChanges, BookDetailsChanges
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.images import ImagePolicy
-from bookreviver.services.stage_summaries import StageSummaries
 from tests.harness.adapters.database import database_file
 from tests.harness.builders.domain import directory_of, make_page, make_record, make_scan, make_source
 from tests.harness.builders.seeding import store_book
-from tests.harness.fakes.processing import FakeCatalogue
+from tests.harness.builders.stage_reads import unprocessed_stages
 
 if TYPE_CHECKING:
     from bookreviver.app.settings import Settings
@@ -33,15 +32,6 @@ DATABASE_NAME: str = 'book.db'
 OLD_TITLE: str = 'Old title'
 NEW_TITLE: str = 'A title that only the book may keep'
 NEW_PUBLISHER: str = 'A publisher that only the book may keep'
-
-
-def _stages() -> StageSummaries:
-    """Build the stage sums over a catalogue with no processors, for books whose queues hold no jobs.
-
-    :returns: The stage summaries.
-    :rtype: StageSummaries
-    """
-    return StageSummaries(processors=FakeCatalogue([]))
 
 
 class TestOverview:
@@ -75,7 +65,7 @@ class TestOverview:
             databases=fx_open_book.databases,
         )
 
-        overview = await _stages().overview(fx_open_book(fx_actor, book_id))
+        overview = await unprocessed_stages().overview(fx_open_book(fx_actor, book_id))
 
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
@@ -108,7 +98,7 @@ class TestUpdate:
 
         await book.update(BookChanges(image_policy=ImagePolicy.LOSSLESS))
 
-        assert (await _stages().overview(book)).book_record.image_policy == ImagePolicy.LOSSLESS
+        assert (await unprocessed_stages().overview(book)).book_record.image_policy == ImagePolicy.LOSSLESS
 
     async def test_the_description_is_read_back_from_the_book_and_stored_nowhere_in_the_catalogue(
         self,

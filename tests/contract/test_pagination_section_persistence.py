@@ -15,15 +15,13 @@ from bookreviver.domain.page_label_rules import LabelStyle
 from bookreviver.domain.pages import PageKind
 from bookreviver.domain.pagination import NumberDisplay
 from tests.harness.builders.domain import make_page, make_record, make_section, new_account_id
-from tests.harness.builders.seeding import store_book
+from tests.harness.builders.seeding import BookLayout, seed_book, store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import BookId
-    from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories
     from tests.contract.conftest import OwnerFactory
-    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -33,26 +31,9 @@ FIRST_MINUTE: int = 1
 SECOND_MINUTE: int = 2
 THIRD_MINUTE: int = 3
 THREE_PAGES: int = 3
+# A book of three pages, which the sections start at
+LAYOUT: BookLayout = BookLayout.of_placeholders(THREE_PAGES)
 SECOND_PAGE: int = 1
-
-
-async def _store_book(
-    catalogue_factory: CatalogueDatabaseFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
-) -> tuple[BookId, list[Page]]:
-    """Store a book of three pages in the changes that own them.
-
-    :param catalogue_factory: Function opening a new catalogue database over the database of the test.
-    :type catalogue_factory: CatalogueDatabaseFactory
-    :param new_owner: Function creating an account the database accepts as an owner.
-    :type new_owner: OwnerFactory
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The book and its pages in book order.
-    :rtype: tuple[BookId, list[Page]]
-    """
-    pages = [make_page(order_key=f'a{index}') for index in range(THREE_PAGES)]
-    book_id = await store_book(catalogue_factory(), make_record(), *pages, owner=await new_owner(), databases=databases)
-    return book_id, pages
 
 
 class TestPaginationSectionRepository:
@@ -70,7 +51,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         later = make_section(page=pages[SECOND_PAGE], minutes=THIRD_MINUTE)
         earlier = make_section(page=pages[0], minutes=FIRST_MINUTE)
         middle = make_section(page=pages[2], minutes=SECOND_MINUTE)
@@ -94,7 +76,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         foreign_page = make_page()
         other_id = await store_book(
             fx_catalogue(), make_record(), foreign_page, owner=await fx_new_owner(), databases=fx_databases()
@@ -121,7 +104,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         section = evolve(
             make_section(
                 page=pages[SECOND_PAGE],
@@ -150,7 +134,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         section = make_section(page=pages[0])
         changed = evolve(
             section,
@@ -187,7 +172,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         section = make_section(page=pages[0])
         orphan = evolve(section, first_page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
@@ -205,7 +191,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         doomed, kept = make_section(page=pages[0]), make_section(page=pages[SECOND_PAGE], minutes=FIRST_MINUTE)
         await (
             fx_databases()
@@ -228,7 +215,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         section = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(section))
         await fx_databases().delete_book(book_id)
@@ -247,7 +235,8 @@ class TestPaginationSectionRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id, pages = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=await fx_new_owner(), databases=fx_databases())
+        book_id, pages = seeded.book_id, seeded.pages
         section = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(section))
         await (

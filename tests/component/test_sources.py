@@ -15,11 +15,9 @@ from bookreviver.domain.images import ImagePolicy, Rendition, Renditions
 from bookreviver.domain.jobs import JobKind
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.sources import FileType, RejectionReason, SourceKind, SourceStatus
-from tests.harness.builders.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
+from tests.harness.builders.books import IMAGE, SCANS_PER_SOURCE, on_disk
 from tests.harness.builders.domain import make_job, make_record, make_scan, make_source
 from tests.harness.builders.seeding import store_book
-from tests.harness.concurrency.scripted_runner import ScriptedRunner
-from tests.harness.fakes.board import FakeJobBoard
 from tests.harness.fakes.jobs import FakeBoardProvider
 
 if TYPE_CHECKING:
@@ -29,12 +27,11 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.sources import Source
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.builders.books import Book
-    from tests.harness.builders.domain import BookOpener
+    from tests.harness.fakes.board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 
@@ -46,43 +43,6 @@ PAGE_NUMBER_PARAM: str = 'page'
 SOURCE_ID_PARAM: str = 'source_id'
 
 
-@pytest.fixture
-async def fx_book(
-    fx_database: SqlDatabase,
-    fx_actor: Actor,
-    fx_open_book: BookOpener,
-) -> Book:
-    """Commit and store a book of the signed-in account.
-
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
-    :param fx_actor: The signed-in account.
-    :type fx_actor: Actor
-    :param fx_open_book: Opens the books of the test with their databases.
-    :type fx_open_book: BookOpener
-    :returns: The stored book.
-    :rtype: Book
-    """
-    return await commit_book(fx_database, fx_open_book, fx_actor)
-
-
-@pytest.fixture
-async def fx_strangers_book(
-    fx_database: SqlDatabase,
-    fx_open_book: BookOpener,
-) -> Book:
-    """Commit and store a book of an account that is not signed in.
-
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
-    :param fx_open_book: Opens the books of the test with their databases.
-    :type fx_open_book: BookOpener
-    :returns: The stored book.
-    :rtype: Book
-    """
-    return await commit_book(fx_database, fx_open_book, None)
-
-
 def _sources_path(book: Book) -> str:
     """Return the path of the book's list of sources.
 
@@ -92,16 +52,6 @@ def _sources_path(book: Book) -> str:
     :rtype: str
     """
     return f'{BOOKS_PATH}/{book.book_id}/sources'
-
-
-@pytest.fixture
-def fx_board() -> FakeJobBoard:
-    """Build the board the application of these tests puts its jobs on, which runs none until a test says so.
-
-    :returns: A fake board with no job.
-    :rtype: FakeJobBoard
-    """
-    return FakeJobBoard(runner=ScriptedRunner())
 
 
 @pytest.fixture

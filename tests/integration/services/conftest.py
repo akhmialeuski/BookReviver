@@ -5,11 +5,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bookreviver.core.book import Book
+from bookreviver.domain.accounts import Actor
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.services.pagination import PaginationService
 from tests.harness.adapters.page_stage_writes import PageStageWrites
 from tests.harness.adapters.page_writes import PageWrites
+from tests.harness.builders.domain import new_account_id
 from tests.harness.builders.page_services import make_page_service
 from tests.harness.builders.processing import CV_DEFAULTS, ProcessingKit
 from tests.harness.fakes.board import FakeJobBoard
@@ -27,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.ids import BookDirectoryName
+    from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.domain.jobs import Job
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
@@ -239,3 +241,27 @@ def fx_events(fx_book_parts: RecordingEventBus) -> RecordingEventBus:
     :rtype: RecordingEventBus
     """
     return fx_book_parts
+
+
+@pytest.fixture
+def fx_owner() -> Actor:
+    """Build the account that owns the book.
+
+    :returns: Actor with a fresh account identifier.
+    :rtype: Actor
+    """
+    return Actor(account_id=new_account_id())
+
+
+@pytest.fixture
+def fx_open_own_book(fx_owner: Actor, fx_open_book: BookOpener) -> Callable[[BookId], Book]:
+    """Return a function opening a book of the acting account with its database.
+
+    :param fx_owner: Account the books belong to.
+    :type fx_owner: Actor
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
+    :returns: Function taking the identifier of the book.
+    :rtype: Callable[[BookId], Book]
+    """
+    return lambda book_id: fx_open_book(fx_owner, book_id)

@@ -82,7 +82,7 @@ def _part(name: str, content: bytes) -> tuple[str, tuple[str, bytes, str]]:
     return FILES_FIELD, (name, content, OCTET_STREAM)
 
 
-def _scan(number: int, *, image_format: str) -> bytes:
+def _scan_image(number: int, *, image_format: str) -> bytes:
     """Build a small gray scan that no other number gives, in the given format.
 
     :param number: Number of the scan, written into the image as bits.
@@ -192,7 +192,7 @@ class TestUploadDirectories:
             suffix = next(suffixes)
             folder = VOLUME_FOLDER.format(number=volume + 1)
             names.append(f'{folder}/{page + 1:04}.{suffix}')
-            parts.append(_part(names[-1], _scan(number + 1, image_format=SCAN_FORMATS[suffix])))
+            parts.append(_part(names[-1], _scan_image(number + 1, image_format=SCAN_FORMATS[suffix])))
             if page == 0:
                 parts.append(_part(f'{folder}/Thumbs.db', b'thumbnails'))
 
@@ -311,8 +311,8 @@ class TestUploadDirectories:
         :type fx_databases: BookDatabasesFactory
         """
         parts = [
-            _part(FIRST_VOLUME_SCAN, _scan(1, image_format=TIFF_FORMAT)),
-            _part('vol2\\001.tif', _scan(2, image_format=TIFF_FORMAT)),
+            _part(FIRST_VOLUME_SCAN, _scan_image(1, image_format=TIFF_FORMAT)),
+            _part('vol2\\001.tif', _scan_image(2, image_format=TIFF_FORMAT)),
         ]
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book), files=parts)
@@ -356,8 +356,8 @@ class TestUploadDirectories:
         :type fx_databases: BookDatabasesFactory
         """
         parts = [
-            _part('001.tif', _scan(1, image_format=TIFF_FORMAT)),
-            _part(case.name, _scan(2, image_format=TIFF_FORMAT)),
+            _part('001.tif', _scan_image(1, image_format=TIFF_FORMAT)),
+            _part(case.name, _scan_image(2, image_format=TIFF_FORMAT)),
         ]
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book), files=parts)

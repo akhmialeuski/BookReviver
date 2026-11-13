@@ -4,17 +4,15 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
 import pytest
-from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
-from fastapi_pagination import Page
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.page_label_rules import LabelStyle
 from bookreviver.domain.pages import PageKind
 from tests.harness.builders.domain import make_page, make_record, new_account_id
-from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.builders.seeding import BookLayout, PageLayout, commit_record, seed_book
+from tests.harness.http.pages import read_labels
 
 if TYPE_CHECKING:
     import httpx
@@ -84,35 +82,14 @@ async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_da
     :returns: The stored book.
     :rtype: Book
     """
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
-    pages = [
-        evolve(
-            make_page(order_key=key),
-            kind=kind,
-            included=included,
-            manual_label=STALE_LABEL,
-            notes='Kept',
+    layout = BookLayout(
+        pages=tuple(
+            PageLayout(kind=kind, included=included, manual_label=STALE_LABEL, notes='Kept')
+            for kind, included in LAYOUT
         )
-        for key, (kind, included) in zip(keys, LAYOUT, strict=True)
-    ]
-    book_id = await store_book(
-        fx_catalogue(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases()
     )
-    return Book(book_id=book_id, pages=pages)
-
-
-async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
-    """Read the labels of the book's pages in book order.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: The book.
-    :type book: Book
-    :returns: The label of each page in the manifest.
-    :rtype: list[str]
-    """
-    response = await client.get(f'{BOOKS_PATH}/{book.book_id}/pages')
-    return [item.label for item in Page[PageSchema].model_validate_json(response.content).items]
+    book = await seed_book(fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases())
+    return Book(book_id=book.book_id, pages=book.pages)
 
 
 class FieldCase(NamedTuple):
@@ -311,7 +288,7 @@ class TestNumberPages:
         first, second = case.labels
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(response.content == b'')
-        expect(await _labels(fx_client, fx_book) == [STALE_LABEL, first, STALE_LABEL, STALE_LABEL, second])
+        expect(await read_labels(fx_client, fx_book.book_id) == [STALE_LABEL, first, STALE_LABEL, STALE_LABEL, second])
         assert_expectations()
 
     async def test_makes_the_sections_that_give_the_numbers(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
@@ -428,7 +405,7 @@ class TestNumberPages:
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(response.json()[DETAIL_FIELD] == 'The numbering runs from a later page to an earlier one.')
-        expect(await _labels(fx_client, fx_book) == [STALE_LABEL] * len(fx_book.pages))
+        expect(await read_labels(fx_client, fx_book.book_id) == [STALE_LABEL] * len(fx_book.pages))
         assert_expectations()
 
     async def test_unknown_page_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:

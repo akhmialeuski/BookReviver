@@ -6,11 +6,11 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.page_label_rules import LabelStyle, PageLabelRule, PrintedNumber
 from bookreviver.domain.pages import PageKind
 from bookreviver.domain.pagination import NumberDisplay, Pagination
-from tests.harness.builders.domain import make_page, make_section
+from tests.harness.builders.domain import make_section
+from tests.harness.builders.seeding import BookLayout
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import PaginationSectionId
@@ -34,8 +34,7 @@ def _book(*kinds: PageKind) -> list[Page]:
     :returns: Pages of one book, included, without labels.
     :rtype: list[Page]
     """
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(kinds))
-    return [make_page(order_key=key, kind=kind) for key, kind in zip(keys, kinds, strict=True)]
+    return BookLayout.of_kinds(*((kind, True) for kind in kinds)).build().pages
 
 
 def _labels(pages: list[Page], *sections: PaginationSection) -> list[str]:

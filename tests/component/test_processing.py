@@ -29,9 +29,14 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import PageKind, RecipeKind
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ResultMark, VersionOrigin, VersionScale
-from tests.harness.builders.domain import make_page, make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.domain import make_page, make_scan, make_source, new_account_id
 from tests.harness.builders.processing import ProcessingFakesProvider
-from tests.harness.builders.seeding import store_book
+from tests.harness.builders.seeding import (
+    BookLayout,
+    ScanLayout,
+    SourceLayout,
+    seed_book,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -117,23 +122,10 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    source = make_source()
-    scan = evolve(
-        make_scan(source=source, number=0),
-        renditions=Renditions(ready=True),
-    )
-    page = make_page(scan=scan)
-    book_id = await store_book(
-        fx_catalogue(),
-        make_record(),
-        page,
-        owner=fx_actor.account_id,
-        sources=[source],
-        scans=[scan],
-        databases=fx_databases(),
-    )
-    await store_scan_images(fx_directories.assets(book_id), scan)
-    return Book(book_id=book_id, page=page)
+    layout = BookLayout.scanned(SourceLayout.of(1, scan=ScanLayout(ready=True)))
+    book = await seed_book(fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases())
+    await store_scan_images(fx_directories.assets(book.book_id), book.scans[0])
+    return Book(book_id=book.book_id, page=book.pages[0])
 
 
 async def store_scan_images(asset_store: AssetStore, scan: Scan) -> None:

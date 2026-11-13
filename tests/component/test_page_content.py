@@ -4,21 +4,18 @@ from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 import pytest
-from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.jobs import ContentDetection, JobKind, JobState
 from bookreviver.domain.pages import ContentSource, ContentType, PageKind
 from tests.harness.builders.domain import make_job, make_page, make_record, new_account_id
-from tests.harness.builders.seeding import commit_record, store_book
-from tests.harness.concurrency.scripted_runner import ScriptedRunner
-from tests.harness.fakes.board import FakeJobBoard
+from tests.harness.builders.seeding import BookLayout, PageLayout, commit_record, seed_book
 from tests.harness.fakes.jobs import FakeBoardProvider
+from tests.harness.http.pages import read_page
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -31,6 +28,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.pages import Page as BookPage
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
+    from tests.harness.fakes.board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 
@@ -71,16 +69,6 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-def fx_board() -> FakeJobBoard:
-    """Build the board the application of these tests puts its jobs on, which runs none until a test says so.
-
-    :returns: A fake board with no job.
-    :rtype: FakeJobBoard
-    """
-    return FakeJobBoard(runner=ScriptedRunner())
-
-
-@pytest.fixture
 def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
     """Replace the application's job board with ``fx_board``, so a detection stays queued.
 
@@ -105,28 +93,13 @@ async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_da
     :returns: The stored book.
     :rtype: Book
     """
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
-    pages = [evolve(make_page(order_key=key), kind=kind) for key, kind in zip(keys, LAYOUT, strict=True)]
-    pages[1] = evolve(pages[1], content_type=FOUND)
-    book_id = await store_book(
-        fx_catalogue(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases()
+    layout = BookLayout(
+        pages=tuple(
+            PageLayout(kind=kind, content_type=FOUND if index == 1 else None) for index, kind in enumerate(LAYOUT)
+        )
     )
-    return Book(book_id=book_id, pages=pages)
-
-
-async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema:
-    """Read a page of the book.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: The book.
-    :type book: Book
-    :param index: Index of the page in book order.
-    :type index: int
-    :returns: The page resource.
-    :rtype: PageSchema
-    """
-    return PageSchema.model_validate_json((await client.get(book.page_path(index))).content)
+    book = await seed_book(fx_catalogue(), layout, owner=fx_actor.account_id, databases=fx_databases())
+    return Book(book_id=book.book_id, pages=book.pages)
 
 
 class TestPageContent:
@@ -167,7 +140,7 @@ class TestPageContent:
         response = await fx_client.patch(fx_book.page_path(0), json={CONTENT_FIELD: ContentType.COLOR_PICTURE})
 
         changed = PageSchema.model_validate_json(response.content)
-        read = await _page(fx_client, fx_book, 0)
+        read = await read_page(fx_client, fx_book.book_id, fx_book.pages[0].id)
         expect(response.status_code == status.HTTP_200_OK)
         expect((changed.content_type, changed.content_source) == (ContentType.COLOR_PICTURE, ContentSource.HAND))
         expect(changed.kind is PageKind.TEXT)
@@ -190,7 +163,7 @@ class TestPageContent:
         response = await fx_client.patch(fx_book.page_path(1), json={CONTENT_FIELD: sent})
 
         expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
-        expect((await _page(fx_client, fx_book, 1)).content_type is FOUND)
+        expect((await read_page(fx_client, fx_book.book_id, fx_book.pages[1].id)).content_type is FOUND)
         assert_expectations()
 
 

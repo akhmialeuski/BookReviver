@@ -27,7 +27,6 @@ from tests.harness.adapters.imports import stored_book
 from tests.harness.adapters.storage import book_directory
 from tests.harness.builders.books import IMAGE
 from tests.harness.builders.domain import (
-    EPOCH,
     PAGES_BLANK,
     SPLIT_NONE,
     make_job,
@@ -39,10 +38,18 @@ from tests.harness.builders.domain import (
 from tests.harness.builders.page_services import (
     PREVIEW_CONTENT,
     THUMBNAIL_CONTENT,
-    make_base_versions,
     make_page_service,
 )
-from tests.harness.builders.seeding import commit_account, store_book
+from tests.harness.builders.seeding import (
+    BaseVersion,
+    BookLayout,
+    PageLayout,
+    ScanLayout,
+    SourceLayout,
+    commit_account,
+    seed_book,
+    store_book,
+)
 from tests.harness.concurrency.book_hold import hold_book_in_thread
 from tests.harness.fakes.acting_renditions import ActingRenditionWriter
 from tests.harness.fakes.board import FakeJobBoard
@@ -59,7 +66,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.images import ColorMode, RenditionInfo
     from bookreviver.domain.jobs import Job
     from bookreviver.domain.pages import Page, PageOverview
-    from bookreviver.domain.sources import Scan, Source
+    from bookreviver.domain.sources import Scan
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
@@ -67,6 +74,7 @@ if TYPE_CHECKING:
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.adapters.storage import SharedBookDirectories
     from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.seeding import SeededBook
     from tests.harness.fakes.jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -85,23 +93,6 @@ WRITTEN_VICTIM: str = 'written'
 FIRST_SCAN_SIZE: tuple[int, int, float | None] = (100, 400, 100.0)
 # Widths, heights and resolutions whose medians are 200, 300 and 200.0
 SIZES: list[tuple[int, int, float | None]] = [(100, 500, 100.0), (300, 100, 300.0), (200, 300, 200.0)]
-
-
-class BookOfScans(NamedTuple):
-    """A book whose pages are cut from scans that are cut and stored, each page with its ready base version.
-
-    :ivar book_id: The identifier of the book.
-    :ivar source: The source of every scan.
-    :ivar scans: The scans, whose full images are stored.
-    :ivar pages: The pages in book order, one per scan.
-    :ivar versions: The ready base versions of the pages.
-    """
-
-    book_id: BookId
-    source: Source
-    scans: list[Scan]
-    pages: list[Page]
-    versions: list[PageVersion]
 
 
 class FlakyRenditionWriter(FakeRenditionWriter):
@@ -143,59 +134,25 @@ class FlakyRenditionWriter(FakeRenditionWriter):
         return await super().write(image, target_dir, full=full, color_mode=color_mode)
 
 
-async def _commit_book(
-    catalogue: CatalogueDatabase,
-    files: SharedBookDirectories,
-    owner: Actor,
-    sizes: Sequence[tuple[int, int, float | None]] = (FIRST_SCAN_SIZE,),
-    *,
-    databases: LocatedBookDatabases,
-) -> BookOfScans:
-    """Commit a book with a scan of each size, a page of each scan and its ready base version, and store the images.
+def _scans_layout(sizes: Sequence[tuple[int, int, float | None]] = (FIRST_SCAN_SIZE,)) -> BookLayout:
+    """Describe a book of one source with a scan of each size, and a page of each scan with its ready base version.
 
-    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
-    :type catalogue: CatalogueDatabase
-    :param files: Opens the asset store of the book, which receives the full image of each scan.
-    :type files: SharedBookDirectories
-    :param owner: Account owning the book.
-    :type owner: Actor
+    Every scan has its renditions ready, its source label and its full image stored.
+
     :param sizes: Width, height and resolution of each scan.
     :type sizes: Sequence[tuple[int, int, float | None]]
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The stored book.
-    :rtype: BookOfScans
+    :returns: The layout.
+    :rtype: BookLayout
     """
-    source = make_source()
-    scans = []
-    for number, (width, height, dpi) in enumerate(sizes):
-        scan = make_scan(source=source, number=number)
-        facts = evolve(scan.facts, width_px=width, height_px=height, dpi_x=dpi, dpi_y=dpi)
-        scans.append(evolve(scan, facts=facts, renditions=Renditions(ready=True), source_label=f'[{number}]'))
-    pages = [make_page(order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
-    versions = [
-        make_base_versions().split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
-        for page, scan in zip(pages, scans, strict=True)
-    ]
-    book_id = await store_book(
-        catalogue,
-        make_record(),
-        *pages,
-        owner=owner.account_id,
-        sources=[source],
-        scans=scans,
-        versions=versions,
-        databases=databases,
+    scans = tuple(
+        ScanLayout(size=size, ready=True, source_label=f'[{number}]', image=IMAGE) for number, size in enumerate(sizes)
     )
-    for scan in scans:
-        async with files.assets(book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
-            path.write_bytes(IMAGE)
-    return BookOfScans(book_id=book_id, source=source, scans=scans, pages=pages, versions=versions)
+    return BookLayout.scanned(SourceLayout(scans=scans), page=PageLayout(version=BaseVersion.CUT))
 
 
 async def _placeholder_book(
     catalogue: CatalogueDatabase, files: SharedBookDirectories, owner: Actor, *, databases: LocatedBookDatabases
-) -> tuple[BookOfScans, Page]:
+) -> tuple[SeededBook, Page]:
     """Commit a book of one scan page, and a placeholder after it.
 
     :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
@@ -207,22 +164,22 @@ async def _placeholder_book(
     :param databases: Opens the databases of the books of the test.
     :type databases: LocatedBookDatabases
     :returns: The book and its placeholder.
-    :rtype: tuple[BookOfScans, Page]
+    :rtype: tuple[SeededBook, Page]
     """
-    book = await _commit_book(catalogue, files, owner, databases=databases)
+    book = await seed_book(catalogue, _scans_layout(), owner=owner.account_id, databases=databases, files=files)
     page = make_page(order_key=PLACEHOLDER_ORDER_KEY)
     placeholder = evolve(page, kind=PageKind.COVER, notes=PLACEHOLDER_NOTES)
     await databases.open(book.book_id).change(lambda repos, _book_record: repos.pages.add(placeholder))
     return book, placeholder
 
 
-async def _spare_scan(files: SharedBookDirectories, book: BookOfScans, *, databases: LocatedBookDatabases) -> Scan:
+async def _spare_scan(files: SharedBookDirectories, book: SeededBook, *, databases: LocatedBookDatabases) -> Scan:
     """Commit a cut scan of a second source that no page shows, and store its image.
 
     :param files: Opens the asset store of the book, which receives the full image.
     :type files: SharedBookDirectories
     :param book: The book that gets the source.
-    :type book: BookOfScans
+    :type book: SeededBook
     :param databases: Opens the databases of the books of the test.
     :type databases: LocatedBookDatabases
     :returns: The scan, with its label ``xii``.
@@ -379,7 +336,13 @@ class TestAddPlaceholder:
         :type fx_open_book: BookOpener
         """
         _, board = fx_runtime
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label=THIRD_LABEL, notes=LOST_NOTES)
 
         overview = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
@@ -418,12 +381,12 @@ class TestAddPlaceholder:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
+        book = await seed_book(
             fx_open_book.catalogue(),
-            fx_directories,
-            fx_actor,
-            [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
+            _scans_layout([FIRST_SCAN_SIZE, FIRST_SCAN_SIZE]),
+            owner=fx_actor.account_id,
             databases=fx_open_book.databases,
+            files=fx_directories,
         )
         anchor = PageAnchor(page_id=book.pages[0].id, side=side)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.COVER, anchor=anchor)
@@ -454,9 +417,19 @@ class TestAddPlaceholder:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(
-            fx_open_book.catalogue(), fx_directories, fx_stranger, databases=fx_open_book.databases
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
+        stranger = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_stranger.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
         )
         pages_before = await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases)
         lost = NewPage(
@@ -497,8 +470,12 @@ class TestAddBlank:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
-            fx_open_book.catalogue(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(SIZES),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
         )
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER)
 
@@ -538,7 +515,13 @@ class TestAddBlank:
         :type fx_open_book: BookOpener
         """
         sizes = [(100, 100, None), (102, 200, None), (9999, 9999, None), (500, 500, None), (300, 300, None)]
-        book = await _commit_book(fx_catalogue(), fx_directories, fx_actor, sizes, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_catalogue(),
+            _scans_layout(sizes),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(book.pages[2], included=False))
         )
@@ -788,13 +771,19 @@ class TestAttachScan:
         book, placeholder = await _placeholder_book(
             fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        elsewhere = await _commit_book(fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        elsewhere = await seed_book(
+            fx_catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
 
         with pytest.raises(NotFoundError):
             await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, elsewhere.scans[0].id)
         with pytest.raises(NotFoundError):
             await fx_service().attach_scan(
-                fx_open_book(fx_actor, book.book_id), placeholder.id, make_scan(source=book.source, number=9).id
+                fx_open_book(fx_actor, book.book_id), placeholder.id, make_scan(source=book.sources[0], number=9).id
             )
 
         assert (
@@ -824,7 +813,13 @@ class TestAttachScan:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         page = book.pages[0]
         if origin is PageOrigin.BLANK:
@@ -1002,12 +997,12 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
+        book = await seed_book(
             fx_open_book.catalogue(),
-            fx_directories,
-            fx_actor,
-            [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
+            _scans_layout([FIRST_SCAN_SIZE, FIRST_SCAN_SIZE]),
+            owner=fx_actor.account_id,
             databases=fx_open_book.databases,
+            files=fx_directories,
         )
         doomed, kept = book.pages
         for version in book.versions:
@@ -1031,7 +1026,9 @@ class TestDelete:
         expect([version.page_id for version in versions] == [kept.id])
         expect(not (book_directory(fx_storage_root, book.book_id) / BookKeys.page(doomed.id)).exists())
         expect((book_directory(fx_storage_root, book.book_id) / BookKeys.page(kept.id)).is_dir())
-        expect([scan.id for scan in scans] == [book.scans[0].id] and book.source.id in {each.id for each in sources})
+        expect(
+            [scan.id for scan in scans] == [book.scans[0].id] and book.sources[0].id in {each.id for each in sources}
+        )
         assert_expectations()
 
     async def test_a_deletion_is_one_change_of_the_pages(
@@ -1055,7 +1052,13 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         fx_book_changes.published.clear()
 
         await fx_service().delete(fx_open_book(fx_actor, book.book_id), book.pages[0].id)
@@ -1083,9 +1086,19 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(
-            fx_open_book.catalogue(), fx_directories, fx_stranger, databases=fx_open_book.databases
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
+        stranger = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_stranger.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
         )
 
         with pytest.raises(NotFoundError):
@@ -1710,7 +1723,13 @@ class TestAddBlankWithoutSizedPages:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_catalogue(),
+            _scans_layout(SIZES),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update_many([evolve(page, included=False) for page in book.pages]),
         )
@@ -1805,7 +1824,13 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         keys = CountingOrderKeys()
         service = make_page_service(fx_open_book, fx_runtime, order_keys=keys)
         fx_book_changes.published.clear()
@@ -1843,8 +1868,12 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
-            fx_catalogue(), fx_directories, fx_actor, [FIRST_SCAN_SIZE] * 3, databases=fx_open_book.databases
+        book = await seed_book(
+            fx_catalogue(),
+            _scans_layout([FIRST_SCAN_SIZE] * 3),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
         )
         first, _, last = book.pages
         keys = CountingOrderKeys()
@@ -1892,8 +1921,12 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
-            fx_open_book.catalogue(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(SIZES),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
         )
         sized = PageSize(width_px=8, height_px=9)
         new = [
@@ -1936,7 +1969,13 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
         lost = PageAnchor(page_id=PageId(UUID(int=7)), side=Side.AFTER)
         new = [_placeholder('1'), _placeholder('2'), _placeholder('3', lost)]
 
@@ -1997,9 +2036,19 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(
-            fx_open_book.catalogue(), fx_directories, fx_stranger, databases=fx_open_book.databases
+        book = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_actor.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
+        )
+        stranger = await seed_book(
+            fx_open_book.catalogue(),
+            _scans_layout(),
+            owner=fx_stranger.account_id,
+            databases=fx_open_book.databases,
+            files=fx_directories,
         )
         too_many = [_placeholder('x')] * (fx_service().MAX_PAGES_PER_BATCH + 1)
 

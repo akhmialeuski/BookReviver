@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import UploadFile
 
 from bookreviver.adapters.storage import LocalBookDirectory, LocalSourceStore
+from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import JobId, SourceId
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys, KeySegment
@@ -241,3 +242,20 @@ class BookFiles:
         :rtype: bool
         """
         return not book_directory(self._root, book_id).exists()
+
+
+async def is_stored(store: AssetStore, key: StorageKey) -> bool:
+    """Return whether anything is stored at ``key``.
+
+    :param store: Asset store to look into.
+    :type store: AssetStore
+    :param key: Key to look up.
+    :type key: StorageKey
+    :returns: True when a file or directory is stored at the key.
+    :rtype: bool
+    """
+    try:
+        async with store.readable(key):
+            return True
+    except NotFoundError:
+        return False

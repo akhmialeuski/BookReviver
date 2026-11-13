@@ -145,7 +145,7 @@ def _unimported(*, status: SourceStatus, name: str, minutes: int = 0, typed: boo
     )
 
 
-def _entry(owner_id: AccountId, *, minutes: int = 0) -> LibraryEntry:
+def _library_entry(owner_id: AccountId, *, minutes: int = 0) -> LibraryEntry:
     """Build the entry of a book that joined the library of an account ``minutes`` after the epoch.
 
     :param owner_id: Account owning the book.
@@ -329,7 +329,7 @@ class TestLibraryRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        entry = _entry(await fx_new_owner())
+        entry = _library_entry(await fx_new_owner())
         await fx_catalogue().change(lambda repos: repos.library.add(entry))
         assert await fx_catalogue().read(lambda repos: repos.library.get(entry.book_id)) == entry
 
@@ -343,7 +343,7 @@ class TestLibraryRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        entry = _entry(await fx_new_owner())
+        entry = _library_entry(await fx_new_owner())
         await fx_catalogue().change(lambda repos: repos.library.add(entry))
         stolen = evolve(entry, owner_id=await fx_new_owner())
         with pytest.raises(ConflictError, match=str(entry.book_id)):
@@ -357,7 +357,7 @@ class TestLibraryRepository:
         :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
         """
-        entry = _entry(new_account_id())
+        entry = _library_entry(new_account_id())
         with pytest.raises(NotFoundError):
             await fx_catalogue().change(lambda repos: repos.library.add(entry))
 
@@ -371,7 +371,7 @@ class TestLibraryRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        entry = _entry(await fx_new_owner())
+        entry = _library_entry(await fx_new_owner())
         await fx_catalogue().change(lambda repos: repos.library.add(entry))
         await fx_catalogue().change(lambda repos: repos.library.delete(entry.book_id))
         with pytest.raises(NotFoundError, match=str(entry.book_id)):
@@ -390,8 +390,8 @@ class TestLibraryRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id, other_owner_id = await fx_new_owner(), await fx_new_owner()
-        older, newer = _entry(owner_id, minutes=1), _entry(owner_id, minutes=2)
-        elsewhere = _entry(other_owner_id, minutes=3)
+        older, newer = _library_entry(owner_id, minutes=1), _library_entry(owner_id, minutes=2)
+        elsewhere = _library_entry(other_owner_id, minutes=3)
         await fx_catalogue().change(lambda repos: [repos.library.add(entry) for entry in (older, elsewhere, newer)])
         reader = fx_catalogue()
         full = await reader.read(lambda repos: repos.library.list_for_owner(owner_id, SliceRequest()))
@@ -417,7 +417,7 @@ class TestLibraryRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        tied = sorted((_entry(owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('book_id'))
+        tied = sorted((_library_entry(owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('book_id'))
         # Insert against the expected order, so neither insertion nor storage order can pass for it
         await fx_catalogue().change(lambda repos: [repos.library.add(entry) for entry in reversed(tied)])
 
@@ -452,7 +452,7 @@ class TestLibraryRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        entries = [_entry(await fx_new_owner(), minutes=minute) for minute in range(PAGE_COUNT)]
+        entries = [_library_entry(await fx_new_owner(), minutes=minute) for minute in range(PAGE_COUNT)]
         await fx_catalogue().change(lambda repos: [repos.library.add(entry) for entry in entries])
         listed = await fx_catalogue().read(lambda repos: repos.library.list_all())
         assert list(listed) == sorted(entries, key=attrgetter('book_id'))

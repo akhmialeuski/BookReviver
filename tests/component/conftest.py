@@ -14,7 +14,9 @@ from bookreviver.app.main import create_app
 from tests.harness.adapters.storage import BookFiles
 from tests.harness.builders.processing import InProcessExecutorProvider
 from tests.harness.concurrency.board_idle import JobsIdle
+from tests.harness.concurrency.scripted_runner import ScriptedRunner
 from tests.harness.fakes.accounts import SignedInUser
+from tests.harness.fakes.board import FakeJobBoard
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -158,3 +160,13 @@ async def fx_client(fx_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=fx_app)
     async with httpx.AsyncClient(transport=transport, base_url=TEST_BASE_URL) as client:
         yield client
+
+
+@pytest.fixture
+def fx_board() -> FakeJobBoard:
+    """Build the board the application of these tests puts its jobs on, which runs none until a test says so.
+
+    :returns: A fake board with no job.
+    :rtype: FakeJobBoard
+    """
+    return FakeJobBoard(runner=ScriptedRunner())

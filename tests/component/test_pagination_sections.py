@@ -8,12 +8,12 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.pagination import PaginationSectionSchema
 from bookreviver.domain.pagination import NumberDisplay
 from tests.harness.builders.domain import make_page, make_record, new_account_id
-from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.builders.seeding import BookLayout, commit_record, seed_book
+from tests.harness.http.pages import read_labels
 
 if TYPE_CHECKING:
     import httpx
@@ -75,26 +75,10 @@ async def fx_book(fx_catalogue: CatalogueDatabaseFactory, fx_actor: Actor, fx_da
     :returns: The stored book.
     :rtype: Book
     """
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
-    pages = [make_page(order_key=key) for key in keys]
-    book_id = await store_book(
-        fx_catalogue(), make_record(), *pages, owner=fx_actor.account_id, databases=fx_databases()
+    book = await seed_book(
+        fx_catalogue(), BookLayout.of_placeholders(PAGE_COUNT), owner=fx_actor.account_id, databases=fx_databases()
     )
-    return Book(book_id=book_id, pages=pages)
-
-
-async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
-    """Read the labels of the book's pages in book order.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: The book.
-    :type book: Book
-    :returns: The label of each page in the manifest.
-    :rtype: list[str]
-    """
-    response = await client.get(f'{BOOKS_PATH}/{book.book_id}/pages')
-    return [item.label for item in Page[PageSchema].model_validate_json(response.content).items]
+    return Book(book_id=book.book_id, pages=book.pages)
 
 
 class TestCreateSection:
@@ -118,7 +102,7 @@ class TestCreateSection:
         expect(response.status_code == status.HTTP_201_CREATED)
         expect((section.first_page_id, section.name, section.start) == (fx_book.pages[1].id, 'Preface', 3))
         expect((section.display, section.kinds) == (NumberDisplay.COUNTED, []))
-        expect(await _labels(fx_client, fx_book) == ['', '[iii]', '[iv]', '[v]'])
+        expect(await read_labels(fx_client, fx_book.book_id) == ['', '[iii]', '[iv]', '[v]'])
         assert_expectations()
 
     async def test_a_series_by_kind_keeps_the_spaces_of_its_prefix(
@@ -214,7 +198,7 @@ class TestCreateSection:
         )
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
-        expect(await _labels(fx_client, fx_book) == [''] * PAGE_COUNT)
+        expect(await read_labels(fx_client, fx_book.book_id) == [''] * PAGE_COUNT)
         assert_expectations()
 
     async def test_page_of_another_book_and_book_of_another_account_are_not_found(
@@ -326,7 +310,7 @@ class TestChangeSections:
         section = PaginationSectionSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_200_OK)
         expect((str(section.id), section.first_page_id) == (made['id'], fx_book.pages[2].id))
-        expect(await _labels(fx_client, fx_book) == ['', '', 'g', 'h'])
+        expect(await read_labels(fx_client, fx_book.book_id) == ['', '', 'g', 'h'])
         assert_expectations()
 
     async def test_delete_removes_the_section_and_empties_its_labels(
@@ -347,7 +331,7 @@ class TestChangeSections:
 
         expect((deleted.status_code, deleted.content) == (status.HTTP_204_NO_CONTENT, b''))
         expect(again.status_code == status.HTTP_404_NOT_FOUND)
-        expect(await _labels(fx_client, fx_book) == [''] * PAGE_COUNT)
+        expect(await read_labels(fx_client, fx_book.book_id) == [''] * PAGE_COUNT)
         assert_expectations()
 
     async def test_an_unknown_section_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:

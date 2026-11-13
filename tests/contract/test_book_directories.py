@@ -70,7 +70,7 @@ REFUSED: dict[str, RefusedArchive] = {
 }
 
 
-async def _book(stores: DirectoryOpener) -> tuple[BookId, SourceId, PageVersion]:
+async def _store_book_files(stores: DirectoryOpener) -> tuple[BookId, SourceId, PageVersion]:
     """Store a book with one source, one derived file of a page, and an upload still being received.
 
     :param stores: Opens the stores of a book of the backend.
@@ -114,7 +114,7 @@ class TestExportAndUnpack:
         :param fx_stores: The directories of the books of the backend.
         :type fx_stores: DirectoryOpener
         """
-        book_id, source_id, version = await _book(fx_stores)
+        book_id, source_id, version = await _store_book_files(fx_stores)
         exported = await _exported(fx_stores, book_id)
         copy_id = BookId(uuid4())
 
@@ -137,7 +137,7 @@ class TestExportAndUnpack:
         :param fx_stores: The directories of the books of the backend.
         :type fx_stores: DirectoryOpener
         """
-        book_id, _, _ = await _book(fx_stores)
+        book_id, _, _ = await _store_book_files(fx_stores)
         exported = await _exported(fx_stores, book_id)
         copy_id = BookId(uuid4())
         await fx_stores(directory_of(copy_id)).unpack(io.BytesIO(exported))
@@ -196,7 +196,7 @@ class TestCreate:
         :param fx_stores: The directories of the books of the backend.
         :type fx_stores: DirectoryOpener
         """
-        book_id, source_id, _ = await _book(fx_stores)
+        book_id, source_id, _ = await _store_book_files(fx_stores)
 
         await fx_stores(directory_of(book_id)).create()
 
@@ -215,8 +215,8 @@ class TestDelete:
         :param fx_stores: The directories of the books of the backend.
         :type fx_stores: DirectoryOpener
         """
-        book_id, source_id, version = await _book(fx_stores)
-        other_id, other_source_id, other_version = await _book(fx_stores)
+        book_id, source_id, version = await _store_book_files(fx_stores)
+        other_id, other_source_id, other_version = await _store_book_files(fx_stores)
         key = BookKeys.version_rendition(version, Rendition.FULL_JPEG)
         directory = fx_stores(directory_of(book_id))
 
@@ -244,7 +244,7 @@ class TestDelete:
         :param fx_stores: The directories of the books of the backend.
         :type fx_stores: DirectoryOpener
         """
-        book_id, _, _ = await _book(fx_stores)
+        book_id, _, _ = await _store_book_files(fx_stores)
 
         await fx_stores(directory_of(book_id)).delete()
         await fx_stores(directory_of(book_id)).delete()
