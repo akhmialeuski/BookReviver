@@ -104,6 +104,15 @@ describe('applyBookEvent', () => {
     expect(sync.version).toBe(2);
   });
 
+  it('reads the rows of the stages again when the settings of a page change, since a row says what a step holds on a page', async () => {
+    // An undo on a page whose stage is out of date already writes no record of a stage, so the change names the settings alone
+    applyBookEvent(queryClient, BOOK_ID, change(['settings']), sync);
+    // The rows of the stages cancel their reads in flight first, and ask for the new read a turn later
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(invalidated()).toContain('listStagePagesApiV1BooksBookIdStagesStagePagesGet');
+  });
+
   it('marks the previews of a numbering stale when the pages change, and the count of a collection when the versions do', () => {
     const preview = [...numberingPreviewKey(BOOK_ID), { first: 'pg-1' }];
     const collectable = collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey({
