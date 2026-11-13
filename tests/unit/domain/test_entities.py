@@ -426,12 +426,26 @@ class TestRecipe:
         assert self.recipe_of(self.ON, self.OFF, later).enabled_steps == (self.ON, later)
 
     def test_steps_through_one_keep_their_index_in_the_recipe_and_leave_out_the_ones_that_are_off(self) -> None:
-        """Verify the pairs of a run through a step skip a step that is off, and name the index of each in the recipe."""
-        recipe = self.recipe_of(self.ON, self.OFF, self.ON)
-        expect(recipe.indexed_steps_through(None) == ((0, self.ON), (2, self.ON)))
-        expect(recipe.indexed_steps_through(1) == ((0, self.ON),))
-        expect(recipe.indexed_steps_through(9) == ((0, self.ON), (2, self.ON)))
-        expect(self.recipe_of(self.OFF, self.ON).indexed_steps_through(0) == ())
+        """Verify the pairs of a run through a step skip a step that is off, and name the index of each in the recipe.
+
+        The run names its last step by its identifier, and a recipe that does not hold the step runs every step that is
+        on, as a run of the whole recipe does.
+        """
+        first, off, last = self.ON, self.OFF, Step(processor_key='geometry.on')
+        recipe = self.recipe_of(first, off, last)
+        expect(recipe.indexed_steps_through(None) == ((0, first), (2, last)))
+        expect(recipe.indexed_steps_through(off.step_id) == ((0, first),))
+        expect(recipe.indexed_steps_through(last.step_id) == ((0, first), (2, last)))
+        expect(recipe.indexed_steps_through(Step(processor_key='geometry.other').step_id) == ((0, first), (2, last)))
+        expect(self.recipe_of(self.OFF, self.ON).indexed_steps_through(self.OFF.step_id) == ())
+        assert_expectations()
+
+    def test_the_index_of_a_step_follows_it_when_it_moves(self) -> None:
+        """Verify the index of a step is computed from where the step stands, and a step the recipe lacks has none."""
+        later = Step(processor_key='geometry.later')
+        expect(self.recipe_of(self.ON, later).index_of(later.step_id) == 1)
+        expect(self.recipe_of(later, self.ON).index_of(later.step_id) == 0)
+        expect(self.recipe_of(self.ON).index_of(later.step_id) is None)
         assert_expectations()
 
     def test_the_place_of_a_step_counts_the_steps_that_are_on_before_it(self) -> None:
@@ -443,9 +457,20 @@ class TestRecipe:
         assert_expectations()
 
     def test_a_run_stops_short_only_when_a_step_that_is_on_is_left(self) -> None:
-        """Verify a run through the last step that is on, or past it, stops nowhere, and one making no step too."""
-        recipe = self.recipe_of(self.OFF, self.ON, self.OFF, self.ON, self.OFF)
-        expect([recipe.stopped_at(through) for through in (None, 0, 1, 2, 3, 4)] == [None, None, 1, 1, None, None])
+        """Verify a run through the last step that is on, or past it, stops nowhere, and one making no step too.
+
+        A run through a step that is off stops at the last step that is on before it.
+        """
+        steps = tuple(Step(processor_key='geometry.on', enabled=index % 2 == 1) for index in range(5))
+        recipe = self.recipe_of(*steps)
+        through = [None, *(step.step_id for step in steps)]
+        stopped = [recipe.stopped_at(step_id) for step_id in through]
+        expect(stopped == [None, None, steps[1].step_id, steps[1].step_id, None, None])
+        expect(recipe.stopped_at(Step(processor_key='geometry.other').step_id) is None)
+        expect(
+            (recipe.holds(steps[0].step_id), recipe.holds(Step(processor_key='geometry.other').step_id))
+            == (True, False)
+        )
         assert_expectations()
 
 

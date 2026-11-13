@@ -23,15 +23,17 @@ from uuid import uuid4
 from attrs import evolve, frozen
 
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.ids import RecipeProfileId
+from bookreviver.domain.ids import RecipeProfileId, StepId
 from bookreviver.domain.recipes import OrderMode, RecipeDraft, RecipeKey, RecipeProfile
 from bookreviver.domain.slices import Slice
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.pages import RecipeKind
-    from bookreviver.domain.recipes import ProfileDraft, Recipe
+    from bookreviver.domain.recipes import ProfileDraft, Recipe, Step
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.domain.stages import Stage
     from bookreviver.ports.persistence import BookRepositories
@@ -56,6 +58,31 @@ class AppliedProfile:
 
     recipe: Recipe
     missing_processors: tuple[str, ...]
+
+
+def made_from(profile_steps: Sequence[Step], recipe: Recipe) -> tuple[Step, ...]:
+    """Make the steps a recipe takes from the steps of a profile, each naming the step of the profile it is made from.
+
+    A step of the profile finds the step of the recipe it made before, or that the profile was saved from, which is the
+    step whose origin or identifier is the identifier of the step of the profile, and the new step keeps its
+    identifier. Each step of the recipe is found once, and a step of the profile that finds none gets a new identifier.
+
+    :param profile_steps: The steps of the profile, in their order.
+    :type profile_steps: Sequence[Step]
+    :param recipe: The recipe as it is before it takes them.
+    :type recipe: Recipe
+    :returns: The steps for the recipe, in the order of the profile.
+    :rtype: tuple[Step, ...]
+    """
+    free = list(recipe.steps)
+    made: list[Step] = []
+    for step in profile_steps:
+        found = next((held for held in free if step.step_id in {held.step_id, held.origin_step_id}), None)
+        if found is not None:
+            free.remove(found)
+        step_id = StepId(uuid4()) if found is None else found.step_id
+        made.append(evolve(step, step_id=step_id, origin_step_id=step.step_id))
+    return tuple(made)
 
 
 class RecipeProfiles:
@@ -333,6 +360,9 @@ class RecipeProfiles:
     async def apply(self, book: Book, profile_id: RecipeProfileId, *, kind: RecipeKind) -> AppliedProfile:
         """Put the steps of a profile into the recipe of one kind of page of the profile's stage, and link it.
 
+        Each step of the recipe is made from a step of the profile and names it as its origin. A step the recipe already
+        made from that step of the profile, or that the profile was saved from, keeps its identifier, so the settings,
+        edits and history of the pages stay with it, and any other step gets a new identifier, unique in the book.
         The pages the recipe processed become stale, as they do for any change of a recipe. The use case holds no
         transaction itself: it finds the recipe, which opens a change of its own when the stage has none, then stores
         the steps, and then links the recipe, each in a transaction of its own.
@@ -354,7 +384,7 @@ class RecipeProfiles:
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=KEY_SEPARATOR.join(missing)))
         recipe = await self._recipes.of_kind(book, profile.stage, kind)
         # The steps were checked when the profile was saved, and rules may have been added to the processors since
-        draft = RecipeDraft(steps=steps, order=OrderMode.FREE, profile_id=profile.id)
+        draft = RecipeDraft(steps=made_from(steps, recipe), order=OrderMode.FREE, profile_id=profile.id)
         applied = await self._put(book, RecipeKey(stage=profile.stage, recipe_id=recipe.id), draft)
         return AppliedProfile(recipe=applied, missing_processors=missing)
 

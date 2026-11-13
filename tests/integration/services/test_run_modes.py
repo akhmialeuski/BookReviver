@@ -366,7 +366,7 @@ class TestApplyModeBlock:
         """
         _, book_id, pages, keys = await worked_book(fx_kit)
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
-        plan = RunPlan(recipes=fx_kit.parts().recipes, book=await open_book(fx_kit, book_id), run=run)
+        plan = RunPlan(recipes=fx_kit.recipes, book=await open_book(fx_kit, book_id), run=run)
         await plan.recipes()
         await fx_kit.databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(pages[1].id))
         written = await plan.apply_mode()
@@ -386,7 +386,7 @@ class TestApplyModeBlock:
         """
         _, book_id, _, keys = await worked_book(fx_kit)
         plan = RunPlan(
-            recipes=fx_kit.parts().recipes,
+            recipes=fx_kit.recipes,
             book=await open_book(fx_kit, book_id),
             run=StageRun(stage=Stage.GEOMETRY, mode=RunMode.KEEP),
         )

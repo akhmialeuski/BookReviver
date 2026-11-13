@@ -7,13 +7,15 @@ import pytest
 from bookreviver.adapters.imaging import DjvuFormat, ImageFormat, PdfFormat, SourceReader
 from bookreviver.domain.errors import UnsupportedSourceError, UploadProblem, UploadRejectedError
 from bookreviver.domain.images import Rendition
-from bookreviver.domain.sources import FileType, SourceKind, UploadedSource
+from bookreviver.domain.sources import FileType, SourceKind
+from tests.harness.adapters.imports import uploaded_source
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
     from bookreviver.adapters.imaging import SourceFormat
+    from bookreviver.domain.sources import UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector
 
 pytestmark = pytest.mark.anyio
@@ -47,21 +49,6 @@ class RejectedGroupCase(NamedTuple):
 
     names: Sequence[str]
     problem: UploadProblem
-
-
-def _source(kind: SourceKind, file_type: FileType, *names: str) -> UploadedSource:
-    """Return an expected source made of the named files.
-
-    :param kind: Kind of the source.
-    :type kind: SourceKind
-    :param file_type: Type of the main file.
-    :type file_type: FileType
-    :param names: Names of the files, the main file first.
-    :type names: str
-    :returns: The source as the reader must group it.
-    :rtype: UploadedSource
-    """
-    return UploadedSource(kind=kind, file_type=file_type, names=list(names))
 
 
 class TestSourceReaderInit:
@@ -113,38 +100,38 @@ class TestGroup:
     @pytest.mark.parametrize(
         CASE_ARG,
         [
-            GroupCase(names=['book.pdf'], sources=[_source(SourceKind.PDF, FileType.PDF, 'book.pdf')]),
+            GroupCase(names=['book.pdf'], sources=[uploaded_source(SourceKind.PDF, FileType.PDF, 'book.pdf')]),
             # Each part of a book is a source of its own, and the order of the upload decides, not the order of the names
             GroupCase(
                 names=['part10.pdf', 'part2.PDF'],
                 sources=[
-                    _source(SourceKind.PDF, FileType.PDF, 'part10.pdf'),
-                    _source(SourceKind.PDF, FileType.PDF, 'part2.PDF'),
+                    uploaded_source(SourceKind.PDF, FileType.PDF, 'part10.pdf'),
+                    uploaded_source(SourceKind.PDF, FileType.PDF, 'part2.PDF'),
                 ],
             ),
             # A cover from another copy, a PDF part and a multi-page TIFF are accepted together
             GroupCase(
                 names=['scans.tif', 'kniga.pdf', 'cover.JPG'],
                 sources=[
-                    _source(SourceKind.IMAGE, FileType.TIFF, 'scans.tif'),
-                    _source(SourceKind.PDF, FileType.PDF, 'kniga.pdf'),
-                    _source(SourceKind.IMAGE, FileType.JPEG, 'cover.JPG'),
+                    uploaded_source(SourceKind.IMAGE, FileType.TIFF, 'scans.tif'),
+                    uploaded_source(SourceKind.PDF, FileType.PDF, 'kniga.pdf'),
+                    uploaded_source(SourceKind.IMAGE, FileType.JPEG, 'cover.JPG'),
                 ],
             ),
             GroupCase(
                 names=['002.png', '001.jp2', DJVU_NAME],
                 sources=[
-                    _source(SourceKind.IMAGE, FileType.PNG, '002.png'),
-                    _source(SourceKind.IMAGE, FileType.JPEG_2000, '001.jp2'),
-                    _source(SourceKind.DJVU, FileType.DJVU, DJVU_NAME),
+                    uploaded_source(SourceKind.IMAGE, FileType.PNG, '002.png'),
+                    uploaded_source(SourceKind.IMAGE, FileType.JPEG_2000, '001.jp2'),
+                    uploaded_source(SourceKind.DJVU, FileType.DJVU, DJVU_NAME),
                 ],
             ),
             # The files of a chosen directory are named by their relative paths, and one name may occur in several
             GroupCase(
                 names=['vol2/001.tif', 'vol1/001.tif'],
                 sources=[
-                    _source(SourceKind.IMAGE, FileType.TIFF, 'vol2/001.tif'),
-                    _source(SourceKind.IMAGE, FileType.TIFF, 'vol1/001.tif'),
+                    uploaded_source(SourceKind.IMAGE, FileType.TIFF, 'vol2/001.tif'),
+                    uploaded_source(SourceKind.IMAGE, FileType.TIFF, 'vol1/001.tif'),
                 ],
             ),
         ],

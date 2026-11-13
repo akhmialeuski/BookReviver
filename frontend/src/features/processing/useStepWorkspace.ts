@@ -38,8 +38,10 @@ export interface StepWorkspace {
   /** The rows of every page of the book at the open step, with the flags the server put on them, or null while read. */
   rows: readonly StagePageSchema[] | null;
   /**
-   * Whether the rows of the open step are still being read, which is false once they are read or the read has failed and
-   * when no step is open, so a screen that waits for the rows stops waiting when they are never coming.
+   * Whether the rows of the step the address names are still on their way: the recipe that holds the step is not read
+   * yet, or the rows of the open step are being read. It is false once they are read or the read has failed, when the
+   * address names no step, and when the recipe is read and has no such step, so a screen that waits for the rows stops
+   * waiting when they are never coming.
    */
   rowsPending: boolean;
   /** What the last carry-over of the open step did, or null when there is none, it was taken back, or no step is open. */
@@ -60,7 +62,7 @@ export function useStepWorkspace(
   stepId: string | undefined,
   current: StripItem | undefined,
 ): StepWorkspace {
-  const { bookId, stage, recipe, catalogue } = processing;
+  const { bookId, stage, recipe, catalogue, ready } = processing;
   // A stage that has no bar reads no row of any step
   const steps = useMemo(
     () => (hasStepBar(stage) ? barStepsOf(recipe, catalogue) : []),
@@ -118,7 +120,8 @@ export function useStepWorkspace(
     states,
     page: rowOfPage?.step ?? null,
     rows: open === null ? null : (rows.data ?? null),
-    rowsPending: open !== null && rows.isPending,
+    // An address may name a step before the recipe that holds it is read, and the step is then not open yet
+    rowsPending: open === null ? stepId !== undefined && !ready : rows.isPending,
     carried: carryKey === null ? null : (carriedResults.get(carryKey) ?? null),
     setCarried,
   };

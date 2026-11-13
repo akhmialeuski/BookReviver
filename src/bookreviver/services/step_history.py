@@ -1,18 +1,22 @@
 """A step on a page inside one transaction: its history, the undo of its changes, and the clear of the step.
 
 ``StepOnPage`` is opened by ``PageHistoryService`` in the work it hands to ``Book.read`` or ``Book.change``. It holds
-the repositories of that transaction, the page, the stage and the step, and reads the history and the recipes of the
-step. ``StepUndo`` and ``StepClear`` belong to it and reach the transaction through it, so neither is handed the
-repositories or the key from call to call.
+the repositories of that transaction, the page, the stage and the step, and the replacer of the types of the steps, and
+reads the history and the recipes of the step. ``StepUndo`` and ``StepClear`` belong to it and reach the transaction
+through it, so neither is handed the repositories or the key from call to call.
 
 An undo writes the content a change replaced back into the layer, as a new change whose source is an undo and which
 names the change it takes back, so the history only grows and shows what the undo did. Taking a change back needs the
 layer to hold what the change left in it, since writing ``before`` over a layer that has changed since would lose the
 later change. A change of a batch is taken back with the rest of its batch, on every page the batch reached, and the
-undos of one batch share a batch of their own, so the undo of a batch is one action as well.
+undos of one batch share a batch of their own, so the undo of a batch is one action as well. The undo of a replacement
+of the type of a step gives the step its earlier type back, which the step must still have the later type for, and with
+it what the pages kept for the earlier type. The layers of the later type are taken back first, under that type.
 
 A clear is the one way a history shrinks: it takes the settings and the edit of a step away from one page, deletes that
-step's history on that page, and deletes the results of the step on the page with every result that read them.
+step's history on that page, and deletes the results of the step on the page with every result that read them. The
+settings, the edit and the history are those of the active type of the step, with the changes of its type: what the
+page keeps for an earlier type stays, and comes back with that type.
 """
 
 from datetime import UTC, datetime
@@ -24,18 +28,19 @@ from attrs import evolve
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.history import ChangeSource, ClearedStep, PageHistoryEntry, StepHistory
 from bookreviver.domain.ids import ChangeBatchId
-from bookreviver.domain.page_steps import PageStepState
+from bookreviver.domain.page_steps import PageStepState, StepLayer
 from bookreviver.domain.step_values import StepValues, StepValuesKey, ValueScope
 from bookreviver.domain.version_chains import StepVersions, step_places
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
+    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId, StepId
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.domain.recipes import Recipe
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.stage_records import StageRecords
+    from bookreviver.services.step_types import StepTypes
 
 CHANGED_SINCE: str = 'The layer {layer} of a step changed after this change, so it cannot be taken back on its own.'
 
@@ -43,22 +48,24 @@ CHANGED_SINCE: str = 'The layer {layer} of a step changed after this change, so 
 class StepOnPage:
     """One step on one page inside one transaction.
 
+    :ivar types: The replacer of the types of the steps, which the undo of a replacement asks.
     :ivar records: Writer of the stage records, which an undo and a clear mark stale.
     :ivar repos: Repositories of the transaction.
     :ivar key: The page, the stage and the step.
     """
 
-    def __init__(self, records: StageRecords, repos: BookRepositories, key: PageStepKey) -> None:
+    def __init__(self, types: StepTypes, repos: BookRepositories, key: PageStepKey) -> None:
         """Open a step on a page for the work of one transaction.
 
-        :param records: Writer of the stage records.
-        :type records: StageRecords
+        :param types: The replacer of the types of the steps, through which the writer of the stage records is reached.
+        :type types: StepTypes
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         """
-        self.records = records
+        self.types = types
+        self.records: StageRecords = types.records
         self.repos = repos
         self.key = key
 
@@ -140,16 +147,20 @@ class StepUndo:
         self.batch = ChangeBatchId(uuid4()) if len(self.targets) > 1 else None
 
     def write(self) -> Sequence[PageHistoryEntry]:
-        """Write the undos, put the layers and the values back, and mark the stages of the pages stale.
+        """Write the undos, put the layers, the values and the types back, and mark the stages of the pages stale.
+
+        The undos of the layers are written while the step has the type they were made under, and the types are put
+        back after them.
 
         :returns: The undos that were written.
         :rtype: Sequence[PageHistoryEntry]
-        :raises ConflictError: If a layer changed after the change that is taken back.
+        :raises ConflictError: If a layer or the type of the step changed after the change that is taken back.
         """
         if not self.targets:
             return ()
         repos = self.step.repos
-        added = repos.page_history.add_many([*self._pages_back(), *self._parts_back()])
+        layers = repos.page_history.add_many([*self._pages_back(), *self._parts_back()])
+        added = [*layers, *repos.page_history.add_many(self._types_back())]
         for page_id, stage in dict.fromkeys((change.page_id, change.stage) for change in added):
             self.step.records.mark_stale(repos, page_id, stage)
         return added
@@ -165,7 +176,8 @@ class StepUndo:
         stored: dict[PageStepKey, PageStepState | None] = {}
         working: dict[PageStepKey, PageStepState] = {}
         written: list[PageHistoryEntry] = []
-        for target in (target for target in self.targets if target.scope is ValueScope.PAGES):
+        # A change of the type of the step is kept by every page it reached, and the type is put back once for all
+        for target in (target for target in self.targets if self._of_one_page(target)):
             if target.key not in working:
                 stored[target.key] = repos.page_step_states.find(target.key)
                 working[target.key] = stored[target.key] or PageStepState(
@@ -241,6 +253,43 @@ class StepUndo:
                 if page.recipe_kind in kinds and holder.covers(group_label=page.group_label, position=place)
             ]
             self.step.records.mark_pages_stale(repos, covered, {stage})
+        return undone
+
+    @staticmethod
+    def _of_one_page(change: PageHistoryEntry) -> bool:
+        """Tell whether a change is of a layer that a page keeps for itself, which its own state puts back.
+
+        :param change: A change that is taken back.
+        :type change: PageHistoryEntry
+        :returns: Whether it is a change of the settings or the edit of one page, and not of a part or of the type.
+        :rtype: bool
+        """
+        return change.scope is ValueScope.PAGES and change.layer is not StepLayer.TYPE
+
+    def _types_back(self) -> Sequence[PageHistoryEntry]:
+        """Give the step back the types the targets replaced, from the newest replacement to the oldest.
+
+        A replacement is one change, which the history of every page it reached names under its one identifier, so the
+        type is put back once for each replacement, and the replacement is taken back in the history of each page.
+
+        :returns: The undos of the replacements of the type.
+        :rtype: Sequence[PageHistoryEntry]
+        :raises ConflictError: If the step has another type than the one a replacement gave it.
+        """
+        changes = [target for target in self.targets if target.layer is StepLayer.TYPE]
+        replacements = {change.id: change for change in changes}.values()
+        for change in sorted(replacements, key=lambda change: change.created_at, reverse=True):
+            before, after = change.types
+            retyping = self.step.types.open(self.step.repos, change.stage, change.step_id)
+            if retyping.type_key != after:
+                raise ConflictError(CHANGED_SINCE.format(layer=change.layer.label))
+            retyping.restore(before)
+        # The undo of a change is one change too, so the undos of its pages share one identifier
+        undos: dict[PageHistoryEntryId, PageHistoryEntryId] = {}
+        undone: list[PageHistoryEntry] = []
+        for change in changes:
+            undo = change.taken_back(self.moment, self.batch)
+            undone.append(evolve(undo, id=undos.setdefault(change.id, undo.id)))
         return undone
 
     @staticmethod
@@ -351,15 +400,15 @@ class StepClear:
                 continue
             if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
                 untiled.append(head)
-            through_step = self._through_step(recipes, record.recipe_id, chain.depths[head])
+            through_step_id = self._through_step(recipes, record.recipe_id, chain.depths[head])
             records.set_head(
-                repos, record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step
+                repos, record.key, head_version_id=head, recipe_id=record.recipe_id, through_step_id=through_step_id
             )
         return untiled
 
     @staticmethod
-    def _through_step(recipes: Sequence[Recipe], recipe_id: RecipeId | None, place: int) -> int | None:
-        """Return the index of the step a page was run through when its new current version is the result at this depth.
+    def _through_step(recipes: Sequence[Recipe], recipe_id: RecipeId | None, place: int) -> StepId | None:
+        """Return the step a page was run through when its new current version is the result at this depth.
 
         The new head is the result of the step at its depth in the recipe the page was run by, and the page was run
         through that step only, which is before the last step that is on.
@@ -370,10 +419,9 @@ class StepClear:
         :type recipe_id: RecipeId | None
         :param place: The depth of the new current version among the steps that are on.
         :type place: int
-        :returns: The index of the step the run stopped at, or None when the version is the result of the last step
-                  that is on.
-        :rtype: int | None
+        :returns: The step the run stopped at, or None when the version is the result of the last step that is on.
+        :rtype: StepId | None
         """
         recipe = next((recipe for recipe in recipes if recipe.id == recipe_id), None)
         enabled = () if recipe is None else recipe.indexed_steps_through(None)
-        return None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
+        return None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][1].step_id)

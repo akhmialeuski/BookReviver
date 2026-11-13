@@ -40,6 +40,8 @@ FAILED_BLOCK: str = 'The block failed after it wrote a page.'
 # Every duration a change that committed records
 TIMINGS: tuple[SpanAttribute, ...] = (SpanAttribute.WAIT_MS, SpanAttribute.HOLD_MS, SpanAttribute.COMMIT_MS)
 REFUSER_ARG: str = 'refuser'
+# The order keys of the three pages the test of the statement count adds
+ORDER_KEYS: tuple[str, str, str] = ('a0', 'a1', 'a2')
 # How many times the limit of a change its work lasts in the test that shows the limit never cuts the work
 WORK_FACTOR: int = 3
 
@@ -92,6 +94,49 @@ class TestWriteBlockSpan:
         expect(span.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
         for key in TIMINGS:
             expect(milliseconds(span, key) >= 0, f'{key} is negative')
+        assert_expectations()
+
+    async def test_block_counts_the_statements_of_its_work_and_their_time_in_sqlite(
+        self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
+    ) -> None:
+        """Verify the span of a change carries how many statements its work ran and the time they took.
+
+        A change that adds two pages runs more statements than one that adds one, and the time of the statements is
+        part of the time the block held the transaction and committed.
+
+        :param fx_traced_databases: Function opening the databases of the traced books.
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
+        :param fx_book: Committed book of the database.
+        :type fx_book: BookId
+        :param fx_tracer: Tracer of the test.
+        :type fx_tracer: AskingTracer
+        """
+        book = fx_traced_databases().open(fx_book)
+        one, first, second = (make_page(order_key=key) for key in ORDER_KEYS)
+
+        def add_two(repos: BookRepositories, _book_record: BookRecord) -> None:
+            """Add two pages and read one back, so the block runs statements of its own beside the flush.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: The record of the book, which the work does not read.
+            :type _book_record: BookRecord
+            """
+            repos.pages.add(first)
+            repos.pages.add(second)
+            repos.pages.get(first.id)
+
+        await book.change(lambda repos, _book_record: repos.pages.add(one))
+        await book.change(add_two)
+        small, large = fx_tracer.named(SpanName.WRITE_BLOCK)
+        fewer, more = small.attributes[SpanAttribute.SQL_COUNT], large.attributes[SpanAttribute.SQL_COUNT]
+        assert isinstance(fewer, int)
+        assert isinstance(more, int)
+        expect(fewer > 0, 'The block of one page counted no statement.')
+        expect(more > fewer, f'Two pages and a read ran {more} statements, one page {fewer}.')
+        spent = milliseconds(large, SpanAttribute.SQL_MS)
+        total = milliseconds(large, SpanAttribute.HOLD_MS) + milliseconds(large, SpanAttribute.COMMIT_MS)
+        expect(0 < spent <= total, f'The statements took {spent} ms of a block of {total} ms.')
         assert_expectations()
 
     async def test_block_is_a_child_of_the_span_current_at_its_caller(

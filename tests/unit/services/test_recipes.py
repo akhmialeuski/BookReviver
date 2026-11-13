@@ -28,7 +28,7 @@ class TestLeavesToBook:
             make_recipe(), steps=(Step(processor_key=FakeProcessor.spec.key), Step(processor_key=BOOK_SIZED_KEY))
         )
         expect(recipes.leaves_to_book(recipe))
-        expect(not recipes.leaves_to_book(recipe, through_step=0))
+        expect(not recipes.leaves_to_book(recipe, through_step_id=recipe.steps[0].step_id))
         assert_expectations()
 
 

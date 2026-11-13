@@ -8,11 +8,12 @@ import {
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
-import { profileChanges } from '@/features/profiles/changes';
+import { draftFromProfile, profileChanges } from '@/features/profiles/changes';
 
 /**
  * How the steps on the screen differ from the steps of the profile: steps are matched by the identifier the server gave
- * them, a step the draft added counts as added, and a change of the order is reported once.
+ * them or by the step of the profile they were made from, a step the draft added counts as added, and a change of the
+ * order is reported once.
  */
 
 const CATALOGUE = [deskew(), processor('geometry.crop', { title: 'Select content' })];
@@ -88,11 +89,45 @@ describe('profileChanges', () => {
     expect(profileChanges(PROFILE, moved, CATALOGUE)).toEqual([{ kind: 'order' }]);
   });
 
+  it('matches the steps a profile made in the book by the step of the profile each was made from', () => {
+    const madeFrom = (index: number) => {
+      const saved = PROFILE[index] ?? step('geometry.deskew');
+      return { ...saved, step_id: `made-${index}`, origin_step_id: saved.step_id };
+    };
+
+    expect(profileChanges(PROFILE, draftOf({ steps: [0, 1, 2].map(madeFrom) }), CATALOGUE)).toEqual(
+      [],
+    );
+    expect(profileChanges(PROFILE, draftOf({ steps: [2, 0, 1].map(madeFrom) }), CATALOGUE)).toEqual(
+      [{ kind: 'order' }],
+    );
+  });
+
   it('does not count a step that was added or taken out as a change of the order', () => {
     const shorter = removeStep(draftOf({ steps: PROFILE }), 'step-0');
 
     expect(profileChanges(PROFILE, shorter, CATALOGUE)).toEqual([
       { kind: 'removed', title: 'Deskew' },
     ]);
+  });
+});
+
+describe('draftFromProfile', () => {
+  it('keeps the saved step made from each step of the profile, and adds a new step for one the recipe lacks', () => {
+    const [deskewStep, cropStep] = PROFILE.map((saved, index) => ({
+      ...saved,
+      step_id: `made-${index}`,
+      origin_step_id: saved.step_id,
+      enabled: false,
+    }));
+    const saved = [cropStep, deskewStep].flatMap((held) => (held === undefined ? [] : [held]));
+    const draft = draftFromProfile(PROFILE, saved);
+
+    expect(draft.map((step) => [step.stepId, step.originStepId, step.enabled])).toEqual([
+      ['made-0', PROFILE[0]?.step_id, true],
+      ['made-1', PROFILE[1]?.step_id, true],
+      [null, PROFILE[2]?.step_id, true],
+    ]);
+    expect(profileChanges(PROFILE, draft, CATALOGUE)).toEqual([]);
   });
 });

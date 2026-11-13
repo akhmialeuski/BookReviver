@@ -48,8 +48,8 @@ export interface KindView {
 
 /** A step the strip can be narrowed to, with the pages a run of the stage stopped at it. */
 export interface StopOption {
-  /** Index of the step in the recipe, from zero. */
-  step: number;
+  /** The identifier of the step. */
+  step: string;
   pages: number;
 }
 
@@ -59,11 +59,11 @@ export interface StopOption {
  */
 export interface StopView {
   options: readonly StopOption[];
-  /** The title of the step at an index of the recipe, which names the step in the choice. */
-  titleOf: (step: number) => string;
+  /** The title of the step with an identifier, which names the step in the choice. */
+  titleOf: (step: string) => string;
   /** The step whose pages are listed, or null for every page. */
-  selected: number | null;
-  onSelect: (step: number | null) => void;
+  selected: string | null;
+  onSelect: (step: string | null) => void;
 }
 
 /**
@@ -201,27 +201,38 @@ export function applyKind(
 }
 
 /** Tell whether the result of a page was made through some of the steps of its recipe only. */
-function stoppedAt(item: StripItem): number | null {
+function stoppedAt(item: StripItem): string | null {
   const { row } = item;
-  return row === undefined || row.status === 'failed' ? null : row.through_step;
+  return row === undefined || row.status === 'failed' ? null : row.through_step_id;
 }
 
-/** List the steps a run stopped at with the pages of each, the first step first. */
-export function stopOptions(items: readonly StripItem[]): StopOption[] {
-  const counts = new Map<number, number>();
+/**
+ * List the steps a run stopped at with the pages of each, in the order of the steps of the recipe, the first step first.
+ *
+ * @param items The pages of the strip.
+ * @param order The identifiers of the steps of the recipe shown, in their order; a step it does not hold comes last.
+ */
+export function stopOptions(items: readonly StripItem[], order: readonly string[]): StopOption[] {
+  const counts = new Map<string, number>();
   for (const item of items) {
     const step = stoppedAt(item);
     if (step !== null) {
       counts.set(step, (counts.get(step) ?? 0) + 1);
     }
   }
-  return [...counts].map(([step, pages]) => ({ step, pages })).sort((a, b) => a.step - b.step);
+  const placeOf = (step: string): number => {
+    const place = order.indexOf(step);
+    return place < 0 ? order.length : place;
+  };
+  return [...counts]
+    .map(([step, pages]) => ({ step, pages }))
+    .sort((a, b) => placeOf(a.step) - placeOf(b.step) || a.step.localeCompare(b.step));
 }
 
 /** Keep the pages a run stopped at a step, or every page for no step. */
 export function applyStopped(
   items: readonly StripItem[],
-  step: number | null,
+  step: string | null,
 ): readonly StripItem[] {
   return step === null ? items : items.filter((item) => stoppedAt(item) === step);
 }

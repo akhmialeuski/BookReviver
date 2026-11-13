@@ -176,14 +176,16 @@ describe('StepList', () => {
     function renderRunnable(steps = STEPS): void {
       act(() =>
         root.render(
-          <StepList
-            processing={processing({
-              steps,
-              catalogue: [deskew(), whole()],
-              ...handlers,
-            })}
-            progress={progress}
-          />,
+          <QueryClientProvider client={new QueryClient()}>
+            <StepList
+              processing={processing({
+                steps,
+                catalogue: [deskew(), whole()],
+                ...handlers,
+              })}
+              progress={progress}
+            />
+          </QueryClientProvider>,
         ),
       );
     }

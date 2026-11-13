@@ -71,6 +71,14 @@ describe('describeContent', () => {
     expect(describeContent('hand', null, titleOf)).toBeNull();
   });
 
+  it('words a change of the type of the step by the title of the processor', () => {
+    const typeOf = (key: string): string => `Processor ${key}`;
+
+    expect(describeContent('type', { processor_key: 'geometry.crop' }, titleOf, typeOf)).toBe(
+      'Processor geometry.crop',
+    );
+  });
+
   describe('of a manual edit', () => {
     /** A snapshot of the hand layer as the server writes it. */
     function hand(kind: string, geometry: unknown): Record<string, unknown> {

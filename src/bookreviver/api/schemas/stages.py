@@ -38,11 +38,11 @@ class KindRecipeSchema(ResponseModel):
 class StepPagesSchema(ResponseModel):
     """How many pages of a stage a run stopped at one step.
 
-    :ivar through_step: Index in the recipe of the last step the pages were run through, from zero.
+    :ivar through_step_id: The last step the pages were run through.
     :ivar pages: Pages with an image, not failed, that stopped at the step.
     """
 
-    through_step: int
+    through_step_id: StepId
     pages: int
 
 
@@ -134,8 +134,8 @@ class StagePageSchema(ResponseModel):
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
     :ivar version: The current version of the stage on the page with its data and images, or None.
-    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
-                        that is on, so the page is not ready for the next stage, or None.
+    :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+                           is on, so the page is not ready for the next stage, or None.
     :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
     :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
     :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
@@ -155,7 +155,7 @@ class StagePageSchema(ResponseModel):
     recipe_id: RecipeId | None
     kind: RecipeKind
     version: PageVersionSchema | None
-    through_step: int | None
+    through_step_id: StepId | None
     review_processor: str | None
     step: StepPageSchema | None
     marked_bad: bool
@@ -182,7 +182,7 @@ class StagePageSchema(ResponseModel):
             recipe_id=row.recipe_id,
             kind=row.kind,
             version=version,
-            through_step=row.through_step,
+            through_step_id=row.through_step_id,
             review_processor=row.review_processor,
             step=None if row.step is None else StepPageSchema.of(row.step, book_id, request),
             marked_bad=row.marked_bad,

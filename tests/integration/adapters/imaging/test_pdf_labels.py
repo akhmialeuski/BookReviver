@@ -42,7 +42,7 @@ BOOK_PAGES: int = 5
 HAND_WRITTEN: str = '12a'
 
 
-def _entry(start: int, style: str = '', prefix: str = '', first: int = 1) -> dict[str, Any]:
+def _label_rule(start: int, style: str = '', prefix: str = '', first: int = 1) -> dict[str, Any]:
     """Build a dictionary as ``Document.get_page_labels`` returns it.
 
     :param start: Page the rule starts at.
@@ -85,12 +85,12 @@ class TestReadLabelRules:
     def test_the_style_letters_become_the_styles_of_the_domain(self) -> None:
         """Verify each letter of PDF 32000 reads as its style, and an unknown letter reads as a prefix alone."""
         entries = [
-            _entry(0, 'D'),
-            _entry(1, 'R'),
-            _entry(2, 'r'),
-            _entry(3, 'A'),
-            _entry(4, 'a'),
-            _entry(5, 'X', prefix='x'),
+            _label_rule(0, 'D'),
+            _label_rule(1, 'R'),
+            _label_rule(2, 'r'),
+            _label_rule(3, 'A'),
+            _label_rule(4, 'a'),
+            _label_rule(5, 'X', prefix='x'),
         ]
 
         rules = read_label_rules(entries, page_count=6)
@@ -106,7 +106,7 @@ class TestReadLabelRules:
 
     def test_rules_come_in_page_order_and_a_rule_past_the_last_page_is_dropped(self) -> None:
         """Verify the rules are sorted by their start and one that starts after the last page is left out."""
-        rules = read_label_rules([_entry(2, 'D'), _entry(0, 'r'), _entry(9, 'D')], page_count=4)
+        rules = read_label_rules([_label_rule(2, 'D'), _label_rule(0, 'r'), _label_rule(9, 'D')], page_count=4)
 
         assert [(rule.first_index, rule.style) for rule in rules] == [
             (0, LabelStyle.ROMAN_LOWER),
@@ -115,7 +115,7 @@ class TestReadLabelRules:
 
     def test_the_prefix_and_the_first_number_are_kept(self) -> None:
         """Verify a rule keeps its prefix and the number of its first page."""
-        [rule] = read_label_rules([_entry(0, 'D', prefix='A-', first=7)], page_count=2)
+        [rule] = read_label_rules([_label_rule(0, 'D', prefix='A-', first=7)], page_count=2)
 
         expect(rule == PageLabelRule(first_index=0, style=LabelStyle.ARABIC, prefix='A-', start=7))
         assert_expectations()
@@ -133,7 +133,7 @@ class TestReadLabelRules:
         :param text: The text of the prefix.
         :type text: str
         """
-        [rule] = read_label_rules([_entry(0, 'D', prefix=shown)], page_count=1)
+        [rule] = read_label_rules([_label_rule(0, 'D', prefix=shown)], page_count=1)
 
         assert rule.prefix == text
 
@@ -175,9 +175,9 @@ class TestPdfLabelEntries:
         ]
 
         assert pdf_label_entries(rules) == [
-            _entry(0, 'r'),
-            _entry(3, 'D', prefix='\\050x\\051', first=4),
-            _entry(4, '', prefix=HAND_WRITTEN),
+            _label_rule(0, 'r'),
+            _label_rule(3, 'D', prefix='\\050x\\051', first=4),
+            _label_rule(4, '', prefix=HAND_WRITTEN),
         ]
 
 

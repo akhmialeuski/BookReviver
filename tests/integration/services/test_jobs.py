@@ -7,7 +7,6 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.accounts import Actor
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.jobs import JobKind, JobState
@@ -23,17 +22,17 @@ from tests.harness.builders.domain import (
     new_book_id,
 )
 from tests.harness.builders.seeding import commit_record
-from tests.harness.fakes.jobs import JobFakes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.core.book import Book
+    from bookreviver.domain.accounts import Actor
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.harness.adapters.storage import SharedBookDirectories
     from tests.harness.builders.domain import BookOpener
-    from tests.harness.fakes.jobs import RecordingEventBus
+    from tests.harness.fakes.jobs import JobFakes
 
 # The tests open books of the library with the databases of the test, whether or not they store any
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures('fx_databases')]
@@ -45,18 +44,6 @@ UNKNOWN_JOB: JobId = JobId(new_account_id())
 
 
 @pytest.fixture
-def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
-    """Build the adapters the job service runs on.
-
-    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
-    :type fx_book_parts: RecordingEventBus
-    :returns: Fakes with a board with no job and nothing published.
-    :rtype: JobFakes
-    """
-    return JobFakes(events=fx_book_parts)
-
-
-@pytest.fixture
 def fx_job_service() -> JobService:
     """Build the job service of a request, whose books open the board and the event bus a test registered.
 
@@ -64,16 +51,6 @@ def fx_job_service() -> JobService:
     :rtype: JobService
     """
     return JobService()
-
-
-@pytest.fixture
-def fx_owner() -> Actor:
-    """Build the account that owns the book.
-
-    :returns: Actor with a fresh account identifier.
-    :rtype: Actor
-    """
-    return Actor(account_id=new_account_id())
 
 
 @pytest.fixture
@@ -100,20 +77,6 @@ async def fx_book(
         fx_database, fx_catalogue(), make_record(), owner=fx_owner.account_id, databases=fx_databases()
     )
     return book_id
-
-
-@pytest.fixture
-def fx_open_own_book(fx_owner: Actor, fx_open_book: BookOpener) -> Callable[[BookId], Book]:
-    """Return a function opening a book of the acting account with its database.
-
-    :param fx_owner: Account the books belong to.
-    :type fx_owner: Actor
-    :param fx_open_book: Opens the books of the test with their databases.
-    :type fx_open_book: BookOpener
-    :returns: Function taking the identifier of the book.
-    :rtype: Callable[[BookId], Book]
-    """
-    return lambda book_id: fx_open_book(fx_owner, book_id)
 
 
 class TestGet:

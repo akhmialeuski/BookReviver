@@ -56,16 +56,16 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageEdit, PageStepState
     from bookreviver.domain.recipes import Recipe
+    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import StepOutput
     from bookreviver.services.stage_records import StageRecords
-    from bookreviver.services.stage_runs import StageRuntime
-    from bookreviver.services.step_work import StepSource
+    from bookreviver.services.stage_work import StageWork
+    from bookreviver.services.step_source import StepSource
 
 UNSPLIT_NOT_CONFIRMED: str = (
     'Undoing the split deletes page {page_id}, the right half of the spread, with its versions. Confirm it to go on.'
@@ -140,35 +140,30 @@ class Unsplit:
 class SpreadSplit:
     """Applies a step that splits a scan to the page of the scan, and undoes the split.
 
-    It is the splitting of one job on one book. The split of one page is a ``PageSplit``, which belongs to it and
-    reaches the book, the runner and the records through it, and what the step made of the page is a ``MadeSplit``.
+    It is the splitting of one job on one book, and belongs to the ``StageWork`` of the job, through which it reaches
+    the book, its record and the engine that runs the step. The split of one page is a ``PageSplit``, which belongs to
+    it and reaches the book, the runner and the records through it, and what the step made of the page is a
+    ``MadeSplit``.
 
-    :ivar book: The open book, whose ``Book.change`` stores a split once it is complete.
-    :ivar book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
-    :ivar runner: Runner of the step that splits, and writer of its files.
-    :ivar processors: The processors the application can run.
+    :ivar work: The work of the job, whose book stores a split once it is complete in a ``Book.change``, whose record
+                chooses the format of a version's ``full``, and whose engine runs the step that splits.
     :ivar order_keys: Builder of the order key of a new right half.
     :ivar records: Writer of the stage records.
     :ivar labels: Keeper of the labels the pagination sections give the pages.
     """
 
-    def __init__(self, *, book: Book, book_record: BookRecord, runtime: StageRuntime, records: StageRecords) -> None:
-        """Work over the ports of one job.
+    def __init__(self, work: StageWork, *, order_keys: OrderKeys, records: StageRecords) -> None:
+        """Split the pages of a job.
 
-        :param book: The open book, whose ``Book.change`` stores a split once it is complete.
-        :type book: Book
-        :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
-        :type book_record: BookRecord
-        :param runtime: The runner, the processors and the order keys.
-        :type runtime: StageRuntime
+        :param work: The work of the job the splitting belongs to.
+        :type work: StageWork
+        :param order_keys: Builder of the order key of a new right half.
+        :type order_keys: OrderKeys
         :param records: Writer of the stage records.
         :type records: StageRecords
         """
-        self.book = book
-        self.book_record = book_record
-        self.runner = runtime.runner
-        self.processors = runtime.processors
-        self.order_keys = runtime.order_keys
+        self.work = work
+        self.order_keys = order_keys
         self.records = records
         self.labels = PageLabels()
 
@@ -184,7 +179,7 @@ class SpreadSplit:
         steps = recipe.enabled_steps
         if recipe.stage is not Stage.PAGE_SPLIT or not steps:
             return False
-        return self.processors.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
+        return self.work.engine.processors.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
 
     async def split(self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool = False) -> RunOutcome:
         """Split the scan of a page into two pages, and make the base version of each half the current one.
@@ -267,7 +262,7 @@ class SpreadSplit:
         :type undoing: Unsplit
         """
         for right in undoing.rights:
-            await self.runner.discard(self.book, BookKeys.page(right.id))
+            await self.work.engine.runner.discard(self.work.book, BookKeys.page(right.id))
 
     def halves(self, repos: BookRepositories, page: Page, right_id: PageId | None = None) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
@@ -335,7 +330,7 @@ class PageSplit:
         self.recipe = recipe
         self.confirmed = confirmed
         self.step = recipe.enabled_steps[0]
-        self.processor = spread.processors.get(self.step.processor_key)
+        self.processor = spread.work.engine.processors.get(self.step.processor_key)
 
     async def run(self, source: StepSource) -> RunOutcome:
         """Run the step on the scan, and store the pages and the versions it made.
@@ -349,7 +344,7 @@ class PageSplit:
         :raises ConflictError: If the page has no scan.
         """
         spread, page = self.spread, self.page
-        basis = await spread.book.read(self._basis)
+        basis = await spread.work.book.read(self._basis)
         run = StepRun(
             processor_key=self.step.processor_key,
             params=basis.params,
@@ -361,7 +356,7 @@ class PageSplit:
             made = await self._cached(basis.stored)
             if made is None:
                 made = await self._make(basis.templates, run)
-            undoing = await spread.book.read(self._undoing) if len(made) == 1 else None
+            undoing = await spread.work.book.read(self._undoing) if len(made) == 1 else None
         except DomainError as error:
             await self._fail(basis.templates[0], str(error))
             return RunOutcome.FAILED
@@ -462,10 +457,10 @@ class PageSplit:
         wanted = [version for version in stored[:count] if version is not None]
         if len(wanted) != count or any(version.state is not VersionState.READY for version in wanted):
             return None
-        spread = self.spread
+        work = self.spread.work
         # A half an earlier run made may never have had its pyramid cut
         return [
-            version if version.tiles_ready else await spread.runner.cut_tiles(spread.book, version)
+            version if version.tiles_ready else await work.engine.runner.cut_tiles(work.book, version)
             for version in wanted
         ]
 
@@ -481,14 +476,14 @@ class PageSplit:
         :raises ConflictError: If the step makes neither one output nor two.
         :raises DomainError: If the step cannot run on this input.
         """
-        spread = self.spread
-        async with spread.runner.execute(spread.book, run) as result:
+        work = self.spread.work
+        async with work.engine.runner.execute(work.book, run) as result:
             outputs: list[StepOutput] = list(result.outputs)
             if not 0 < len(outputs) <= len(templates):
                 raise ConflictError(WRONG_HALVES.format(key=run.processor_key, count=len(outputs)))
             return [
-                await spread.runner.store(
-                    spread.book, template, output, policy=spread.book_record.image_policy, tiles=True
+                await work.engine.runner.store(
+                    work.book, template, output, policy=work.book_record.image_policy, tiles=True
                 )
                 for template, output in zip(templates, outputs, strict=False)
             ]
@@ -526,7 +521,7 @@ class PageSplit:
 
         # A page that was deleted meanwhile has no version to tell the reason on, and the run reports it as skipped
         with suppress(NotFoundError):
-            await self.spread.book.change(work)
+            await self.spread.work.book.change(work)
 
 
 class MadeSplit:
@@ -581,12 +576,12 @@ class MadeSplit:
         :returns: Whether the split was stored, which it is not when what the split went by changed.
         :rtype: bool
         """
-        spread = self.split.spread
+        work = self.split.spread.work
         async with AsyncExitStack() as cleanup:
             # What the step wrote belongs to no stored version unless the change commits
             for version in self.fresh:
-                cleanup.push_async_callback(spread.runner.discard, spread.book, BookKeys.version_directory(version))
-            stored = await spread.book.change(self._work)
+                cleanup.push_async_callback(work.engine.runner.discard, work.book, BookKeys.version_directory(version))
+            stored = await work.book.change(self._work)
             if stored:
                 cleanup.pop_all()
         return stored
@@ -594,7 +589,7 @@ class MadeSplit:
     async def announce(self) -> None:
         """Announce the versions the split made ready, which a preview waits for, after the transaction."""
         for version in self.fresh:
-            await self.split.spread.book.events.publish(PageVersionReady(version=version))
+            await self.split.spread.work.book.events.publish(PageVersionReady(version=version))
 
     def _work(self, repos: BookRepositories, _book_record: BookRecord) -> bool:
         """Store the split, unless the page is gone or what the split went by changed.

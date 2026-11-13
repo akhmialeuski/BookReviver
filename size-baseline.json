@@ -1,9 +1,4 @@
 {
-  "size": {
-    "src/bookreviver/adapters/persistence/sqlalchemy/mappers.py": 575,
-    "src/bookreviver/adapters/persistence/sqlalchemy/repositories.py": 770,
-    "src/bookreviver/services/imports.py::ImportRun._import_source": 84,
-    "src/bookreviver/services/pagination.py::PaginationService._plan": 63
-  },
+  "size": {},
   "version": 1
 }

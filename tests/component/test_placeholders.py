@@ -15,13 +15,21 @@ from fastapi import status
 from PIL import Image
 
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.images import Rendition, Renditions
-from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.images import Renditions
 from bookreviver.domain.pages import PageKind, PageOrigin
-from bookreviver.domain.versions import VersionState
-from tests.harness.builders.domain import EPOCH, make_page, make_record, make_scan, make_source, new_account_id
-from tests.harness.builders.page_services import make_base_versions
-from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.builders.domain import make_record, make_scan, make_source, new_account_id
+from tests.harness.builders.seeding import (
+    BaseVersion,
+    BookLayout,
+    PageLayout,
+    ScanLayout,
+    SourceLayout,
+    commit_record,
+    seed_book,
+    store_book,
+)
+from tests.harness.http.pages import read_page
+from tests.harness.images.documents import gray_jpeg
 
 if TYPE_CHECKING:
     import httpx
@@ -70,17 +78,6 @@ class Book(NamedTuple):
         return f'{self.pages_path}/batch'
 
 
-def _jpeg() -> bytes:
-    """Encode a small gray page as a JPEG.
-
-    :returns: The bytes of the JPEG.
-    :rtype: bytes
-    """
-    buffer = io.BytesIO()
-    Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
-    return buffer.getvalue()
-
-
 @pytest.fixture
 async def fx_book(
     fx_catalogue: CatalogueDatabaseFactory,
@@ -101,49 +98,26 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    first, second = make_source(name='a.pdf'), make_source(name='b.jpg')
-    scans = [
-        evolve(
-            make_scan(source=source, number=0),
-            renditions=Renditions(ready=True),
-            source_label=label,
-            facts=evolve(make_scan(source=source, number=0).facts, width_px=SCAN_SIZE_PX[0], height_px=SCAN_SIZE_PX[1]),
+    image = gray_jpeg(SCAN_SIZE_PX)
+    sources = tuple(
+        SourceLayout.of(
+            1, name=name, scan=ScanLayout(size=(*SCAN_SIZE_PX, None), ready=True, source_label=label, image=image)
         )
-        for source, label in ((first, ''), (second, 'xii'))
-    ]
-    shown = make_page(order_key='a0', scan=scans[0])
-    placeholder = evolve(make_page(order_key='a1'), kind=PageKind.COVER, notes='Missing')
-    base = make_base_versions().split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
-    book_id = await store_book(
-        fx_catalogue(),
-        make_record(),
-        shown,
-        placeholder,
-        owner=fx_actor.account_id,
-        sources=[first, second],
-        scans=scans,
-        versions=[base],
-        databases=fx_databases(),
+        for name, label in (('a.pdf', ''), ('b.jpg', 'xii'))
     )
-    for scan in scans:
-        async with fx_directories.assets(book_id).writable(BookKeys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
-            path.write_bytes(_jpeg())
-    return Book(book_id=book_id, shown=shown, placeholder=placeholder, spare=scans[1])
-
-
-async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageSchema:
-    """Read one page of the book.
-
-    :param client: Client of the running application.
-    :type client: httpx.AsyncClient
-    :param book: Book of the signed-in account.
-    :type book: Book
-    :param page_id: Identifier of the page.
-    :type page_id: object
-    :returns: The page.
-    :rtype: PageSchema
-    """
-    return PageSchema.model_validate_json((await client.get(f'{book.pages_path}/{page_id}')).content)
+    pages = (
+        PageLayout(scan=(0, 0), order_key='a0', version=BaseVersion.CUT),
+        PageLayout(order_key='a1', kind=PageKind.COVER, notes='Missing'),
+    )
+    book = await seed_book(
+        fx_catalogue(),
+        BookLayout(sources=sources, pages=pages),
+        owner=fx_actor.account_id,
+        databases=fx_databases(),
+        files=fx_directories,
+    )
+    shown, placeholder = book.pages
+    return Book(book_id=book.book_id, shown=shown, placeholder=placeholder, spare=book.scans[1])
 
 
 class TestCreatePage:
@@ -198,7 +172,7 @@ class TestCreatePage:
         await fx_idle(fx_book.book_id)
 
         created = PageSchema.model_validate_json(response.content)
-        leaf = await _page(fx_client, fx_book, created.id)
+        leaf = await read_page(fx_client, fx_book.book_id, created.id)
         assert leaf.images is not None
         thumbnail = await fx_client.get(leaf.images.thumbnail)
         full = await fx_client.get(leaf.images.full)
@@ -253,7 +227,7 @@ class TestCreatePage:
         response = await fx_client.post(fx_book.pages_path, json=body)
         await fx_idle(fx_book.book_id)
 
-        leaf = await _page(fx_client, fx_book, PageSchema.model_validate_json(response.content).id)
+        leaf = await read_page(fx_client, fx_book.book_id, PageSchema.model_validate_json(response.content).id)
         assert leaf.images is not None
         with Image.open(io.BytesIO((await fx_client.get(leaf.images.full)).content)) as image:
             assert image.size == (50, 70)
@@ -487,7 +461,7 @@ class TestAttachScan:
         await fx_idle(fx_book.book_id)
 
         bound = PageSchema.model_validate_json(response.content)
-        ready = await _page(fx_client, fx_book, fx_book.placeholder.id)
+        ready = await read_page(fx_client, fx_book.book_id, fx_book.placeholder.id)
         assert ready.images is not None
         copy = await fx_client.get(ready.images.full)
         expect(response.status_code == status.HTTP_200_OK)
@@ -496,7 +470,7 @@ class TestAttachScan:
             == (PageOrigin.SCAN, fx_book.spare.id, 0, 'xii', None)
         )
         expect((bound.kind, bound.notes, bound.id) == (PageKind.COVER, 'Missing', fx_book.placeholder.id))
-        expect(copy.content == _jpeg())
+        expect(copy.content == gray_jpeg(SCAN_SIZE_PX))
         assert_expectations()
 
     async def test_scan_another_page_shows_is_a_conflict_problem_unless_taken_over(

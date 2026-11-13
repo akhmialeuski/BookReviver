@@ -1,13 +1,13 @@
 import type { ProcessorSchema, StepSchema } from '@/api';
-import { type StepDraft, sameValue } from '@/features/processing/recipe';
+import { draftIdAt, type StepDraft, sameValue } from '@/features/processing/recipe';
 import { formSchemaOf, methodsOf } from '@/features/processing/schema';
 
 /**
  * How the steps of a book differ from the steps of the profile it was made from.
  *
- * Steps are matched by the identifier the server gave them, which a profile keeps when it is applied to a book and when
- * a book is saved to it, so a step that was moved or changed is the same step on both sides. A step the draft added has
- * no identifier yet and counts as added. The order of the steps is reported once, for the steps both sides have, since
+ * Steps are matched by the identifier the server gave them, which a profile keeps when a book is saved to it, or by the
+ * step of the profile a step of the book was made from when the profile was applied, so a step that was moved or
+ * changed is the same step on both sides. A step the draft added has no identifier yet and counts as added. The order of the steps is reported once, for the steps both sides have, since
  * moving one step past three others would otherwise be reported as four moves.
  */
 
@@ -60,11 +60,18 @@ export function profileChanges(
     catalogue.find((entry) => entry.key === key);
   const titleOf = (key: string): string => processorOf(key)?.title ?? key;
   const saved = new Map(profile.map((step) => [step.step_id, step]));
-  const kept = new Set(draft.map((step) => step.stepId));
+  // The step of the profile a step of the draft is, by its own identifier or by the one it was made from
+  const profileIdOf = (step: StepDraft): string | null => {
+    const candidates = [step.stepId, step.originStepId ?? null];
+    return candidates.find((id): id is string => id !== null && saved.has(id)) ?? null;
+  };
+  const matched = draft.map(profileIdOf);
+  const kept = new Set(matched);
   const found: ProfileChange[] = [];
 
-  for (const step of draft) {
-    const before = step.stepId === null ? undefined : saved.get(step.stepId);
+  for (const [index, step] of draft.entries()) {
+    const id = matched[index] ?? null;
+    const before = id === null ? undefined : saved.get(id);
     if (before === undefined) {
       found.push({ kind: 'added', title: titleOf(step.processorKey) });
       continue;
@@ -84,8 +91,7 @@ export function profileChanges(
     }
   }
 
-  const common = (id: string | null): boolean => id !== null && saved.has(id);
-  const draftOrder = draft.map((step) => step.stepId).filter(common);
+  const draftOrder = matched.filter((id): id is string => id !== null);
   const profileOrder = profile.map((step) => step.step_id).filter((id) => kept.has(id));
   if (draftOrder.some((id, index) => id !== profileOrder[index])) {
     found.push({ kind: 'order' });
@@ -97,4 +103,36 @@ export function profileChanges(
     }
   }
   return found;
+}
+
+/**
+ * Give the steps of a profile as a draft of the recipe that is put back to it.
+ *
+ * Each step of the profile takes the identifier of the saved step of the recipe that was made from it, or that the profile
+ * was saved from, so the step keeps what the pages hold for it, and a step of the profile the recipe has none of is added
+ * as a new step made from it. Each saved step is taken once.
+ *
+ * @param profile The steps of the profile, in their order.
+ * @param saved The saved steps of the recipe.
+ * @returns The draft, in the order of the profile.
+ */
+export function draftFromProfile(
+  profile: readonly StepSchema[],
+  saved: readonly StepSchema[],
+): StepDraft[] {
+  const free = [...saved];
+  return profile.map((step, index) => {
+    const found = free.findIndex(
+      (held) => held.step_id === step.step_id || held.origin_step_id === step.step_id,
+    );
+    const [taken] = found < 0 ? [] : free.splice(found, 1);
+    return {
+      id: draftIdAt(index),
+      stepId: taken?.step_id ?? null,
+      originStepId: step.step_id,
+      processorKey: step.processor_key,
+      params: { ...step.params },
+      enabled: step.enabled,
+    };
+  });
 }

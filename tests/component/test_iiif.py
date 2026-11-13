@@ -14,8 +14,8 @@ from bookreviver.domain.ids import JobId, SourceId, StorageKey
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 from tests.harness.adapters.storage import upload
-from tests.harness.builders.domain import make_page, make_page_version, make_record
-from tests.harness.builders.seeding import commit_account, store_book
+from tests.harness.builders.domain import make_record
+from tests.harness.builders.seeding import BaseVersion, BookLayout, PageLayout, commit_account, seed_book, store_book
 
 if TYPE_CHECKING:
     import httpx
@@ -60,10 +60,10 @@ class Book(NamedTuple):
         return BookKeys.version_rendition(self.version, Rendition.TILES)
 
 
-async def _store_book(
+async def _store_tiled_book(
     catalogue: CatalogueDatabase, files: SharedBookDirectories, owner: AccountId, *, databases: LocatedBookDatabases
 ) -> Book:
-    """Store a book with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
+    """Seed a book with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
 
     :param catalogue: Catalogue database over the catalogue and the books of the test.
     :type catalogue: CatalogueDatabase
@@ -76,9 +76,9 @@ async def _store_book(
     :returns: The stored book.
     :rtype: Book
     """
-    page = make_page()
-    version = make_page_version(page_id=page.id)
-    book_id = await store_book(catalogue, make_record(), page, owner=owner, versions=[version], databases=databases)
+    layout = BookLayout(pages=(PageLayout(version=BaseVersion.RECORDED),))
+    seeded = await seed_book(catalogue, layout, owner=owner, databases=databases)
+    book_id, [version] = seeded.book_id, seeded.versions
     for key, content in (
         (f'{BookKeys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
         (f'{BookKeys.version_rendition(version, Rendition.TILES)}/{TILE_PATH}', TILE_CONTENT),
@@ -114,7 +114,7 @@ class TestIiifFile:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book = await _store_book(fx_catalogue(), fx_directories, fx_actor.account_id, databases=fx_databases())
+        book = await _store_tiled_book(fx_catalogue(), fx_directories, fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.book_id}/{book.pyramid}/{IIIF_INFO_FILE}')
 
@@ -146,7 +146,7 @@ class TestIiifFile:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _store_book(
+        book = await _store_tiled_book(
             fx_open_book.catalogue(), fx_directories, fx_actor.account_id, databases=fx_open_book.databases
         )
         key = BookKeys.version_rendition(book.version, rendition)
@@ -181,7 +181,7 @@ class TestIiifFile:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _store_book(
+        book = await _store_tiled_book(
             fx_open_book.catalogue(), fx_directories, fx_actor.account_id, databases=fx_open_book.databases
         )
         directory = BookKeys.version_directory(book.version)
@@ -211,7 +211,7 @@ class TestIiifFile:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book = await _store_book(
+        book = await _store_tiled_book(
             fx_catalogue(), fx_directories, await commit_account(fx_database), databases=fx_databases()
         )
 
@@ -275,7 +275,7 @@ class TestIiifFile:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book = await _store_book(fx_catalogue(), fx_directories, fx_actor.account_id, databases=fx_databases())
+        book = await _store_tiled_book(fx_catalogue(), fx_directories, fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.book_id}/{book.pyramid}/%2E%2E/{Rendition.THUMBNAIL}')
 

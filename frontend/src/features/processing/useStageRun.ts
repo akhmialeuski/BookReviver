@@ -27,8 +27,8 @@ export interface RunRequest {
   scope: RunScope;
   /** The group of pages the scope of a group goes over. */
   group?: PageGroup;
-  /** Index in the recipe of the last step to run, or undefined to run through the last step that is on. */
-  throughStep?: number;
+  /** The identifier of the last step to run, or undefined to run through the last step that is on. */
+  throughStepId?: string;
   /** What the run does with the work of the pages, which is to keep it unless it is asked otherwise. */
   mode?: RunMode;
 }
@@ -107,7 +107,7 @@ export function useStageRun(
   const bodyOf = ({
     scope,
     group,
-    throughStep,
+    throughStepId,
     mode = 'keep',
   }: RunRequest): StageRunBody | null => {
     if (recipe === undefined) {
@@ -121,7 +121,7 @@ export function useStageRun(
     // Each page of the scope is run by the recipe of its kind
     return {
       ...(ids === null ? {} : { page_ids: ids }),
-      ...(throughStep === undefined ? {} : { through_step: throughStep }),
+      ...(throughStepId === undefined ? {} : { through_step_id: throughStepId }),
       ...(mode === 'keep' ? {} : { mode }),
     };
   };

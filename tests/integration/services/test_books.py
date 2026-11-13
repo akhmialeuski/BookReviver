@@ -20,7 +20,6 @@ from bookreviver.domain.page_steps import PageStepKey
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.books import BooksService
-from bookreviver.services.stage_summaries import StageSummaries
 from tests.harness.adapters.storage import BookFiles, SharedBookDirectories, SharedDirectory
 from tests.harness.builders.domain import (
     DESKEW_STEP_ID,
@@ -34,7 +33,7 @@ from tests.harness.builders.domain import (
     open_for,
 )
 from tests.harness.builders.seeding import commit_record, store_book
-from tests.harness.fakes.processing import FakeCatalogue
+from tests.harness.builders.stage_reads import unprocessed_stages
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.domain.library import BookOverview
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
-    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.harness.builders.domain import BookOpener
     from tests.harness.fakes.jobs import RecordingEventBus
 
@@ -60,15 +59,6 @@ DATABASE_NAME: str = 'book.db'
 MASK_EDIT_HASH: str = 'masked-edit'
 FILE_CONTENT: bytes = b'derived file'
 MASK_CONTENT: bytes = b'mask of the edit'
-
-
-def _stages() -> StageSummaries:
-    """Build the stage sums over a catalogue with no processors, for books whose queues hold no jobs.
-
-    :returns: The stage summaries.
-    :rtype: StageSummaries
-    """
-    return StageSummaries(processors=FakeCatalogue([]))
 
 
 @pytest.fixture
@@ -130,19 +120,6 @@ def fx_flaky_directories(fx_storage_root: Path, fx_book_parts: RecordingEventBus
     directories = SharedBookDirectories(root=fx_storage_root, directory_type=DirectoryFailingOnce)
     BookDirectory.register(directories.open)
     return directories
-
-
-async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> BookRecord:
-    """Read the committed state of a book.
-
-    :param book_id: Identifier of the book to read back.
-    :type book_id: BookId
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The book as committed.
-    :rtype: BookRecord
-    """
-    return await databases.open(book_id).read(lambda repos: repos.book_record.get())
 
 
 @pytest.fixture
@@ -419,7 +396,7 @@ async def _listed(catalogue: CatalogueDatabase, actor: Actor) -> dict[BookId, Bo
     :rtype: dict[BookId, BookOverview]
     """
     window = await catalogue.read(lambda repos: repos.library.list_for_owner(actor.account_id, SliceRequest()))
-    stages = _stages()
+    stages = unprocessed_stages()
     return {entry.book_id: await stages.overview(Book(entry.directory)) for entry in window.items}
 
 
@@ -467,7 +444,7 @@ class TestExportAndImport:
         archive = await _archive(book_id)
 
         copy_id = await fx_service().import_archive(fx_actor, archive)
-        imported = await _stages().overview(Book(directory_of(copy_id)))
+        imported = await unprocessed_stages().overview(Book(directory_of(copy_id)))
 
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)
         listed = await _listed(fx_catalogue(), fx_actor)

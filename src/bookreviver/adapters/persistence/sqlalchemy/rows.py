@@ -41,9 +41,12 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PaginationSectionRow,
     RecipeProfileRow,
     RecipeRow,
+    RecipeStepParamsRow,
+    RecipeStepRow,
     ScanRow,
     SourceRow,
     StepChangeRow,
+    StepRow,
     StepValuesRow,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -412,6 +415,24 @@ class RecipeRows(RowRepository[RecipeRow]):
     """Rows of the ``recipes`` table."""
 
     model_type = RecipeRow
+
+
+class StepRows(RowRepository[StepRow]):
+    """Rows of the ``steps`` table."""
+
+    model_type = StepRow
+
+
+class RecipeStepRows(RowRepository[RecipeStepRow]):
+    """Rows of the ``recipe_steps`` table."""
+
+    model_type = RecipeStepRow
+
+
+class RecipeStepParamsRows(RowRepository[RecipeStepParamsRow]):
+    """Rows of the ``recipe_step_params`` table."""
+
+    model_type = RecipeStepParamsRow
 
 
 class RecipeProfileRows(RowRepository[RecipeProfileRow]):

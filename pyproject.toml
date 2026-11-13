@@ -146,6 +146,12 @@ name = "Domain modules import each other in one direction only"
 type = "acyclic_siblings"
 ancestors = ["bookreviver.domain"]
 
+# Imports under TYPE_CHECKING count too, since a cycle hidden there still ties the two modules together
+[[tool.importlinter.contracts]]
+name = "Service modules import each other in one direction only"
+type = "acyclic_siblings"
+ancestors = ["bookreviver.services"]
+
 [[tool.importlinter.contracts]]
 name = "The core imports no framework and no I/O library"
 type = "forbidden"
@@ -219,7 +225,7 @@ useless-overload-body = "error"
 include = [
     "src/bookreviver/adapters/persistence/sqlalchemy/accounts.py",
     "src/bookreviver/adapters/persistence/sqlalchemy/catalogue.py",
-    "src/bookreviver/adapters/persistence/sqlalchemy/tables.py",
+    "src/bookreviver/adapters/persistence/sqlalchemy/tables/**",
 ]
 
 [tool.ty.overrides.rules]

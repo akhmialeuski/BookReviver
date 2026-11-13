@@ -12,7 +12,7 @@ from bookreviver.domain.ids import JobId, SourceId
 from tests.harness.adapters.storage import upload
 from tests.harness.builders.domain import directory_of, make_record
 from tests.harness.builders.seeding import store_book
-from tests.harness.fakes.jobs import FakeBoardProvider, JobFakes, JobFakesProvider
+from tests.harness.fakes.jobs import FakeBoardProvider, JobFakesProvider
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.storage import SourceStore
     from tests.harness.builders.domain import BookOpener
-    from tests.harness.fakes.jobs import RecordingEventBus
+    from tests.harness.fakes.jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 
@@ -84,18 +84,6 @@ class Uploads:
         await self.sources(book_id).stage(job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
         await self.sources(book_id).promote(job_id, source_id, names=[PROMOTED_NAME])
         self.kept = (book_id, source_id)
-
-
-@pytest.fixture
-def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
-    """Build the adapters the application runs on, with an empty database and a board that runs nothing.
-
-    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
-    :type fx_book_parts: RecordingEventBus
-    :returns: Fakes with nothing stored and no job on the board.
-    :rtype: JobFakes
-    """
-    return JobFakes(events=fx_book_parts)
 
 
 @pytest.fixture

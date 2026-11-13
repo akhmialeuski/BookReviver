@@ -6,11 +6,13 @@ the writer, so the tests run them in a worker thread through ``_migrate``, and s
 sessions of that engine, which they close before a command runs, since the pool of the writer holds one connection.
 """
 
+import json
+import logging
 import re
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID, uuid4
 
 import pytest
@@ -24,6 +26,7 @@ from sqlalchemy import func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
@@ -42,30 +45,31 @@ from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
 from bookreviver.domain.history import ChangeSource, PageHistoryEntry
 from bookreviver.domain.ids import BookId, ChangeBatchId, PageHistoryEntryId, PageId
+from bookreviver.domain.page_steps import StepLayer
 from bookreviver.domain.spans import BlockKind
 from bookreviver.domain.step_values import ValueScope
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.harness.builders.domain import (
+    DESKEW,
     EPOCH,
     directory_of,
     make_book_place,
     make_page,
     make_page_history_entry,
-    make_page_version,
-    make_record,
-    make_scan,
-    make_source,
+    make_page_step_state,
+    make_recipe,
     make_step_values,
     new_account_id,
     new_book_id,
 )
-from tests.harness.builders.seeding import commit_account
+from tests.harness.builders.seeding import BaseVersion, BookLayout, PageLayout, SourceLayout, commit_account
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
     from advanced_alchemy.base import CommonTableAttributes
     from dishka import AsyncContainer
+    from sqlalchemy import TextClause
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import AccountId
@@ -185,7 +189,7 @@ BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (BookRecordRow, SourceRow
 
 
 @pytest.fixture
-async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
+async def fx_bare_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
     """Yield the application's container with its own database provider, with no schema created for it.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
@@ -196,21 +200,6 @@ async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
     container = build_container(fx_settings)
     yield container
     await container.close()
-
-
-@pytest.fixture
-async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open a catalogue with no table, at the URL the settings name.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :returns: Iterator yielding the catalogue and disposing of its engine afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    fx_settings.data_dir.mkdir(parents=True)
-    database = SqlDatabase(fx_settings.resolved_catalogue_url, schema=Schema.CATALOGUE, tracer=NullTracer())
-    yield database
-    await database.dispose()
 
 
 @pytest.fixture
@@ -348,15 +337,17 @@ async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: s
 
 
 async def _commit_book(database: SqlDatabase) -> None:
-    """Commit a book with a page cut from a scan, its source and the page's version.
+    """Commit a book with a page cut from a scan, its source, the page's version and a recipe of the geometry stage.
+
+    The recipe holds the step the builders of the settings, the values and the history of a step name, which the rows
+    a test adds for it need.
 
     :param database: Migrated database of a book to commit into.
     :type database: SqlDatabase
     """
-    book_record = make_record()
-    source = make_source()
-    scan = make_scan(source=source, number=0)
-    page = make_page(scan=scan)
+    book = BookLayout(
+        sources=(SourceLayout.of(1),), pages=(PageLayout(scan=(0, 0), version=BaseVersion.RECORDED),)
+    ).build()
 
     def store(session: Session) -> None:
         """Store the book in the order its keys need.
@@ -364,12 +355,13 @@ async def _commit_book(database: SqlDatabase) -> None:
         :param session: Session of the transaction.
         :type session: Session
         """
-        repos = SqlAlchemyBookRepositories(session)
-        repos.book_record.add(book_record)
-        repos.sources.add(source)
-        repos.scans.add(scan)
-        repos.pages.add(page)
-        repos.page_versions.add(make_page_version(page_id=page.id))
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
+        repos.book_record.add(book.record)
+        repos.sources.add_many(book.sources)
+        repos.scans.add_many(book.scans)
+        repos.pages.add_many(book.pages)
+        repos.page_versions.add_many(book.versions)
+        repos.recipes.add(make_recipe())
 
     await database.write(store, kind=BlockKind.BOOK, book=None, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
 
@@ -469,26 +461,26 @@ class TestBaseline:
 class TestDatabaseProvider:
     """Tests for DatabaseProvider.database, which opens the catalogue only at the head revision."""
 
-    async def test_refuses_a_catalogue_no_revision_was_applied_to(self, fx_container: AsyncContainer) -> None:
+    async def test_refuses_a_catalogue_no_revision_was_applied_to(self, fx_bare_container: AsyncContainer) -> None:
         """Verify the application does not start on an unmigrated catalogue and names the command that migrates it.
 
-        :param fx_container: The application's container, with no schema.
-        :type fx_container: AsyncContainer
+        :param fx_bare_container: The application's container, with no schema.
+        :type fx_bare_container: AsyncContainer
         """
         head = ScriptDirectory(str(Schema.CATALOGUE.migrations)).get_current_head()
         expected = f'{SCHEMA_AT} none, code expects {head}{RUN}{MIGRATE_COMMAND}`'
         with pytest.raises(RuntimeError, match=re.escape(expected)):
-            await fx_container.get(SqlDatabase)
+            await fx_bare_container.get(SqlDatabase)
 
     async def test_refuses_a_catalogue_migrated_by_code_it_does_not_ship(
-        self, fx_container: AsyncContainer, fx_empty_catalogue: SqlDatabase, tmp_path: Path
+        self, fx_bare_container: AsyncContainer, fx_empty_catalogue: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify a catalogue migrated on another branch is refused with the downgrade that returns it, not an upgrade.
 
         ``upgrade head`` cannot help here: Alembic cannot locate the revision the catalogue records.
 
-        :param fx_container: The application's container.
-        :type fx_container: AsyncContainer
+        :param fx_bare_container: The application's container.
+        :type fx_bare_container: AsyncContainer
         :param fx_empty_catalogue: The same catalogue, which the test migrates with a revision the code does not ship.
         :type fx_empty_catalogue: SqlDatabase
         :param tmp_path: Temporary directory of the test, holding the migrations of the other branch.
@@ -503,20 +495,20 @@ class TestDatabaseProvider:
             f'or restore the copy of the data directory made before migrating'
         )
         with pytest.raises(RuntimeError, match=re.escape(expected)):
-            await fx_container.get(SqlDatabase)
+            await fx_bare_container.get(SqlDatabase)
 
     async def test_opens_a_catalogue_at_the_head_revision(
-        self, fx_container: AsyncContainer, fx_empty_catalogue: SqlDatabase
+        self, fx_bare_container: AsyncContainer, fx_empty_catalogue: SqlDatabase
     ) -> None:
         """Verify the application starts once the migrations are applied, and leaves the schema as they left it.
 
-        :param fx_container: The application's container.
-        :type fx_container: AsyncContainer
+        :param fx_bare_container: The application's container.
+        :type fx_bare_container: AsyncContainer
         :param fx_empty_catalogue: The same catalogue, which the test migrates first.
         :type fx_empty_catalogue: SqlDatabase
         """
         await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, HEAD)
-        database = await fx_container.get(SqlDatabase)
+        database = await fx_bare_container.get(SqlDatabase)
         assert (await database.schema_revisions()).is_current
 
 
@@ -677,7 +669,9 @@ class TestBookKeyRevision:
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         await _commit_book(fx_empty_book)
         await fx_empty_book.write(
-            lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
+            lambda session: SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys()).book_places.save(
+                make_book_place()
+            ),
             kind=BlockKind.BOOK,
             book=directory_of(BOOK_ID),
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
@@ -703,7 +697,9 @@ class TestBookKeyRevision:
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         await _commit_book(fx_empty_book)
         await fx_empty_book.write(
-            lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
+            lambda session: SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys()).book_places.save(
+                make_book_place()
+            ),
             kind=BlockKind.BOOK,
             book=directory_of(BOOK_ID),
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
@@ -743,7 +739,9 @@ class TestHistoryRevision:
             page_id = PageId(session.scalars(select(PageRow.id)).one())
         entry = make_page_history_entry(page_id=page_id)
         await fx_empty_book.write(
-            lambda session: SqlAlchemyBookRepositories(session).page_history.add(entry),
+            lambda session: SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys()).page_history.add(
+                entry
+            ),
             kind=BlockKind.BOOK,
             book=directory_of(BOOK_ID),
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
@@ -780,7 +778,7 @@ class TestGroupsRevision:
             :param session: Session of the transaction.
             :type session: Session
             """
-            repos = SqlAlchemyBookRepositories(session)
+            repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
             repos.pages.update(evolve(repos.pages.get(page_id), group_label=GROUP))
             repos.step_values.save_many(
                 [make_step_values(scope=ValueScope.GROUP, group_label=GROUP), make_step_values(scope=ValueScope.ODD)]
@@ -811,7 +809,7 @@ class TestGroupsRevision:
             )
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
-            repos = SqlAlchemyBookRepositories(session)
+            repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
             expect(session.scalars(text('SELECT label FROM page_groups')).all() == [GROUP])
             expect(repos.pages.get(page_id).group_label == GROUP)
             expect([entry.group_label for entry in repos.page_history.list_for_page(page_id)] == [GROUP])
@@ -869,7 +867,7 @@ class TestChangesRevision:
             :param session: Session of the transaction.
             :type session: Session
             """
-            repos = SqlAlchemyBookRepositories(session)
+            repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
             repos.pages.add(second)
             repos.page_history.add_many([*change, *undo])
 
@@ -886,7 +884,7 @@ class TestChangesRevision:
         expect(undoing == entries)
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
-            repos = SqlAlchemyBookRepositories(session)
+            repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
             expect(session.scalar(text('SELECT count(*) FROM step_changes')) == 2)
             histories = [repos.page_history.list_for_page(page) for page in pages]
         expect(
@@ -952,6 +950,323 @@ class TestRecordKeyRevision:
 
         expect(downgraded == [BOOK_ID.bytes])
         expect(upgraded == [1])
+        assert_expectations()
+
+
+class StepsBook(NamedTuple):
+    """The rows a book of the revision before the steps became rows holds, as the test of that revision stores them.
+
+    :ivar page: The page of the book.
+    :ivar geometry: The recipe of the geometry stage, made first.
+    :ivar cleanup: The recipe of the cleanup stage, which shares a step with the geometry.
+    :ivar steps: The steps of the geometry recipe in order, the last of them the shared one.
+    :ivar own: The step of the cleanup recipe that only it holds.
+    :ivar unheld: The step that a setting of the page names and no recipe holds.
+    """
+
+    page: UUID
+    geometry: UUID
+    cleanup: UUID
+    steps: tuple[UUID, UUID, UUID]
+    own: UUID
+    unheld: UUID
+
+    @property
+    def shared(self) -> UUID:
+        """The step the recipes of both stages hold."""
+        return self.steps[2]
+
+    @staticmethod
+    def listed(step_id: UUID, key: str, angle: int, *, enabled: bool = True) -> dict[str, object]:
+        """Give a step as the list of a recipe of that revision holds it.
+
+        :param step_id: The step.
+        :type step_id: UUID
+        :param key: Key of its processor.
+        :type key: str
+        :param angle: The one parameter of the step.
+        :type angle: int
+        :param enabled: Whether the step is on.
+        :type enabled: bool
+        :returns: The step as JSON.
+        :rtype: dict[str, object]
+        """
+        return {'processor_key': key, 'params': {'angle': angle}, 'enabled': enabled, 'step_id': str(step_id)}
+
+    def geometry_list(self) -> list[dict[str, object]]:
+        """Give the list of the steps of the geometry recipe.
+
+        :returns: The steps in order, the second one off.
+        :rtype: list[dict[str, object]]
+        """
+        first, second, shared = self.steps
+        return [
+            self.listed(first, 'geometry.deskew', 1),
+            self.listed(second, 'geometry.crop', 2, enabled=False),
+            self.listed(shared, 'geometry.deskew', 3),
+        ]
+
+    def cleanup_list(self, shared: UUID) -> list[dict[str, object]]:
+        """Give the list of the steps of the cleanup recipe, whose first step is the shared one.
+
+        :param shared: The identifier the shared step has in the cleanup recipe.
+        :type shared: UUID
+        :returns: The steps in order.
+        :rtype: list[dict[str, object]]
+        """
+        return [self.listed(shared, 'cleanup.despeckle', 4), self.listed(self.own, 'cleanup.whiten', 5)]
+
+
+# The rows of a book before the revision that keeps the steps as rows, written as that revision reads them
+INSERT_LISTED_RECIPE = text(
+    "INSERT INTO recipes (id, stage, kind, steps, created_at, updated_at) VALUES (:id, :stage, 'text', :steps, "
+    ':created, :created)'
+)
+INSERT_STOP = text(
+    'INSERT INTO page_stages (page_id, stage, recipe_id, state, through_step, updated_at) VALUES (:page, :stage, '
+    ":recipe, 'fresh', :through, :moment)"
+)
+INSERT_SETTING = text(
+    'INSERT INTO page_step_states (page_id, stage, step_id, updated_at) VALUES (:page, :stage, :step, :moment)'
+)
+INSERT_CHANGE = text(
+    'INSERT INTO step_changes (id, stage, step_id, layer, scope, source, created_at) VALUES '
+    "(:id, :stage, :step, 'settings', 'pages', 'user', :moment)"
+)
+INSERT_LINK = text('INSERT INTO page_history (page_id, sequence, change_id) VALUES (:page, 1, :change)')
+# The revision before the one that keeps the steps of the recipes as rows
+BEFORE_STEPS: str = '07e2df4566fa'
+# Times of the rows of that test, as SQLite holds them
+EARLIER: str = '2026-01-01 00:00:00.000000'
+LATER: str = '2026-01-02 00:00:00.000000'
+
+
+async def _listed_book(database: SqlDatabase) -> StepsBook:
+    """Store a book at the revision before the steps became rows, whose recipes of two stages share a step.
+
+    The page stopped at the second step of the geometry, at the shared step of the cleanup, and at a step past the end
+    of the geometry recipe in the layout. It has a setting of the shared step in both stages, one of a step no recipe
+    holds, and a change of the shared step of the cleanup in its history.
+
+    :param database: Database of a book with no table.
+    :type database: SqlDatabase
+    :returns: The identifiers of the rows.
+    :rtype: StepsBook
+    """
+    await _migrate(database, database.migrations.upgrade, HEAD)
+    await _commit_book(database)
+    await _migrate(database, database.migrations.downgrade, BEFORE_STEPS)
+    with _session(database) as session:
+        page = UUID(bytes=session.scalars(text('SELECT id FROM pages')).one())
+    book = StepsBook(
+        page=page, geometry=uuid4(), cleanup=uuid4(), steps=(uuid4(), uuid4(), uuid4()), own=uuid4(), unheld=uuid4()
+    )
+    rows: list[tuple[TextClause, dict[str, object]]] = [
+        (
+            INSERT_LISTED_RECIPE,
+            {
+                'id': book.geometry.bytes,
+                'stage': 'geometry',
+                'created': EARLIER,
+                'steps': json.dumps(book.geometry_list()),
+            },
+        ),
+        (
+            INSERT_LISTED_RECIPE,
+            {
+                'id': book.cleanup.bytes,
+                'stage': 'cleanup',
+                'created': LATER,
+                'steps': json.dumps(book.cleanup_list(book.shared)),
+            },
+        ),
+        (INSERT_STOP, {'stage': 'geometry', 'recipe': book.geometry.bytes, 'through': 1}),
+        (INSERT_STOP, {'stage': 'cleanup', 'recipe': book.cleanup.bytes, 'through': 0}),
+        (INSERT_STOP, {'stage': 'layout', 'recipe': book.geometry.bytes, 'through': 7}),
+        (INSERT_SETTING, {'stage': 'geometry', 'step': book.shared.bytes}),
+        (INSERT_SETTING, {'stage': 'cleanup', 'step': book.shared.bytes}),
+        (INSERT_SETTING, {'stage': 'geometry', 'step': book.unheld.bytes}),
+        (INSERT_CHANGE, {'id': book.own.bytes, 'stage': 'cleanup', 'step': book.shared.bytes}),
+        (INSERT_LINK, {'change': book.own.bytes}),
+    ]
+    with _session(database) as session, session.begin():
+        session.execute(text('DELETE FROM recipes'))
+        for statement, values in rows:
+            session.execute(statement, {'page': page.bytes, 'moment': EARLIER, **values})
+    return book
+
+
+class TestStepsRevision:
+    """Tests for the revision that keeps the steps of the recipes as rows."""
+
+    async def test_the_steps_become_rows_and_the_lists_come_back_in_order(
+        self, fx_empty_book: SqlDatabase, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify the steps, their order and the stops of the pages survive both ways, the shared step renamed once.
+
+        Up, each recipe places its steps in the order of its list, the cleanup holds the shared step under a new
+        identifier that its setting and its change take too, the step no recipe holds is kept as removed, and each
+        record names the step it stopped at, or none when its index pointed past its recipe. Down, the lists and the
+        indexes are written back.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        :param caplog: The records the revision logs.
+        :type caplog: pytest.LogCaptureFixture
+        """
+        book = await _listed_book(fx_empty_book)
+        caplog.set_level(logging.WARNING)
+        caplog.clear()
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        upgrade_log = [record.getMessage() for record in caplog.records]
+        with _session(fx_empty_book) as session:
+            places = {
+                (UUID(bytes=row.recipe_id), UUID(bytes=row.step_id)): row.enabled
+                for row in session.execute(
+                    text('SELECT recipe_id, step_id, enabled FROM recipe_steps ORDER BY order_key')
+                )
+            }
+            steps = {
+                UUID(bytes=row.id): (row.stage, row.type_key, row.removed_at is not None)
+                for row in session.execute(text('SELECT id, stage, type_key, removed_at FROM steps'))
+            }
+            stops: dict[str, bytes | None] = {
+                row.stage: row.through_step_id
+                for row in session.execute(text('SELECT stage, through_step_id FROM page_stages'))
+            }
+            settings = sorted(
+                (row.stage, row.step_id) for row in session.execute(text('SELECT stage, step_id FROM page_step_states'))
+            )
+            changed = session.scalars(text('SELECT step_id FROM step_changes')).all()
+            recipes = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys()).recipes.list_all()
+        renamed = next(step_id for recipe_id, step_id in places if recipe_id == book.cleanup and step_id != book.own)
+        expect([step.step_id for step in recipes[0].steps] == list(book.steps))
+        expect([step.step_id for step in recipes[1].steps] == [renamed, book.own])
+        expect([step.enabled for step in recipes[0].steps] == [True, False, True])
+        expect([step.params for step in recipes[1].steps] == [{'angle': 4}, {'angle': 5}])
+        expect(renamed not in {book.shared, *book.steps})
+        expect(steps[book.shared] == ('geometry', 'geometry.deskew', False))
+        expect(steps[renamed] == ('cleanup', 'cleanup.despeckle', False))
+        expect(steps[book.unheld] == ('geometry', '', True))
+        expect(stops == {'geometry': book.steps[1].bytes, 'cleanup': renamed.bytes, 'layout': None})
+        expect(
+            settings
+            == sorted([('cleanup', renamed.bytes), ('geometry', book.shared.bytes), ('geometry', book.unheld.bytes)])
+        )
+        expect(changed == [renamed.bytes])
+        expect(
+            upgrade_log
+            == [
+                '5 steps of 2 recipes became rows; 1 took a new identifier, which 2 rows of their stage took too.',
+                '1 steps no recipe holds were kept as removed; 0 rows took a new identifier.',
+                '2 records name the step they stopped at; 1 could not be translated and lost it.',
+            ]
+        )
+        caplog.clear()
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_STEPS)
+        with _session(fx_empty_book) as session:
+            lists = {
+                UUID(bytes=row.id): json.loads(row.steps)
+                for row in session.execute(text('SELECT id, steps FROM recipes'))
+            }
+            indexes: dict[str, int | None] = {
+                row.stage: row.through_step
+                for row in session.execute(text('SELECT stage, through_step FROM page_stages'))
+            }
+        expect(lists == {book.geometry: book.geometry_list(), book.cleanup: book.cleanup_list(renamed)})
+        expect(indexes == {'geometry': 1, 'cleanup': 0, 'layout': None})
+        expect(
+            [record.getMessage() for record in caplog.records]
+            == [
+                TYPES_DROPPED.format(rows=0, changes=0),
+                '1 steps no recipe holds were dropped with the types and origins of every step; rows still name them.',
+            ]
+        )
+        assert_expectations()
+
+
+# The revision before the one that keeps what the pages hold for a step under its type
+BEFORE_TYPES: str = 'edca77c509a2'
+# The type the deskew step of that test is given in place of its own
+CROP_KEY: str = 'geometry.crop'
+# What the downgrade of that revision logs
+TYPES_DROPPED: str = (
+    '{rows} rows the pages kept for earlier types of their steps and {changes} changes of those types or of the types '
+    'of the steps were dropped.'
+)
+
+
+async def _typed_book(database: SqlDatabase) -> PageId:
+    """Store a book at the head revision whose deskew step was given the crop type, with rows of both types.
+
+    The page keeps a setting, the even pages a value and the history a change of the deskew type, and then, under the
+    crop type, the page keeps a setting of its own and the history the change of the type.
+
+    :param database: Database of a book with no table.
+    :type database: SqlDatabase
+    :returns: The page of the book.
+    :rtype: PageId
+    """
+    await _migrate(database, database.migrations.upgrade, HEAD)
+    await _commit_book(database)
+    with _session(database) as session, session.begin():
+        page = PageId(UUID(bytes=session.scalars(text('SELECT id FROM pages')).one()))
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
+        repos.page_step_states.save(make_page_step_state(page_id=page, params={'max_angle_deg': 2}))
+        repos.step_values.save(make_step_values())
+        repos.page_history.add(make_page_history_entry(page_id=page, after={'max_angle_deg': 2}))
+    with _session(database) as session, session.begin():
+        session.execute(text('UPDATE steps SET type_key = :key'), {'key': CROP_KEY})
+    with _session(database) as session, session.begin():
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
+        repos.page_step_states.save(make_page_step_state(page_id=page, params={'margin': 4}))
+        change = make_page_history_entry(page_id=page)
+        repos.page_history.add(
+            evolve(
+                change, layer=StepLayer.TYPE, before={'processor_key': DESKEW.key}, after={'processor_key': CROP_KEY}
+            )
+        )
+    return page
+
+
+class TestTypesRevision:
+    """Tests for the revision that keeps what the pages hold for a step under its type."""
+
+    async def test_the_downgrade_keeps_the_active_type_and_the_upgrade_types_every_row(
+        self, fx_empty_book: SqlDatabase, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify the rows of the earlier type and the change of the type go down, and the rest comes back typed.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        :param caplog: The records the revision logs.
+        :type caplog: pytest.LogCaptureFixture
+        """
+        page = await _typed_book(fx_empty_book)
+        with _session(fx_empty_book) as session:
+            typed = sorted(tuple(row) for row in session.execute(text('SELECT type_key, params FROM page_step_states')))
+            shown = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys()).page_history.list_for_page(
+                page
+            )
+        caplog.set_level(logging.WARNING)
+        caplog.clear()
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_TYPES)
+        with _session(fx_empty_book) as session:
+            kept: list[str] = list(session.execute(text('SELECT params FROM page_step_states')).scalars())
+            values = session.scalar(text('SELECT count(*) FROM step_values'))
+            changes = session.scalar(text('SELECT count(*) FROM step_changes'))
+            links = session.scalar(text('SELECT count(*) FROM page_history'))
+        downgrade_log = [record.getMessage() for record in caplog.records]
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            upgraded = [tuple(row) for row in session.execute(text('SELECT type_key, params FROM page_step_states'))]
+
+        expect(typed == [(CROP_KEY, '{"margin": 4}'), (DESKEW.key, '{"max_angle_deg": 2}')])
+        expect([entry.layer for entry in shown] == [StepLayer.TYPE])
+        expect(kept == ['{"margin": 4}'])
+        expect((values, changes, links) == (0, 0, 0))
+        expect(downgrade_log == [TYPES_DROPPED.format(rows=2, changes=2)])
+        expect(upgraded == [(CROP_KEY, '{"margin": 4}')])
         assert_expectations()
 
 

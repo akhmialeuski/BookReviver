@@ -92,10 +92,12 @@ export function useThisPage(
         ) : row?.status === 'stale' ? (
           <p className="text-sm text-status-attention">{labels.thisPage.outOfDate}</p>
         ) : null}
-        {row?.through_step === null || row?.through_step === undefined ? null : (
+        {row?.through_step_id === null || row?.through_step_id === undefined ? null : (
           <p className="text-sm text-status-attention" data-testid="this-page-stopped">
             {labels.thisPage.stoppedAt(
-              barStepsOf(recipe, processing.catalogue)[row.through_step]?.title ?? '',
+              barStepsOf(recipe, processing.catalogue).find(
+                (step) => step.stepId === row.through_step_id,
+              )?.title ?? '',
             )}
           </p>
         )}

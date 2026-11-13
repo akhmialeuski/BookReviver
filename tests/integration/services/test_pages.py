@@ -19,24 +19,26 @@ from tests.harness.builders.domain import (
     make_page_stage,
     make_page_version,
     make_record,
-    make_scan,
-    make_source,
     new_book_id,
 )
-from tests.harness.builders.seeding import commit_record, store_book
+from tests.harness.builders.seeding import (
+    BaseVersion,
+    BookLayout,
+    PageLayout,
+    SourceLayout,
+    seed_book,
+    store_book,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.domain.pages import Page
     from bookreviver.domain.versions import PageVersion
-    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.pages import PageService
-    from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import CatalogueDatabaseFactory
     from tests.harness.builders.domain import BookOpener
     from tests.harness.fakes.board import FakeJobBoard
 
@@ -46,6 +48,16 @@ pytestmark = pytest.mark.anyio
 STORED_KEYS: list[str] = ['a1', 'a0', 'a0V']
 BOOK_ORDER: list[int] = [1, 2, 0]
 WINDOW: SliceRequest = SliceRequest(offset=1, limit=1)
+# Three pages stored against the book order, the middle one in the book a placeholder and the other two cut from the
+# two scans of a source, each with its base version
+LAYOUT: BookLayout = BookLayout(
+    sources=(SourceLayout.of(2),),
+    pages=(
+        PageLayout(scan=(0, 0), order_key=STORED_KEYS[0], version=BaseVersion.RECORDED),
+        PageLayout(order_key=STORED_KEYS[1]),
+        PageLayout(scan=(0, 1), order_key=STORED_KEYS[2], version=BaseVersion.RECORDED),
+    ),
+)
 FILE_CONTENT: bytes = b'derived file'
 
 
@@ -60,49 +72,12 @@ def _ready(version: PageVersion) -> PageVersion:
     return evolve(version, renditions=Renditions(ready=True), state=VersionState.READY)
 
 
-async def _commit_book(
-    database: SqlDatabase, catalogue: CatalogueDatabase, owner: AccountId, *, databases: LocatedBookDatabases
-) -> tuple[BookId, list[Page], list[PageVersion]]:
-    """Commit a book of three pages stored against the book order, the middle one in the book a placeholder.
-
-    :param database: Catalogue of the test, which stores the owner when it does not already.
-    :type database: SqlDatabase
-    :param catalogue: Catalogue database over the catalogue and the books of the test.
-    :type catalogue: CatalogueDatabase
-    :param owner: Account owning the book.
-    :type owner: AccountId
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The identifier of the book, the pages in the order they were stored, and the base versions of the two
-              that have one.
-    :rtype: tuple[BookId, list[Page], list[PageVersion]]
-    """
-    source = make_source()
-    scans = [make_scan(source=source, number=number) for number in range(2)]
-    shown = [scans[0], None, scans[1]]
-    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)]
-    versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
-    book_id = await commit_record(
-        database,
-        catalogue,
-        make_record(),
-        *pages,
-        owner=owner,
-        sources=[source],
-        scans=scans,
-        versions=versions,
-        databases=databases,
-    )
-    return book_id, pages, versions
-
-
 class TestManifest:
     """Tests for PageService.manifest()."""
 
     async def test_lists_the_pages_in_book_order_with_their_positions_and_versions(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
         fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -111,8 +86,6 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
@@ -120,9 +93,8 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages, versions = await _commit_book(
-            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
-        )
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages, versions = seeded.book_id, seeded.pages, seeded.versions
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
 
@@ -135,7 +107,6 @@ class TestManifest:
     async def test_a_window_continues_the_positions_of_the_book(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
         fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -144,8 +115,6 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
@@ -153,9 +122,8 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages, _ = await _commit_book(
-            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
-        )
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages = seeded.book_id, seeded.pages
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), WINDOW)
 
@@ -319,7 +287,6 @@ class TestManifest:
     async def test_names_the_source_of_a_page_with_a_scan_and_none_for_a_placeholder(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
         fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -328,8 +295,6 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
@@ -337,9 +302,9 @@ class TestManifest:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, _, _ = await _commit_book(
-            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
-        )
+        book_id = (
+            await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        ).book_id
         [source, *_] = await fx_open_book.databases.open(book_id).read(lambda repos: repos.sources.list_all())
 
         manifest = await fx_service().manifest(fx_open_book(fx_actor, book_id), SliceRequest())
@@ -353,7 +318,6 @@ class TestGet:
     async def test_returns_the_page_with_its_position_and_base_version(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
         fx_catalogue: CatalogueDatabaseFactory,
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -362,8 +326,6 @@ class TestGet:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a new catalogue database over the database of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
         :param fx_actor: Account the service acts for.
@@ -371,9 +333,8 @@ class TestGet:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages, versions = await _commit_book(
-            fx_database, fx_catalogue(), fx_actor.account_id, databases=fx_open_book.databases
-        )
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages, versions = seeded.book_id, seeded.pages, seeded.versions
 
         overview = await fx_service().get(fx_open_book(fx_actor, book_id), pages[0].id)
 

@@ -1,12 +1,17 @@
-"""The pages of a book inside one transaction of a page use case: their overviews, their places and their leaves.
+"""The pages of a book inside one transaction of a page use case: their overviews, and their places.
 
-``PagesWork`` is opened by ``PageService`` in the work it hands to ``Book.read`` or ``Book.change``. It holds the
-repositories of that transaction and what the service was built with, so nothing below it is handed the repositories
-from call to call. It owns three objects, each reaching the transaction through it:
+``PageKeeping`` is the pages of the books of a service, built once with the ports of the pages, and it opens a
+``PagesWork`` in the work ``PageService`` hands to ``Book.read`` or ``Book.change``. ``PagesWork`` holds the
+repositories of that transaction and the keeping it belongs to, so nothing below it is handed the repositories or the
+ports from call to call. It adds the pending base version of a page that is bound to a scan, finds the leaves a newer
+``pages.blank`` replaces, and owns two objects, each reaching the transaction through it:
 
 - ``PageOverviews`` reads pages as the interface shows them, with their position, image, label and section;
-- ``PagePlaces`` gives pages the order keys of a place of the book, for a page that is added or moved;
-- ``Leaves`` of ``services/leaves.py`` stands a blank leaf in place of the scan of a page.
+- ``PagePlaces`` gives pages the order keys of a place of the book, for a page that is added or moved.
+
+``Leaves`` of ``services/leaves.py`` stands a blank leaf in place of the scan of a page, and ``PageImages`` of
+``services/page_images.py`` is the ``prepare-pages`` job that writes the images of base versions. Both belong to what
+this module opens, and so lie above it, which never imports them.
 
 The position of a page is not stored: it is computed when a page is read, from the order keys of the book. Moving a
 page writes a new order key to the moved pages alone: the key lies between the key of the page next to the place and
@@ -18,34 +23,38 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import evolve, frozen
+from attrs import evolve
 
 from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError, NotFoundError
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.pages import Page, PageOverview
 from bookreviver.domain.pagination import Numbering
 from bookreviver.domain.sides import Side
-from bookreviver.services.leaves import PAGE_OF_BATCH, Leaves
+from bookreviver.domain.versions import VersionState
+from bookreviver.services.page_labels import PageLabels
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.domain.pages import NewPage, PageAnchor
+    from bookreviver.domain.sources import Scan
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.base_versions import BaseVersions
     from bookreviver.services.book_steps import BookSteps
-    from bookreviver.services.page_labels import PageLabels
     from bookreviver.services.stage_records import SideWatch, StageRecords
     from bookreviver.services.steps import StepRunner
 
 ANCHOR_NOT_IN_BOOK: str = 'the page it is put next to is not a page of the book.'
+PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
 
 
-@frozen(kw_only=True)
-class PageParts:
-    """What the use cases of the pages are built with, the same for every transaction and job of a service.
+class PageKeeping:
+    """The pages of the books of a service, which a use case opens for the work of one transaction.
+
+    It is built once, with what every transaction of the pages and every ``prepare-pages`` job works with, and the
+    ``PagesWork`` it opens, the ``Leaves`` of that and the ``PageImages`` of a job reach those through it.
 
     :ivar order_keys: Builder of the order keys of moved and new pages.
     :ivar base_versions: Builder of the rows of base versions.
@@ -55,37 +64,67 @@ class PageParts:
     :ivar labels: Keeper of the labels the pagination sections give the pages.
     """
 
-    order_keys: OrderKeys
-    base_versions: BaseVersions
-    runner: StepRunner
-    book_steps: BookSteps
-    records: StageRecords
-    labels: PageLabels
+    def __init__(
+        self,
+        *,
+        order_keys: OrderKeys,
+        base_versions: BaseVersions,
+        runner: StepRunner,
+        book_steps: BookSteps,
+        records: StageRecords,
+    ) -> None:
+        """Keep the pages of the books through the ports of the application.
+
+        :param order_keys: Builder of the order keys of moved and new pages.
+        :type order_keys: OrderKeys
+        :param base_versions: Builder of the rows of base versions.
+        :type base_versions: BaseVersions
+        :param runner: Runner of the processors ``split.none`` and ``pages.blank``, and writer of their files.
+        :type runner: StepRunner
+        :param book_steps: Finder of the steps whose plugin reads the whole book.
+        :type book_steps: BookSteps
+        :param records: Writer of the records of the stages of a page.
+        :type records: StageRecords
+        """
+        self.order_keys = order_keys
+        self.base_versions = base_versions
+        self.runner = runner
+        self.book_steps = book_steps
+        self.records = records
+        self.labels = PageLabels()
+
+    def open(self, repos: BookRepositories) -> PagesWork:
+        """Open the pages of a book for the work of one transaction.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :returns: The pages of the transaction, with their overviews and their places.
+        :rtype: PagesWork
+        """
+        return PagesWork(self, repos)
 
 
 class PagesWork:
     """The pages of a book inside one transaction of a page use case.
 
-    :ivar parts: What the use cases of the pages are built with.
+    :ivar keeping: What opened the pages, through which the ports of the pages are reached.
     :ivar repos: Repositories of the transaction.
     :ivar overviews: Reader of the pages as the interface shows them.
     :ivar places: Giver of the order keys of a place of the book.
-    :ivar leaves: What stands a blank leaf in place of the scan of a page.
     """
 
-    def __init__(self, parts: PageParts, repos: BookRepositories) -> None:
+    def __init__(self, keeping: PageKeeping, repos: BookRepositories) -> None:
         """Open the pages of a book for the work of one transaction.
 
-        :param parts: What the use cases of the pages are built with.
-        :type parts: PageParts
+        :param keeping: What opened the pages.
+        :type keeping: PageKeeping
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
         """
-        self.parts = parts
+        self.keeping = keeping
         self.repos = repos
         self.overviews = PageOverviews(self)
         self.places = PagePlaces(self)
-        self.leaves = Leaves(self)
 
     def settle(self, *, leaving: Sequence[PageId] = ()) -> None:
         """Settle the pagination sections after pages were added, deleted, moved or changed.
@@ -93,7 +132,7 @@ class PagesWork:
         :param leaving: Pages that are about to be deleted, whose sections are handed on.
         :type leaving: Sequence[PageId]
         """
-        self.parts.labels.settle(self.repos, leaving=leaving)
+        self.keeping.labels.settle(self.repos, leaving=leaving)
 
     def numbering(self, pages: Sequence[Page]) -> Numbering:
         """Work out the labels and the sections the pagination gives pages.
@@ -103,7 +142,7 @@ class PagesWork:
         :returns: The labels and the sections of the pages.
         :rtype: Numbering
         """
-        return self.parts.labels.numbering(self.repos, pages)
+        return self.keeping.labels.numbering(self.repos, pages)
 
     def watching_sides(self) -> SideWatch:
         """Mark stale the pages that turn over to the other side of the book while the block changes the order.
@@ -111,7 +150,7 @@ class PagesWork:
         :returns: The block inside which pages are added, deleted or moved.
         :rtype: SideWatch
         """
-        return self.parts.records.watching_sides(self.repos)
+        return self.keeping.records.watching_sides(self.repos)
 
     def found(self, page_id: PageId) -> Page | None:
         """Read a page that may have been deleted since a job looked at it.
@@ -125,6 +164,29 @@ class PagesWork:
             return self.repos.pages.get(page_id)
         except NotFoundError:
             return None
+
+    def bind_scan(self, page: Page, scan: Scan, moment: datetime) -> None:
+        """Add the pending base version of a page that now shows a scan, which copies the scan for the job to write.
+
+        :param page: The page, as it shows the scan.
+        :type page: Page
+        :param scan: The scan the page shows.
+        :type scan: Scan
+        :param moment: Time of the change.
+        :type moment: datetime
+        """
+        self.repos.page_versions.add(
+            self.keeping.base_versions.split_none(page=page, scan=scan, state=VersionState.PENDING, moment=moment)
+        )
+
+    def replaced_leaves(self) -> list[PageId]:
+        """List the pages whose page order is a leaf made by a version of ``pages.blank`` that was replaced.
+
+        :returns: The identifiers of the pages.
+        :rtype: list[PageId]
+        """
+        leaf = self.keeping.base_versions.blank_leaf
+        return [record.page_id for record in self.repos.page_stages.list_replaced(leaf.stage, leaf.ref)]
 
 
 class PageOverviews:
@@ -161,6 +223,34 @@ class PageOverviews:
         :returns: The overviews of the pages, in the same order.
         :rtype: Sequence[PageOverview]
         """
+        return self._shown(pages, range(first_position, first_position + len(pages)), numbered=numbered)
+
+    def placed(self, pages: Sequence[Page]) -> Sequence[PageOverview]:
+        """Attach positions, base versions, labels and sections to pages that may stand anywhere in a book.
+
+        The order of the book is read once for the positions of all the pages, and the rest is read once for all of
+        them, as ``of`` reads it, so the pages a batch put in many places cost no read for each place.
+
+        :param pages: Stored pages of one book, in any order.
+        :type pages: Sequence[Page]
+        :returns: The overviews of the pages, in the same order.
+        :rtype: Sequence[PageOverview]
+        """
+        positions = self.work.repos.pages.order().positions()
+        return self._shown(pages, [positions[page.id] for page in pages], numbered=True)
+
+    def _shown(self, pages: Sequence[Page], positions: Sequence[int], *, numbered: bool) -> Sequence[PageOverview]:
+        """Attach the given positions, and the base versions, labels and sections read for all the pages at once.
+
+        :param pages: Pages of one book.
+        :type pages: Sequence[Page]
+        :param positions: Position of each page in the book, in the order of the pages.
+        :type positions: Sequence[int]
+        :param numbered: Whether to give every page its label and its section.
+        :type numbered: bool
+        :returns: The overviews of the pages, in the same order.
+        :rtype: Sequence[PageOverview]
+        """
         repos = self.work.repos
         numbering = self.work.numbering(pages) if numbered and pages else Numbering(labels={}, section_ids={})
         versions = repos.page_versions.list_base_versions([page.id for page in pages])
@@ -172,13 +262,13 @@ class PageOverviews:
         return [
             PageOverview(
                 page=page,
-                position=first_position + index,
+                position=position,
                 image_version=current.get(page.id, newest.get(page.id)),
                 source_id=sources.get(page.scan_id) if page.scan_id is not None else None,
                 section_id=numbering.section_ids.get(page.id),
                 label=numbering.labels.get(page.id, ''),
             )
-            for index, page in enumerate(pages)
+            for page, position in zip(pages, positions, strict=True)
         ]
 
     def one(self, page: Page) -> PageOverview:
@@ -214,18 +304,6 @@ class PageOverviews:
             if head is not None and head.renditions is not None and head.renditions.ready:
                 shown[record.page_id] = head
         return shown
-
-
-@frozen(kw_only=True)
-class PlacedBatch:
-    """The pages of a batch that were given their places.
-
-    :ivar pages: The new pages, in the order they were listed.
-    :ivar runs: The pages of each place, in the order they stand in, every run without a gap.
-    """
-
-    pages: Sequence[Page]
-    runs: Sequence[Sequence[Page]]
 
 
 class PagePlaces:
@@ -270,7 +348,7 @@ class PagePlaces:
             lower, upper = (
                 (neighbour, target.order_key) if anchor.side is Side.BEFORE else (target.order_key, neighbour)
             )
-        return self.work.parts.order_keys.spread(lower=lower, upper=upper, count=count)
+        return self.work.keeping.order_keys.spread(lower=lower, upper=upper, count=count)
 
     def new(self, new_page: NewPage, moment: datetime) -> Page:
         """Build the stored form of a page the user adds, at its place of the book.
@@ -286,18 +364,19 @@ class PagePlaces:
         [key] = self.keys_at(new_page.anchor, count=1)
         return self._page(new_page, key, moment)
 
-    def batch(self, new_pages: Sequence[NewPage], moment: datetime) -> PlacedBatch:
+    def batch(self, new_pages: Sequence[NewPage], moment: datetime) -> list[Page]:
         """Build the pages of a batch with their order keys, one call of the key builder for each place.
 
         A page with an anchor goes to that place, and a page without one goes after the page before it in the list, or
-        at the end of the book when it is the first, so it joins that page's place.
+        at the end of the book when it is the first, so it joins that page's place. The order of the book is read once
+        for every place, before any page of the batch is stored, so each place lies between the pages the book had.
 
         :param new_pages: The pages of the batch.
         :type new_pages: Sequence[NewPage]
         :param moment: When the pages are added.
         :type moment: datetime
-        :returns: The new pages in the order listed, and by the place they stand in.
-        :rtype: PlacedBatch
+        :returns: The new pages, in the order listed.
+        :rtype: list[Page]
         :raises ConflictError: If the anchor of a place is not a page of the book, naming the first page of the place.
         """
         places: dict[PageAnchor | None, list[int]] = {}
@@ -306,17 +385,15 @@ class PagePlaces:
             place = new_page.anchor or place
             places.setdefault(place, []).append(index)
 
+        gaps = self.work.repos.pages.order().gaps(places)
         pages: dict[int, Page] = {}
         for anchor, indexes in places.items():
-            try:
-                keys = self.keys_at(anchor, count=len(indexes))
-            except NotFoundError as error:
-                raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK)) from error
+            if anchor not in gaps:
+                raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK))
+            lower, upper = gaps[anchor]
+            keys = self.work.keeping.order_keys.spread(lower=lower, upper=upper, count=len(indexes))
             pages.update((i, self._page(new_pages[i], key, moment)) for i, key in zip(indexes, keys, strict=True))
-        return PlacedBatch(
-            pages=[pages[index] for index in range(len(new_pages))],
-            runs=[[pages[index] for index in indexes] for indexes in places.values()],
-        )
+        return [pages[index] for index in range(len(new_pages))]
 
     def moved(self, pages: Sequence[Page], anchor: PageAnchor) -> list[Page]:
         """Give pages new order keys that put them in a run next to the anchor page, in the order given.

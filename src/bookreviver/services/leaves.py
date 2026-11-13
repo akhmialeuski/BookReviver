@@ -22,6 +22,7 @@ from bookreviver.domain.pages import BlankFill, NewPageOrigin, PageKind, RecipeK
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.versions import PageSize, VersionState
+from bookreviver.services.pages_work import PAGE_OF_BATCH
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,7 +37,6 @@ NO_BOOK_IMAGE: str = (
     'No page of the book that is cut from a scan and part of the book has a recorded size, so a blank leaf has no size '
     'to take. Give the size of the leaf.'
 )
-PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
 
 
 class Leaves:
@@ -75,7 +75,7 @@ class Leaves:
         recipes = self.work.repos.recipes.list_for_stage(Stage.GEOMETRY)
         recipe = next((recipe for recipe in recipes if recipe.kind is RecipeKind.BLANK), None)
         for step in () if recipe is None else recipe.enabled_steps:
-            book_step = self.work.parts.book_steps.of(step)
+            book_step = self.work.keeping.book_steps.of(step)
             if book_step is not None and (size := book_step.page_size(step.params)) is not None:
                 return evolve(median, width_px=size[0], height_px=size[1])
         return median
@@ -111,7 +111,7 @@ class Leaves:
         :rtype: PageVersion
         """
         full = book_record.image_policy.full_format(ColorMode.BILEVEL)
-        return self.work.parts.base_versions.blank(page=page, size=size, full=full, moment=page.created_at)
+        return self.work.keeping.base_versions.blank(page=page, size=size, full=full, moment=page.created_at)
 
     def stand(self, pages: Sequence[Page], book_record: BookRecord) -> bool:
         """Give pages the image their choice says, and tell whether a job must write leaves that are not made yet.
@@ -128,7 +128,7 @@ class Leaves:
         :rtype: bool
         :raises ConflictError: If a leaf is chosen and no page of the book has a recorded size to give it.
         """
-        repos, parts = self.work.repos, self.work.parts
+        repos, keeping = self.work.repos, self.work.keeping
         moment = datetime.now(UTC)
         leaves = any(page.blank_fill is not BlankFill.SCAN for page in pages)
         size = self.size() if leaves else None
@@ -137,14 +137,14 @@ class Leaves:
         for page in pages:
             key = PageStageKey(page.id, Stage.PAGE_ORDER)
             if size is None or page.blank_fill is BlankFill.SCAN:
-                parts.records.clear(repos, key)
+                keeping.records.clear(repos, key)
                 continue
             sources = self._paper_sources(page) if page.blank_fill is BlankFill.PAPER else None
-            leaf = parts.base_versions.blank(page=page, size=size, full=full, moment=moment, paper_from=sources)
+            leaf = keeping.base_versions.blank(page=page, size=size, full=full, moment=moment, paper_from=sources)
             made = repos.page_versions.find(leaf.id)
             if made is not None and made.state is VersionState.READY:
                 # The same leaf was made before, so it is current again without the job
-                parts.records.set_head(repos, key, head_version_id=made.id, recipe_id=None)
+                keeping.records.set_head(repos, key, head_version_id=made.id, recipe_id=None)
                 continue
             if made is None:
                 repos.page_versions.add(leaf)

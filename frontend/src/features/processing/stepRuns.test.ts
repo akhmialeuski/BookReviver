@@ -9,27 +9,48 @@ import {
 } from '@/features/processing/stepRuns';
 
 describe('passedPages', () => {
+  const three = recipe('r', {
+    steps: [
+      step('geometry.perspective', { step_id: 'a' }),
+      step('geometry.deskew', { step_id: 'b' }),
+      step('geometry.crop', { step_id: 'c' }),
+    ],
+  });
   const rows = [
     row('whole', { recipe_id: 'r' }),
-    row('first', { recipe_id: 'r', through_step: 0 }),
-    row('second', { recipe_id: 'r', through_step: 1 }),
-    row('stale', { recipe_id: 'r', status: 'stale', through_step: 1 }),
-    row('failed', { recipe_id: 'r', status: 'failed', through_step: 2 }),
+    row('first', { recipe_id: 'r', through_step_id: 'a' }),
+    row('second', { recipe_id: 'r', through_step_id: 'b' }),
+    row('stale', { recipe_id: 'r', status: 'stale', through_step_id: 'b' }),
+    row('failed', { recipe_id: 'r', status: 'failed', through_step_id: 'c' }),
     row('other', { recipe_id: 'x' }),
     row('never', { status: 'not-run' }),
   ];
 
   it('counts every page that has a result by the recipe for the first step', () => {
-    expect(passedPages(rows, 'r', 0)).toBe(4);
+    expect(passedPages(rows, three, 0)).toBe(4);
   });
 
   it('leaves out the pages that stopped before a step', () => {
-    expect(passedPages(rows, 'r', 1)).toBe(3);
-    expect(passedPages(rows, 'r', 2)).toBe(1);
+    expect(passedPages(rows, three, 1)).toBe(3);
+    expect(passedPages(rows, three, 2)).toBe(1);
+  });
+
+  it('finds the step a page stopped at by its identifier, wherever the step stands now', () => {
+    const moved = recipe('r', {
+      steps: [
+        step('geometry.deskew', { step_id: 'b' }),
+        step('geometry.perspective', { step_id: 'a' }),
+        step('geometry.crop', { step_id: 'c' }),
+      ],
+    });
+
+    // The pages that stopped at b stopped at the first step now, and the one that stopped at a passed the second
+
+    expect(passedPages(rows, moved, 1)).toBe(2);
   });
 
   it('counts none of the pages another recipe processed, the ones that failed and the ones not run', () => {
-    expect(passedPages(rows, 'nobody', 0)).toBe(0);
+    expect(passedPages(rows, { ...three, id: 'nobody' }, 0)).toBe(0);
   });
 });
 

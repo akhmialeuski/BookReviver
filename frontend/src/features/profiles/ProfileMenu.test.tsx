@@ -295,7 +295,9 @@ describe('ProfileMenu', () => {
     await click('profile-button');
     await click('profile-revert');
 
-    expect(loadSteps).toHaveBeenCalledWith(draftOf(PROFILE), 'free');
+    // The steps keep the identifiers of the saved steps they match and name the steps of the profile as their origin
+    const putBack = draftOf(PROFILE).map((step) => ({ ...step, originStepId: step.stepId }));
+    expect(loadSteps).toHaveBeenCalledWith(putBack, 'free');
   });
 
   it('saves the steps as a new profile and links the recipe to it', async () => {

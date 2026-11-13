@@ -21,7 +21,7 @@ from bookreviver.domain.recipes import RecipeDraft, Step
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from tests.harness.builders.domain import make_page_step_state, open_for
 from tests.harness.builders.page_batches import PageValues
-from tests.harness.builders.processing import open_book
+from tests.harness.builders.processing import open_book, started_after, stored_job
 from tests.harness.builders.spreads import run_stage
 from tests.harness.fakes.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.integration.services.test_processing_versions import previewed, ran_geometry, ran_two_steps
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId
+    from bookreviver.domain.jobs import Job
     from bookreviver.domain.page_steps import PageEdit, PageStepState
     from bookreviver.domain.pages import Page
     from bookreviver.domain.stages import PageStage
@@ -45,7 +46,6 @@ pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
 STRONGER: int = 2
-BUSY_MESSAGE: str = 'book is busy'
 STRONGEST: int = 3
 NOT_FAILING: bool = False
 OTHER_ORDER_KEY: str = 'a1'
@@ -87,6 +87,23 @@ async def history_of(kit: ProcessingKit, actor: Actor, book_id: BookId, key: Pag
     :rtype: list[PageHistoryEntry]
     """
     return list((await kit.page_history().list(open_for(actor, book_id), key)).changes)
+
+
+async def queued_clear(kit: ProcessingKit, actor: Actor, book_id: BookId, key: PageStepKey) -> Job:
+    """Ask for the clear of a step on a page, which puts a job on the board and runs nothing.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param book_id: The book.
+    :type book_id: BookId
+    :param key: The page, the stage and the step.
+    :type key: PageStepKey
+    :returns: The queued job.
+    :rtype: Job
+    """
+    return await kit.page_history().start_clear(open_for(actor, book_id), key)
 
 
 async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: LocatedBookDatabases) -> PageEdit | None:
@@ -579,7 +596,11 @@ class TestClear:
         stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
-        assert (stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0)
+        assert (stored.head_version_id, stored.state, stored.through_step_id) == (
+            made[0].id,
+            StageState.STALE,
+            step_ids[0],
+        )
 
     async def test_the_version_the_stage_stands_on_gets_its_pyramid_cut_since_the_page_is_shown_by_it(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -658,7 +679,10 @@ class TestClear:
         stored = await fx_open_book.databases.open(book_id).read(
             lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
-        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
+        expect(
+            (stored.head_version_id, stored.recipe_id, stored.through_step_id)
+            == (made[0].id, blank_recipe.id, blank_recipe.steps[0].step_id)
+        )
         assert_expectations()
 
     async def test_the_first_step_leaves_the_stage_with_no_current_version(
@@ -885,7 +909,7 @@ class TestClear:
         assert_expectations()
 
     async def test_a_page_of_another_book_is_not_found(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
-        """Verify a clear on a page of another book is not found and deletes nothing.
+        """Verify a clear on a page of another book is not found, queues nothing and deletes nothing.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -896,14 +920,17 @@ class TestClear:
         _, other_record = await fx_kit.seed_book()
         key = await step_key(fx_kit, book_id, page)
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        queued = len(fx_kit.board.put_jobs)
         with pytest.raises(NotFoundError):
-            await fx_kit.page_history().clear(fx_open_book(actor, other_record), key)
-        assert len(await history_of(fx_kit, actor, book_id, key)) == 1
+            await fx_kit.page_history().start_clear(fx_open_book(actor, other_record), key)
+        expect(fx_kit.board.put_jobs[queued:] == [])
+        expect(len(await history_of(fx_kit, actor, book_id, key)) == 1)
+        assert_expectations()
 
-    async def test_a_clear_is_refused_while_the_book_is_processing_something_and_deletes_nothing(
+    async def test_a_clear_asked_for_during_a_collection_waits_behind_it_and_clears_after(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Reject a clear while a job may be reading or deleting the versions, and leave the step as it was.
+        """Verify a clear is queued behind a collection, which may delete versions, and deletes the step once it ends.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -914,23 +941,27 @@ class TestClear:
         key = await step_key(fx_kit, book_id, page)
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, book_id, key))
-        await fx_kit.service().start_collection(fx_open_book(actor, book_id))
-        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
+        collection = await fx_kit.service().start_collection(fx_open_book(actor, book_id))
+        job = await queued_clear(fx_kit, actor, book_id, key)
+        waiting = len(await history_of(fx_kit, actor, book_id, key))
+        await fx_kit.work_queue()
+        ended = stored_job(fx_kit, job.id)
         state, kept = await fx_open_book.databases.open(book_id).read(
             lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )
-        expect(len(await history_of(fx_kit, actor, book_id, key)) == written)
-        expect(state is not None)
-        expect(kept is not None)
-        expect(await has_files(fx_kit, book_id, version))
+        expect((job.kind, job.state, waiting) == (JobKind.CLEAR_STEP, JobState.QUEUED, written))
+        expect(ended.state is JobState.SUCCEEDED)
+        expect(started_after(fx_kit, job.id, collection.id))
+        expect(await history_of(fx_kit, actor, book_id, key) == [])
+        expect((state, kept) == (None, None))
+        expect(not await has_files(fx_kit, book_id, version))
         assert_expectations()
 
     @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
     async def test_a_preview_of_the_book_is_cancelled_and_the_clear_goes_on(
         self, fx_kit: ProcessingKit, state: JobState, fx_open_book: BookOpener
     ) -> None:
-        """Verify a clear takes the book from a preview, queued or running, instead of being refused by it.
+        """Verify a clear takes the book from a preview, queued or running, instead of waiting behind it.
 
         The editor of a step asks for a preview when the step is opened, so a clear a moment later finds one. The
         preview is cancelled and announced, as a run cancels it, and the clear deletes what it was asked to.
@@ -949,25 +980,29 @@ class TestClear:
         other, _ = await fx_kit.seed_scan_page(book_id, order_key=OTHER_ORDER_KEY)
         await fx_kit.seed_base_version(book_id, other)
         async with previewed(fx_kit, actor, book_id, other, state) as preview:
-            cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
+            job = await queued_clear(fx_kit, actor, book_id, key)
+        await fx_kit.work_queue()
         announced = [
             (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
         ]
-        left = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key))
+        left, kept = await fx_open_book.databases.open(book_id).read(
+            lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
+        )
         expect(fx_kit.board.get(preview.id).state is JobState.CANCELLED)
         expect((preview.id, JobState.CANCELLED) in announced)
-        expect([deleted.id for deleted in cleared.versions] == [version.id])
+        expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
         expect(await history_of(fx_kit, actor, book_id, key) == [])
-        expect(left is None)
+        expect((left, kept) == (None, None))
         assert_expectations()
 
     @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    async def test_a_clear_is_still_refused_while_a_run_or_a_measure_is_active_and_the_job_stays(
+    async def test_a_clear_waits_behind_a_run_or_a_measure_and_clears_once_it_ended(
         self, fx_kit: ProcessingKit, active: JobKind, fx_open_book: BookOpener
     ) -> None:
-        """Reject a clear while a run or a measure of the book is queued, which may read the versions it deletes.
+        """Verify a clear asked for while a run or a measure of the book is queued is a job that waits behind it.
 
-        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+        The earlier job may read the versions the clear deletes, so the clear changes nothing until it has ended, and
+        then deletes the step on the page as on a free book.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -976,25 +1011,53 @@ class TestClear:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        actor, book_id, page, version = await ran_geometry(fx_kit)
+        actor, book_id, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, book_id, page)
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, book_id, key))
-        job = await fx_kit.parts().starter.enqueue(
-            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY)
+        earlier = await fx_kit.starter.enqueue(await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY))
+        job = await queued_clear(fx_kit, actor, book_id, key)
+        waiting = (stored_job(fx_kit, earlier.id).state, len(await history_of(fx_kit, actor, book_id, key)))
+        await fx_kit.work_queue()
+        ended = stored_job(fx_kit, job.id)
+        left = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_step_states.find(key))
+        expect((job.state, waiting) == (JobState.QUEUED, (JobState.QUEUED, written)))
+        expect(ended.state is JobState.SUCCEEDED)
+        expect(started_after(fx_kit, job.id, earlier.id))
+        expect(await history_of(fx_kit, actor, book_id, key) == [])
+        expect(left is None)
+        assert_expectations()
+
+    async def test_a_clear_whose_step_left_the_recipes_by_its_turn_fails_and_deletes_nothing(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify the step is checked again when the job runs, and a step no recipe holds any longer fails the job.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, book_id, page)
+        await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
+        job = await queued_clear(fx_kit, actor, book_id, key)
+        await fx_kit.edit_recipe(actor, book_id, Stage.GEOMETRY, RecipeDraft(steps=[Step(processor_key=FAKE_KEY)]))
+        await fx_kit.work_queue()
+        ended = stored_job(fx_kit, job.id)
+        state, kept = await fx_open_book.databases.open(book_id).read(
+            lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )
-        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_id), key)
-        kept = await fx_open_book.databases.open(book_id).read(lambda repos: repos.page_versions.find(version.id))
-        expect(fx_kit.board.get(job.id).state is JobState.QUEUED)
-        expect(len(await history_of(fx_kit, actor, book_id, key)) == written)
+        expect((ended.state, str(key.step_id) in ended.error) == (JobState.FAILED, True))
+        expect(len(await history_of(fx_kit, actor, book_id, key)) == 1)
+        expect(state is not None)
         expect(kept is not None)
         assert_expectations()
 
     async def test_a_step_that_is_in_no_recipe_does_not_cancel_the_preview(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Reject a clear of an unknown step as not found before it takes the book from a preview.
+        """Reject a clear of an unknown step as not found before it queues anything or takes the book from a preview.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -1003,10 +1066,13 @@ class TestClear:
         """
         actor, book_id, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, book_id, page)
-        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
+        preview = await fx_kit.starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
+        queued = len(fx_kit.board.put_jobs)
         with pytest.raises(NotFoundError):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
-        assert fx_kit.board.get(preview.id).state is JobState.QUEUED
+            await fx_kit.page_history().start_clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
+        expect(fx_kit.board.get(preview.id).state is JobState.QUEUED)
+        expect(fx_kit.board.put_jobs[queued:] == [])
+        assert_expectations()
 
     async def test_a_step_that_no_recipe_of_the_stage_has_is_not_found_and_deletes_nothing(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -1022,7 +1088,7 @@ class TestClear:
         key = await step_key(fx_kit, book_id, page)
         await PageValues(fx_kit, actor, book_id).set(key, STRENGTH_PARAMETER, STRONGER)
         with pytest.raises(NotFoundError):
-            await fx_kit.page_history().clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
+            await fx_kit.page_history().start_clear(fx_open_book(actor, book_id), evolve(key, step_id=StepId(uuid4())))
         state, kept = await fx_open_book.databases.open(book_id).read(
             lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )

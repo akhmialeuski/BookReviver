@@ -1,8 +1,8 @@
-"""The collaborators every processing use case is built from, and the starting of the jobs that do the heavy work.
+"""The starting of the jobs that do the heavy work, and the bounds of processing the settings give.
 
-A use case of processing writes recipes and stage records, follows jobs and starts new ones. ``ProcessingParts`` gathers
-the objects that do these on the book a use case is given, so ``ProcessingService`` and ``ProcessingJobs`` take one
-value for them and are built the same way.
+``JobStarter`` keeps no state of its own and works on the book it is given, so the container builds it once, as it does
+the ``RecipeBook`` and the ``StageRecords`` a use case of processing works with, and each use case declares the ones it
+uses. ``ProcessingConfig`` holds the bounds of processing read from the settings.
 
 A job is what was asked for: a step or a stage, the pages it goes over, and its parameters, as the value of its kind
 (``Job.work``). It is put on the job queue of its book, which runs one job of the book at a time in the order they were
@@ -12,9 +12,10 @@ from the one that is running, such as the split of the pages an import made, is 
 so that what the user asked for meanwhile works on what the follow-up made.
 
 A preview is the one job that is dropped for another. It is a look at one page that changes nothing that is current,
-so a run, a measure of the book and a collection the user asks for cancel the previews of the book that are queued or
-running, and a new preview takes the place of the one before it. A tile cutting cancels nothing. The collection that
-every run queues when it ends is left out while a collection of the book is queued already, since one is enough.
+so a run, a measure of the book, a collection, a clear of a step on a page and a choice of a version the user asks for
+cancel the previews of the book that are queued or running, and a new preview takes the place of the one before it. A
+tile cutting cancels nothing. The collection that every run queues when it ends is left out while a collection of the
+book is queued already, since one is enough.
 
 The job is put with no ``await`` before it, so no other request can put a job in between. A cancelled preview that is
 running keeps its place until its current task has returned, and the job put behind it starts only then.
@@ -30,24 +31,14 @@ from attrs import field, frozen, validators
 from bookreviver.domain.errors import JobFinishedError, NotFoundError
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.jobs import Job, JobKind, JobState, TileCut, VersionCollection
-from bookreviver.services.recipe_order import RecipeOrder
-from bookreviver.services.recipes import RecipeBook
-from bookreviver.services.stage_records import StageRecords
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import timedelta
 
     from bookreviver.core.book import Book
-    from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.jobs import JobWork
-    from bookreviver.services.recipes import DefaultRecipes
-
-BOOK_BUSY: str = (
-    'The book is busy with a run, a measure of the book, a tile cutting or a collection of old versions, which this '
-    'change would be read or written over by. Wait for it to end, or cancel it.'
-)
 
 
 @frozen(kw_only=True)
@@ -79,8 +70,9 @@ class JobStarter:
         """Put a job on the queue of the book, behind the jobs the book has, and drop the previews it replaces.
 
         The job starts when every job put before it has ended, so two jobs of a book never overlap and a later one
-        reads what an earlier one made. A run, a measure of the book and a new preview cancel the previews of the
-        book, queued or running, the way an account holder cancels a job, after the new job is put. A preview that was
+        reads what an earlier one made. A run, a measure of the book, a clear of a step, a choice of a version and a
+        new preview cancel the previews of the book, queued or running, the way an account holder cancels a job, after
+        the new job is put. A preview that was
         still queued never runs. One that is running stops at the boundary of its current task, and the new job starts
         after that.
 
@@ -100,23 +92,6 @@ class JobStarter:
         job = book.jobs.put(self._new_job(kind, work), next_up=next_up)
         await self._cancel(book, previews)
         return job
-
-    async def free_of_previews(self, book: Book) -> list[Job]:
-        """Cancel the previews of the book that are queued or running, and return the jobs that are still active.
-
-        A preview is cancelled the way an account holder cancels a job, so a request that would be refused by a preview
-        alone, such as the choice of another version of a page or the clear of a step, goes on as if the book had been
-        free of it.
-
-        :param book: The open book.
-        :type book: Book
-        :returns: The queued or running run, tile cutting, collection or measure of the book, newest first, which
-                  are none when the book was free of them.
-        :rtype: list[Job]
-        """
-        previews, others = self._active(book)
-        await self._cancel(book, previews)
-        return others
 
     def collection(self) -> VersionCollection:
         """Say what a collection started now deletes: the versions nothing needs, and the previews old enough.
@@ -157,11 +132,12 @@ class JobStarter:
         return book.jobs.put(self._new_job(JobKind.COLLECT_VERSIONS, self.collection()))
 
     async def enqueue_tiles(self, book: Book, version_ids: Sequence[PageVersionId]) -> Job | None:
-        """Queue the cutting of the pyramids of versions that were just made the current ones of their stages.
+        """Queue the cutting of the pyramids of versions the running job just made the current ones of their stages.
 
         The change that made them current is committed already. The viewer asks for the pyramid of a current version,
         and only the last step of a run cuts one, so the version of a step in the middle of a recipe has none until it
-        is cut here.
+        is cut here. The cutting follows from the job that made the change, a clear of a step or a choice of a version,
+        so it is put next up, ahead of the jobs that are queued already.
 
         :param book: The open book.
         :type book: Book
@@ -172,7 +148,7 @@ class JobStarter:
         """
         if not version_ids:
             return None
-        return book.jobs.put(self._new_job(JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids))))
+        return book.jobs.put(self._new_job(JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids))), next_up=True)
 
     def _active(self, book: Book) -> tuple[list[Job], list[Job]]:
         """Read the jobs of the book that process its versions and are queued or running.
@@ -210,41 +186,3 @@ class JobStarter:
         :rtype: Job
         """
         return Job(id=JobId(uuid4()), kind=kind, work=work, created_at=datetime.now(UTC))
-
-
-@frozen(kw_only=True)
-class ProcessingParts:
-    """The objects a processing use case works through, built for one request or job.
-
-    :ivar recipes: The recipes of the book and the check of their steps.
-    :ivar records: Writer of the stage records.
-    :ivar starter: Putter of new jobs on the queue of a book.
-    """
-
-    recipes: RecipeBook
-    records: StageRecords
-    starter: JobStarter
-
-    @classmethod
-    def build(
-        cls,
-        processors: ProcessorCatalog,
-        defaults: DefaultRecipes,
-        config: ProcessingConfig,
-    ) -> ProcessingParts:
-        """Build the parts of one request or job.
-
-        :param processors: The processors the application can run.
-        :type processors: ProcessorCatalog
-        :param defaults: The recipes a stage starts with.
-        :type defaults: DefaultRecipes
-        :param config: The retention period and the size of a preview.
-        :type config: ProcessingConfig
-        :returns: The parts.
-        :rtype: ProcessingParts
-        """
-        return cls(
-            recipes=RecipeBook(processors=processors, defaults=defaults, order=RecipeOrder(processors)),
-            records=StageRecords(),
-            starter=JobStarter(config=config),
-        )

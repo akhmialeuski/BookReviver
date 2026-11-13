@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.core.plugins import BookStep, ProcessorCatalog
+    from bookreviver.domain.ids import StepId
     from bookreviver.domain.recipes import Recipe, Step
     from bookreviver.domain.stages import Stage
 
@@ -60,7 +61,7 @@ class BookSteps:
         """
         return next((index for index, step in enumerate(steps) if self.of(step) is not None), None)
 
-    def leaves_to_book(self, recipe: Recipe, *, through_step: int | None = None) -> bool:
+    def leaves_to_book(self, recipe: Recipe, *, through_step_id: StepId | None = None) -> bool:
         """Tell whether a run of the recipe has a step that takes a field of its parameters from the book.
 
         A page run by such a recipe gets a result that what the step found on every page of the book decides, so its
@@ -68,12 +69,12 @@ class BookSteps:
 
         :param recipe: Recipe of the stage.
         :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step the run goes over, or None for every step that is on.
+        :type through_step_id: StepId | None
         :returns: Whether a step the run goes over leaves a field to the book.
         :rtype: bool
         """
         return any(
             (book_step := self.of(step)) is not None and book_step.leaves_to_book(step.params)
-            for _, step in recipe.indexed_steps_through(through_step)
+            for _, step in recipe.indexed_steps_through(through_step_id)
         )

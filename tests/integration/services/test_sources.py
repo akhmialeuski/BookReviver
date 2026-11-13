@@ -19,7 +19,7 @@ from bookreviver.ports.runtime import BookJobs
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.sources import SourceService
 from tests.harness.adapters.storage import SharedBookDirectories, book_directory
-from tests.harness.builders.books import SCANS_PER_SOURCE, commit_book, on_disk
+from tests.harness.builders.books import SCANS_PER_SOURCE, on_disk
 from tests.harness.builders.domain import make_job, make_record, make_source
 from tests.harness.builders.seeding import store_book
 from tests.harness.concurrency.scripted_runner import ScriptedRunner
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.core.book import Book as OpenedBook
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
@@ -175,43 +174,6 @@ async def fx_unimported(fx_book: Book, fx_databases: BookDatabasesFactory) -> tu
     :rtype: tuple[Source, Source]
     """
     return await _record_unimported(fx_book.book_id, databases=fx_databases())
-
-
-@pytest.fixture
-async def fx_book(
-    fx_database: SqlDatabase,
-    fx_actor: Actor,
-    fx_open_book: BookOpener,
-) -> Book:
-    """Commit and store a book of the acting account.
-
-    :param fx_database: Database of the test.
-    :type fx_database: SqlDatabase
-    :param fx_actor: Account the service acts for.
-    :type fx_actor: Actor
-    :param fx_open_book: Opens the books of the test with their databases.
-    :type fx_open_book: BookOpener
-    :returns: The stored book.
-    :rtype: Book
-    """
-    return await commit_book(fx_database, fx_open_book, fx_actor)
-
-
-@pytest.fixture
-async def fx_strangers_book(
-    fx_database: SqlDatabase,
-    fx_open_book: BookOpener,
-) -> Book:
-    """Commit and store a book of an account that acts nowhere in the test.
-
-    :param fx_database: Database of the test.
-    :type fx_database: SqlDatabase
-    :param fx_open_book: Opens the books of the test with their databases.
-    :type fx_open_book: BookOpener
-    :returns: The stored book.
-    :rtype: Book
-    """
-    return await commit_book(fx_database, fx_open_book, None)
 
 
 @pytest.fixture

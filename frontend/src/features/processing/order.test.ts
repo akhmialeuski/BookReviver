@@ -6,7 +6,9 @@ import {
   orderIssues,
   refusalOf,
   refusalOfAdd,
+  refusalOfType,
   restoreUsualOrder,
+  typesAt,
   usualPlace,
 } from '@/features/processing/order';
 import { draftOf, type StepDraft } from '@/features/processing/recipe';
@@ -159,6 +161,30 @@ describe('refusalOfAdd', () => {
 
   it('does not count a required place the draft already breaks', () => {
     expect(refusalOfAdd(draft('c', 'b'), CATALOGUE, processorOf('b'), 2)).toBeUndefined();
+  });
+});
+
+describe('refusalOfType', () => {
+  it('refuses a type that must follow a step standing after the step', () => {
+    const refusal = refusalOfType(draft('a', 'b'), CATALOGUE, 'step-0', processorOf('c'));
+
+    expect(refusal).toMatchObject({ kind: 'required', reason: C_REASON });
+  });
+
+  it('allows a type whose place the step keeps', () => {
+    expect(refusalOfType(draft('b', 'a'), CATALOGUE, 'step-1', processorOf('c'))).toBeUndefined();
+  });
+});
+
+describe('typesAt', () => {
+  it('lists the types the usual order accepts at the place of the step, its own among them', () => {
+    expect(
+      typesAt(draft('a', 'b'), CATALOGUE, 'step-0', 'usual').map((entry) => entry.title),
+    ).toEqual(['A', 'B', 'O']);
+  });
+
+  it('lists every type of the stage in the free order', () => {
+    expect(typesAt(draft('a', 'b'), CATALOGUE, 'step-0', 'free')).toHaveLength(CATALOGUE.length);
   });
 });
 

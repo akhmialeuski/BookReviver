@@ -95,7 +95,7 @@ export function PageTimeline({
   const versions = stepId === null ? ofStage : ofStep;
   const undo = useUndo(bookId);
   const clear = useClearHistory(bookId);
-  const choose = useChooseVersion(bookId, stage);
+  const choose = useChooseVersion(bookId);
   const [filter, setFilter] = useState<TimelineFilter>(TimelineFilter.All);
   const [shown, setShown] = useState(ROWS_AT_A_TIME);
   const [question, setQuestion] = useState<Question>(null);
@@ -146,6 +146,10 @@ export function PageTimeline({
   const titleOf = useCallback(
     (name: string) => (schema === undefined ? name : fieldTitleOf(schema, name)),
     [schema],
+  );
+  const typeOf = useCallback(
+    (key: string) => catalogue.find((entry) => entry.key === key)?.title ?? key,
+    [catalogue],
   );
   // An undo of the newest change is never dropped while an earlier one settles: the requests of the book go to the server
   // one at a time in the order they were made, and each takes back the newest change that stands by then
@@ -262,6 +266,7 @@ export function PageTimeline({
                   key={`change:${row.id}`}
                   change={row.change}
                   titleOf={titleOf}
+                  typeOf={typeOf}
                   disabled={undo.isPending}
                   onUndo={() => undoTo(row.id)}
                 />

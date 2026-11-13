@@ -300,16 +300,15 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   });
 
   await test.step('a clear asks first, deletes the history and the settings, and leaves the section grey', async () => {
-    // The undo changed the settings, so the editor of the step asks for a preview of the page, and a clear is refused
-    // while that preview may read the versions the clear deletes
-    await waitForIdleJobs(page, openBookId(page));
+    // The undo changed the settings, so the editor of the step asks for a preview of the page, which the clear cancels;
+    // the clear is a job of the book, and the section turns grey when the job has deleted the history
     await history.getByTestId('page-history-clear').click();
     await expect(dialog).toContainText('cannot be undone');
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-clear-confirmation');
     await dialog.getByTestId('page-history-confirm').click();
     await expect(dialog).toHaveCount(0);
-    await expect(history).toHaveAttribute('aria-disabled', 'true');
+    await expect(history).toHaveAttribute('aria-disabled', 'true', { timeout: RUN_TIMEOUT_MS });
     await expect(history.getByTestId('page-history-toggle')).toBeDisabled();
     await expect(history.getByTestId('page-history-reason')).toContainText('Nothing has happened');
     await expect(rows).toHaveCount(0);
@@ -530,9 +529,10 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await dialog.getByTestId('page-history-confirm').click();
     await expect(dialog).toHaveCount(0);
 
-    // The section is grey, the step is at its defaults with no frame, and the stage stands on what the step read
+    // The section is grey, the step is at its defaults with no frame, and the stage stands on what the step read, once
+    // the job of the clear has run
     const cleared = async (): Promise<void> => {
-      await expect(history).toHaveAttribute('aria-disabled', 'true');
+      await expect(history).toHaveAttribute('aria-disabled', 'true', { timeout: RUN_TIMEOUT_MS });
       await expect(history.getByTestId('page-history-reason')).toContainText(
         'Nothing has happened on this page yet.',
       );

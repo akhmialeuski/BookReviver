@@ -12,6 +12,7 @@ from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.providers.imports import ImportsProvider
 from bookreviver.app.providers.persistence import ChangeWaitProvider
 from bookreviver.app.providers.processing import ProcessingProvider
+from bookreviver.app.providers.runs import RunsProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.providers.tracing import TracingProvider
 from bookreviver.app.settings import Settings
@@ -43,6 +44,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
         ImportsProvider(),
         BooksProvider(),
         ProcessingProvider(),
+        RunsProvider(),
         *extra_providers,
         context={Settings: settings},
     )

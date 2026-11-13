@@ -2,7 +2,8 @@
 
 An upload of any number of files becomes one import job. ``ImportService.start_import`` receives the files into the
 job's own directory and puts the job on the board, and the request is answered at once. ``ImportService.run_import`` is
-the body of the job, which hands the work to an ``ImportRun``. The whole import is one task of the job, so the job is
+the body of the job, which hands the work to an ``ImportRun`` that belongs to the service and reaches the inspector,
+the cutter of scans, the order keys and the limits through it. The whole import is one task of the job, so the job is
 cancelled between sources and between scans, and not inside one, and its progress counts the files dealt with and the
 scans cut.
 
@@ -17,10 +18,9 @@ stored and the scans a cancelled or interrupted import left behind. Inspection, 
 any transaction, and the work of a transaction holds only the reads that decide and the writes. The staged upload is
 removed when the run ends, however it ends.
 
-The base version of a page, ``split.none``, holds the page's own copy of its scan's ``full`` image and the renditions
-cut from that copy, so the page stands on its own once its scan is deleted. Until the plugin framework exists
-``BaseVersions`` writes it, as it does when a scan is bound to a placeholder, and the ``split.none`` processor replaces
-that code.
+The images of a scan and the base version of its pages, ``split.none``, are cut by the ``ScanCutter`` of
+``services/scan_cuts.py``. When the import has taken in a source, the ``ProcessingService`` queues the split of its
+pages, when the recipe of text pages splits them without the user.
 
 A file is named by its relative path in the upload, such as ``vol1/001.tif``, and the order of the upload is the order
 of the book: the job lists its files as the user gave them, sources are created in that order, and the pages of their
@@ -33,7 +33,6 @@ written through the imaging and asset ports.
 
 import logging
 from datetime import UTC, datetime
-from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -48,37 +47,29 @@ from bookreviver.domain.errors import (
     UploadRejectedError,
 )
 from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
-from bookreviver.domain.images import Renditions
-from bookreviver.domain.jobs import ImportRequest, Job, JobEnd, JobKind, JobState, StageRun
-from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.pages import Page, PageOrigin, RecipeKind
+from bookreviver.domain.jobs import ImportRequest, Job, JobEnd, JobKind, JobState
+from bookreviver.domain.pages import Page, PageOrigin
 from bookreviver.domain.sources import FileType, RejectionReason, Scan, Source, SourceStatus, SystemFile, UploadPath
-from bookreviver.domain.stages import PageStageKey, Stage
-from bookreviver.domain.versions import VersionState
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.source_labels import SourceLabels
-from bookreviver.services.stage_records import StageRecords
-from bookreviver.services.steps import StepRun
 from bookreviver.services.worker_group import WorkerGroup
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.core.book import Book
-    from bookreviver.domain.books import BookRecord, MetadataSuggestion
-    from bookreviver.domain.sources import SourceKind, UploadedSource
-    from bookreviver.ports.imaging import PageRasterizer, SourceInspector
+    from bookreviver.domain.books import BookRecord
+    from bookreviver.domain.sources import SourceAnalysis, SourceKind, UploadedSource
+    from bookreviver.ports.imaging import SourceInspector
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import IncomingFile
-    from bookreviver.services.base_versions import BaseVersions
-    from bookreviver.services.processing_parts import ProcessingParts
-    from bookreviver.services.steps import StepRunner
+    from bookreviver.services.processing import ProcessingService
+    from bookreviver.services.scan_cuts import ScanCutter
 
 IMPORT_ACTIVE: str = 'This book is already importing files. Wait for the import to finish, or cancel it.'
 NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
-# The processor of the page split that decides for each scan, whose recipe an import runs on the new pages
 # Kinds of job that import files, of which a book runs one at a time
 IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
 
@@ -97,34 +88,6 @@ class ImportLimits:
     max_files: int
     max_bytes: int
     parallel_scans: int
-
-
-@frozen(kw_only=True)
-class ImportImaging:
-    """The imaging ports an import reads its sources and cuts its scans with.
-
-    :ivar inspector: Port grouping an upload into sources and describing each source.
-    :ivar rasterizer: Port writing one scan as an image.
-    :ivar base_versions: Builder of the base version of a page, which also cuts the files of a scan.
-    :ivar runner: Runner of the processor that makes the base version of a page from its scan.
-    """
-
-    inspector: SourceInspector
-    rasterizer: PageRasterizer
-    base_versions: BaseVersions
-    runner: StepRunner
-
-
-@frozen(kw_only=True)
-class ImportRuntime:
-    """What an import orders by and is bounded by.
-
-    :ivar order_keys: Builder of the order keys of the new pages.
-    :ivar limits: Bounds of an upload and of an import.
-    """
-
-    order_keys: OrderKeys
-    limits: ImportLimits
 
 
 @frozen(kw_only=True)
@@ -147,46 +110,38 @@ class ImportRun:
     needed. The progress counts the files dealt with, and the scans cut against the scans to cut. Every report is
     also the check that the job was not cancelled.
 
+    :ivar imports: The service the run belongs to, through which the inspector, the cutter of scans, the order keys
+                   and the limits are reached.
     :ivar imported: Identifiers of the sources the run imported, in book order.
     :ivar book: The open book the job imports into, whose ``Book.change`` stores each source.
+    :ivar job_id: Identifier of the job, which names the directory the upload is staged in.
+    :ivar files: The staged files of the upload by their relative names, in the order of the upload.
+    :ivar labels: Rules that keep the labels of the pages writable by the sections of the book.
+    :ivar handled: Names of the files dealt with: imported, or stored as rejected.
     """
 
-    def __init__(
-        self,
-        *,
-        running: RunningImport,
-        book: Book,
-        imaging: ImportImaging,
-        runtime: ImportRuntime,
-    ) -> None:
+    def __init__(self, imports: ImportService, *, running: RunningImport, book: Book) -> None:
         """Prepare to run a job that is running already.
 
+        :param imports: The service the run belongs to.
+        :type imports: ImportService
         :param running: The running job, whose request lists the files to import, and its control.
         :type running: RunningImport
         :param book: The open book the job imports into, whose stores hold the upload, the sources and their scans.
         :type book: Book
-        :param imaging: The inspector, the rasterizer, the tiler and the runner of processors.
-        :type imaging: ImportImaging
-        :param runtime: The order keys and the limits.
-        :type runtime: ImportRuntime
         """
         job = running.job
+        self.imports = imports
         self.imported: list[SourceId] = []
         self.book = book
         self._job = job
+        self.job_id = job.id
         self._control = running.control
-        self._files = {file.name: file for file in job.asked(ImportRequest).files}
-        self._inspector = imaging.inspector
-        self._rasterizer = imaging.rasterizer
-        self._runner = imaging.runner
-        self._records = StageRecords()
-        self._labels = PageLabels()
-        self._base_versions = imaging.base_versions
-        self._order_keys = runtime.order_keys
-        self._limits = runtime.limits
-        self._handled: set[str] = set()
+        self.files = {file.name: file for file in job.asked(ImportRequest).files}
+        self.labels = PageLabels()
+        self.handled: set[str] = set()
         self._done = 0
-        self._total = len(self._files)
+        self._total = len(self.files)
 
     async def execute(self) -> None:
         """Import the staged files as sources, then cut the images of every scan of the book that has none.
@@ -194,8 +149,8 @@ class ImportRun:
         :raises JobCancelledError: If the job was cancelled, which the first report after it finds out.
         """
         unready = await self.book.read(lambda repos: repos.scans.list_unready())
-        await self._report(total=len(unready))
-        await self._import_sources(list(self._files))
+        await self.report(total=len(unready))
+        await self._import_sources(list(self.files))
         await self._cut_scans()
 
     async def record_skipped(self) -> None:
@@ -203,7 +158,7 @@ class ImportRun:
 
         A file whose suffix names a type the application accepts keeps that type, and any other has none.
         """
-        names = [name for name in self._files if name not in self._handled]
+        names = [name for name in self.files if name not in self.handled]
         moment = datetime.now(UTC)
         rows = [
             Source(
@@ -211,9 +166,9 @@ class ImportRun:
                 kind=None if (file_type := FileType.from_name(name)) is None else file_type.source_kind,
                 file_type=file_type,
                 file_name=name,
-                files=[self._files[name]],
-                size_bytes=self._files[name].size_bytes,
-                sha256=self._files[name].sha256,
+                files=[self.files[name]],
+                size_bytes=self.files[name].size_bytes,
+                sha256=self.files[name].sha256,
                 scan_count=0,
                 status=SourceStatus.SKIPPED,
                 imported_at=moment,
@@ -237,155 +192,26 @@ class ImportRun:
         supported: list[str] = []
         for name in names:
             if SystemFile.matches(name):
-                await self._reject([name], RejectionReason.SYSTEM_FILE, RejectionReason.SYSTEM_FILE.label)
+                await self.reject([name], RejectionReason.SYSTEM_FILE, RejectionReason.SYSTEM_FILE.label)
             elif FileType.from_name(name) is None:
-                await self._reject([name], RejectionReason.UNSUPPORTED_TYPE, RejectionReason.UNSUPPORTED_TYPE.label)
+                await self.reject([name], RejectionReason.UNSUPPORTED_TYPE, RejectionReason.UNSUPPORTED_TYPE.label)
             else:
                 supported.append(name)
         if not supported:
             return
-        async with self.book.sources.staged_files(self._job.id) as paths:
-            grouped = await self._inspector.group({name: paths[name] for name in supported})
+        async with self.book.sources.staged_files(self.job_id) as paths:
+            grouped = await self.imports.inspector.group({name: paths[name] for name in supported})
         for uploaded in grouped:
             await self._import_source(uploaded)
 
     async def _import_source(self, uploaded: UploadedSource) -> None:
         """Import one source: check it is new and readable, store it with its scans and pages, and promote its files.
 
-        The source, its scans and its pages are stored in one ``Book.change``, which reads the end of the book and the
-        sections of the book to place the new pages, and a source whose files cannot be promoted is taken back whole
-        in a second one.
-
         :param uploaded: The staged files that make the source.
         :type uploaded: UploadedSource
         :raises JobCancelledError: If the job was cancelled.
         """
-        files = [self._files[name] for name in uploaded.names]
-        main = files[0]
-        twin = await self.book.read(lambda repos: repos.sources.find_by_sha256(main.sha256))
-        if twin is not None:
-            await self._reject(
-                uploaded.names,
-                RejectionReason.DUPLICATE,
-                f'The book already has this file as {twin.file_name}.',
-                uploaded=uploaded,
-            )
-            return
-        async with self.book.sources.staged_files(self._job.id) as paths:
-            try:
-                analysis = await self._inspector.inspect(uploaded.kind, [paths[name] for name in uploaded.names])
-            except UnsupportedSourceError as error:
-                await self._reject(uploaded.names, RejectionReason.UNREADABLE, str(error), uploaded=uploaded)
-                return
-        moment = datetime.now(UTC)
-        source = Source(
-            id=SourceId(uuid4()),
-            kind=uploaded.kind,
-            file_type=uploaded.file_type,
-            file_name=main.name,
-            files=files,
-            size_bytes=sum(file.size_bytes for file in files),
-            sha256=main.sha256,
-            scan_count=len(analysis.scans),
-            metadata=analysis.file_metadata,
-            suggestion=analysis.suggestion,
-            imported_at=moment,
-        )
-        scans = [
-            Scan(
-                id=ScanId(uuid4()),
-                source_id=source.id,
-                number=number,
-                source_label=analysis.label_of(number),
-                facts=facts,
-            )
-            for number, facts in enumerate(analysis.scans)
-        ]
-
-        def store(repos: BookRepositories, book_record: BookRecord) -> list[Page]:
-            """Store the source with its scans and pages, and describe the book.
-
-            :param repos: Repositories of the transaction.
-            :type repos: BookRepositories
-            :param book_record: The record of the book as the change finds it.
-            :type book_record: BookRecord
-            :returns: The pages as stored.
-            :rtype: list[Page]
-            """
-            order_keys = self._order_keys.spread(lower=repos.pages.last_order_key(), upper=None, count=len(scans))
-            pages = [
-                Page(
-                    id=PageId(uuid4()),
-                    order_key=order_key,
-                    manual_label=scan.source_label or None,
-                    origin=PageOrigin.SCAN,
-                    scan_id=scan.id,
-                    created_at=moment,
-                    updated_at=moment,
-                )
-                for scan, order_key in zip(scans, order_keys, strict=True)
-            ]
-            # The label rules of the file become sections, and only a label they do not give stays an exception. A
-            # source without rules is kept out of the numbering of a book that has sections, instead of continuing it
-            source_labels = SourceLabels(
-                rules=analysis.label_rules,
-                pages=pages,
-                moment=moment,
-                book_has_sections=bool(repos.pagination_sections.list_all()),
-            )
-            pages = source_labels.pages
-            repos.sources.add(source)
-            repos.scans.add_many(scans)
-            repos.pages.add_many(pages)
-            if source_labels.sections:
-                repos.pagination_sections.add_many(source_labels.sections)
-            # The new pages may take numbers past what a section of the book can write
-            self._labels.settle(repos)
-            self._describe_book(repos, book_record, analysis.suggestion)
-            return pages
-
-        pages = await self.book.change(store)
-
-        def retract(repos: BookRepositories, _book_record: BookRecord) -> None:
-            """Delete the pages and the source, which takes their scans with it.
-
-            :param repos: Repositories of the transaction.
-            :type repos: BookRepositories
-            :param _book_record: The record of the book as the change finds it, which the retraction does not need.
-            :type _book_record: BookRecord
-            """
-            for page in pages:
-                repos.pages.delete(page.id)
-            repos.sources.delete(source.id)
-
-        try:
-            await self.book.sources.promote(self._job.id, source.id, names=list(uploaded.names))
-        except Exception:
-            # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
-            # is taken back whole. Its pages go first, since deleting the source only empties their scan.
-            await self.book.change(retract)
-            raise
-        self.imported.append(source.id)
-        self._handled.update(uploaded.names)
-        await self._report(done=len(uploaded.names), total=len(scans))
-
-    def _describe_book(self, repos: BookRepositories, book_record: BookRecord, suggestion: MetadataSuggestion) -> None:
-        """Fill the empty fields of the book description from what a source suggests, never the title.
-
-        Writes through the repositories of its caller and opens no transaction, so the change joins the one of the
-        source, and a source is never stored without the values it gave the book. Sources come in order, so the first
-        source that has a value for a field is the one that gives it.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param book_record: The record of the book as the change of the source found it.
-        :type book_record: BookRecord
-        :param suggestion: Description fields found in the source, empty where nothing was found.
-        :type suggestion: MetadataSuggestion
-        """
-        details = book_record.details.fill_from(suggestion)
-        if details != book_record.details:
-            repos.book_record.update(evolve(book_record, details=details, updated_at=datetime.now(UTC)))
+        await SourceImport(run=self, uploaded=uploaded).execute()
 
     async def _cut_scans(self) -> None:
         """Cut the images of every scan of the book that has none, a few at a time, in the order of the book.
@@ -409,18 +235,15 @@ class ImportRun:
             return repos.scans.list_unready(), kinds
 
         scans, kinds = await self.book.read(read)
-        await WorkerGroup(self._limits.parallel_scans).run(scans, lambda scan: self._cut(kinds[scan.source_id], scan))
+        await WorkerGroup(self.imports.limits.parallel_scans).run(
+            scans, lambda scan: self._cut(kinds[scan.source_id], scan)
+        )
 
     async def _cut(self, kind: SourceKind, scan: Scan) -> None:
-        """Write the four renditions of a scan and the base version of its pages, then mark the scan ready.
+        """Cut the images of one scan and the base version of its pages, and count the scan as cut.
 
-        The format of ``full`` is chosen here, from the colour of the scan and the image policy of the book as it is
-        now, and recorded with the scan, so a later change of the policy changes no stored path. The base version of a
-        page copies that format along with the image. What an earlier attempt left in the directories of the scan and
-        of the versions is removed first, since a stored file is never replaced. The files are written outside any
-        transaction, and the scan and its versions are marked ready together, in one ``Book.change``. That change reads
-        the scan and its pages again. A scan that is gone or ready already, or whose pages are not the ones the
-        versions were made for, is left as it is, its files are removed, and the run counts one scan less to cut.
+        A scan the ``ScanCutter`` leaves as it is, because it is gone, ready already, or its pages changed while its
+        files were written, is one scan less to cut.
 
         :param kind: Kind of the source holding the scan.
         :type kind: SourceKind
@@ -428,81 +251,14 @@ class ImportRun:
         :type scan: Scan
         :raises JobCancelledError: If the job was cancelled.
         """
-
-        def start(repos: BookRepositories, book_record: BookRecord) -> tuple[BookRecord, list[Page]]:
-            """Read the record of the book and the pages of the scan.
-
-            :param repos: Repositories of the transaction.
-            :type repos: BookRepositories
-            :param book_record: The record of the book as the change finds it, whose image policy chooses the format of
-                                the scan.
-            :type book_record: BookRecord
-            :returns: The record of the book, and the pages cut from the scan.
-            :rtype: tuple[BookRecord, list[Page]]
-            """
-            return book_record, list(repos.pages.list_for_scan(scan.id))
-
         # A cancellation stops the run before the next scan is cut
-        await self._report()
-        book_record, pages = await self.book.change(start)
-        full = book_record.image_policy.full_format(scan.facts.color_mode)
-        ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
-        of_scan = partial(BookKeys.scan_rendition, ready)
-        await self.book.assets.delete_prefix(BookKeys.scan_directory(scan))
-        async with (
-            self.book.sources.source_files(scan.source_id) as files,
-            self.book.assets.writable(of_scan(full)) as target,
-        ):
-            await self._rasterizer.extract(kind, files, scan.number, target, full=full)
-        await self._base_versions.derive(of_scan, assets=self.book.assets, full=full)
-        versions = []
-        key = self._base_versions.scan_copy.key
-        run = StepRun(processor_key=key, params={}, input_data=ready.facts.as_data(), image=of_scan(full))
-        base = self._base_versions
-        for page in pages:
-            version = base.split_none(page=page, scan=ready, state=VersionState.READY, moment=datetime.now(UTC))
-            async with self._runner.execute(self.book, run) as result:
-                versions.append(
-                    await self._runner.store(
-                        self.book, version, result.outputs[0], policy=book_record.image_policy, tiles=True
-                    )
-                )
+        await self.report()
+        if await self.imports.cutter.cut(self.book, kind, scan):
+            await self.report(done=1)
+        else:
+            await self.report(total=-1)
 
-        def finish(repos: BookRepositories, _book_record: BookRecord) -> bool:
-            """Store the versions and mark the scan ready, unless the book changed while the files were cut.
-
-            :param repos: Repositories of the transaction.
-            :type repos: BookRepositories
-            :param _book_record: The record of the book as the change finds it, which the check does not need.
-            :type _book_record: BookRecord
-            :returns: Whether the scan and its pages were still the ones the versions were made for.
-            :rtype: bool
-            """
-            # The scan and its pages are read again, since the book may have changed while the files were cut
-            unready = {unready_scan.id for unready_scan in repos.scans.list_unready()}
-            current = {page.id for page in repos.pages.list_for_scan(scan.id)}
-            if scan.id not in unready or current != {page.id for page in pages}:
-                return False
-            repos.page_versions.add_many(versions)
-            for page, version in zip(pages, versions, strict=True):
-                self._records.set_head(
-                    repos, PageStageKey(page.id, version.stage), head_version_id=version.id, recipe_id=None
-                )
-            repos.scans.update(ready)
-            return True
-
-        fits = await self.book.change(finish)
-        if not fits:
-            # The scan stays unready for the next run to cut, and the files made for it are of no version or scan
-            logger.warning('Scan %s was changed or deleted while its images were cut, so they were not stored', scan.id)
-            await self.book.assets.delete_prefix(BookKeys.scan_directory(scan))
-            for version in versions:
-                await self.book.assets.delete_prefix(BookKeys.version_directory(version))
-            await self._report(total=-1)
-            return
-        await self._report(done=1)
-
-    async def _reject(
+    async def reject(
         self,
         names: Sequence[str],
         reason: RejectionReason,
@@ -523,7 +279,7 @@ class ImportRun:
         :type uploaded: UploadedSource | None
         :raises JobCancelledError: If the job was cancelled.
         """
-        files = [self._files[name] for name in names]
+        files = [self.files[name] for name in names]
         source = Source(
             id=SourceId(uuid4()),
             kind=None if uploaded is None else uploaded.kind,
@@ -539,10 +295,10 @@ class ImportRun:
             imported_at=datetime.now(UTC),
         )
         await self.book.change(lambda repos, _book_record: repos.sources.add(source))
-        self._handled.update(names)
-        await self._report(done=len(names))
+        self.handled.update(names)
+        await self.report(done=len(names))
 
-    async def _report(self, *, done: int = 0, total: int = 0) -> None:
+    async def report(self, *, done: int = 0, total: int = 0) -> None:
         """Add to the progress of the job, announce it, and stop the run when the job was cancelled.
 
         :param done: Units completed since the last report: files dealt with, or scans cut.
@@ -556,30 +312,254 @@ class ImportRun:
         await self._control.report(done=self._done, total=self._total)
 
 
+class SourceImport:
+    """The import of one source of an upload: the checks that come before it is stored, and then its storing.
+
+    The source is checked in the order a cheap check comes first. A file the book has already is rejected as a
+    duplicate, and a source the inspector cannot read is rejected as unreadable, each on its own, so neither stops the
+    rest of the upload. A source that passes both is handed to a ``StoredSource``.
+
+    :ivar run: The run of the job, which holds the book, the staged files and the report of the import.
+    :ivar uploaded: The staged files that make the source.
+    :ivar files: The staged files of the source, the main file first.
+    """
+
+    def __init__(self, *, run: ImportRun, uploaded: UploadedSource) -> None:
+        """Prepare to import one source of the upload.
+
+        :param run: The run of the job.
+        :type run: ImportRun
+        :param uploaded: The staged files that make the source.
+        :type uploaded: UploadedSource
+        """
+        self.run = run
+        self.uploaded = uploaded
+        self.files = [run.files[name] for name in uploaded.names]
+
+    async def execute(self) -> None:
+        """Import the source: check it is new and readable, store it with its scans and pages, and promote its files.
+
+        :raises JobCancelledError: If the job was cancelled.
+        """
+        main = self.files[0]
+        twin = await self.run.book.read(lambda repos: repos.sources.find_by_sha256(main.sha256))
+        if twin is not None:
+            await self.run.reject(
+                self.uploaded.names,
+                RejectionReason.DUPLICATE,
+                f'The book already has this file as {twin.file_name}.',
+                uploaded=self.uploaded,
+            )
+            return
+        analysis = await self._inspect()
+        if analysis is None:
+            return
+        await StoredSource(source_import=self, analysis=analysis).execute()
+
+    async def _inspect(self) -> SourceAnalysis | None:
+        """Describe the source and its scans with the inspector, outside any transaction.
+
+        :returns: The analysis of the source, or None if the source was rejected as unreadable.
+        :rtype: SourceAnalysis | None
+        :raises JobCancelledError: If the job was cancelled while the rejection was reported.
+        """
+        names = self.uploaded.names
+        async with self.run.book.sources.staged_files(self.run.job_id) as paths:
+            try:
+                return await self.run.imports.inspector.inspect(self.uploaded.kind, [paths[name] for name in names])
+            except UnsupportedSourceError as error:
+                await self.run.reject(names, RejectionReason.UNREADABLE, str(error), uploaded=self.uploaded)
+                return None
+
+
+class StoredSource:
+    """A source that passed the checks, which is stored with its scans and pages and then has its files promoted.
+
+    The source, its scans and its pages are stored in one ``Book.change``, which reads the end of the book and the
+    sections of the book to place the new pages, and a source whose files cannot be promoted is taken back whole in a
+    second one.
+
+    :ivar source: The source as it is stored.
+    :ivar scans: The scans of the source, in the order of the source.
+    """
+
+    def __init__(self, *, source_import: SourceImport, analysis: SourceAnalysis) -> None:
+        """Make the source and its scans from what the inspector found.
+
+        :param source_import: The import of the source, which holds the run, the files and the staged upload.
+        :type source_import: SourceImport
+        :param analysis: What the inspector found in the source and its scans.
+        :type analysis: SourceAnalysis
+        """
+        self._run = source_import.run
+        self._uploaded = source_import.uploaded
+        self._analysis = analysis
+        self._pages: list[Page] = []
+        files = source_import.files
+        self._moment = datetime.now(UTC)
+        self.source = Source(
+            id=SourceId(uuid4()),
+            kind=self._uploaded.kind,
+            file_type=self._uploaded.file_type,
+            file_name=files[0].name,
+            files=files,
+            size_bytes=sum(file.size_bytes for file in files),
+            sha256=files[0].sha256,
+            scan_count=len(analysis.scans),
+            metadata=analysis.file_metadata,
+            suggestion=analysis.suggestion,
+            imported_at=self._moment,
+        )
+        self.scans = [
+            Scan(
+                id=ScanId(uuid4()),
+                source_id=self.source.id,
+                number=number,
+                source_label=analysis.label_of(number),
+                facts=facts,
+            )
+            for number, facts in enumerate(analysis.scans)
+        ]
+
+    async def execute(self) -> None:
+        """Store the source, promote its files, and count the source as imported.
+
+        :raises JobCancelledError: If the job was cancelled.
+        """
+        run = self._run
+        self._pages = await run.book.change(self._store)
+        try:
+            await run.book.sources.promote(run.job_id, self.source.id, names=list(self._uploaded.names))
+        except Exception:
+            # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
+            # is taken back whole. Its pages go first, since deleting the source only empties their scan.
+            await run.book.change(self._retract)
+            raise
+        run.imported.append(self.source.id)
+        run.handled.update(self._uploaded.names)
+        await run.report(done=len(self._uploaded.names), total=len(self.scans))
+
+    def _new_pages(self, repos: BookRepositories) -> list[Page]:
+        """Make a page for each scan, at the end of the book, with the labels the file gives them.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :returns: The new pages in the order of the scans, which the label rules of the file may have sectioned.
+        :rtype: list[Page]
+        """
+        order_keys = self._run.imports.order_keys.spread(
+            lower=repos.pages.last_order_key(), upper=None, count=len(self.scans)
+        )
+        moment = self._moment
+        return [
+            Page(
+                id=PageId(uuid4()),
+                order_key=order_key,
+                manual_label=scan.source_label or None,
+                origin=PageOrigin.SCAN,
+                scan_id=scan.id,
+                created_at=moment,
+                updated_at=moment,
+            )
+            for scan, order_key in zip(self.scans, order_keys, strict=True)
+        ]
+
+    def _store(self, repos: BookRepositories, book_record: BookRecord) -> list[Page]:
+        """Store the source with its scans and pages, and describe the book.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :param book_record: The record of the book as the change finds it.
+        :type book_record: BookRecord
+        :returns: The pages as stored.
+        :rtype: list[Page]
+        """
+        pages = self._new_pages(repos)
+        # The label rules of the file become sections, and only a label they do not give stays an exception. A
+        # source without rules is kept out of the numbering of a book that has sections, instead of continuing it
+        source_labels = SourceLabels(
+            rules=self._analysis.label_rules,
+            pages=pages,
+            moment=self._moment,
+            book_has_sections=bool(repos.pagination_sections.list_all()),
+        )
+        pages = source_labels.pages
+        repos.sources.add(self.source)
+        repos.scans.add_many(self.scans)
+        repos.pages.add_many(pages)
+        if source_labels.sections:
+            repos.pagination_sections.add_many(source_labels.sections)
+        # The new pages may take numbers past what a section of the book can write
+        self._run.labels.settle(repos)
+        self._describe_book(repos, book_record)
+        return pages
+
+    def _retract(self, repos: BookRepositories, _book_record: BookRecord) -> None:
+        """Delete the pages and the source, which takes their scans with it.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :param _book_record: The record of the book as the change finds it, which the retraction does not need.
+        :type _book_record: BookRecord
+        """
+        for page in self._pages:
+            repos.pages.delete(page.id)
+        repos.sources.delete(self.source.id)
+
+    def _describe_book(self, repos: BookRepositories, book_record: BookRecord) -> None:
+        """Fill the empty fields of the book description from what the source suggests, never the title.
+
+        Writes through the repositories of its caller and opens no transaction, so the change joins the one of the
+        source, and a source is never stored without the values it gave the book. Sources come in order, so the first
+        source that has a value for a field is the one that gives it.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param book_record: The record of the book as the change of the source found it.
+        :type book_record: BookRecord
+        """
+        details = book_record.details.fill_from(self._analysis.suggestion)
+        if details != book_record.details:
+            repos.book_record.update(evolve(book_record, details=details, updated_at=datetime.now(UTC)))
+
+
 class ImportService:
-    """Accepts uploads for the owner of a book, and runs the import jobs they become."""
+    """Accepts uploads for the owner of a book, and runs the import jobs they become.
+
+    :ivar inspector: Port grouping an upload into sources and describing each source.
+    :ivar cutter: Cutter of the images of a scan and of the base version of its pages.
+    :ivar order_keys: Builder of the order keys of the new pages.
+    :ivar limits: Bounds of an upload and of an import.
+    """
 
     def __init__(
         self,
         *,
-        imaging: ImportImaging,
-        runtime: ImportRuntime,
-        parts: ProcessingParts,
+        inspector: SourceInspector,
+        cutter: ScanCutter,
+        order_keys: OrderKeys,
+        limits: ImportLimits,
+        processing: ProcessingService,
     ) -> None:
         """Build the service over the ports of one request or job.
 
-        :param imaging: The inspector, the rasterizer and the tiler.
-        :type imaging: ImportImaging
-        :param runtime: The order keys and the limits.
-        :type runtime: ImportRuntime
-        :param parts: The recipes and the job starter, with which the split of the new pages is queued.
-        :type parts: ProcessingParts
+        :param inspector: Port grouping an upload into sources and describing each source.
+        :type inspector: SourceInspector
+        :param cutter: Cutter of the images of a scan and of the base version of its pages.
+        :type cutter: ScanCutter
+        :param order_keys: Builder of the order keys of the new pages.
+        :type order_keys: OrderKeys
+        :param limits: Bounds of an upload and of an import.
+        :type limits: ImportLimits
+        :param processing: The processing service, which queues the split of the new pages when their recipe splits
+                           them without the user.
+        :type processing: ProcessingService
         """
-        self._imaging = imaging
-        self._runtime = runtime
-        self._recipes = parts.recipes
-        self._starter = parts.starter
-        self._limits = runtime.limits
+        self.inspector = inspector
+        self.cutter = cutter
+        self.order_keys = order_keys
+        self.limits = limits
+        self._processing = processing
 
     async def authorize_upload(self, book: Book) -> None:
         """Refuse an upload the book cannot take now, before any file is read.
@@ -626,13 +606,13 @@ class ImportService:
         await self.authorize_upload(book)
         if not files:
             raise UploadRejectedError(UploadProblem.NO_FILES)
-        if len(files) > self._limits.max_files:
+        if len(files) > self.limits.max_files:
             raise UploadRejectedError(UploadProblem.TOO_MANY_FILES)
         # A path that cannot be stored is found before the first file is streamed, not after hundreds of megabytes
         for file in files:
             UploadPath.parse(file.filename or '')
         job_id = JobId(uuid4())
-        staged = await book.sources.stage(job_id, files, max_bytes=self._limits.max_bytes)
+        staged = await book.sources.stage(job_id, files, max_bytes=self.limits.max_bytes)
         try:
             self._refuse_active_import(book)
             return book.jobs.put(
@@ -664,9 +644,7 @@ class ImportService:
         :rtype: JobEnd
         :raises JobCancelledError: If the job was cancelled.
         """
-        run = ImportRun(
-            running=RunningImport(job=job, control=control), book=book, imaging=self._imaging, runtime=self._runtime
-        )
+        run = ImportRun(self, running=RunningImport(job=job, control=control), book=book)
         try:
             await run.execute()
         except JobCancelledError:
@@ -684,10 +662,9 @@ class ImportService:
     async def _queue_split(self, job: Job, run: ImportRun) -> None:
         """Queue a run of the page split on the pages an import made, when the recipe of text pages decides it.
 
-        The book gets its pages with no action of the user, even with the tab closed. The pages of an import are text
-        until their content is detected. A book whose recipe was chosen by hand is left as it is, and so is a book that
-        is processing something already, since the user can run
-        the stage. Neither is an error of the import, which has succeeded.
+        The book gets its pages with no action of the user, even with the tab closed. The processing service decides
+        by the recipe of text pages, and leaves a book whose recipe was chosen by hand as it is, since the user can run
+        the stage. A split that cannot be queued is no error of the import, which has succeeded.
 
         :param job: The import job that ended.
         :type job: Job
@@ -695,18 +672,6 @@ class ImportService:
         :type run: ImportRun
         """
         try:
-            steps = (await self._recipes.of_kind(run.book, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
-            if not steps or not self._recipes.unattended(steps[0]):
-                return
-            pages = await run.book.read(
-                lambda repos: [
-                    page.id for source_id in run.imported for page in repos.pages.list_for_source(source_id)
-                ],
-            )
-            if pages:
-                # The split follows from the import, so it runs before what the user queued while the files were read
-                await self._starter.enqueue(
-                    run.book, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)), next_up=True
-                )
+            await self._processing.split_imported(run.book, run.imported)
         except DomainError:
             logger.warning('The split of the pages of import job %s was not queued', job.id, exc_info=True)

@@ -2,10 +2,11 @@
 
 A run that takes the work of the pages away, a value set for several pages, a value set for the odd pages, the even
 pages or a group, and a carry-over of a shape write the same thing: a layer of a step on many pages, each change in the
-history with the same batch and the source that made it. A state with neither a setting nor an edit left is deleted.
-The batch opens no transaction and marks no stage stale. It is built inside the work of ``Book.change`` from
-the repositories of that work, and every method is synchronous and writes through them. The use case that owns the work
-marks the stages stale once the batch is flushed.
+history with the same batch and the source that made it. A replacement of the type of a step writes one change of the
+type into the history of each page that keeps something of the step, under a batch as well. A state with neither a
+setting nor an edit left is deleted. The batch opens no transaction and marks no stage stale. It is built inside the
+work of ``Book.change`` from the repositories of that work, and every method is synchronous and writes through them.
+The use case that owns the work marks the stages stale once the batch is flushed.
 """
 
 from typing import TYPE_CHECKING
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepState
+    from bookreviver.domain.recipes import StepTypeChange
+    from bookreviver.domain.stages import Stage
     from bookreviver.domain.step_values import StepValues
     from bookreviver.ports.persistence import BookRepositories
 
@@ -112,6 +115,25 @@ class PageBatch:
             for change in PageHistoryEntry.of_values(pages, values, changed, self._source)
         )
         return changed
+
+    def write_type(self, stage: Stage, change: StepTypeChange, before: str, pages: Sequence[PageId]) -> None:
+        """Keep the replacement of the type of a step for each page whose history keeps it, as one change.
+
+        The recipes store the type, which the caller has replaced, so only the change is kept here.
+
+        :param stage: Stage of the step.
+        :type stage: Stage
+        :param change: The step, its new type and when it was replaced.
+        :type change: StepTypeChange
+        :param before: Key of the processor that was the type of the step.
+        :type before: str
+        :param pages: The pages whose history keeps the change.
+        :type pages: Sequence[PageId]
+        """
+        self._changes.extend(
+            evolve(entry, batch_id=self.batch_id, source=self._source)
+            for entry in PageHistoryEntry.of_type(pages, stage, change, before)
+        )
 
     def clear_work(self, state: PageStepState) -> PageStepState:
         """Empty the settings and the manual edit of the state, which is the work of the page for the step.

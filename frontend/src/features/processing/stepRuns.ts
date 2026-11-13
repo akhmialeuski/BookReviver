@@ -4,8 +4,9 @@ import type { PageVersionSchema, RecipeSchema, StagePageSchema, StepSchema } fro
  * What a run of a stage up to one step leaves on the pages, as the panel reads it: how many pages passed each step, which
  * step of the recipe a processor is, and which version of a page is the result of a step.
  *
- * A step is named by its index in the recipe, from zero, as the server names it, and shown by its number from one. A page
- * that was run through every step that is on has no stopping step, so it passed every step.
+ * The server names the step a page stopped at by its identifier, and the panel finds its place in the recipe, from zero,
+ * and shows its number from one. A page that was run through every step that is on has no stopping step, so it passed
+ * every step, and a page that stopped at a step the recipe no longer holds passed none of them.
  */
 
 /** Tell whether the row of a page holds a result of the stage that was made, whether or not it is out of date now. */
@@ -17,20 +18,28 @@ function hasResult(row: StagePageSchema): boolean {
  * Count the pages whose result was made through a step or a later one.
  *
  * @param rows The rows of the stage.
- * @param recipeId The recipe the steps belong to; a page processed by another recipe passed none of them.
+ * @param recipe The recipe the steps belong to; a page processed by another recipe passed none of them.
  * @param stepIndex Index of the step in the recipe.
  */
 export function passedPages(
   rows: readonly StagePageSchema[],
-  recipeId: string,
+  recipe: Pick<RecipeSchema, 'id' | 'steps'>,
   stepIndex: number,
 ): number {
   return rows.filter(
     (row) =>
       hasResult(row) &&
-      row.recipe_id === recipeId &&
-      (row.through_step === null || row.through_step >= stepIndex),
+      row.recipe_id === recipe.id &&
+      (row.through_step_id === null || indexOfStep(recipe, row.through_step_id) >= stepIndex),
   ).length;
+}
+
+/** Find the place of a step in a recipe, from zero, or -1 for a step the recipe does not hold. */
+export function indexOfStep(
+  recipe: Pick<RecipeSchema, 'steps'> | undefined,
+  stepId: string,
+): number {
+  return recipe?.steps.findIndex((step) => step.step_id === stepId) ?? -1;
 }
 
 /** Tell whether a run can go up to a step: it, or a step before it, is switched on. */

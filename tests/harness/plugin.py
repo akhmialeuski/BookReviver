@@ -21,6 +21,8 @@ pytest_plugins = (
     'tests.harness.fixtures.anyio_backend',
     'tests.harness.fixtures.settings',
     'tests.harness.fixtures.databases',
+    'tests.harness.fixtures.books',
+    'tests.harness.fixtures.jobs',
 )
 
 # The directory under the root of the project that holds one directory per level

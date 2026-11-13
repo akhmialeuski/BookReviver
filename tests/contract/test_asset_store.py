@@ -11,7 +11,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
-from tests.harness.adapters.storage import WriterFailedError, abandon_write
+from tests.harness.adapters.storage import WriterFailedError, abandon_write, is_stored
 from tests.harness.builders.domain import directory_of, make_page_version
 
 if TYPE_CHECKING:
@@ -168,23 +168,6 @@ async def _read_tile(store: AssetStore, key: StorageKey) -> bytes:
         return (path / TILE_NAME).read_bytes()
 
 
-async def _is_stored(store: AssetStore, key: StorageKey) -> bool:
-    """Return whether anything is stored at ``key``.
-
-    :param store: Asset store to look into.
-    :type store: AssetStore
-    :param key: Key to look up.
-    :type key: StorageKey
-    :returns: True when a file or directory is stored at the key.
-    :rtype: bool
-    """
-    try:
-        async with store.readable(key):
-            return True
-    except NotFoundError:
-        return False
-
-
 class StoredKeyCase(NamedTuple):
     """A key holding a file or a directory, with how to store content there and read it back.
 
@@ -245,7 +228,7 @@ class TestWritable:
         """
         async with fx_asset_store.writable(FILE_KEY) as path:
             path.write_bytes(NEW_CONTENT)
-            expect(not await _is_stored(fx_asset_store, FILE_KEY))
+            expect(not await is_stored(fx_asset_store, FILE_KEY))
 
         expect(await _read_file(fx_asset_store, FILE_KEY) == NEW_CONTENT)
         assert_expectations()
@@ -259,7 +242,7 @@ class TestWritable:
         async with fx_asset_store.writable(DIRECTORY_KEY) as path:
             path.mkdir()
             (path / TILE_NAME).write_bytes(NEW_CONTENT)
-            expect(not await _is_stored(fx_asset_store, DIRECTORY_KEY))
+            expect(not await is_stored(fx_asset_store, DIRECTORY_KEY))
 
         expect(await _list_directory(fx_asset_store, DIRECTORY_KEY) == {TILE_NAME: NEW_CONTENT})
         assert_expectations()
@@ -306,7 +289,7 @@ class TestWritable:
         with pytest.raises(WriterFailedError):
             await abandon_write(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
 
-        assert not await _is_stored(fx_asset_store, FILE_KEY)
+        assert not await is_stored(fx_asset_store, FILE_KEY)
 
 
 class TestReadable:
@@ -355,7 +338,7 @@ class TestCopy:
 
         await fx_asset_store.delete_prefix(PAGE_PREFIX)
 
-        expect(not await _is_stored(fx_asset_store, FILE_KEY))
+        expect(not await is_stored(fx_asset_store, FILE_KEY))
         expect(await _read_file(fx_asset_store, COPY_KEY) == NEW_CONTENT)
         assert_expectations()
 
@@ -368,7 +351,7 @@ class TestCopy:
         with pytest.raises(NotFoundError):
             await fx_asset_store.copy(FILE_KEY, COPY_KEY)
 
-        assert not await _is_stored(fx_asset_store, COPY_KEY)
+        assert not await is_stored(fx_asset_store, COPY_KEY)
 
     async def test_stored_target_raises_conflict_and_keeps_its_content(self, fx_asset_store: AssetStore) -> None:
         """Verify a copy never replaces what is stored at its target.
@@ -411,9 +394,9 @@ class TestDeletePrefix:
 
         await fx_asset_store.delete_prefix(PAGE_PREFIX)
 
-        expect(not await _is_stored(fx_asset_store, FILE_KEY))
-        expect(not await _is_stored(fx_asset_store, DIRECTORY_KEY))
-        expect(await _is_stored(fx_asset_store, SIBLING_KEY))
+        expect(not await is_stored(fx_asset_store, FILE_KEY))
+        expect(not await is_stored(fx_asset_store, DIRECTORY_KEY))
+        expect(await is_stored(fx_asset_store, SIBLING_KEY))
         assert_expectations()
 
     async def test_missing_prefix_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
@@ -424,7 +407,7 @@ class TestDeletePrefix:
         """
         await fx_asset_store.delete_prefix(PAGE_PREFIX)
 
-        assert not await _is_stored(fx_asset_store, FILE_KEY)
+        assert not await is_stored(fx_asset_store, FILE_KEY)
 
     async def test_frees_keys_for_writing_again(self, fx_asset_store: AssetStore) -> None:
         """Verify deleting a prefix is the way to write its keys again, as a retried import does.

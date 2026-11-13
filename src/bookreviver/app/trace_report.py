@@ -304,6 +304,8 @@ def report(spans: list[Span], title: str) -> str:
         ('Wait for the write lock, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.WAIT_MS)),
         ('Hold of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.HOLD_MS)),
         ('Commit of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.COMMIT_MS)),
+        ('Statements of a block', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.SQL_COUNT)),
+        ('SQL of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.SQL_MS)),
         ('Event-loop lag, ms', attribute_values(spans, SpanName.LOOP_LAG, SpanAttribute.LAG_MS)),
     ):
         if values:

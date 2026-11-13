@@ -4,7 +4,8 @@ A stage has one recipe for each kind of page, and a page is processed by the rec
 the pages it processed stale and runs nothing. A run and a preview are jobs:
 the route records the job and answers 202 with it, and the result reaches the browser as events, since a request
 handler never blocks on CPU-bound work. A page keeps every version it was ever given, a stage points at the current
-one, and the user may make another ready version the current one.
+one, and the user may make another ready version the current one, which is a job as well, so it waits behind the jobs
+that may read the versions.
 """
 
 from dataclasses import dataclass
@@ -29,10 +30,11 @@ from bookreviver.api.schemas.processing import (
     RunImpactSchema,
     StageRunBody,
     StepPreviewBody,
+    StepTypeBody,
     VersionQuery,
 )
-from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
-from bookreviver.domain.recipes import Recipe, RecipeKey
+from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId, StepId
+from bookreviver.domain.recipes import Recipe, RecipeKey, RecipeStepKey
 from bookreviver.domain.stages import PageStage, Stage
 from bookreviver.domain.versions import PageVersion
 from bookreviver.services.processing import ProcessingService
@@ -43,6 +45,7 @@ from bookreviver.services.run_plans import RunImpactService
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
 STAGE_DESCRIPTION: str = 'Stage of the pipeline'
 RECIPE_ID_DESCRIPTION: str = 'Identifier of the recipe'
+STEP_ID_DESCRIPTION: str = 'Identifier of the step'
 VERSION_ID_DESCRIPTION: str = 'Identifier of the page version'
 
 router = APIRouter(prefix='/books', tags=['processing'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
@@ -72,6 +75,22 @@ class RecipePath:
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
     recipe_id: Annotated[RecipeId, Path(description=RECIPE_ID_DESCRIPTION)]
+
+
+@dataclass(frozen=True)
+class RecipeStepPath:
+    """The identifiers in the address of one step of a recipe of a stage of a book.
+
+    :ivar book_id: Identifier of the book.
+    :ivar stage: The stage.
+    :ivar recipe_id: Identifier of the recipe.
+    :ivar step_id: Identifier of the step.
+    """
+
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
+    stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
+    recipe_id: Annotated[RecipeId, Path(description=RECIPE_ID_DESCRIPTION)]
+    step_id: Annotated[StepId, Path(description=STEP_ID_DESCRIPTION)]
 
 
 @dataclass(frozen=True)
@@ -144,7 +163,8 @@ async def put_recipe(
     No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
     or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot
     work, unless the body asks for the free order. A step that stands off its usual place is saved and named in the
-    answer.
+    answer. A step the recipe keeps under another processor answers 409: its type is replaced by
+    ``PUT .../steps/{step_id}/type``.
 
     \N{FORM FEED}
     :param access: Access of the signed-in account, which opens the book the path names.
@@ -164,6 +184,45 @@ async def put_recipe(
     book = await access.book(address.book_id)
     saved = await processing.save_recipe(book, RecipeKey(address.stage, address.recipe_id), body.to_draft())
     return RecipeSchema.of(saved, order.issues(saved.steps))
+
+
+@router.put('/{book_id}/stages/{stage}/recipes/{recipe_id}/steps/{step_id}/type')
+async def replace_step_type(
+    access: AccessDep,
+    address: Annotated[RecipeStepPath, Depends()],
+    body: StepTypeBody,
+    processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
+) -> RecipeSchema:
+    """Give a step of a recipe another type, in every recipe of the stage that holds the step.
+
+    The step keeps its identifier and its place. Each recipe runs it with the parameters it kept for the new type, or
+    the defaults of the processor, and keeps those of the earlier type, which come back with it, as do the settings,
+    the edits and the values the pages keep for that type. The history of every page that keeps a setting or an edit of
+    the step under either type gains the replacement, as one batch whose undo brings the earlier type back. The pages
+    that run the step are marked stale and none is processed. A processor that is unknown or of another stage answers
+    422, and so does one that would stand where it cannot work, unless the body asks for the free order. A step the
+    recipe does not hold answers 404. A recipe saved with another processor for a step it keeps answers 409, so this is
+    the one way to change a type.
+
+    \N{FORM FEED}
+    :param access: Access of the signed-in account, which opens the book the path names.
+    :type access: Access
+    :param address: Identifiers of the book, the stage, the recipe and the step.
+    :type address: RecipeStepPath
+    :param body: The new type and the order to keep.
+    :type body: StepTypeBody
+    :param processing: Processing service of the request.
+    :type processing: ProcessingService
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe of the address as stored, with the steps that are out of their place.
+    :rtype: RecipeSchema
+    """
+    book = await access.book(address.book_id)
+    key = RecipeStepKey(address.stage, address.recipe_id, address.step_id)
+    replaced = await processing.replace_step_type(book, key, body.processor_key, body.order)
+    return RecipeSchema.of(replaced, order.issues(replaced.steps))
 
 
 @router.post('/{book_id}/stages/{stage}/recipes/{recipe_id}/reset')
@@ -337,16 +396,20 @@ async def list_page_stages(
     return pager.page(await processing.page_stages(book, address.page_id, pager.request))
 
 
-@router.put('/{book_id}/pages/{page_id}/stages/{stage}')
+@router.put('/{book_id}/pages/{page_id}/stages/{stage}', status_code=status.HTTP_202_ACCEPTED)
 async def choose_version(
     access: AccessDep,
     address: Annotated[PageStagePath, Depends()],
     body: HeadChoice,
     processing: FromDishka[ProcessingService],
-) -> PageStageSchema:
-    """Make a version the current one of a stage of a page, which marks the later stages of the page stale.
+) -> JobSchema:
+    """Make a version the current one of a stage of a page in the background, and answer with the queued job.
 
-    The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
+    The job marks the later stages of the page stale. The version must be ready and made by a full run of this page in
+    this stage: the answer is 409 for one that is not, and nothing is queued then. A book runs one job at a time in the
+    order they were asked for, so a choice asked for while a run, a measure of the book, a tile cutting or a collection
+    is queued or running waits behind it, and the job fails with nothing written when the version stopped being one
+    that can be chosen by its turn. A preview of the book is cancelled.
 
     \N{FORM FEED}
     :param access: Access of the signed-in account, which opens the book the path names.
@@ -357,12 +420,13 @@ async def choose_version(
     :type body: HeadChoice
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The record of the stage in its new state.
-    :rtype: PageStageSchema
+    :returns: The queued job.
+    :rtype: JobSchema
     """
     book = await access.book(address.book_id)
-    chosen = await processing.choose_version(book, address.page_id, address.stage, body.version_id)
-    return PageStageSchema.of(chosen)
+    return JobSchema.model_validate(
+        await processing.choose_version(book, address.page_id, address.stage, body.version_id)
+    )
 
 
 @router.get('/{book_id}/pages/{page_id}/versions')

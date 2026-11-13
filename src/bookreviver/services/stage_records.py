@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Iterable
     from types import TracebackType
 
-    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
     from bookreviver.ports.persistence import BookRepositories
 
 
@@ -40,7 +40,7 @@ class StageRecords:
         *,
         head_version_id: PageVersionId,
         recipe_id: RecipeId | None,
-        through_step: int | None = None,
+        through_step_id: StepId | None = None,
     ) -> PageStage:
         """Make a version the current one of a stage, and mark the later stages of the page stale if it changed.
 
@@ -52,9 +52,9 @@ class StageRecords:
         :type head_version_id: PageVersionId
         :param recipe_id: Recipe the page was processed by, or None for a version no recipe made.
         :type recipe_id: RecipeId | None
-        :param through_step: Index in the recipe of the step the version is the result of when the run stopped before
+        :param through_step_id: The step of the recipe the version is the result of when the run stopped before
                              the last step that is on, or None when it went through all of them.
-        :type through_step: int | None
+        :type through_step_id: StepId | None
         :returns: The record of the stage in its new state.
         :rtype: PageStage
         """
@@ -65,7 +65,7 @@ class StageRecords:
             recipe_id=recipe_id,
             head_version_id=head_version_id,
             state=StageState.FRESH,
-            through_step=through_step,
+            through_step_id=through_step_id,
             updated_at=datetime.now(UTC),
         )
         repos.page_stages.save(record)
@@ -223,7 +223,7 @@ class StageRecords:
             recipe_id=recipe_id,
             head_version_id=None if previous is None else previous.head_version_id,
             state=StageState.FAILED,
-            through_step=None if previous is None else previous.through_step,
+            through_step_id=None if previous is None else previous.through_step_id,
             updated_at=datetime.now(UTC),
         )
         repos.page_stages.save(record)
@@ -311,4 +311,4 @@ class SideWatch:
         :returns: The identifiers of the pages, by place.
         :rtype: list[PageId]
         """
-        return [page.id for page in self._repos.pages.list_all()]
+        return self._repos.pages.order().page_ids

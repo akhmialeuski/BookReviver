@@ -17,7 +17,7 @@ from bookreviver.domain.processors import OrderIssue, OrderRuleKind
 from bookreviver.domain.recipes import OrderMode
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.recipes import Step
@@ -85,6 +85,38 @@ class RecipeOrder:
         """
         if order is OrderMode.FREE:
             return
-        reasons = dict.fromkeys(issue.reason for issue in self.issues(steps) if issue.kind is OrderRuleKind.REQUIRED)
+        self._refuse(self.issues(steps))
+
+    def enforce_change(self, before: Sequence[Step], after: Sequence[Step], order: OrderMode) -> None:
+        """Refuse a change of the steps of a recipe that puts a step where it cannot work, unless the order is free.
+
+        A required place the steps already break before the change is not counted, so a recipe saved in the free order
+        can still be changed in the usual one, and only a change that makes the order worse is refused.
+
+        :param before: The steps of the recipe before the change, in the order they run.
+        :type before: Sequence[Step]
+        :param after: The steps after the change, in the order they run.
+        :type after: Sequence[Step]
+        :param order: Whether a required place is kept or only warned of.
+        :type order: OrderMode
+        :raises InvalidParametersError: If the order is the usual one and the change breaks a required place. The
+                                        message gives the reason of each.
+        """
+        if order is OrderMode.FREE:
+            return
+        broken = {(issue.step_id, issue.other_step_id, issue.reason) for issue in self.issues(before)}
+        self._refuse(
+            issue for issue in self.issues(after) if (issue.step_id, issue.other_step_id, issue.reason) not in broken
+        )
+
+    @staticmethod
+    def _refuse(issues: Iterable[OrderIssue]) -> None:
+        """Refuse the required places among some issues.
+
+        :param issues: Issues of the order of a recipe.
+        :type issues: Iterable[OrderIssue]
+        :raises InvalidParametersError: If an issue is of a required place. The message gives the reason of each.
+        """
+        reasons = dict.fromkeys(issue.reason for issue in issues if issue.kind is OrderRuleKind.REQUIRED)
         if reasons:
             raise InvalidParametersError(' '.join(reasons))

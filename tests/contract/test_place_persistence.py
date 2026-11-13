@@ -14,36 +14,17 @@ from attrs import evolve
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.places import CanvasPosition, PlaceMode
 from bookreviver.domain.stages import Stage
-from tests.harness.builders.domain import make_book_place, make_record
-from tests.harness.builders.seeding import store_book
+from tests.harness.builders.domain import make_book_place
+from tests.harness.builders.seeding import BookLayout, seed_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.ids import BookId
     from tests.contract.conftest import OwnerFactory
-    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
 
 pytestmark = pytest.mark.anyio
 
 # How much later one write of a place is stamped than another
 LATER: timedelta = timedelta(minutes=5)
-
-
-async def _store_book(
-    catalogue_factory: CatalogueDatabaseFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
-) -> BookId:
-    """Store a book of a new account.
-
-    :param catalogue_factory: Function opening a new catalogue database over the catalogue and the books of the test.
-    :type catalogue_factory: CatalogueDatabaseFactory
-    :param new_owner: Function creating an account the catalogue accepts as an owner.
-    :type new_owner: OwnerFactory
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The identifier of the book.
-    :rtype: BookId
-    """
-    book_id = await store_book(catalogue_factory(), make_record(), owner=await new_owner(), databases=databases)
-    return book_id
 
 
 class TestBookPlaceRepository:
@@ -61,7 +42,9 @@ class TestBookPlaceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        book_id = (
+            await seed_book(fx_catalogue(), BookLayout(), owner=await fx_new_owner(), databases=fx_databases())
+        ).book_id
         place = make_book_place(page_id=PageId(uuid4()))
         assert (
             await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_places.save(place))
@@ -81,7 +64,9 @@ class TestBookPlaceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        book_id = (
+            await seed_book(fx_catalogue(), BookLayout(), owner=await fx_new_owner(), databases=fx_databases())
+        ).book_id
         place = evolve(
             make_book_place(stage=Stage.PAGE_ORDER),
             mode=PlaceMode.READING,
@@ -103,7 +88,9 @@ class TestBookPlaceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        book_id = (
+            await seed_book(fx_catalogue(), BookLayout(), owner=await fx_new_owner(), databases=fx_databases())
+        ).book_id
         first = make_book_place()
         second = evolve(first, stage=Stage.CLEANUP, page_id=PageId(uuid4()), canvas=None)
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_places.save(first))
@@ -125,7 +112,9 @@ class TestBookPlaceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        book_id = (
+            await seed_book(fx_catalogue(), BookLayout(), owner=await fx_new_owner(), databases=fx_databases())
+        ).book_id
         stored = evolve(make_book_place(), mode=PlaceMode.READING)
         first = evolve(
             stored, mode=PlaceMode.WORKSPACE, page_id=None, canvas=None, updated_at=stored.updated_at + LATER
@@ -154,7 +143,9 @@ class TestBookPlaceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        book_id = (
+            await seed_book(fx_catalogue(), BookLayout(), owner=await fx_new_owner(), databases=fx_databases())
+        ).book_id
         older = make_book_place()
         newer = evolve(older, stage=Stage.CLEANUP, page_id=PageId(uuid4()), updated_at=older.updated_at + LATER)
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.book_places.save(newer))
@@ -176,5 +167,7 @@ class TestBookPlaceRepository:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        book_id = await _store_book(fx_catalogue, fx_new_owner, databases=fx_databases())
+        book_id = (
+            await seed_book(fx_catalogue(), BookLayout(), owner=await fx_new_owner(), databases=fx_databases())
+        ).book_id
         assert await fx_databases().open(book_id).read(lambda repos: repos.book_places.find()) is None
