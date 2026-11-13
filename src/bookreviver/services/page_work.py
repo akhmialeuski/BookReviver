@@ -98,18 +98,7 @@ class PageWork:
         """
         if self.stage is Stage.PAGE_SPLIT:
             return await self._scan_source(scale)
-        for earlier in self.stage.earlier:
-            record, readable = await self._earlier(earlier)
-            if record is None or record.head_version_id is None:
-                continue
-            # A page run through some of the steps only is not ready to be read, and is run through the rest first
-            if record.state is StageState.STALE or record.through_step is not None:
-                record, readable = await self._brought_up_to_date(earlier)
-            if record.head_version_id is None:
-                continue
-            # Stages further back are not brought up to date once a nearer one has a result to read
-            if readable:
-                break
+        await self._refresh_earlier()
         page_id, stage = self.page.id, self.stage
         read = await self.work.book.read(lambda repos: BookContent(repos).pages.inputs(stage, [page_id]).get(page_id))
         if read is None:
@@ -182,6 +171,24 @@ class PageWork:
         :rtype: StepSource
         """
         return evolve(source, book=await self.book_of(steps, source))
+
+    async def _refresh_earlier(self) -> None:
+        """Bring the earlier stages of the page up to date, nearest first, as far back as the one that can be read.
+
+        A stage the page has not been through, or that has no current version, is passed by. A stage that is stale, or
+        run through some of its steps only, is not ready to be read and is run through the rest first.
+
+        :raises ConflictError: If an earlier stage of the page is stale and running it again failed.
+        """
+        for earlier in self.stage.earlier:
+            record, readable = await self._earlier(earlier)
+            if record is None or record.head_version_id is None:
+                continue
+            if record.state is StageState.STALE or record.through_step is not None:
+                record, readable = await self._brought_up_to_date(earlier)
+            # Stages further back are not brought up to date once a nearer one has a result to read
+            if record.head_version_id is not None and readable:
+                return
 
     async def _brought_up_to_date(self, earlier: Stage) -> tuple[PageStage, bool]:
         """Run an earlier stage of the page again, and read its record and whether its current version can be read.
