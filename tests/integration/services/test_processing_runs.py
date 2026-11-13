@@ -21,7 +21,9 @@ from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ResultMark, VersionData, VersionScale, VersionState
+from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.persistence import BookDatabase
+from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from tests.harness.adapters.counting import CountingBookDatabase
 from tests.harness.builders.domain import make_job, make_page, open_for
 from tests.harness.builders.page_batches import PageValues
@@ -39,7 +41,13 @@ from tests.harness.builders.stage_heads import seed_head
 from tests.harness.concurrency.held_steps import steps_held
 from tests.harness.concurrency.meanwhile import change_while_writing
 from tests.harness.fakes.processing import PREVIEW_TOKEN
-from tests.harness.fakes.processors import FAILING_PARAMETER, RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
+from tests.harness.fakes.processors import (
+    FAILING_PARAMETER,
+    RAN_KEY,
+    STRENGTH_PARAMETER,
+    AutoSplitProcessor,
+    FakeProcessor,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -1227,3 +1235,78 @@ class TestStartRun:
         await fx_kit.service().start_run(book, Stage.GEOMETRY, run)
 
         assert database.reads == 1
+
+
+class TestSplitImported:
+    """Tests for ProcessingService.split_imported()."""
+
+    @staticmethod
+    def _splitting_kit(kit: ProcessingKit, opener: BookOpener) -> ProcessingKit:
+        """Build a kit over the books of another whose recipes of the page split split the pages without the user.
+
+        :param kit: The kit of the test, whose catalogue and books the new kit shares.
+        :type kit: ProcessingKit
+        :param opener: Opens the books of the test with their databases.
+        :type opener: BookOpener
+        :returns: The kit whose page split is ``split.auto``.
+        :rtype: ProcessingKit
+        """
+        template = RecipeTemplate(processor_keys=(AutoSplitProcessor.spec.key,))
+        return ProcessingKit(
+            kit.database,
+            opener,
+            processors=[SplitNone(), AutoSplitProcessor()],
+            defaults=DefaultRecipes({Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, template)}),
+        )
+
+    async def test_pages_of_the_sources_get_a_run_of_the_split_ahead_of_the_queued_jobs(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify the pages of the sources are split by a run put next up when the recipe needs no user.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        kit = self._splitting_kit(fx_kit, fx_open_book)
+        actor, book_id = await kit.seed_book()
+        page, scan = await kit.seed_scan_page(book_id)
+        job = await kit.service().split_imported(fx_open_book(actor, book_id), [scan.source_id])
+        assert job is not None
+        expect(job.kind is JobKind.RUN_STAGE)
+        expect(job.work == StageRun(stage=Stage.PAGE_SPLIT, page_ids=(page.id,)))
+        expect([queued.id for queued in kit.board.put_jobs] == [job.id])
+        assert_expectations()
+
+    async def test_sources_without_pages_queue_nothing(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
+        """Verify sources that gave no page queue no run, even when the recipe splits without the user.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        kit = self._splitting_kit(fx_kit, fx_open_book)
+        actor, book_id = await kit.seed_book()
+        job = await kit.service().split_imported(fx_open_book(actor, book_id), [])
+        expect(job is None)
+        expect(kit.board.put_jobs == [])
+        assert_expectations()
+
+    async def test_a_recipe_that_waits_for_the_user_queues_nothing(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
+        """Verify the pages are left as they are when the first step of the page split is one the user runs.
+
+        :param fx_kit: What the processing services of the test share, whose page split is ``split.none``.
+        :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
+        """
+        actor, book_id = await fx_kit.seed_book()
+        _, scan = await fx_kit.seed_scan_page(book_id)
+        job = await fx_kit.service().split_imported(fx_open_book(actor, book_id), [scan.source_id])
+        expect(job is None)
+        expect(fx_kit.board.put_jobs == [])
+        assert_expectations()

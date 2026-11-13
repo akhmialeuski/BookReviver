@@ -23,12 +23,13 @@ from typing import TYPE_CHECKING
 from bookreviver.core.content import BookContent
 from bookreviver.core.pages import BookPage
 from bookreviver.domain.errors import ConflictError, DomainError, InvalidParametersError, NotFoundError
-from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StepPreview, TileCut, VersionChoice
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StageRun, StepPreview, TileCut, VersionChoice
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import OrderMode
 from bookreviver.domain.runs import RunMode
 from bookreviver.domain.slices import Slice
-from bookreviver.domain.stages import PageStageKey
+from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.domain.versions import CollectionReport, VersionScale, VersionState
 from bookreviver.services.run_plans import RunPlan
@@ -40,13 +41,13 @@ if TYPE_CHECKING:
     from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.geometry import Point
-    from bookreviver.domain.ids import PageId, PageVersionId
-    from bookreviver.domain.jobs import Job, StageRun
+    from bookreviver.domain.ids import PageId, PageVersionId, SourceId
+    from bookreviver.domain.jobs import Job
     from bookreviver.domain.pages import Page
     from bookreviver.domain.processors import ProcessorSpec
     from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey
     from bookreviver.domain.slices import SliceRequest
-    from bookreviver.domain.stages import PageStage, Stage
+    from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
@@ -201,6 +202,34 @@ class ProcessingService:
             if affected:
                 raise ConflictError(NEEDS_CONFIRMATION.format(mode=run.mode.label, pages=affected))
         return await self._starter.enqueue(book, JobKind.RUN_STAGE, run)
+
+    async def split_imported(self, book: Book, source_ids: Sequence[SourceId]) -> Job | None:
+        """Queue a run of the page split on the pages of imported sources, when the recipe splits them without the user.
+
+        The pages of an import are text until their content is detected, so the recipe of text pages decides. A book
+        whose recipe was chosen by hand is left as it is, since the user can run the stage. The split follows from the
+        job that imported the sources, so it runs before what the user queued while that job ran.
+
+        :param book: The open book.
+        :type book: Book
+        :param source_ids: The imported sources, in book order.
+        :type source_ids: Sequence[SourceId]
+        :returns: The queued run, or None when the first step of the recipe waits for the user or the sources gave no
+                  page.
+        :rtype: Job | None
+        :raises DomainError: If the recipe of the page split cannot be read.
+        """
+        steps = (await self._recipes.of_kind(book, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
+        if not steps or not self._recipes.unattended(steps[0]):
+            return None
+        pages = await book.read(
+            lambda repos: [page.id for source_id in source_ids for page in repos.pages.list_for_source(source_id)],
+        )
+        if not pages:
+            return None
+        return await self._starter.enqueue(
+            book, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)), next_up=True
+        )
 
     def _plan(self, book: Book, run: StageRun) -> RunPlan:
         """Plan a run over the book.
