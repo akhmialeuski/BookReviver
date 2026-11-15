@@ -140,7 +140,8 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
   await test.step('the pages are checked by the step they stopped at', async () => {
     const filter = page.getByTestId('strip-stopped-filter');
     await expect(filter).toBeVisible();
-    await filter.selectOption('0');
+    // The first choice after every page is the first step a page stopped at
+    await filter.selectOption({ index: 1 });
     await expect(filter.locator('option:checked')).toHaveText(
       new RegExp(`^Stopped at \\S.* · ${PAGES}$`),
     );

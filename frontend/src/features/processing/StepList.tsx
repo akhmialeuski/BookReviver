@@ -10,6 +10,7 @@ import type { OrderMode, ProcessorSchema } from '@/api';
 import type { OrderIssue } from '@/features/processing/order';
 import type { StepDraft } from '@/features/processing/recipe';
 import { StepSorter } from '@/features/processing/StepSorter';
+import { StepTypeMenu } from '@/features/processing/StepTypeMenu';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
 import type { Processing } from '@/features/processing/useProcessing';
 import { cn } from '@/shared/lib/utils';
@@ -20,8 +21,9 @@ import { Switch } from '@/shared/ui/switch';
 
 /**
  * The steps of the recipe as a list the reader reorders by dragging a handle or with the keyboard, switches on and off,
- * removes and opens to choose the step whose settings the panel shows. It is the one editor of that list: the panel of a
- * stage without a step bar and the window of the gear of a stage with one both draw it, over the same draft.
+ * removes, gives another type through the menu of its card, and opens to choose the step whose settings the panel shows.
+ * It is the one editor of that list: the panel of a stage without a step bar and the window of the gear of a stage with
+ * one both draw it, over the same draft.
  *
  * The switch of the order of the steps and the button that puts them back in their usual order belong to it too, since
  * the marks of a step out of its place are drawn here.
@@ -121,6 +123,7 @@ function StepCard({
           data-testid="step-enabled"
           onCheckedChange={() => processing.toggle(step.id)}
         />
+        <StepTypeMenu processing={processing} step={step} title={title} />
         <Button
           variant="ghost"
           size="icon-sm"

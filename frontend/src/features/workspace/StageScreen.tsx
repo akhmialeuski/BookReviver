@@ -231,11 +231,15 @@ export function StageScreen({
           onSelect: (kind) => setKindPick({ stage, kind }),
         };
   // The steps a run stopped at narrow the list too; the choice belongs to one stage, like the kind of page
-  const [stopPick, setStopPick] = useState<{ stage: Stage; step: number | null }>({
+  const [stopPick, setStopPick] = useState<{ stage: Stage; step: string | null }>({
     stage,
     step: null,
   });
-  const stopOptionList = useMemo(() => stopOptions(items), [items]);
+  const stepOrder = useMemo(
+    () => (processing.recipe?.steps ?? []).map((step) => step.step_id),
+    [processing.recipe],
+  );
+  const stopOptionList = useMemo(() => stopOptions(items, stepOrder), [items, stepOrder]);
   const stopStep =
     stopPick.stage === stage && stopOptionList.some((option) => option.step === stopPick.step)
       ? stopPick.step
@@ -245,8 +249,10 @@ export function StageScreen({
       ? undefined
       : {
           options: stopOptionList,
-          titleOf: (index) =>
-            barStepsOf(processing.recipe, processing.catalogue)[index]?.title ?? '',
+          titleOf: (stepId) =>
+            barStepsOf(processing.recipe, processing.catalogue).find(
+              (step) => step.stepId === stepId,
+            )?.title ?? '',
           selected: stopStep,
           onSelect: (step) => setStopPick({ stage, step }),
         };
@@ -349,9 +355,11 @@ export function StageScreen({
     ? placementOf(workspace.page?.version, workspace.page?.input_version)
     : null;
   // The place comes from the rows of the open step, and until they are read the canvas waits rather than draw both
-  // pictures as tall as each other and move them once the rows arrive. When the read fails they never arrive, and the
+  // pictures as tall as each other and move them once the rows arrive. The step of the address is not open while its
+  // recipe is still being read, and the canvas waits then as well. When the read fails the rows never arrive, and the
   // canvas draws the pair without a place
-  const placementPending = placesPictures && workspace.rowsPending;
+  const placementPending =
+    editing === null && compareMode !== CompareMode.Off && workspace.rowsPending;
   const stepLabels = MESSAGES.workspace.steps.canvas;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);

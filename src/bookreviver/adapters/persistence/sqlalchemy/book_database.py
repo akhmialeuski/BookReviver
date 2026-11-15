@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookDirectoryName
+    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
 
 
@@ -69,18 +70,22 @@ class SqlAlchemyBookDatabase(BookDatabase):
                   waits for its writer before it gives up with ``BookBusyError``;
                   :mod:`bookreviver.adapters.persistence.sqlalchemy.database` says what that covers.
     :ivar _events: The event channel of the book, where a committed change is announced with the new version.
+    :ivar _order_keys: The order keys the repositories place the steps of a recipe with.
     """
 
-    def __init__(self, dir_name: BookDirectoryName, *, books: BookRegistry) -> None:
+    def __init__(self, dir_name: BookDirectoryName, *, books: BookRegistry, order_keys: OrderKeys) -> None:
         """Run the transactions of a book over the registry of the databases of the books.
 
         :param dir_name: Name of the directory of the book, which the event channel of the book is opened by too.
         :type dir_name: BookDirectoryName
         :param books: The registry of the databases of the books, shared by every book database.
         :type books: BookRegistry
+        :param order_keys: The order keys the repositories place the steps of a recipe with.
+        :type order_keys: OrderKeys
         """
         self._dir_name = dir_name
         self._books = books
+        self._order_keys = order_keys
         self._events = BookEvents.open(dir_name)
 
     @override
@@ -96,7 +101,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :raises NoChangeOpenError: If the work writes.
         """
         async with self._books.use(self._dir_name) as database:
-            return await database.read(lambda session: work(SqlAlchemyBookRepositories(session)))
+            return await database.read(lambda session: work(self._repositories(session)))
 
     @override
     async def change[T](self, work: Callable[[BookRepositories, BookRecord], T]) -> T:
@@ -160,7 +165,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
             raise ConflictError(self._dir_name) from error
         async with self._books.use(self._dir_name) as database:
             await database.write(
-                lambda session: SqlAlchemyBookRepositories(session).book_record.add(book_record),
+                lambda session: self._repositories(session).book_record.add(book_record),
                 kind=BlockKind.BOOK,
                 book=self._dir_name,
                 wait_seconds=self._books.wait_seconds,
@@ -175,7 +180,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         """
         try:
             async with self._books.use(self._dir_name) as database:
-                await database.read(_the_record)
+                await database.read(self._the_record)
         except DatabaseError as error:
             raise InvalidArchiveError(NOT_A_DATABASE) from error
 
@@ -183,6 +188,30 @@ class SqlAlchemyBookDatabase(BookDatabase):
     async def close(self) -> None:
         """Close the book in the registry for good, once the transactions using it have ended."""
         await self._books.close(self._dir_name)
+
+    def _repositories(self, session: Session) -> SqlAlchemyBookRepositories:
+        """Bind the repositories of the book to the session of a transaction.
+
+        :param session: Session of the transaction.
+        :type session: Session
+        :returns: The repositories.
+        :rtype: SqlAlchemyBookRepositories
+        """
+        return SqlAlchemyBookRepositories(session, order_keys=self._order_keys)
+
+    def _the_record(self, session: Session) -> BookRecord:
+        """Read the one record of a book file an archive placed.
+
+        :param session: Session of the transaction of the read.
+        :type session: Session
+        :returns: The record of the book.
+        :rtype: BookRecord
+        :raises InvalidArchiveError: If the file holds no record of a book.
+        """
+        try:
+            return self._repositories(session).book_record.get()
+        except NotFoundError as error:
+            raise InvalidArchiveError(NO_RECORD) from error
 
     def _work_on_book[T](
         self, work: Callable[[BookRepositories, BookRecord], T], session: Session
@@ -200,7 +229,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :rtype: tuple[T, BookChanged | None]
         :raises NotFoundError: If the book is not stored.
         """
-        repositories = SqlAlchemyBookRepositories(session)
+        repositories = self._repositories(session)
         written = WrittenParts(session)
         done = work(repositories, repositories.book_record.get())
         repositories.groups.prune()
@@ -211,21 +240,6 @@ class SqlAlchemyBookDatabase(BookDatabase):
         raise_version = update(BookRecordRow).values(version=BookRecordRow.version + 1).returning(BookRecordRow.version)
         raised = session.execute(raise_version)
         return done, BookChanged(version=raised.scalar_one(), resources=parts)
-
-
-def _the_record(session: Session) -> BookRecord:
-    """Read the one record of a book file an archive placed.
-
-    :param session: Session of the transaction of the read.
-    :type session: Session
-    :returns: The record of the book.
-    :rtype: BookRecord
-    :raises InvalidArchiveError: If the file holds no record of a book.
-    """
-    try:
-        return SqlAlchemyBookRepositories(session).book_record.get()
-    except NotFoundError as error:
-        raise InvalidArchiveError(NO_RECORD) from error
 
 
 def _copy_of_database(session: Session) -> bytes:

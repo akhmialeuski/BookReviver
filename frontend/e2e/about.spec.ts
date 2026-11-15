@@ -1,5 +1,8 @@
+import { access } from 'node:fs/promises';
+import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
-import { createBook, openLibrary, uniqueTitle } from './support/account';
+import { createBook, openBookId, openLibrary, uniqueTitle } from './support/account';
+import { BASE_URL, RUN_DIR } from './support/env';
 import { test } from './support/fixtures';
 
 /**
@@ -11,6 +14,8 @@ import { test } from './support/fixtures';
 const TITLE = 'A book to describe';
 const RENAMED_WORDS = 'A book that was described';
 const STAGE_COUNT = 10;
+// Where the server keeps the directory of each book: the data folder of the run, the storage of the books, its name
+const BOOKS_DIR = path.join(RUN_DIR, 'data', 'storage', 'books');
 
 /** Wait until the line under the form says the changes were saved. */
 async function expectSaved(page: Page): Promise<void> {
@@ -81,5 +86,52 @@ test('a reader describes a book and finds the description after a reload', async
     await page.getByRole('button', { name: 'Delete book', exact: true }).click();
     await expect(page).toHaveURL(/\/books(\?.*)?$/);
     await expect(page.getByTestId('book-card').filter({ hasText: renamed })).toHaveCount(0);
+  });
+});
+
+/** Tell whether the directory of a book is on the disk of the server. */
+function directoryExists(bookId: string): Promise<boolean> {
+  return access(path.join(BOOKS_DIR, bookId)).then(
+    () => true,
+    () => false,
+  );
+}
+
+test('deleting a book removes it from the library and from the disk and leaves its neighbour open', async ({
+  page,
+}) => {
+  await openLibrary(page);
+  const doomed = await createBook(page, 'A book to delete');
+  const doomedId = openBookId(page);
+  await openLibrary(page);
+  const kept = await createBook(page, 'A book to keep');
+  const keptId = openBookId(page);
+
+  await test.step('both books have a directory on the disk and a card in the library', async () => {
+    expect(await directoryExists(doomedId)).toBe(true);
+    expect(await directoryExists(keptId)).toBe(true);
+    await page.goto('/books');
+    await expect(page.getByTestId('book-card').filter({ hasText: doomed })).toHaveCount(1);
+    await expect(page.getByTestId('book-card').filter({ hasText: kept })).toHaveCount(1);
+  });
+
+  await test.step('the book is deleted after the confirmation and leaves the library', async () => {
+    await page.goto(`/books/${doomedId}/about`);
+    await page.getByRole('button', { name: 'Delete the book' }).click();
+    await page.getByRole('button', { name: 'Delete book', exact: true }).click();
+    await expect(page).toHaveURL(/\/books(\?.*)?$/);
+    await expect(page.getByTestId('book-card').filter({ hasText: doomed })).toHaveCount(0);
+    await expect(page.getByTestId('book-card').filter({ hasText: kept })).toHaveCount(1);
+  });
+
+  await test.step('the server no longer knows the book and its directory is gone', async () => {
+    expect((await page.request.get(`${BASE_URL}/api/v1/books/${doomedId}`)).status()).toBe(404);
+    expect(await directoryExists(doomedId)).toBe(false);
+  });
+
+  await test.step('the neighbouring book is still on the disk and opens', async () => {
+    expect(await directoryExists(keptId)).toBe(true);
+    await page.goto(`/books/${keptId}/about`);
+    await expect(page.getByLabel('Title', { exact: true })).toHaveValue(kept);
   });
 });

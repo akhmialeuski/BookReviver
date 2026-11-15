@@ -1,13 +1,15 @@
 """Provider of the processing feature: the catalogue of processors and the services that run recipes and keep edits.
 
-The catalogue, the executor and the runner of processors keep no per-request state, so one of each serves the whole
-application. The catalogue loads the plugins of the pools the settings name when it is built, from the same source
-that each process of the executor builds its own catalogue from. The executor starts its processes when the container
-first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that serves a
-request or a job is built for it, and works on the book it is given: the parts the use cases share, the service of the
-requests, the jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them
-over, of what a run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes,
-which only ``api`` knows, as it does for the import.
+The catalogue and the executor of processors keep no per-request state, so one of each serves the whole application.
+The catalogue loads the plugins of the pools the settings name when it is built, from the same source that each process
+of the executor builds its own catalogue from. The executor starts its processes when the container first builds it,
+which the lifespan does at start-up, and stops them when the container closes. The recipes, the writer of the stage
+records and the starter of jobs keep no state either, so one of each serves the application too, and each service
+declares the ones it uses. Everything that serves a request or a job is built for it, and works on the book it is
+given: the service of the requests and the services of the manual edits, of the settings of pages, of carrying them
+over, of what a run takes away and of the resets of steps. The runner of the steps and the work of the jobs that run
+them have a provider of their own, ``RunsProvider``. The IIIF root comes from the mount point of the IIIF routes, which
+only ``api`` knows, as it does for the import.
 """
 
 from collections.abc import AsyncIterator
@@ -21,27 +23,21 @@ from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.core.plugins import ProcessorCatalog
-from bookreviver.ports.imaging import RenditionWriter, Tiler
-from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.processing import ProcessorSettings, StepExecutor
-from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
+from bookreviver.services.job_starter import JobStarter, ProcessingConfig
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
-from bookreviver.services.pages import PageService
 from bookreviver.services.processing import ProcessingService
-from bookreviver.services.processing_jobs import ProcessingJobs
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
-from bookreviver.services.recipes import DefaultRecipes
+from bookreviver.services.recipes import DefaultRecipes, RecipeBook
 from bookreviver.services.result_marks import ResultMarksService
 from bookreviver.services.run_plans import RunImpactService
-from bookreviver.services.stage_runs import StageRuntime
-from bookreviver.services.steps import StepRunner
+from bookreviver.services.stage_records import StageRecords
 
 
 class ProcessingProvider(Provider):
@@ -137,172 +133,136 @@ class ProcessingProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def step_runner(self, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler) -> StepRunner:
-        """Build the runner of processors over the imaging ports.
-
-        :param executor: Executor that runs the steps of the processors.
-        :type executor: StepExecutor
-        :param renditions: Writer of the files of a page version.
-        :type renditions: RenditionWriter
-        :param tiler: Tiler of the application.
-        :type tiler: Tiler
-        :returns: The runner.
-        :rtype: StepRunner
-        """
-        return StepRunner(executor=executor, renditions=renditions, tiler=tiler)
-
-    @provide(scope=Scope.REQUEST)
-    def processing_parts(
-        self,
-        processors: ProcessorCatalog,
-        defaults: DefaultRecipes,
-        config: ProcessingConfig,
-    ) -> ProcessingParts:
-        """Build the parts the processing use cases share in the request or job.
+    def recipe_book(self, processors: ProcessorCatalog, defaults: DefaultRecipes, order: RecipeOrder) -> RecipeBook:
+        """Build the recipes of the books, which keep no state and work on the book they are given.
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param config: The retention period and the size of a preview.
-        :type config: ProcessingConfig
-        :returns: The parts.
-        :rtype: ProcessingParts
+        :param order: The finder of steps that stand off their place.
+        :type order: RecipeOrder
+        :returns: The recipes.
+        :rtype: RecipeBook
         """
-        return ProcessingParts.build(processors, defaults, config)
+        return RecipeBook(processors=processors, defaults=defaults, order=order)
+
+    @provide(scope=Scope.APP)
+    def stage_records(self) -> StageRecords:
+        """Build the writer of the stage records, which keeps no state and writes through the transaction it is given.
+
+        :returns: The writer of the stage records.
+        :rtype: StageRecords
+        """
+        return StageRecords()
+
+    @provide(scope=Scope.APP)
+    def job_starter(self, config: ProcessingConfig) -> JobStarter:
+        """Build the putter of new jobs, which keeps no state and puts them on the queue of the book it is given.
+
+        :param config: The retention period of a preview.
+        :type config: ProcessingConfig
+        :returns: The job starter.
+        :rtype: JobStarter
+        """
+        return JobStarter(config=config)
 
     @provide(scope=Scope.REQUEST)
-    def processing_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> ProcessingService:
+    def processing_service(
+        self, processors: ProcessorCatalog, recipes: RecipeBook, records: StageRecords, starter: JobStarter
+    ) -> ProcessingService:
         """Build the processing service of a request.
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The parts the processing use cases share.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the books.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :param starter: Putter of new jobs.
+        :type starter: JobStarter
         :returns: The processing service.
         :rtype: ProcessingService
         """
-        return ProcessingService(processors=processors, parts=parts)
+        return ProcessingService(processors=processors, recipes=recipes, records=records, starter=starter)
 
     @provide(scope=Scope.REQUEST)
-    def recipe_profiles(self, parts: ProcessingParts, processing: ProcessingService) -> RecipeProfiles:
+    def recipe_profiles(self, recipes: RecipeBook, processing: ProcessingService) -> RecipeProfiles:
         """Build the service of the recipe profiles of a request.
 
-        :param parts: The parts the processing use cases share, of which the recipes are used.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the books.
+        :type recipes: RecipeBook
         :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
         :type processing: ProcessingService
         :returns: The profiles service.
         :rtype: RecipeProfiles
         """
-        return RecipeProfiles(recipes=parts.recipes, processing=processing)
-
-    @provide(scope=Scope.APP)
-    def stage_runtime(
-        self,
-        runner: StepRunner,
-        processors: ProcessorCatalog,
-        tracer: Tracer,
-        order_keys: OrderKeys,
-        config: ProcessingConfig,
-    ) -> StageRuntime:
-        """Gather what a run of a stage works with, apart from the book.
-
-        :param runner: Runner of processors.
-        :type runner: StepRunner
-        :param processors: The processors the application can run.
-        :type processors: ProcessorCatalog
-        :param tracer: Tracer of the application.
-        :type tracer: Tracer
-        :param order_keys: Order keys of the application.
-        :type order_keys: OrderKeys
-        :param config: The retention period and the size of a preview.
-        :type config: ProcessingConfig
-        :returns: The runtime of a stage run.
-        :rtype: StageRuntime
-        """
-        return StageRuntime(
-            runner=runner,
-            processors=processors,
-            order_keys=order_keys,
-            preview_long_side_px=config.preview_long_side_px,
-            tracer=tracer,
-            parallel_pages=config.parallel_pages,
-        )
+        return RecipeProfiles(recipes=recipes, processing=processing)
 
     @provide(scope=Scope.REQUEST)
-    def processing_jobs(self, runtime: StageRuntime, parts: ProcessingParts, pages: PageService) -> ProcessingJobs:
-        """Build the work of the processing jobs.
-
-        :param runtime: What a run of a stage works with.
-        :type runtime: StageRuntime
-        :param parts: The parts the processing use cases share.
-        :type parts: ProcessingParts
-        :param pages: The page service of the job, which queues the detection of the content of the pages a split made.
-        :type pages: PageService
-        :returns: The jobs.
-        :rtype: ProcessingJobs
-        """
-        return ProcessingJobs(runtime=runtime, parts=parts, pages=pages)
-
-    @provide(scope=Scope.REQUEST)
-    def edit_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> EditService:
+    def edit_service(self, processors: ProcessorCatalog, records: StageRecords) -> EditService:
         """Build the edit service of a request.
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The parts the processing use cases share, of which the stage records are used.
-        :type parts: ProcessingParts
+        :param records: Writer of the stage records.
+        :type records: StageRecords
         :returns: The edit service.
         :rtype: EditService
         """
-        return EditService(processors=processors, records=parts.records)
+        return EditService(processors=processors, records=records)
 
     @provide(scope=Scope.REQUEST)
-    def page_settings_service(self, processors: ProcessorCatalog, parts: ProcessingParts) -> PageSettingsService:
+    def page_settings_service(self, processors: ProcessorCatalog, records: StageRecords) -> PageSettingsService:
         """Build the page settings service of a request.
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The parts the processing use cases share, of which the stage records are used.
-        :type parts: ProcessingParts
+        :param records: Writer of the stage records.
+        :type records: StageRecords
         :returns: The page settings service.
         :rtype: PageSettingsService
         """
-        return PageSettingsService(processors=processors, records=parts.records)
+        return PageSettingsService(processors=processors, records=records)
 
     @provide(scope=Scope.REQUEST)
-    def run_impact_service(self, parts: ProcessingParts) -> RunImpactService:
+    def run_impact_service(self, recipes: RecipeBook) -> RunImpactService:
         """Build the run impact service of a request.
 
-        :param parts: The parts the processing use cases share, of which the recipes are used.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the books.
+        :type recipes: RecipeBook
         :returns: The run impact service.
         :rtype: RunImpactService
         """
-        return RunImpactService(recipes=parts.recipes)
+        return RunImpactService(recipes=recipes)
 
     @provide(scope=Scope.REQUEST)
-    def carry_over_service(self, parts: ProcessingParts) -> CarryOverService:
+    def carry_over_service(self, records: StageRecords) -> CarryOverService:
         """Build the carry-over service of a request.
 
-        :param parts: The parts the processing use cases share, of which the stage records are used.
-        :type parts: ProcessingParts
+        :param records: Writer of the stage records.
+        :type records: StageRecords
         :returns: The carry-over service.
         :rtype: CarryOverService
         """
-        return CarryOverService(records=parts.records)
+        return CarryOverService(records=records)
 
     @provide(scope=Scope.REQUEST)
-    def page_history_service(self, parts: ProcessingParts) -> PageHistoryService:
+    def page_history_service(
+        self, recipes: RecipeBook, records: StageRecords, starter: JobStarter
+    ) -> PageHistoryService:
         """Build the page history service of a request.
 
-        :param parts: The parts the processing use cases share, of which the stage records and the job starter are used.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the books, which the undo of a replacement of the type of a step asks.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :param starter: Putter of new jobs, which queues the clear of a step.
+        :type starter: JobStarter
         :returns: The page history service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(records=parts.records, starter=parts.starter)
+        return PageHistoryService(recipes=recipes, records=records, starter=starter)
 
     @provide(scope=Scope.REQUEST)
     def result_marks_service(self) -> ResultMarksService:

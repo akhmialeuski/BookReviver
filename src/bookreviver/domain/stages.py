@@ -2,14 +2,14 @@
 
 from typing import TYPE_CHECKING
 
-from attrs import field, frozen, validators
+from attrs import frozen
 
 from bookreviver.domain.labels import LabeledStrEnum
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
 
 
 class Stage(LabeledStrEnum):
@@ -144,9 +144,10 @@ class PageStage:
     :ivar recipe_id: Recipe the page was processed by, or None when the recipe was deleted or none ran yet.
     :ivar head_version_id: Last version of the recipe's steps, which is the current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
-    :ivar through_step: Index in the recipe of the last step the page was run through, when that is before the last
-                        step that is on, so the page is not ready for the next stage. None for a page run through every
-                        step that is on, and for a record no recipe made.
+    :ivar through_step_id: The last step of the recipe the page was run through, when that is before the last step
+                           that is on, so the page is not ready for the next stage. None for a page run through every
+                           step that is on, and for a record no recipe made. The record names the step, never its
+                           place, so a step that moves in the recipe stays the step the page stopped at.
     :ivar updated_at: When the record last changed.
     """
 
@@ -155,7 +156,7 @@ class PageStage:
     recipe_id: RecipeId | None = None
     head_version_id: PageVersionId | None = None
     state: StageState = StageState.FRESH
-    through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
+    through_step_id: StepId | None = None
     updated_at: datetime
 
     @property

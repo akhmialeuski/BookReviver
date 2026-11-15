@@ -233,6 +233,19 @@ describe('useStepWorkspace', () => {
     expect(seen?.rowsPending).toBe(false);
   });
 
+  it('waits for the step an address names while the recipe that holds it is still read, and not for a step it lacks', async () => {
+    // The recipe is not read yet, so the bar has no step, and the address already names one
+    await render('b', { ...STATE, recipe: undefined, ready: false });
+    const whileRecipeIsRead = { open: seen?.open, pending: seen?.rowsPending };
+    await render('gone');
+
+    expect(whileRecipeIsRead).toEqual({ open: null, pending: true });
+    expect({ open: seen?.open, pending: seen?.rowsPending }).toEqual({
+      open: null,
+      pending: false,
+    });
+  });
+
   it('stops waiting for the rows of the open step when their read fails, which leaves them null', async () => {
     sdk.rows.mockImplementation(async (options: RowsRequest) => {
       if (options.query.size === WHOLE_BOOK) {

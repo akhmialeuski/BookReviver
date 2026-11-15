@@ -5,25 +5,15 @@ computes, and for a step that reads the whole book the half that reads it. The i
 from the spec alone, so what the spec says must be what the plugin does.
 """
 
-import pytest
+from typing import TYPE_CHECKING
 
-from bookreviver.app.plugins import EntryPointCatalog
-from bookreviver.domain.processors import ProcessorRole, WorkerPool
-from tests.harness.images.samples import CV_MISSING
+from bookreviver.domain.processors import ProcessorRole
+
+if TYPE_CHECKING:
+    from bookreviver.app.plugins import EntryPointCatalog
 
 # The key of the JSON Schema of the parameters that lists the settings of a step
 PROPERTIES: str = 'properties'
-
-
-@pytest.fixture(scope='module')
-def fx_processors() -> EntryPointCatalog:
-    """Load the built-in processors once for the module, which need OpenCV for the most part.
-
-    :returns: The catalogue of the processors the project registers.
-    :rtype: EntryPointCatalog
-    """
-    pytest.importorskip('cv2', reason=CV_MISSING)
-    return EntryPointCatalog(pools=set(WorkerPool))
 
 
 class TestPluginContract:

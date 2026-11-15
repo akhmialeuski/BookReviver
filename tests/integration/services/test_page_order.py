@@ -6,7 +6,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.books import BookResource
 from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError, NotFoundError
 from bookreviver.domain.pages import PageAnchor
@@ -14,14 +13,11 @@ from bookreviver.domain.sides import Side
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.ports.ordering import OrderKeys
 from tests.harness.builders.domain import (
-    make_page,
-    make_record,
-    make_scan,
     make_source,
     new_account_id,
 )
 from tests.harness.builders.page_services import make_page_service
-from tests.harness.builders.seeding import ensure_account, store_book
+from tests.harness.builders.seeding import BookLayout, SourceLayout, ensure_account, seed_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -29,11 +25,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.domain.pages import Page
-    from bookreviver.domain.sources import Source
-    from bookreviver.ports.persistence import CatalogueDatabase
     from bookreviver.services.pages import PageService
-    from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
+    from tests.harness.adapters.database import CatalogueDatabaseFactory
     from tests.harness.adapters.page_writes import PageWrites
     from tests.harness.builders.domain import BookOpener
     from tests.harness.fakes.board import FakeJobBoard
@@ -46,19 +39,11 @@ SECOND_SOURCE_PAGES: int = 2
 CASE_ARG: str = 'case'
 
 
-class Book(NamedTuple):
-    """A book of two sources whose pages stand one after the other in the order of their upload.
-
-    :ivar book_id: Identifier of the book.
-    :ivar first: The source of the first three pages.
-    :ivar second: The source of the last two pages.
-    :ivar pages: The five pages in book order.
-    """
-
-    book_id: BookId
-    first: Source
-    second: Source
-    pages: list[Page]
+# A book of two sources whose pages stand one after the other in the order of their upload, three of the first source
+# and two of the second
+LAYOUT: BookLayout = BookLayout.scanned(
+    SourceLayout.of(FIRST_SOURCE_PAGES, name='part1.pdf'), SourceLayout.of(SECOND_SOURCE_PAGES, name='part2.pdf')
+)
 
 
 class MoveCase(NamedTuple):
@@ -130,40 +115,6 @@ class TakenKey(OrderKeys):
         return [self.key] * count
 
 
-async def _commit_book(catalogue: CatalogueDatabase, owner: Actor, *, databases: LocatedBookDatabases) -> Book:
-    """Commit a book of five pages, three from one source and two from another, in the order of upload.
-
-    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
-    :type catalogue: CatalogueDatabase
-    :param owner: Account owning the book.
-    :type owner: Actor
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The stored book.
-    :rtype: Book
-    """
-    first, second = (
-        make_source(name='part1.pdf'),
-        make_source(name='part2.pdf'),
-    )
-    scans = [
-        *(make_scan(source=first, number=number) for number in range(FIRST_SOURCE_PAGES)),
-        *(make_scan(source=second, number=number) for number in range(SECOND_SOURCE_PAGES)),
-    ]
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
-    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    book_id = await store_book(
-        catalogue,
-        make_record(),
-        *pages,
-        owner=owner.account_id,
-        sources=[first, second],
-        scans=scans,
-        databases=databases,
-    )
-    return Book(book_id=book_id, first=first, second=second, pages=pages)
-
-
 async def _book_order(service: PageService, actor: Actor, book_id: BookId, *, opener: BookOpener) -> list[PageId]:
     """Read the identifiers of a book's pages in book order.
 
@@ -215,7 +166,9 @@ class TestMove:
         :type fx_open_book: BookOpener
         """
         side, expected = case
-        book = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         fx_page_writes.start()
 
         moved = await fx_service().move(
@@ -253,7 +206,7 @@ class TestMove:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         fx_book_changes.published.clear()
         await fx_service().move(
@@ -285,7 +238,9 @@ class TestMove:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
@@ -318,7 +273,7 @@ class TestMove:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
         service = make_page_service(
             fx_open_book,
             fx_runtime,
@@ -356,10 +311,10 @@ class TestMove:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
         owner = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, owner.account_id)
-        stranger = await _commit_book(fx_catalogue(), owner, databases=fx_open_book.databases)
+        stranger = await seed_book(fx_catalogue(), LAYOUT, owner=owner.account_id, databases=fx_open_book.databases)
         known = PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         missing = PageAnchor(page_id=stranger.pages[0].id, side=Side.BEFORE)
 
@@ -405,7 +360,9 @@ class TestMoveGroup:
         :type fx_open_book: BookOpener
         """
         chosen, anchor_index, side, expected = case
-        book = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         fx_page_writes.start()
 
         await fx_service().move_group(
@@ -442,7 +399,7 @@ class TestMoveGroup:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         fx_book_changes.published.clear()
         await fx_service().move_group(
@@ -474,7 +431,9 @@ class TestMoveGroup:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
@@ -510,8 +469,8 @@ class TestMoveGroup:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
-        other = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        other = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         with pytest.raises(NotFoundError):
@@ -548,13 +507,15 @@ class TestMoveSource:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(
+            fx_open_book.catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
             fx_open_book(fx_actor, book.book_id),
-            book.first.id,
+            book.sources[0].id,
             PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
         )
 
@@ -588,7 +549,7 @@ class TestMoveSource:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
         bare = make_source(name='bare.pdf')
         await fx_open_book.databases.open(book.book_id).change(lambda repos, _book_record: repos.sources.add(bare))
 
@@ -617,12 +578,12 @@ class TestMoveSource:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_source(
                 fx_open_book(fx_actor, book.book_id),
-                book.first.id,
+                book.sources[0].id,
                 PageAnchor(page_id=book.pages[1].id, side=Side.AFTER),
             )
 
@@ -644,12 +605,12 @@ class TestMoveSource:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
-        other = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        other = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
             await fx_service().move_source(
                 fx_open_book(fx_actor, book.book_id),
-                other.first.id,
+                other.sources[0].id,
                 PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE),
             )

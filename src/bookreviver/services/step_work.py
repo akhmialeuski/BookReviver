@@ -1,9 +1,10 @@
-"""One step of a recipe on one page: what it reads, and the making of its version.
+"""The steps of a recipe on one page: the chain of them, and the making of the version of each.
 
-``StepSource`` is what a step reads, the version before it or the scan, and ``StepWork`` is the step itself on a page of
-a run. Before the step is run its identifier is worked out from everything it depends on, so a version that was made
-already is found and used again, and only a step whose parameters, edit or input changed is computed. A page that shows
-a generated leaf passes every step unchanged: the version of the step holds the image of its input, flagged as skipped.
+``StepChain`` is the steps a run or a preview goes over on a page. It makes the version of each step, each reading the
+one before, and asks the book what it gives the step that reads it. ``StepWork`` is one step of it on the page. Before
+the step is run its identifier is worked out from everything it depends on, so a version that was made already is found
+and used again, and only a step whose parameters, edit or input changed is computed. A page that shows a generated leaf
+passes every step unchanged: the version of the step holds the image of its input, flagged as skipped.
 
 A version is stored by two short ``Book.change`` calls, the mark that it is running and then its result, so the viewer
 shows the first results while the rest are made, and no transaction is held while the processor computes. Each of them
@@ -11,37 +12,39 @@ reads the page again, so a page that was deleted while its steps ran gets nothin
 whose ``Book.change`` failed are discarded. A version that fails is stored as failed with its reason, so a repeated run
 makes it again under the same identifier.
 
-The step belongs to the ``PageWork`` of its page, which belongs to the ``StageWork`` of its job: the step reaches the
-book, the runner and the processors through them, and nothing is handed down from call to call.
+The chain belongs to the ``PageWork`` of its page, which belongs to the ``StageWork`` of its job, and the step to the
+chain: the step reaches the book, the runner and the processors through them, and nothing is handed down from call to
+call. This module imports ``page_work`` for them, and ``page_work`` never imports this one.
 """
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 from attrs import evolve, frozen
 
+from bookreviver.core.content import BookContent
 from bookreviver.domain.errors import ConflictError, DomainError
 from bookreviver.domain.events import PageVersionReady
-from bookreviver.domain.images import Rendition
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.page_steps import PageStepKey
 from bookreviver.domain.processors import ProcessorScope
 from bookreviver.domain.sides import PageSide
 from bookreviver.domain.spans import SpanAttribute, SpanName, StepOutcome
-from bookreviver.domain.versions import PageSize, PageVersion, VersionData, VersionInputs, VersionScale, VersionState
+from bookreviver.domain.versions import PageVersion, VersionData, VersionInputs, VersionState
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.core.plugins import Processor
-    from bookreviver.domain.ids import PageVersionId, StorageKey
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageEdit
     from bookreviver.domain.recipes import Step
-    from bookreviver.domain.sources import Scan
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.tracing import Span
     from bookreviver.services.page_work import PageWork
+    from bookreviver.services.step_source import StepSource
 
 UNEXPECTED_FAILURE: str = 'The step failed because of an unexpected error. It has been logged.'
 SPLIT_NOT_AVAILABLE: str = 'The step {key} splits a scan, so it is the only step of its recipe and cannot be previewed.'
@@ -50,123 +53,85 @@ WRONG_OUTPUTS: str = 'The step {key} made {count} outputs, and a step of one pag
 logger = logging.getLogger(__name__)
 
 
-@frozen(kw_only=True)
-class StepSource:
-    """What a step reads: the version before it, or the scan, and the image of it.
+class StepChain:
+    """The steps a run or a preview goes over on one page, which make a version each, every one reading the one before.
 
-    :ivar version_id: Version the step reads, or None when it reads a scan.
-    :ivar image: Key of the image, the ``full`` or the ``preview`` of the version or the scan.
-    :ivar data: ``data`` of the version, or the facts of the scan.
-    :ivar scale: Whether the image is the full one or the preview, which is what the step reading it runs on.
-    :ivar ratio: Size of the image over the size of the full image, 1 for a full run.
-    :ivar book: What the book gives the step that reads the book for the fields its parameters leave to it, which lies
-                under the settings of the page, or None for a run that has not worked it out.
+    :ivar page_work: The work on the page the steps belong to, through which the book of the job is reached.
+    :ivar steps: The steps to make, in order.
     """
 
-    version_id: PageVersionId | None
-    image: StorageKey
-    data: MetadataMap
-    scale: VersionScale = VersionScale.FULL
-    ratio: float = 1.0
-    book: MetadataMap | None = None
+    def __init__(self, page_work: PageWork, steps: Sequence[Step]) -> None:
+        """Take the steps of a page.
 
-    @staticmethod
-    def preview_ratio(width_px: int, height_px: int, preview_long_side_px: int) -> float:
-        """Work out the size of the preview of an image over its full size.
-
-        :param width_px: Width of the full image.
-        :type width_px: int
-        :param height_px: Height of the full image.
-        :type height_px: int
-        :param preview_long_side_px: Longer side of a preview in pixels.
-        :type preview_long_side_px: int
-        :returns: The ratio, at most 1, since a preview is never larger than the image.
-        :rtype: float
+        :param page_work: The work on the page.
+        :type page_work: PageWork
+        :param steps: The steps a run or a preview goes over.
+        :type steps: Sequence[Step]
         """
-        return min(1.0, preview_long_side_px / max(width_px, height_px))
+        self.page_work = page_work
+        self.steps = steps
 
-    @classmethod
-    def of_scan(cls, scan: Scan, scale: VersionScale, preview_long_side_px: int) -> Self:
-        """Read a scan, whose image the page split reads.
+    async def make(self, source: StepSource) -> PageVersion | None:
+        """Make the version of each step, each reading the one before, on the scale of the source.
 
-        :param scan: The scan, whose renditions are ready.
-        :type scan: Scan
-        :param scale: Whether the full image or the preview is read.
-        :type scale: VersionScale
-        :param preview_long_side_px: Longer side of a preview in pixels.
-        :type preview_long_side_px: int
-        :returns: The source, with the facts of the scan for its data.
-        :rtype: Self
+        :param source: What the first step reads, whose scale is the scale of every version made and whose book
+                       is laid over the step that takes one.
+        :type source: StepSource
+        :returns: The version of the last step, or the one that failed, which ends the chain, or None for no step.
+        :rtype: PageVersion | None
+        :raises DomainError: If a processor is missing or its parameters do not fit.
         """
-        facts = scan.facts
-        if scale is VersionScale.PREVIEW:
-            return cls(
-                version_id=None,
-                image=BookKeys.scan_rendition(scan, Rendition.PREVIEW),
-                data=facts.as_data(),
-                scale=scale,
-                ratio=cls.preview_ratio(facts.width_px, facts.height_px, preview_long_side_px),
-            )
-        return cls(
-            version_id=None,
-            image=BookKeys.scan_rendition(scan, scan.renditions.full),
-            data=facts.as_data(),
-            scale=scale,
+        version: PageVersion | None = None
+        for step in self.steps:
+            version = await StepWork(self.page_work, step, source).make()
+            # A task is done whether the version was made, found made, or failed, and no transaction is open here
+            await self.page_work.work.control.task_done()
+            if version.state is not VersionState.READY:
+                return version
+            source = source.after(version)
+        return version
+
+    async def measure(self, source: StepSource) -> PageVersion | None:
+        """Make the steps as they stand, and give the version of the last one.
+
+        The chain is the steps as far as the one that reads the book.
+
+        :param source: What the first step reads.
+        :type source: StepSource
+        :returns: The version of the last step on the page, or None when a step failed on the way.
+        :rtype: PageVersion | None
+        """
+        version = await self.make(source)
+        return None if version is None or version.state is not VersionState.READY else version
+
+    async def book_of(self, source: StepSource) -> MetadataMap:
+        """Work out what the book gives the step that reads it, on a page that is run or previewed alone.
+
+        :param source: What the first step reads.
+        :type source: StepSource
+        :returns: The fields of the step that are by the book with their values, none when the step has no field by the
+                  book or no page has a result of it.
+        :rtype: MetadataMap
+        """
+        work, steps = self.page_work.work, self.steps
+        if (fields := work.engine.book_fields(steps)) is None:
+            return {}
+        made = await StepChain(self.page_work, steps[: fields.position + 1]).measure(source)
+        fresh = {} if made is None else {self.page_work.page.id: made}
+        stage = self.page_work.stage
+        return await work.book.read(
+            lambda repos: fields.book_step.from_book(BookContent(repos), stage, fields.params, fresh)
         )
 
-    @classmethod
-    def of_version(cls, version: PageVersion, scale: VersionScale, preview_long_side_px: int) -> Self:
-        """Read a version of a page, which the first step of a stage reads.
+    async def with_book(self, source: StepSource) -> StepSource:
+        """Give the source with what the book gives the step that reads it, worked out for this page alone.
 
-        :param version: The version, whose images are ready.
-        :type version: PageVersion
-        :param scale: Whether the full image or the preview is read.
-        :type scale: VersionScale
-        :param preview_long_side_px: Longer side of a preview in pixels.
-        :type preview_long_side_px: int
-        :returns: The source, with the data of the version.
-        :rtype: Self
-        :raises ValueError: If the version has no image.
+        :param source: What the first step reads.
+        :type source: StepSource
+        :returns: The source the chain of the steps starts from.
+        :rtype: StepSource
         """
-        if scale is VersionScale.FULL:
-            return cls(version_id=version.id, image=cls._image_of(version, scale), data=version.data, scale=scale)
-        size = PageSize.from_data(version.data)
-        ratio = 1.0 if size is None else cls.preview_ratio(size.width_px, size.height_px, preview_long_side_px)
-        return cls(
-            version_id=version.id, image=cls._image_of(version, scale), data=version.data, scale=scale, ratio=ratio
-        )
-
-    def after(self, version: PageVersion) -> Self:
-        """Give what the next step of a chain reads once this source was made into a version.
-
-        A preview made of a preview is as large of the full image as the preview it read, so the ratio goes on, and so
-        does what the book gives.
-
-        :param version: The version a step made of this source.
-        :type version: PageVersion
-        :returns: The source the next step reads, on the same scale.
-        :rtype: Self
-        :raises ValueError: If the version has no image.
-        """
-        return evolve(self, version_id=version.id, image=self._image_of(version, self.scale), data=version.data)
-
-    @staticmethod
-    def _image_of(version: PageVersion, scale: VersionScale) -> StorageKey:
-        """Give the key of the image of a version a step reads on a scale.
-
-        :param version: The version.
-        :type version: PageVersion
-        :param scale: Whether the full image or the preview is read.
-        :type scale: VersionScale
-        :returns: The key of the ``preview`` or of the ``full`` image.
-        :rtype: StorageKey
-        :raises ValueError: If the version has no image.
-        """
-        if version.renditions is None:
-            err_msg = f'The version {version.id} has no image.'
-            raise ValueError(err_msg)
-        rendition = Rendition.PREVIEW if scale is VersionScale.PREVIEW else version.renditions.full
-        return BookKeys.version_rendition(version, rendition)
+        return evolve(source, book=await self.book_of(source))
 
 
 @frozen
@@ -185,7 +150,7 @@ class StepWork:
     @property
     def processor(self) -> Processor:
         """The processor of the step, from the catalogue of the job."""
-        return self.page_work.work.processors.get(self.step.processor_key)
+        return self.page_work.work.engine.processors.get(self.step.processor_key)
 
     @property
     def skipped(self) -> bool:
@@ -209,7 +174,7 @@ class StepWork:
             SpanAttribute.STEP_SCALE: self.source.scale,
             SpanAttribute.STEP_OUTCOME: StepOutcome.FAILED,
         }
-        with work.tracer.span(SpanName.STEP, attributes) as span:
+        with work.engine.tracer.span(SpanName.STEP, attributes) as span:
             inputs, edit, existing = await work.book.read(self._look)
             if existing is not None and existing.state is VersionState.READY:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.CACHED)
@@ -250,7 +215,7 @@ class StepWork:
         layers, skipped = page_work.layers, self.skipped
         key = PageStepKey(page_work.page.id, page_work.stage, step.step_id)
         state = None if skipped else repos.page_step_states.find(key)
-        reads_book = source.book and page_work.work.book_steps.of(step) is not None
+        reads_book = source.book and page_work.work.engine.book_steps.of(step) is not None
         base = {**step.params, **(source.book or {})} if reads_book else step.params
         laid = base if skipped else layers.lay(repos, step.step_id, base, None if state is None else state.params)
         checked = processor.validate_params(laid)
@@ -339,10 +304,10 @@ class StepWork:
         :raises DomainError: If the step cannot run on its input.
         """
         work = self.page_work.work
-        async with work.runner.execute(work.book, run) as result:
+        async with work.engine.runner.execute(work.book, run) as result:
             if len(result.outputs) != 1:
                 raise ConflictError(WRONG_OUTPUTS.format(key=run.processor_key, count=len(result.outputs)))
-            return await work.runner.store(
+            return await work.engine.runner.store(
                 work.book, version, result.outputs[0], policy=work.book_record.image_policy, tiles=False
             )
 
@@ -376,7 +341,7 @@ class StepWork:
         try:
             await work.book.change(lambda repos, _book_record: store(repos))
         except Exception:
-            await work.runner.discard(work.book, BookKeys.version_directory(made))
+            await work.engine.runner.discard(work.book, BookKeys.version_directory(made))
             raise
         if made.state is VersionState.READY:
             span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)

@@ -139,7 +139,7 @@ def fx_users(fx_counting_catalogue: CountingCatalogueDatabase) -> AccountDatabas
 
 
 @pytest.fixture
-def fx_tokens(fx_counting_catalogue: CountingCatalogueDatabase) -> AccessTokenDatabase:
+def fx_token_database(fx_counting_catalogue: CountingCatalogueDatabase) -> AccessTokenDatabase:
     """Build the session token database of the request.
 
     :param fx_counting_catalogue: Catalogue database of the request.
@@ -462,7 +462,7 @@ class TestAccountDatabase:
     async def test_delete_removes_the_user_with_its_provider_accounts_and_tokens(
         self,
         fx_users: AccountDatabase,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_linked_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
     ) -> None:
@@ -470,14 +470,14 @@ class TestAccountDatabase:
 
         :param fx_users: The user database of the request.
         :type fx_users: AccountDatabase
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_linked_user: The stored user with a Google account linked.
         :type fx_linked_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
         :type fx_counting_catalogue: CountingCatalogueDatabase
         """
-        await fx_tokens.create(_token(fx_linked_user))
+        await fx_token_database.create(_token(fx_linked_user))
         user_id = fx_linked_user.id
         await fx_users.delete(fx_linked_user)
         expect(await _committed_user(fx_counting_catalogue, user_id) is None)
@@ -575,19 +575,22 @@ class TestAccessTokenDatabase:
         return stored
 
     async def test_create_stores_a_token_created_now_in_utc(
-        self, fx_tokens: AccessTokenDatabase, fx_user: AccountTable, fx_counting_catalogue: CountingCatalogueDatabase
+        self,
+        fx_token_database: AccessTokenDatabase,
+        fx_user: AccountTable,
+        fx_counting_catalogue: CountingCatalogueDatabase,
     ) -> None:
         """Verify a token created without a time gets the current time with its time zone, and is committed.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the token is for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request, which reads what was committed.
         :type fx_counting_catalogue: CountingCatalogueDatabase
         """
         before = datetime.now(UTC)
-        token = await fx_tokens.create(_token(fx_user))
+        token = await fx_token_database.create(_token(fx_user))
         stored = await _committed_token(fx_counting_catalogue)
         expect(before <= token.created_at <= datetime.now(UTC))
         expect(token.created_at.utcoffset() == timedelta(0))
@@ -597,15 +600,15 @@ class TestAccessTokenDatabase:
     @pytest.mark.parametrize('value', [SESSION_TOKEN, OTHER_TOKEN], ids=['stored-token', 'unknown-token'])
     async def test_get_by_token_finds_only_the_stored_token(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
         value: str,
     ) -> None:
         """Verify the stored token is found by its value and another value is not.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the token is for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request.
@@ -613,8 +616,8 @@ class TestAccessTokenDatabase:
         :param value: The value to look up.
         :type value: str
         """
-        await self._store(fx_tokens, fx_user, fx_counting_catalogue)
-        looked_up = await fx_tokens.get_by_token(value)
+        await self._store(fx_token_database, fx_user, fx_counting_catalogue)
+        looked_up = await fx_token_database.get_by_token(value)
         assert (looked_up is not None) == (value == SESSION_TOKEN)
 
     @pytest.mark.parametrize(
@@ -628,7 +631,7 @@ class TestAccessTokenDatabase:
     )
     async def test_get_by_token_does_not_find_a_token_older_than_max_age(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
         max_age: datetime | None,
@@ -637,8 +640,8 @@ class TestAccessTokenDatabase:
     ) -> None:
         """Verify a token created before ``max_age`` is not found, and one created at or after it is.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the token is for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request.
@@ -648,26 +651,26 @@ class TestAccessTokenDatabase:
         :param is_within_age: Whether the token is expected.
         :type is_within_age: bool
         """
-        await self._store(fx_tokens, fx_user, fx_counting_catalogue)
-        assert (await fx_tokens.get_by_token(SESSION_TOKEN, max_age) is not None) == is_within_age
+        await self._store(fx_token_database, fx_user, fx_counting_catalogue)
+        assert (await fx_token_database.get_by_token(SESSION_TOKEN, max_age) is not None) == is_within_age
 
     async def test_update_changes_the_columns_and_commits_them(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
     ) -> None:
         """Verify an update returns the token with the new time, and another transaction reads it.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the token is for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
         :type fx_counting_catalogue: CountingCatalogueDatabase
         """
-        token = await self._store(fx_tokens, fx_user, fx_counting_catalogue)
-        updated = await fx_tokens.update(token, dict(LATER))
+        token = await self._store(fx_token_database, fx_user, fx_counting_catalogue)
+        updated = await fx_token_database.update(token, dict(LATER))
         stored = await _committed_token(fx_counting_catalogue)
         expect(updated.created_at == CREATED_AT + STEP)
         expect(stored is not None and stored.created_at == CREATED_AT + STEP)
@@ -675,35 +678,35 @@ class TestAccessTokenDatabase:
 
     async def test_delete_removes_the_token(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
     ) -> None:
         """Verify a deleted token is no longer found, which is how signing out revokes a session.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the token is for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
         :type fx_counting_catalogue: CountingCatalogueDatabase
         """
-        token = await self._store(fx_tokens, fx_user, fx_counting_catalogue)
-        await fx_tokens.delete(token)
-        expect(await fx_tokens.get_by_token(SESSION_TOKEN) is None)
+        token = await self._store(fx_token_database, fx_user, fx_counting_catalogue)
+        await fx_token_database.delete(token)
+        expect(await fx_token_database.get_by_token(SESSION_TOKEN) is None)
         expect(await _count(fx_counting_catalogue, AccessTokenTable) == 0)
         assert_expectations()
 
     async def test_delete_created_before_removes_only_the_tokens_older_than_the_cutoff(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
     ) -> None:
         """Verify a token created before the cutoff goes, and one created at the cutoff or after it stays.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the tokens are for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request, which also reads what was committed.
@@ -714,20 +717,20 @@ class TestAccessTokenDatabase:
             (OTHER_TOKEN, CREATED_AT + STEP),
             (NEWER_TOKEN, CREATED_AT + 2 * STEP),
         ):
-            await fx_tokens.create(_token(fx_user, token=value, created_at=created_at))
+            await fx_token_database.create(_token(fx_user, token=value, created_at=created_at))
 
-        await fx_tokens.delete_created_before(CREATED_AT + STEP)
+        await fx_token_database.delete_created_before(CREATED_AT + STEP)
 
-        expect(await fx_tokens.get_by_token(SESSION_TOKEN) is None)
-        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is not None)
-        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect(await fx_token_database.get_by_token(SESSION_TOKEN) is None)
+        expect(await fx_token_database.get_by_token(OTHER_TOKEN) is not None)
+        expect(await fx_token_database.get_by_token(NEWER_TOKEN) is not None)
         expect(await _count(fx_counting_catalogue, AccessTokenTable) == EXPECTED_KEPT)
         assert_expectations()
 
     @pytest.mark.parametrize('keep', [None, SESSION_TOKEN], ids=['all', 'all-but-one'])
     async def test_delete_of_user_removes_the_tokens_of_that_user_only(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_users: AccountDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
@@ -735,8 +738,8 @@ class TestAccessTokenDatabase:
     ) -> None:
         """Verify the tokens of the user go, but for the one to keep, and the token of another user stays.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_users: The user database of the request.
         :type fx_users: AccountDatabase
         :param fx_user: The stored user the first two tokens are for.
@@ -747,16 +750,16 @@ class TestAccessTokenDatabase:
         :type keep: str | None
         """
         neighbour = await fx_users.create({**NEW_USER, 'email': OTHER_EMAIL})
-        await fx_tokens.create(_token(fx_user))
-        await fx_tokens.create(_token(fx_user, token=OTHER_TOKEN))
-        await fx_tokens.create(_token(neighbour, token=NEWER_TOKEN))
+        await fx_token_database.create(_token(fx_user))
+        await fx_token_database.create(_token(fx_user, token=OTHER_TOKEN))
+        await fx_token_database.create(_token(neighbour, token=NEWER_TOKEN))
         fx_counting_catalogue.blocks = 0
 
-        await fx_tokens.delete_of_user(fx_user.id, keep=keep)
+        await fx_token_database.delete_of_user(fx_user.id, keep=keep)
 
-        expect((await fx_tokens.get_by_token(SESSION_TOKEN) is not None) == (keep == SESSION_TOKEN))
-        expect(await fx_tokens.get_by_token(OTHER_TOKEN) is None)
-        expect(await fx_tokens.get_by_token(NEWER_TOKEN) is not None)
+        expect((await fx_token_database.get_by_token(SESSION_TOKEN) is not None) == (keep == SESSION_TOKEN))
+        expect(await fx_token_database.get_by_token(OTHER_TOKEN) is None)
+        expect(await fx_token_database.get_by_token(NEWER_TOKEN) is not None)
         expect(fx_counting_catalogue.blocks == ONE_BLOCK)
         assert_expectations()
 
@@ -775,15 +778,15 @@ class TestAccessTokenDatabase:
     )
     async def test_every_write_runs_in_one_transaction_that_writes(
         self,
-        fx_tokens: AccessTokenDatabase,
+        fx_token_database: AccessTokenDatabase,
         fx_user: AccountTable,
         fx_counting_catalogue: CountingCatalogueDatabase,
         operation: Callable[[AccessTokenDatabase, AccessTokenTable, AccountTable], Awaitable[Any]],
     ) -> None:
         """Verify each write opens exactly one transaction that writes, so it takes the writer and the write lock.
 
-        :param fx_tokens: The session token database of the request.
-        :type fx_tokens: AccessTokenDatabase
+        :param fx_token_database: The session token database of the request.
+        :type fx_token_database: AccessTokenDatabase
         :param fx_user: The stored user the token is for.
         :type fx_user: AccountTable
         :param fx_counting_catalogue: Catalogue database of the request, counting its transactions that write.
@@ -791,8 +794,8 @@ class TestAccessTokenDatabase:
         :param operation: The write to run, given the token database, a stored token and the user.
         :type operation: Callable[[AccessTokenDatabase, AccessTokenTable, AccountTable], Awaitable[Any]]
         """
-        token = await self._store(fx_tokens, fx_user, fx_counting_catalogue)
-        await operation(fx_tokens, token, fx_user)
+        token = await self._store(fx_token_database, fx_user, fx_counting_catalogue)
+        await operation(fx_token_database, token, fx_user)
         assert fx_counting_catalogue.blocks == ONE_BLOCK
 
 

@@ -7,13 +7,12 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.pages import ContentType, PageAnchor, PageKind
 from bookreviver.domain.sides import Side
-from tests.harness.builders.domain import EPOCH, make_page, make_record, new_account_id
-from tests.harness.builders.seeding import ensure_account, store_book
+from tests.harness.builders.domain import EPOCH, make_page, new_account_id
+from tests.harness.builders.seeding import BookLayout, ensure_account, seed_book
 from tests.harness.concurrency.book_hold import hold_book_in_thread
 
 if TYPE_CHECKING:
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.domain.pages import Page
-    from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.pages import PageService
     from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.adapters.page_writes import PageWrites
@@ -36,8 +35,8 @@ pytestmark = pytest.mark.anyio
 STALE_LABEL: str = 'old'
 NEW_LABEL: str = '[4]'
 NEW_NOTES: str = 'Library stamp'
-# Kind and inclusion of the seven pages of the book, which the edits have to tell apart
-LAYOUT: list[tuple[PageKind, bool]] = [
+# Seven pages of kinds and inclusion the edits have to tell apart, each labelled by hand with a stale number
+LAYOUT: BookLayout = BookLayout.of_kinds(
     (PageKind.COVER, True),
     (PageKind.TITLE, True),
     (PageKind.TEXT, True),
@@ -45,38 +44,11 @@ LAYOUT: list[tuple[PageKind, bool]] = [
     (PageKind.TEXT, True),
     (PageKind.TEXT, False),
     (PageKind.TEXT, True),
-]
+    manual_label=STALE_LABEL,
+)
 
 
-async def _commit_book(
-    catalogue: CatalogueDatabase, owner: Actor, *, databases: LocatedBookDatabases
-) -> tuple[BookId, list[Page]]:
-    """Commit a book of seven pages of the kinds in ``LAYOUT``, each labelled by hand with a stale number.
-
-    :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
-    :type catalogue: CatalogueDatabase
-    :param owner: Account owning the book.
-    :type owner: Actor
-    :param databases: Opens the databases of the books of the test.
-    :type databases: LocatedBookDatabases
-    :returns: The book and its pages in book order.
-    :rtype: tuple[BookRecord, list[Page]]
-    """
-    keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
-    pages = [
-        evolve(
-            make_page(order_key=key),
-            kind=kind,
-            included=included,
-            manual_label=STALE_LABEL,
-        )
-        for key, (kind, included) in zip(keys, LAYOUT, strict=True)
-    ]
-    book_id = await store_book(catalogue, make_record(), *pages, owner=owner.account_id, databases=databases)
-    return book_id, pages
-
-
-async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> dict[PageId, Page]:
+async def _pages_by_id(book_id: BookId, *, databases: LocatedBookDatabases) -> dict[PageId, Page]:
     """Read the committed pages of a book.
 
     :param book_id: Identifier of the book.
@@ -151,7 +123,8 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages = seeded.book_id, seeded.pages
         fx_page_writes.start()
 
         await fx_service().update(
@@ -180,11 +153,12 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages = seeded.book_id, seeded.pages
 
         await fx_service().update(fx_open_book(fx_actor, book_id), pages[3].id, PageChanges(label=''))
 
-        stored = (await _stored(book_id, databases=fx_open_book.databases))[pages[3].id]
+        stored = (await _pages_by_id(book_id, databases=fx_open_book.databases))[pages[3].id]
         assert evolve(stored, manual_label=STALE_LABEL, updated_at=EPOCH) == pages[3]
         assert stored.manual_label is None
 
@@ -209,17 +183,22 @@ class TestUpdate:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages = seeded.book_id, seeded.pages
         strangers_account = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, strangers_account.account_id)
-        _, strangers_pages = await _commit_book(fx_catalogue(), strangers_account, databases=fx_open_book.databases)
+        strangers_pages = (
+            await seed_book(
+                fx_catalogue(), LAYOUT, owner=strangers_account.account_id, databases=fx_open_book.databases
+            )
+        ).pages
         other = make_page(order_key='z0')
 
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_open_book(fx_actor, book_id), other.id, PageChanges(label='1'))
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_open_book(fx_actor, book_id), strangers_pages[0].id, PageChanges(label='1'))
-        stored = await _stored(book_id, databases=fx_open_book.databases)
+        stored = await _pages_by_id(book_id, databases=fx_open_book.databases)
         assert [stored[page.id].manual_label for page in pages] == [STALE_LABEL] * len(pages)
 
 
@@ -248,7 +227,8 @@ class TestConcurrentWrites:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_catalogue(), fx_actor, databases=fx_open_book.databases)
+        seeded = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
+        book_id, pages = seeded.book_id, seeded.pages
         moved = [pages[0].id, pages[1].id]
         anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
         seen_by_job: list[PageId] = []
@@ -273,7 +253,7 @@ class TestConcurrentWrites:
             await anyio.wait_all_tasks_blocked()
             expect(not seen_by_job)
 
-        stored = await _stored(book_id, databases=fx_open_book.databases)
+        stored = await _pages_by_id(book_id, databases=fx_open_book.databases)
         order = sorted(stored.values(), key=lambda page: page.order_key)
         expected = [pages[2].id, pages[3].id, *moved, pages[4].id]
         expect([page.id for page in order][:5] == expected)
@@ -306,7 +286,10 @@ class TestConcurrentWrites:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book_id, pages = await _commit_book(fx_open_book.catalogue(), fx_actor, databases=fx_open_book.databases)
+        seeded = await seed_book(
+            fx_open_book.catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases
+        )
+        book_id, pages = seeded.book_id, seeded.pages
         ids = [page.id for page in pages]
         fx_page_writes.start()
 
@@ -323,7 +306,7 @@ class TestConcurrentWrites:
             await anyio.wait_all_tasks_blocked()
             expect(fx_page_writes.page_ids == set())
 
-        after = await _stored(book_id, databases=fx_open_book.databases)
+        after = await _pages_by_id(book_id, databases=fx_open_book.databases)
         expect(after[ids[0]].order_key != pages[0].order_key)
         # The third page is the one both use cases of the parameters write: its row is changed or gone
         expect(after.get(ids[2]) != pages[2])

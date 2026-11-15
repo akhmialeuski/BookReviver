@@ -867,25 +867,6 @@ export type CarryScope = 'following' | 'selected' | 'kind';
 export type ChangeSource = 'user' | 'run' | 'carry-over' | 'undo';
 
 /**
- * ClearedSchema
- *
- * What clearing a step on a page deleted.
- *
- * :ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.
- * :ivar versions: How many versions were deleted: the results of the step on the page and the results that read them.
- */
-export type ClearedSchema = {
-    /**
-     * Changes
-     */
-    changes: number;
-    /**
-     * Versions
-     */
-    versions: number;
-};
-
-/**
  * CollectionReportSchema
  *
  * What a collection would delete from a book now.
@@ -1135,7 +1116,7 @@ export type ImagePolicy = 'compact' | 'lossless';
  *
  * What a background job does.
  */
-export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book' | 'detect-content';
+export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book' | 'detect-content' | 'clear-step' | 'choose-version';
 
 /**
  * JobSchema
@@ -1798,8 +1779,8 @@ export type PageSchema = {
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar head_version_id: The current version of the stage, or None.
  * :ivar state: Whether the current version matches the inputs of the stage.
- * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
- * that is on, so the page is not ready for the next stage, or None.
+ * :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+ * is on, so the page is not ready for the next stage, or None.
  * :ivar updated_at: When the record last changed.
  */
 export type PageStageSchema = {
@@ -1818,9 +1799,9 @@ export type PageStageSchema = {
     head_version_id: string | null;
     state: StageState;
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step: number | null;
+    through_step_id: string | null;
     /**
      * Updated At
      */
@@ -3278,8 +3259,8 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
  * :ivar version: The current version of the stage on the page with its data and images, or None.
- * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
- * that is on, so the page is not ready for the next stage, or None.
+ * :ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that
+ * is on, so the page is not ready for the next stage, or None.
  * :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
  * :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
  * :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
@@ -3306,9 +3287,9 @@ export type StagePageSchema = {
     kind: RecipeKind;
     version: PageVersionSchema | null;
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step: number | null;
+    through_step_id: string | null;
     /**
      * Review Processor
      */
@@ -3342,9 +3323,9 @@ export type StageProgressSchema = {
  * :ivar page_ids: Pages to run it on, or omitted for every page with an image.
  * :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
  * run that would do so leaves that page failed.
- * :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
- * that is on. The steps before it come from the cache of versions when their inputs did not
- * change.
+ * :ivar through_step_id: The last step to run, which the recipe of every page of the run must hold, or omitted to run
+ * through the last step that is on. The steps before it come from the cache of versions when
+ * their inputs did not change.
  * :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they
  * read: it keeps them, which is the usual run, or takes the edits or the settings away first.
  * :ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without
@@ -3360,9 +3341,9 @@ export type StageRunBody = {
      */
     confirm_unsplit?: boolean;
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step?: number | null;
+    through_step_id?: string | null;
     mode?: RunMode;
     /**
      * Confirm Overwrite
@@ -3467,6 +3448,8 @@ export type StageSummarySchema = {
  * :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
  * :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
  * omitted for a step that is added, which gets a new one.
+ * :ivar origin_step_id: The step of a profile the step is made from, which a recipe keeps for a step it stores for
+ * the first time, or omitted. A profile keeps no origin of its steps.
  */
 export type StepBody = {
     /**
@@ -3487,6 +3470,10 @@ export type StepBody = {
      * Step Id
      */
     step_id?: string | null;
+    /**
+     * Origin Step Id
+     */
+    origin_step_id?: string | null;
 };
 
 /**
@@ -3501,9 +3488,12 @@ export type StepFlag = 'unsure' | 'unusual' | 'by-hand' | 'skipped';
 /**
  * StepLayer
  *
- * One of the three layers a page keeps for a step, which a change of the history names.
+ * What a change of the history of a page changed: one of the three layers a page keeps for a step, or its type.
+ *
+ * The type is no layer of the page: it is the processor the step runs, which the recipe holds, and a change of it
+ * reaches every page that keeps a layer of the step, since what each page keeps belongs to the type it was made for.
  */
-export type StepLayer = 'settings' | 'found' | 'hand';
+export type StepLayer = 'settings' | 'found' | 'hand' | 'type';
 
 /**
  * StepPageSchema
@@ -3539,14 +3529,14 @@ export type StepPageSchema = {
  *
  * How many pages of a stage a run stopped at one step.
  *
- * :ivar through_step: Index in the recipe of the last step the pages were run through, from zero.
+ * :ivar through_step_id: The last step the pages were run through.
  * :ivar pages: Pages with an image, not failed, that stopped at the step.
  */
 export type StepPagesSchema = {
     /**
-     * Through Step
+     * Through Step Id
      */
-    through_step: number;
+    through_step_id: string;
     /**
      * Pages
      */
@@ -3586,6 +3576,8 @@ export type StepPreviewBody = {
  * :ivar params: Parameters of the step, with the defaults of the processor filled in.
  * :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
  * :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
+ * :ivar origin_step_id: The step of a profile the step was made from, by which the step is matched with the profile,
+ * or None.
  */
 export type StepSchema = {
     /**
@@ -3606,6 +3598,29 @@ export type StepSchema = {
      * Step Id
      */
     step_id: string;
+    /**
+     * Origin Step Id
+     */
+    origin_step_id?: string | null;
+};
+
+/**
+ * StepTypeBody
+ *
+ * The type a step of a recipe is given in place of the one it has.
+ *
+ * :ivar processor_key: Key of the processor that becomes the type of the step, which must belong to the stage of the
+ * recipe.
+ * :ivar order: ``usual`` refuses a type that would stand where it cannot work at the place of the step in a recipe
+ * that holds it, with the reason as the detail of a 422, and ``free`` gives it and reports it in the
+ * answer.
+ */
+export type StepTypeBody = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    order?: OrderMode;
 };
 
 /**
@@ -5517,6 +5532,62 @@ export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses = {
 
 export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponse = PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses[keyof PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses];
 
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutData = {
+    body: StepTypeBody;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+        /**
+         * Step Id
+         *
+         * Identifier of the step
+         */
+        step_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/steps/{step_id}/type';
+};
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutError = ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutErrors[keyof ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutErrors];
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponse = ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponses[keyof ReplaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutResponses];
+
 export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostData = {
     body?: never;
     path: {
@@ -5839,7 +5910,7 @@ export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses = {
     /**
      * Successful Response
      */
-    200: PageStageSchema;
+    202: JobSchema;
 };
 
 export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses];
@@ -7024,7 +7095,7 @@ export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteRespo
     /**
      * Successful Response
      */
-    200: ClearedSchema;
+    202: JobSchema;
 };
 
 export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponse = ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses[keyof ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses];

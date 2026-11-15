@@ -120,8 +120,8 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   book runs one job at a time in the order they were put, first in, first out, and `JobStarter` refuses nothing
   because the book is busy: a second run waits behind the first and reads what it made. A job that follows from the
   running one, such as the split of the pages an import made or the detection of their content, is put `next_up`,
-  ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book and a
-  new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
+  ahead of the queued jobs. A preview is the one job that is dropped for another: a run, a measure of the book, a
+  clear of a step, the choice of a version and a new preview cancel it. `app/jobs.py` has one runner for every job and `job_workers`, which names the method of a
   service that does each `JobKind`, each taking the book, the job and its control.
 - A job that does the same work for many pages or scans hands it to `WorkerGroup` of `services/worker_group.py`, which
   does a few at a time. A run of a stage processes as many pages together as the step executor has processes for full
@@ -135,13 +135,17 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 
 - The work of a use case is a chain of classes, each owning the next and holding what its methods share, so a value
   is given once to the class it belongs to and never handed down from call to call. The run of a stage is the model:
-  `StageWork` is one job on one book, `PageWork` one stage on one page of it, `StepWork` one step on that page, and
-  each reaches the book and the ports through the one it belongs to. The other use cases follow it: `PagesWork` is the
-  pages of one transaction with their `PageOverviews`, `PagePlaces` and `Leaves`, `PageImages` the prepare-pages job
-  with a `BaseVersionWork` for each version, `StepOnPage` a step on a page with its `StepUndo` and `StepClear`,
-  `DetectionWork` a detect-content job with a `PageDetection` for a page, `StageRunJob` a run-stage job with the
-  `PagesRun` of its pages, and `PageSplit` the split of a scan with the `MadeSplit` of its result. A group of methods
-  that pass the same three values on is a class that is missing.
+  `StageRuns`, built once by the container, opens the work of a job, `StageEngine` runs the steps, `StageWork` is one
+  job on one book of the engine, `PageWork` one stage on one page of it, `StepWork` one step on that page, and each
+  reaches the book and the ports through the one it belongs to. The other use cases follow it: `PageKeeping`, built
+  once, opens `PagesWork`, the pages of one transaction with their `PageOverviews`, `PagePlaces` and `Leaves`,
+  `PageImages` the prepare-pages job of the keeping with a `BaseVersionWork` for each version, `StepOnPage` a step on a
+  page with its `StepUndo` and `StepClear`, `DetectionWork` a detect-content job with a `PageDetection` for a page,
+  `StageRunJob` a run-stage job of `StageRuns` with the `PagesRun` of its pages, `PageSplit` the split of a scan with
+  the `MadeSplit` of its result, and `ImportRun` an import job of `ImportService`, whose scans `ScanCutter` cuts. A
+  group of methods that pass the same three values on is a class that is missing. A class of a chain lives in a module
+  that imports the module of its owner and never the reverse, which the `acyclic_siblings` contract on `services`
+  enforces.
 
 - Closed value sets are `StrEnum` or `IntEnum` in `domain`, each carrying its own label.
 - Data travelling together is a frozen `attrs` class in `domain`, changed with `attrs.evolve`. Identifiers are

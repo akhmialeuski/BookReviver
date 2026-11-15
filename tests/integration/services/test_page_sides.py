@@ -3,43 +3,30 @@
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
-from attrs import evolve
 
 from bookreviver.domain.pages import NewPage, NewPageOrigin, PageAnchor, PageKind
 from bookreviver.domain.sides import Side
 from bookreviver.domain.stages import Stage, StageState
 from bookreviver.domain.step_values import ValueScope
-from tests.harness.builders.domain import make_page, make_page_stage, make_record, make_step_values
-from tests.harness.builders.seeding import store_book
+from tests.harness.builders.domain import make_page_stage, make_step_values
+from tests.harness.builders.seeding import BookLayout, seed_book
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import BookId
-    from bookreviver.domain.pages import Page
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.services.pages import PageService
     from tests.harness.adapters.database import CatalogueDatabaseFactory, LocatedBookDatabases
     from tests.harness.builders.domain import BookOpener
+    from tests.harness.builders.seeding import SeededBook
 
 pytestmark = pytest.mark.anyio
 
 PAGE_COUNT: int = 4
 CHECKED_STAGES: tuple[Stage, ...] = (Stage.GEOMETRY, Stage.CLEANUP)
 GROUP: str = 'Index'
-
-
-class Book(NamedTuple):
-    """A book of four pages that all went through the geometry and the cleanup stage.
-
-    :ivar book_id: Identifier of the book.
-    :ivar pages: The pages in book order.
-    """
-
-    book_id: BookId
-    pages: list[Page]
 
 
 class Reordering(NamedTuple):
@@ -49,11 +36,11 @@ class Reordering(NamedTuple):
     :ivar turned: Indexes of the pages whose place changed by an odd number.
     """
 
-    act: Callable[[PageService, Actor, Book, BookOpener], Awaitable[None]]
+    act: Callable[[PageService, Actor, SeededBook, BookOpener], Awaitable[None]]
     turned: set[int]
 
 
-async def _move(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
+async def _move(service: PageService, actor: Actor, book: SeededBook, opener: BookOpener) -> None:
     """Put the first page after the third, so the second and the third move up by one place.
 
     :param service: The page service.
@@ -61,7 +48,7 @@ async def _move(service: PageService, actor: Actor, book: Book, opener: BookOpen
     :param actor: Owner of the book.
     :type actor: Actor
     :param book: The book.
-    :type book: Book
+    :type book: SeededBook
     :param opener: Opens the books of the test with their databases and their files.
     :type opener: BookOpener
     """
@@ -72,7 +59,7 @@ async def _move(service: PageService, actor: Actor, book: Book, opener: BookOpen
     )
 
 
-async def _move_group(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
+async def _move_group(service: PageService, actor: Actor, book: SeededBook, opener: BookOpener) -> None:
     """Put the second and the third page after the fourth, so they move down by one place.
 
     :param service: The page service.
@@ -80,7 +67,7 @@ async def _move_group(service: PageService, actor: Actor, book: Book, opener: Bo
     :param actor: Owner of the book.
     :type actor: Actor
     :param book: The book.
-    :type book: Book
+    :type book: SeededBook
     :param opener: Opens the books of the test with their databases and their files.
     :type opener: BookOpener
     """
@@ -88,7 +75,7 @@ async def _move_group(service: PageService, actor: Actor, book: Book, opener: Bo
     await service.move_group(opener(actor, book.book_id), [book.pages[1].id, book.pages[2].id], anchor)
 
 
-async def _delete(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
+async def _delete(service: PageService, actor: Actor, book: SeededBook, opener: BookOpener) -> None:
     """Delete the first page, so every page after it moves up by one place.
 
     :param service: The page service.
@@ -96,14 +83,14 @@ async def _delete(service: PageService, actor: Actor, book: Book, opener: BookOp
     :param actor: Owner of the book.
     :type actor: Actor
     :param book: The book.
-    :type book: Book
+    :type book: SeededBook
     :param opener: Opens the books of the test with their databases and their files.
     :type opener: BookOpener
     """
     await service.delete(opener(actor, book.book_id), book.pages[0].id)
 
 
-async def _insert(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
+async def _insert(service: PageService, actor: Actor, book: SeededBook, opener: BookOpener) -> None:
     """Add a placeholder before the second page, so every page from it on moves down by one place.
 
     :param service: The page service.
@@ -111,7 +98,7 @@ async def _insert(service: PageService, actor: Actor, book: Book, opener: BookOp
     :param actor: Owner of the book.
     :type actor: Actor
     :param book: The book.
-    :type book: Book
+    :type book: SeededBook
     :param opener: Opens the books of the test with their databases and their files.
     :type opener: BookOpener
     """
@@ -131,14 +118,14 @@ REORDERINGS: dict[str, Reordering] = {
 }
 
 
-async def _commit_book(
+async def _seed_checked_book(
     catalogue: CatalogueDatabase,
     actor: Actor,
     valued: tuple[ValueScope, Stage] | None,
     *,
     databases: LocatedBookDatabases,
-) -> Book:
-    """Commit a book of four pages with a fresh record of each checked stage, and one value for a step of a stage.
+) -> SeededBook:
+    """Seed a book of four pages with a fresh record of each checked stage, and one value for a step of a stage.
 
     :param catalogue: Catalogue database to commit through, over a database that stores the account of the owner.
     :type catalogue: CatalogueDatabase
@@ -149,10 +136,11 @@ async def _commit_book(
     :param databases: Opens the databases of the books of the test.
     :type databases: LocatedBookDatabases
     :returns: The book.
-    :rtype: Book
+    :rtype: SeededBook
     """
-    pages = [make_page(order_key=f'a{number}') for number in range(PAGE_COUNT)]
-    book_id = await store_book(catalogue, make_record(), *pages, owner=actor.account_id, databases=databases)
+    book = await seed_book(
+        catalogue, BookLayout.of_placeholders(PAGE_COUNT), owner=actor.account_id, databases=databases
+    )
 
     def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save a record for every checked stage of every page, and the value of the part of the pages when given.
@@ -162,24 +150,23 @@ async def _commit_book(
         :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
-        for page in pages:
+        for page in book.pages:
             for stage in CHECKED_STAGES:
                 repos.page_stages.save(make_page_stage(page_id=page.id, stage=stage))
         if valued is not None:
             scope, stage = valued
             group_label = GROUP if scope is ValueScope.GROUP else ''
-            values = make_step_values(scope=scope, group_label=group_label)
-            repos.step_values.save(evolve(values, stage=stage))
+            repos.step_values.save(make_step_values(scope=scope, group_label=group_label, stage=stage))
 
-    await databases.open(book_id).change(save_records)
-    return Book(book_id=book_id, pages=pages)
+    await databases.open(book.book_id).change(save_records)
+    return book
 
 
-async def _stale(book: Book, *, databases: LocatedBookDatabases) -> set[tuple[int, Stage]]:
+async def _stale(book: SeededBook, *, databases: LocatedBookDatabases) -> set[tuple[int, Stage]]:
     """Read which stages of which pages are stale.
 
     :param book: The book.
-    :type book: Book
+    :type book: SeededBook
     :param databases: Opens the databases of the books of the test.
     :type databases: LocatedBookDatabases
     :returns: The index of the page in the original book order and the stage, of each stale record.
@@ -215,7 +202,7 @@ class TestPagesTurnedOver:
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
+        book = await _seed_checked_book(
             fx_catalogue(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY), databases=fx_open_book.databases
         )
         await reordering.act(fx_service(), fx_actor, book, fx_open_book)
@@ -241,7 +228,7 @@ class TestPagesTurnedOver:
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(
+        book = await _seed_checked_book(
             fx_catalogue(), fx_actor, (ValueScope.EVEN, Stage.CLEANUP), databases=fx_open_book.databases
         )
         await _move(fx_service(), fx_actor, book, opener=fx_open_book)
@@ -269,6 +256,6 @@ class TestPagesTurnedOver:
         :param fx_open_book: Opens the books of the test with their databases and their files.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_catalogue(), fx_actor, valued, databases=fx_open_book.databases)
+        book = await _seed_checked_book(fx_catalogue(), fx_actor, valued, databases=fx_open_book.databases)
         await _move(fx_service(), fx_actor, book, opener=fx_open_book)
         assert await _stale(book, databases=fx_open_book.databases) == set()

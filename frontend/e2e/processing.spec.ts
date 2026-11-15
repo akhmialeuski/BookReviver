@@ -200,7 +200,8 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
   });
 
   await test.step('the earlier result is chosen from the history and becomes the current one', async () => {
-    await waitForIdleJobs(page, openBookId(page));
+    // The choice is a job of the book that waits behind the tile cutting and the collection of the run, so the history
+    // is read for the result it makes current once it has run
     const entries = page.locator(RESULT_ROWS);
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'false');
     await entries.nth(1).getByTestId('page-history-use').click();

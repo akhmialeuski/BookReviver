@@ -34,6 +34,7 @@ import {
   putMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutMutation,
   putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutMutation,
   putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutMutation,
+  replaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutMutation,
   resetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostMutation,
   runImpactApiV1BooksBookIdStagesStageRunImpactPostMutation,
   runStageApiV1BooksBookIdStagesStageRunPostMutation,
@@ -42,7 +43,6 @@ import {
   invalidateAllRecipes,
   invalidateJobs,
   invalidatePageLayers,
-  invalidateStageRows,
   invalidateVersions,
 } from '@/features/books/queries';
 
@@ -158,6 +158,18 @@ export function useSaveRecipe(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutMutation(),
+    onSettled: () => invalidateAllRecipes(queryClient, bookId),
+  });
+}
+
+/**
+ * Give a step of a recipe another type, in every recipe of the stage that holds it, which marks the pages that run the
+ * step out of date. The settings and edits the pages kept for the earlier type stay with it and come back with it.
+ */
+export function useReplaceStepType(bookId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...replaceStepTypeApiV1BooksBookIdStagesStageRecipesRecipeIdStepsStepIdTypePutMutation(),
     onSettled: () => invalidateAllRecipes(queryClient, bookId),
   });
 }
@@ -372,16 +384,18 @@ export function useOwnWork(bookId: string, stage: Stage, body: StageRunBody | nu
   });
 }
 
-/** Make one of the results of a page its current result in the stage, which the rows of the stage and its results show. */
-export function useChooseVersion(bookId: string, stage: Stage) {
+/**
+ * Make one of the results of a page its current result in the stage, which the rows of the stage and its results show.
+ *
+ * The choice is a job of the book, which waits behind the jobs the book has queued or running, so the answer is the job
+ * and the list of jobs is read again. The rows of the stage and the results of the page follow the `book-changed` event
+ * the job sends when it has made the result current.
+ */
+export function useChooseVersion(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...chooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutMutation(),
-    onSettled: (_data, _error, variables) =>
-      Promise.all([
-        invalidateStageRows(queryClient, bookId, stage),
-        invalidateVersions(queryClient, bookId, variables.path.page_id),
-      ]),
+    onSettled: () => invalidateJobs(queryClient, bookId),
   });
 }
 

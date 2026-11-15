@@ -2,7 +2,6 @@
 
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -39,11 +38,11 @@ from tests.harness.builders.processing import (
     found_version,
     open_book,
     stage_versions,
+    started_after,
     stored_job,
 )
 from tests.harness.builders.spreads import run_stage, stage_of
 from tests.harness.concurrency.held_steps import steps_held
-from tests.harness.concurrency.meanwhile import change_when_published
 from tests.harness.fakes.processors import STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
@@ -67,7 +66,6 @@ BATCH_ARG: str = 'batch_size'
 # The attribute of the jobs that holds how many versions a collection deletes before it commits
 BATCH_SIZE_ATTRIBUTE: str = 'COLLECTION_BATCH_SIZE'
 STATE_ARGUMENT: str = 'state'
-BUSY_REASON: str = 'book is busy'
 OTHER_STAGE_REASON: str = 'another stage'
 PREVIEW_REASON: str = 'preview'
 # A version of the geometry stage a test adds beside the one the run made, with a strength of its own
@@ -187,6 +185,44 @@ async def previewed(
         yield preview
 
 
+async def queued_choice(
+    kit: ProcessingKit, actor: Actor, book_id: BookId, page: Page, version_id: PageVersionId
+) -> Job:
+    """Ask for a version of the geometry stage of a page to be made current, which puts a job and runs nothing.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the book.
+    :type actor: Actor
+    :param book_id: The identifier of the book.
+    :type book_id: BookId
+    :param page: The page.
+    :type page: Page
+    :param version_id: The version to make current.
+    :type version_id: PageVersionId
+    :returns: The queued job.
+    :rtype: Job
+    """
+    return await kit.service().choose_version(open_for(actor, book_id), page.id, Stage.GEOMETRY, version_id)
+
+
+async def add_second_version(kit: ProcessingKit, book_id: BookId, first: PageVersion) -> PageVersion:
+    """Store a second ready version of the geometry of the page of a version, with a strength of its own.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book_id: The identifier of the book.
+    :type book_id: BookId
+    :param first: The version the run made, which the second copies.
+    :type first: PageVersion
+    :returns: The second version, which is not current.
+    :rtype: PageVersion
+    """
+    second = evolve(first, id=PageVersionId(CHOSEN_VERSION_ID), params={STRENGTH_PARAMETER: 7})
+    await kit.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(second))
+    return second
+
+
 class TestChooseVersion:
     """Tests for ProcessingService.choose_version."""
 
@@ -215,16 +251,22 @@ class TestChooseVersion:
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=first.id))
 
         await fx_open_book.databases.open(book_id).change(add_second)
-        chosen = await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, second.id)
+        job = await queued_choice(fx_kit, actor, book_id, page, second.id)
+        await fx_kit.work_queue()
+        chosen = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
         later = await stage_of(book_id, page, Stage.CLEANUP, databases=fx_open_book.databases)
+        expect((job.kind, stored_job(fx_kit, job.id).state) == (JobKind.CHOOSE_VERSION, JobState.SUCCEEDED))
         expect((chosen.head_version_id, chosen.state) == (second.id, StageState.FRESH))
         expect(later.state is StageState.STALE)
         assert_expectations()
 
-    async def test_choice_is_refused_while_the_book_is_processing_something(
+    async def test_a_choice_asked_for_during_a_collection_fails_when_the_collection_deleted_its_version(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Reject the choice of a current version while a job may be reading or deleting versions, and change nothing.
+        """Verify a choice waits behind a collection, and fails with nothing written when its version went meanwhile.
+
+        The version is one nothing needs, so the collection that runs first deletes it, and the choice that is checked
+        again when its turn comes finds no such version.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -232,15 +274,23 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
-        await fx_kit.service().start_collection(fx_open_book(actor, book_id))
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, first.id)
+        second = await add_second_version(fx_kit, book_id, first)
+        collection = await fx_kit.service().start_collection(fx_open_book(actor, book_id))
+        job = await queued_choice(fx_kit, actor, book_id, page, second.id)
+        await fx_kit.work_queue()
+        ended = stored_job(fx_kit, job.id)
+        record = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        expect(job.state is JobState.QUEUED)
+        expect((ended.state, str(second.id) in ended.error) == (JobState.FAILED, True))
+        expect(started_after(fx_kit, job.id, collection.id))
+        expect(record.head_version_id == first.id)
+        assert_expectations()
 
     @pytest.mark.parametrize(STATE_ARGUMENT, [JobState.QUEUED, JobState.RUNNING])
     async def test_a_preview_of_the_book_is_cancelled_and_the_choice_goes_on(
         self, fx_kit: ProcessingKit, state: JobState, fx_open_book: BookOpener
     ) -> None:
-        """Verify choosing a version takes the book from a preview, queued or running, instead of being refused.
+        """Verify choosing a version takes the book from a preview, queued or running, instead of waiting behind it.
 
         The editor of a step asks for a preview by itself, so a choice made a moment later finds one.
 
@@ -252,25 +302,27 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
+        second = await add_second_version(fx_kit, book_id, first)
         async with previewed(fx_kit, actor, book_id, page, state) as preview:
-            chosen = await fx_kit.service().choose_version(
-                fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, first.id
-            )
+            job = await queued_choice(fx_kit, actor, book_id, page, second.id)
+        await fx_kit.work_queue()
         announced = [
             (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
         ]
-        expect(chosen.head_version_id == first.id)
+        chosen = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
+        expect(chosen.head_version_id == second.id)
         expect(stored_job(fx_kit, preview.id).state is JobState.CANCELLED)
         expect((preview.id, JobState.CANCELLED) in announced)
         assert_expectations()
 
     @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    async def test_choice_is_still_refused_while_a_run_or_a_measure_is_active(
+    async def test_a_choice_waits_behind_a_run_or_a_measure_and_is_made_once_it_ended(
         self, fx_kit: ProcessingKit, active: JobKind, fx_open_book: BookOpener
     ) -> None:
-        """Reject the choice while a run or a measure of the book is queued, and leave the job and the stage alone.
+        """Verify a choice asked for while a run or a measure of the book is queued is a job that waits behind it.
 
-        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+        The stage keeps its version while the earlier job is queued, and the chosen one is current once it ended.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -280,20 +332,23 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
+        second = await add_second_version(fx_kit, book_id, first)
         before = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
-        job = await fx_kit.parts().starter.enqueue(
-            await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY)
-        )
-        with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, first.id)
-        expect(stored_job(fx_kit, job.id).state is JobState.QUEUED)
-        expect(await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases) == before)
+        earlier = await fx_kit.starter.enqueue(await open_book(fx_kit, book_id), active, StageRun(stage=Stage.GEOMETRY))
+        job = await queued_choice(fx_kit, actor, book_id, page, second.id)
+        waiting = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        await fx_kit.work_queue()
+        after = await stage_of(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
+        expect((job.state, waiting) == (JobState.QUEUED, before))
+        expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
+        expect(started_after(fx_kit, job.id, earlier.id))
+        expect(after.head_version_id == second.id)
         assert_expectations()
 
     async def test_a_version_that_cannot_be_current_does_not_cancel_the_preview(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Reject a version of another stage as it is refused when the book is free, and keep the preview queued.
+        """Reject a version of another stage before anything is queued, and keep the preview queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -301,10 +356,13 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
-        preview = await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
+        preview = await fx_kit.starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
+        queued = len(fx_kit.board.put_jobs)
         with pytest.raises(ConflictError, match=OTHER_STAGE_REASON):
             await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.CLEANUP, first.id)
-        assert stored_job(fx_kit, preview.id).state is JobState.QUEUED
+        expect(stored_job(fx_kit, preview.id).state is JobState.QUEUED)
+        expect(fx_kit.board.put_jobs[queued:] == [])
+        assert_expectations()
 
     async def test_old_versions_are_kept_when_a_later_one_is_chosen(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
@@ -317,7 +375,8 @@ class TestChooseVersion:
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
-        await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, first.id)
+        await queued_choice(fx_kit, actor, book_id, page, first.id)
+        await fx_kit.work_queue()
         versions = await stage_versions(book_id, page, None, databases=fx_open_book.databases)
         assert versions.total == 2
 
@@ -370,7 +429,7 @@ class TestChooseVersion:
     async def test_version_without_a_pyramid_gets_a_job_that_cuts_it(
         self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Verify a chosen version whose pyramid is not cut queues a ``cut-tiles`` job, since the viewer opens it.
+        """Verify a chosen version whose pyramid is not cut has a ``cut-tiles`` job follow the choice, ahead of the queue.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -380,8 +439,16 @@ class TestChooseVersion:
         actor, book_id, page, first = await ran_geometry(fx_kit)
         untiled = evolve(first, id=PageVersionId('0011223344556677'), tiles_ready=False)
         await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(untiled))
-        await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, untiled.id)
-        assert fx_kit.board.put_jobs[-1].kind is JobKind.CUT_TILES
+        job = await queued_choice(fx_kit, actor, book_id, page, untiled.id)
+        later = await fx_kit.service().start_collection(fx_open_book(actor, book_id))
+        await fx_kit.work_queue()
+        [cutting] = [
+            put for put in fx_kit.board.put_jobs if put.kind is JobKind.CUT_TILES and put.created_at > job.created_at
+        ]
+        expect(cutting.asked(TileCut).version_ids == (untiled.id,))
+        expect(started_after(fx_kit, cutting.id, job.id))
+        expect(started_after(fx_kit, later.id, cutting.id))
+        assert_expectations()
 
 
 class TestVersions:
@@ -1177,43 +1244,41 @@ class TestChooseVersionApplyStep:
     """Tests for the change that makes a chosen version current, which checks the version again inside it."""
 
     @pytest.mark.parametrize(
-        ('change', 'refusal'),
+        ('change', 'reason'),
         [
-            pytest.param(fail_the_chosen_version, ConflictError, id='version-failed-meanwhile'),
-            pytest.param(delete_the_page_of_the_version, NotFoundError, id='page-deleted-meanwhile'),
+            pytest.param(fail_the_chosen_version, 'not ready', id='version-failed-meanwhile'),
+            pytest.param(delete_the_page_of_the_version, '', id='page-deleted-meanwhile'),
         ],
     )
-    async def test_a_choice_whose_version_changed_while_a_preview_was_cancelled_changes_nothing(
+    async def test_a_choice_whose_version_changed_before_its_turn_fails_and_changes_nothing(
         self,
         fx_kit: ProcessingKit,
-        monkeypatch: pytest.MonkeyPatch,
         change: Callable[[BookId, PageVersion, LocatedBookDatabases], Awaitable[None]],
-        refusal: type[Exception],
+        reason: str,
         fx_open_book: BookOpener,
     ) -> None:
-        """Verify the version is checked again inside the change, after the cancelling that comes before it.
+        """Verify the version is checked again when the job runs, and one that stopped being choosable fails the job.
 
-        The cancelling of the preview is a change of its own, and the use case announces it before its own change
-        opens, so the version may have failed, or the page may have gone, in between. The stage is not given the
-        version.
+        The job waits behind the jobs of the book, so the version may have failed, or the page may have gone, between
+        the request and the turn of the job. The stage is not given the version.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the event bus.
-        :type monkeypatch: pytest.MonkeyPatch
-        :param change: The change another request makes while the preview is cancelled.
+        :param change: The change another request or job makes while the choice is queued.
         :type change: Callable[[BookId, PageVersion, LocatedBookDatabases], Awaitable[None]]
-        :param refusal: What the use case refuses with.
-        :type refusal: type[Exception]
+        :param reason: Text the reason of the failure says.
+        :type reason: str
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         actor, book_id, page, first = await ran_geometry(fx_kit)
-        second = evolve(first, id=PageVersionId(CHOSEN_VERSION_ID), params={STRENGTH_PARAMETER: 7})
-        await fx_open_book.databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add(second))
-        await fx_kit.parts().starter.enqueue(await open_book(fx_kit, book_id), JobKind.PREVIEW_STEP)
-        change_when_published(fx_kit, monkeypatch, partial(change, book_id, second, fx_kit.databases))
-        with pytest.raises(refusal):
-            await fx_kit.service().choose_version(fx_open_book(actor, book_id), page.id, Stage.GEOMETRY, second.id)
+        second = await add_second_version(fx_kit, book_id, first)
+        job = await queued_choice(fx_kit, actor, book_id, page, second.id)
+        await change(book_id, second, fx_kit.databases)
+        await fx_kit.work_queue()
+        ended = stored_job(fx_kit, job.id)
         record = await found_stage(book_id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
-        assert record is None or record.head_version_id != second.id
+        expect(ended.state is JobState.FAILED)
+        expect(bool(ended.error) and reason in ended.error)
+        expect(record is None or record.head_version_id != second.id)
+        assert_expectations()

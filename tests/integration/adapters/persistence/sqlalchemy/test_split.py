@@ -19,6 +19,7 @@ from attrs import evolve, frozen
 from delayed_assert import assert_expectations, expect
 from sqlalchemy.orm import Session
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
 from bookreviver.adapters.persistence.sqlalchemy.catalogue_database import SqlAlchemyCatalogueDatabase
@@ -40,7 +41,7 @@ from tests.harness.builders.domain import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Collection, Sequence
+    from collections.abc import Callable, Collection, Sequence
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
@@ -189,7 +190,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         :param session: Session of the transaction.
         :type session: Session
         """
-        repos = SqlAlchemyBookRepositories(session)
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
         repos.book_record.add(first)
         repos.sources.add(source)
         repos.scans.add(scan)
@@ -204,7 +205,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         :param session: Session of the transaction.
         :type session: Session
         """
-        repos = SqlAlchemyBookRepositories(session)
+        repos = SqlAlchemyBookRepositories(session, order_keys=FractionalOrderKeys())
         repos.book_record.add(second)
         repos.pages.add(make_page())
 
@@ -234,21 +235,6 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         second=second,
         labelled=pages[1].id,
     )
-
-
-@pytest.fixture
-async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open the catalogue of the settings, a file that does not exist yet, which the split builds and fills.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :returns: Iterator yielding the catalogue and disposing of its engines afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
-    database = SqlDatabase(fx_settings.resolved_catalogue_url, schema=Schema.CATALOGUE, tracer=NullTracer())
-    yield database
-    await database.dispose()
 
 
 @pytest.fixture

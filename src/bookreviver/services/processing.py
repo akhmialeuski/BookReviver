@@ -1,15 +1,17 @@
 """Use cases of the processing framework a request makes: recipes, runs, previews and page versions.
 
 A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. The use cases here
-change a recipe or the current version of a stage, which writes rows in one ``Book.change`` and marks the pages
-they affect stale, or start heavy work, a run, a preview, a cut of tiles, a collection or a measure of the book, which
-records a job with its parameters, queues it and answers at once, since a request handler never blocks on CPU-bound
+change a recipe, which writes rows in one ``Book.change`` and marks the pages it affects stale, or start a job: heavy
+work, a run, a preview, a cut of tiles, a collection or a measure of the book, or the choice of the current version of
+a stage, which waits behind the jobs that may read the versions. Starting one records a job with its parameters,
+queues it and answers at once, since a request handler never blocks on CPU-bound
 work. A use case that starts heavy work holds no transaction itself: it finds the recipes, which opens a ``Book.change``
 of its own when the stage has none, and then the job starter records the job in a ``change`` of its own. Neither runs
 a processor. The workers do, through ``ProcessingJobs``, and the files of a step are written by ``StepRunner``.
 
 Editing a recipe does not process any page again. It marks the stage stale on every page the recipe processed, and the
-user starts the run. The one recipe of each kind of a stage is kept by the database with a unique key.
+user starts the run. The one recipe of each kind of a stage is kept by the database with a unique key. The type of a
+step is replaced by an operation of its own, which ``StepTypes`` does, and never by saving the steps of a recipe.
 
 Versions are not deleted when they stop being current, so going back to earlier parameters stays possible. The job
 ``collect-versions``, which a run queues when it ends and the owner of the book starts by hand, deletes the ones that
@@ -21,17 +23,18 @@ from typing import TYPE_CHECKING
 
 from bookreviver.core.content import BookContent
 from bookreviver.core.pages import BookPage
-from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.jobs import JobKind, StepPreview, TileCut
+from bookreviver.domain.errors import ConflictError, DomainError, InvalidParametersError, NotFoundError
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StageRun, StepPreview, TileCut, VersionChoice
 from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import OrderMode
 from bookreviver.domain.runs import RunMode
 from bookreviver.domain.slices import Slice
-from bookreviver.domain.stages import PageStageKey
+from bookreviver.domain.stages import PageStageKey, Stage
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.domain.versions import CollectionReport, VersionScale, VersionState
-from bookreviver.services.processing_parts import BOOK_BUSY
 from bookreviver.services.run_plans import RunPlan
+from bookreviver.services.step_types import StepTypes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -40,16 +43,19 @@ if TYPE_CHECKING:
     from bookreviver.core.plugins import ProcessorCatalog
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.geometry import Point
-    from bookreviver.domain.ids import PageId, PageVersionId
-    from bookreviver.domain.jobs import Job, StageRun
+    from bookreviver.domain.ids import PageId, PageVersionId, SourceId
+    from bookreviver.domain.jobs import Job
     from bookreviver.domain.pages import Page
     from bookreviver.domain.processors import ProcessorSpec
-    from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey
+    from bookreviver.domain.recipes import Recipe, RecipeDraft, RecipeKey, RecipeStepKey
     from bookreviver.domain.slices import SliceRequest
-    from bookreviver.domain.stages import PageStage, Stage
+    from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.processing_parts import ProcessingParts
+    from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.job_starter import JobStarter
+    from bookreviver.services.recipes import RecipeBook
+    from bookreviver.services.stage_records import StageRecords
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
 NOT_READY: str = 'it is not ready'
@@ -61,8 +67,11 @@ NEEDS_CONFIRMATION: str = (
 )
 STEP_NEEDS_STAGE: str = 'The versions of a step are listed with the stage of the step.'
 NO_STEP_TO_RUN_THROUGH: str = (
-    'Step {index} of the recipe for {name} does not exist, or it and every step before it are switched off.'
+    'The step {step_id} is in no recipe of the pages of the run, or it and every step before it are switched off in '
+    'the recipe for {names}.'
 )
+# Separates the names of the recipes in the text of an error
+NAME_SEPARATOR: str = ', '
 
 
 class ProcessingService:
@@ -72,19 +81,26 @@ class ProcessingService:
         self,
         *,
         processors: ProcessorCatalog,
-        parts: ProcessingParts,
+        recipes: RecipeBook,
+        records: StageRecords,
+        starter: JobStarter,
     ) -> None:
-        """Work over the ports of one request.
+        """Work on the book of each request.
 
         :param processors: The processors the application can run.
         :type processors: ProcessorCatalog
-        :param parts: The recipes, the stage records and the job starter, which work on the book of each request.
-        :type parts: ProcessingParts
+        :param recipes: The recipes of the book and the check of their steps.
+        :type recipes: RecipeBook
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :param starter: Putter of new jobs on the queue of a book.
+        :type starter: JobStarter
         """
         self._processors = processors
-        self._recipes = parts.recipes
-        self._records = parts.records
-        self._starter = parts.starter
+        self._recipes = recipes
+        self._records = records
+        self._starter = starter
+        self._types = StepTypes(recipes=recipes, records=records)
 
     def processors(self) -> Sequence[ProcessorSpec]:
         """List what every processor of the catalogue says about itself.
@@ -149,6 +165,50 @@ class ProcessingService:
 
         return await book.change(work)
 
+    async def replace_step_type(self, book: Book, key: RecipeStepKey, processor_key: str, order: OrderMode) -> Recipe:
+        """Give a step another type in every recipe of its stage that holds it, in one transaction.
+
+        The step keeps its identifier and its place. Each recipe keeps the parameters of the earlier type and runs the
+        step with those it kept for the new type, or the defaults of its processor. What the pages keep for the earlier
+        type stays, unread, and comes back with it. The history of every page that keeps a setting or an edit of the
+        step under either type gains the replacement, one batch, and the pages that run the step are marked stale. A
+        type that is the one the step has changes nothing.
+
+        :param book: The open book.
+        :type book: Book
+        :param key: The stage the request names, the recipe and the step, which the recipe must hold.
+        :type key: RecipeStepKey
+        :param processor_key: Key of the processor of the new type.
+        :type processor_key: str
+        :param order: Whether the new type is refused where it would stand off a required place, or only warned of.
+        :type order: OrderMode
+        :returns: The recipe of the request as stored.
+        :rtype: Recipe
+        :raises NotFoundError: If the book has no such recipe of the stage, or the recipe does not hold the step.
+        :raises InvalidParametersError: If the processor does not exist or belongs to another stage, or would stand off
+                                        a required place in the usual order of a recipe that holds the step.
+        """
+
+        def work(repos: BookRepositories, _book_record: BookRecord) -> Recipe:
+            """Replace the type of the step, keep it in the histories, and mark the pages that run the step stale.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: The record of the book as the change finds it.
+            :type _book_record: BookRecord
+            :returns: The recipe of the request as stored.
+            :rtype: Recipe
+            :raises NotFoundError: If the book has no such recipe of the stage, or the recipe does not hold the step.
+            :raises InvalidParametersError: If the new type does not fit the recipes that hold the step.
+            """
+            recipe = self._recipes.get(repos, key.recipe_id, stage=key.stage)
+            if not recipe.holds(key.step_id):
+                raise NotFoundError(key.step_id)
+            self._types.open(repos, key.stage, key.step_id).replace(processor_key, order)
+            return repos.recipes.get(recipe.id)
+
+        return await book.change(work)
+
     async def start_run(self, book: Book, stage: Stage, run: StageRun) -> Job:
         """Record a job that runs a stage over some pages, each by the recipe of its kind, and queue it.
 
@@ -161,9 +221,9 @@ class ProcessingService:
         :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the book has no such page, or the stage has no recipe.
-        :raises ConflictError: If the run goes through a step that the recipe of a page has no such step for, or whose
-                               steps up to it are all switched off, or its mode takes the work of pages away and it
-                               is not confirmed.
+        :raises ConflictError: If the run goes through a step that no recipe of its pages holds, or that a recipe holds
+                               with every step up to it switched off, or its mode takes the work of pages away and it
+                               is not confirmed. The pages of a recipe that does not hold the step run every step.
         """
 
         def check(repos: BookRepositories) -> None:
@@ -177,18 +237,46 @@ class ProcessingService:
                 repos.pages.list_by_ids(page_ids)
 
         await self._recipes.recipes(book, stage, checking=check)
-        if run.through_step is not None:
+        if (step_id := run.through_step_id) is not None:
             planned = {recipe.id: recipe for recipe in (await self._plan(book, run).recipes()).values()}
-            for recipe in planned.values():
-                if run.through_step >= len(recipe.steps) or not recipe.indexed_steps_through(run.through_step):
-                    raise ConflictError(
-                        NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.kind.label)
-                    )
+            holding = [recipe for recipe in planned.values() if recipe.holds(step_id)]
+            refused = [recipe for recipe in holding if not recipe.indexed_steps_through(step_id)]
+            if refused or (planned and not holding):
+                names = NAME_SEPARATOR.join(recipe.kind.label for recipe in refused or planned.values())
+                raise ConflictError(NO_STEP_TO_RUN_THROUGH.format(step_id=step_id, names=names))
         if run.mode is not RunMode.KEEP and not run.confirm_overwrite:
             affected = (await self._plan(book, run).impact()).affected
             if affected:
                 raise ConflictError(NEEDS_CONFIRMATION.format(mode=run.mode.label, pages=affected))
         return await self._starter.enqueue(book, JobKind.RUN_STAGE, run)
+
+    async def split_imported(self, book: Book, source_ids: Sequence[SourceId]) -> Job | None:
+        """Queue a run of the page split on the pages of imported sources, when the recipe splits them without the user.
+
+        The pages of an import are text until their content is detected, so the recipe of text pages decides. A book
+        whose recipe was chosen by hand is left as it is, since the user can run the stage. The split follows from the
+        job that imported the sources, so it runs before what the user queued while that job ran.
+
+        :param book: The open book.
+        :type book: Book
+        :param source_ids: The imported sources, in book order.
+        :type source_ids: Sequence[SourceId]
+        :returns: The queued run, or None when the first step of the recipe waits for the user or the sources gave no
+                  page.
+        :rtype: Job | None
+        :raises DomainError: If the recipe of the page split cannot be read.
+        """
+        steps = (await self._recipes.of_kind(book, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
+        if not steps or not self._recipes.unattended(steps[0]):
+            return None
+        pages = await book.read(
+            lambda repos: [page.id for source_id in source_ids for page in repos.pages.list_for_source(source_id)],
+        )
+        if not pages:
+            return None
+        return await self._starter.enqueue(
+            book, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)), next_up=True
+        )
 
     def _plan(self, book: Book, run: StageRun) -> RunPlan:
         """Plan a run over the book.
@@ -266,18 +354,13 @@ class ProcessingService:
         records = await book.read(work)
         return Slice(items=records[request.offset : request.offset + request.limit], total=len(records))
 
-    async def choose_version(self, book: Book, page_id: PageId, stage: Stage, version_id: PageVersionId) -> PageStage:
-        """Make a version the current one of a stage of a page, and mark the later stages stale.
+    async def choose_version(self, book: Book, page_id: PageId, stage: Stage, version_id: PageVersionId) -> Job:
+        """Queue a job that makes a version the current one of a stage of a page, behind the jobs the book has.
 
-        The version must be ready, made by a full run of this page in this stage. If its tile pyramid is not cut yet, a
-        job is queued to cut it, since the viewer opens the current version.
-
-        A preview of the book, queued or running, is cancelled first, since the reader asked for the choice and a
-        preview is disposable: the editor of a step asks for one by itself, so a choice made a moment later would
-        otherwise be refused by a job the reader never started. A request for a version that cannot be chosen is
-        refused before any preview is cancelled. The version is checked again inside the transaction that makes it
-        current, since the cancelling is a transaction of its own, and a version that stopped being choosable meanwhile
-        is refused with nothing written.
+        The version must be ready, made by a full run of this page in this stage. It is checked first, so a request for
+        a version that cannot be chosen queues nothing and cancels nothing. A preview of the book, queued or running,
+        is cancelled when the job is put, since the reader asked for the choice and a preview is disposable: the editor
+        of a step asks for one by itself.
 
         :param book: The open book.
         :type book: Book
@@ -287,42 +370,64 @@ class ProcessingService:
         :type stage: Stage
         :param version_id: Identifier of the version.
         :type version_id: PageVersionId
-        :returns: The record of the stage in its new state.
-        :rtype: PageStage
+        :returns: The queued job.
+        :rtype: Job
         :raises NotFoundError: If the book has no such page, or the page has no such version.
-        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage, or a run, a
-                               measure of the book, a tile cutting or a collection of the book is queued or
-                               running, which may be reading or deleting the versions the choice depends on.
+        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
         """
         await book.read(lambda repos: self._choosable(repos, repos.pages.get(page_id), stage, version_id))
-        if await self._starter.free_of_previews(book):
-            raise ConflictError(BOOK_BUSY)
-        key = PageStageKey(page_id, stage)
+        choice = VersionChoice(key=PageStageKey(page_id, stage), version_id=version_id)
+        return await self._starter.enqueue(book, JobKind.CHOOSE_VERSION, choice)
 
-        def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[PageVersion, PageStage]:
-            """Check the version again, and make it the current one of the stage.
+    async def make_current(self, book: Book, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``choose-version`` job: make the version current and mark the later stages of the page stale.
 
-            :param repos: Repositories of the transaction.
-            :type repos: BookRepositories
-            :param _book_record: The record of the book as the change finds it, which the check of the version reads
-                                 again.
-            :type _book_record: BookRecord
-            :returns: The version, and the record of the stage in its new state.
-            :rtype: tuple[PageVersion, PageStage]
-            :raises NotFoundError: If the book has no such page, or the page has no
-                                   such version.
-            :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
-            """
-            version = self._choosable(repos, repos.pages.get(page_id), stage, version_id)
-            previous = repos.page_stages.find(key)
-            return version, self._records.set_head(
-                repos, key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
-            )
+        The job runs when the jobs put before it have ended, so the version is checked again inside the transaction
+        that makes it current, and a version that stopped being choosable meanwhile, or is gone, fails the job with
+        nothing written. A version whose tile pyramid is not cut yet gets its cutting put next up, since the viewer
+        opens the current version.
 
-        version, record = await book.change(work)
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after its task.
+        :type control: JobControl
+        :returns: How the job ended: failed with the reason when the version cannot be made current or the job is not
+                  valid, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled while its task ran.
+        """
+        control.plan(1)
+        try:
+            choice = job.asked(VersionChoice)
+            version = await book.change(lambda repos, _book_record: self._set_head(repos, choice))
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
         if version.renditions is not None and not version.tiles_ready:
-            await self._starter.enqueue_tiles(book, [version_id])
-        return record
+            await self._starter.enqueue_tiles(book, [version.id])
+        await control.task_done()
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    def _set_head(self, repos: BookRepositories, choice: VersionChoice) -> PageVersion:
+        """Check the version of a choice again, and make it the current one of the stage, in the transaction of the job.
+
+        :param repos: Repositories of the transaction.
+        :type repos: BookRepositories
+        :param choice: The page, the stage and the version.
+        :type choice: VersionChoice
+        :returns: The version made current.
+        :rtype: PageVersion
+        :raises NotFoundError: If the book has no such page, or the page has no such version.
+        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
+        """
+        key = choice.key
+        version = self._choosable(repos, repos.pages.get(key.page_id), key.stage, choice.version_id)
+        previous = repos.page_stages.find(key)
+        self._records.set_head(
+            repos, key, head_version_id=version.id, recipe_id=None if previous is None else previous.recipe_id
+        )
+        return version
 
     async def versions(
         self,

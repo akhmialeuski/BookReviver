@@ -142,11 +142,13 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
     if case.stage is Stage.CLEANUP:
         await run_stage(kit, actor, book_id, StageRun(stage=Stage.GEOMETRY))
     steps = [Step(processor_key=case.processor_key) for _ in range(STEP_COUNT)]
-    await kit.edit_recipe(actor, book_id, case.stage, RecipeDraft(steps=steps))
+    edited = await kit.edit_recipe(actor, book_id, case.stage, RecipeDraft(steps=steps))
     one_step = RecipeDraft(steps=[Step(processor_key=case.processor_key, params={'strength': OTHER_STRENGTH})])
     await kit.edit_recipe(actor, book_id, case.stage, one_step, RecipeKind.COLOR_PICTURE)
     await run_stage(kit, actor, book_id, StageRun(stage=case.stage, page_ids=(full.id,)))
-    await run_stage(kit, actor, book_id, StageRun(stage=case.stage, page_ids=(partial.id,), through_step=0))
+    await run_stage(
+        kit, actor, book_id, StageRun(stage=case.stage, page_ids=(partial.id,), through_step_id=edited.steps[0].step_id)
+    )
     await run_stage(kit, actor, book_id, StageRun(stage=case.stage, page_ids=(other.id,)))
     recipe = await kit.recipe_of(actor, book_id, case.stage)
     reads = {page.id: await head_of(kit, book_id, page, case.earlier) for page in pages}

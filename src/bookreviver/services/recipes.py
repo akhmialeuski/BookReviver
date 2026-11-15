@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.core.plugins import BookStep, ProcessorCatalog
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import PageId
+    from bookreviver.domain.ids import PageId, StepId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepKey
     from bookreviver.domain.pages import Page
@@ -367,6 +367,29 @@ class RecipeBook:
             raise InvalidParametersError(err_msg)
         return evolve(step, params=processor.validate_params(step.params))
 
+    def retyped(self, recipe: Recipe, step: Step, order: OrderMode) -> Step:
+        """Check a step of a recipe that is given another type, at the place the step has in the recipe.
+
+        The processor of the new type must exist and belong to the stage of the recipe, and the order of the recipe
+        must let it stand where the step stands, as it would for a step added there.
+
+        :param recipe: A recipe that holds the step.
+        :type recipe: Recipe
+        :param step: The step with its new type and the parameters it starts the type with, which the defaults of the
+                     processor fill out.
+        :type step: Step
+        :param order: Whether a step that would stand where it cannot work is refused or only warned of.
+        :type order: OrderMode
+        :returns: The step with its checked parameters.
+        :rtype: Step
+        :raises InvalidParametersError: If the processor does not exist or belongs to another stage, a parameter is
+                                        wrong, or the step would stand off a required place in the usual order.
+        """
+        checked = self._check_step(recipe.stage, step)
+        after = tuple(checked if held.step_id == step.step_id else held for held in recipe.steps)
+        self._order.enforce_change(recipe.steps, after, order)
+        return checked
+
     def unattended(self, step: Step) -> bool:
         """Tell whether a step decides by itself what to do with a page, so its stage may run without the user asking.
 
@@ -389,17 +412,17 @@ class RecipeBook:
         missing = dict.fromkeys(step.processor_key for step in steps if not self._offers(step.processor_key))
         return kept, tuple(missing)
 
-    def leaves_to_book(self, recipe: Recipe, *, through_step: int | None = None) -> bool:
+    def leaves_to_book(self, recipe: Recipe, *, through_step_id: StepId | None = None) -> bool:
         """Tell whether a run of the recipe has a step that takes a field of its parameters from the book.
 
         :param recipe: Recipe of the stage.
         :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
-        :type through_step: int | None
+        :param through_step_id: The last step the run goes over, or None for every step that is on.
+        :type through_step_id: StepId | None
         :returns: Whether a step the run goes over leaves a field to the book.
         :rtype: bool
         """
-        return self._book_steps.leaves_to_book(recipe, through_step=through_step)
+        return self._book_steps.leaves_to_book(recipe, through_step_id=through_step_id)
 
     def book_stages(self) -> list[Stage]:
         """List the stages an installed plugin that reads the book belongs to, in the order of the pipeline.

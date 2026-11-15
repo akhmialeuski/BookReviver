@@ -97,9 +97,9 @@ export function StripToolbar({
             aria-label={labels.stopped.label}
             data-testid="strip-stopped-filter"
             className={STRIP_SELECT}
-            value={stopped.selected === null ? '' : String(stopped.selected)}
+            value={stopped.selected ?? ''}
             onChange={(event) =>
-              stopped.onSelect(event.target.value === '' ? null : Number(event.target.value))
+              stopped.onSelect(event.target.value === '' ? null : event.target.value)
             }
           >
             <option value="">{labels.stopped.all}</option>

@@ -8,7 +8,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.ids import BookId, PageId, RecipeId
+from bookreviver.domain.ids import BookId, PageId, RecipeId, StepId
 from bookreviver.domain.pages import RecipeKind
 from bookreviver.domain.recipes import Recipe, Step
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepRow, StepTally
@@ -23,7 +23,7 @@ from bookreviver.domain.stages import (
 )
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.domain.versions import ProcessorRef, ResultMark, VersionData
-from tests.harness.builders.domain import make_page_version
+from tests.harness.builders.domain import DESKEW, make_page_version, make_recipe
 
 if TYPE_CHECKING:
     from bookreviver.domain.metadata import MetadataMap
@@ -244,11 +244,21 @@ class TestStageSummary:
         assert summary.check == 3
 
     def test_the_steps_the_pages_stopped_at_come_in_the_order_of_the_steps(self) -> None:
-        """Verify the counts of the steps are sorted, and a stage done by hand takes none."""
-        stopped = [StepTally(stage=Stage.GEOMETRY, through_step=step, pages=1) for step in (2, 0, 1)]
-        summary = summary_of(Stage.GEOMETRY, counts=Counts(fresh=3, partial=3)).with_stopped(stopped)
-        manual = summary_of(Stage.PAGE_ORDER).with_stopped(stopped)
-        expect([one.through_step for one in summary.stopped] == [0, 1, 2])
+        """Verify the counts of the steps are sorted by the place of the step, and a stage done by hand takes none.
+
+        A step no recipe holds any longer comes after the steps the recipes hold.
+        """
+        recipe = make_recipe()
+        steps = tuple(Step(processor_key=DESKEW.key) for _ in range(3))
+        held = evolve(recipe, steps=steps)
+        gone = StepId(uuid4())
+        stopped = [
+            StepTally(stage=Stage.GEOMETRY, through_step_id=step_id, pages=1)
+            for step_id in (gone, steps[2].step_id, steps[0].step_id, steps[1].step_id)
+        ]
+        summary = summary_of(Stage.GEOMETRY, counts=Counts(fresh=3, partial=3)).with_stopped(stopped, [held])
+        manual = summary_of(Stage.PAGE_ORDER).with_stopped(stopped, [held])
+        expect([one.through_step_id for one in summary.stopped] == [*(step.step_id for step in steps), gone])
         expect((summary.partial, manual.stopped) == (3, ()))
         assert_expectations()
 

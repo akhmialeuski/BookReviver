@@ -1,24 +1,28 @@
 """Tests for the value of a run of a stage: its last step, its mode, and the count of the pages the mode takes work from."""
 
+from uuid import uuid4
+
 import pytest
 
+from bookreviver.domain.ids import StepId
 from bookreviver.domain.jobs import StageRun
 from bookreviver.domain.runs import RunImpact, RunMode
 from bookreviver.domain.stages import Stage
 from tests.harness.builders.domain import new_book_id
 
 BOOK_ID = new_book_id()
-# The field of a run that names its last step, which the refusal of a wrong one names
-THROUGH_STEP_FIELD: str = 'through_step'
 
 
 class TestStageRun:
     """Tests for the parameters of a ``run-stage`` job."""
 
-    def test_a_run_through_a_step_before_the_first_is_rejected(self) -> None:
-        """Reject a negative index of the last step."""
-        with pytest.raises(ValueError, match=THROUGH_STEP_FIELD):
-            StageRun(stage=Stage.GEOMETRY, through_step=-1)
+    def test_a_run_names_its_last_step_by_its_identifier(self) -> None:
+        """Verify a run through a step keeps the identifier of the step, and a run of the whole recipe names none."""
+        step_id = StepId(uuid4())
+        assert (
+            StageRun(stage=Stage.GEOMETRY, through_step_id=step_id).through_step_id,
+            StageRun(stage=Stage.GEOMETRY).through_step_id,
+        ) == (step_id, None)
 
 
 class TestRunMode:

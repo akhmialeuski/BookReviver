@@ -12,16 +12,18 @@ Taking back marks the stage of each page that changed stale and processes nothin
 A clear is the one way a history shrinks: it takes the settings and the edit of a step away from one page, deletes that
 step's history on that page, and deletes the results of the step on the page with every result that read them, so the
 step is back to the state it had before it first ran or changed there, and nothing of it can be undone any more. Other
-pages and the steps that did not read the cleared one are untouched.
+pages and the steps that did not read the cleared one are untouched. A clear is a job of the book, which waits behind
+the jobs the book has queued or running, since they may read or delete the versions it deletes.
 """
 
 import logging
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.errors import DomainError
+from bookreviver.domain.jobs import JobEnd, JobKind, JobState, StepClearing
 from bookreviver.domain.keys import BookKeys
-from bookreviver.services.processing_parts import BOOK_BUSY
 from bookreviver.services.step_history import StepOnPage
+from bookreviver.services.step_types import StepTypes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -29,8 +31,11 @@ if TYPE_CHECKING:
     from bookreviver.core.book import Book
     from bookreviver.domain.history import ClearedStep, PageHistoryEntry, StepHistory
     from bookreviver.domain.ids import PageHistoryEntryId
+    from bookreviver.domain.jobs import Job
     from bookreviver.domain.page_steps import PageStepKey
-    from bookreviver.services.processing_parts import JobStarter
+    from bookreviver.ports.runtime import JobControl
+    from bookreviver.services.job_starter import JobStarter
+    from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
 logger = logging.getLogger(__name__)
@@ -39,15 +44,19 @@ logger = logging.getLogger(__name__)
 class PageHistoryService:
     """Lists the history of the steps of the acting account's pages, takes its changes back, and clears a step."""
 
-    def __init__(self, *, records: StageRecords, starter: JobStarter) -> None:
+    def __init__(self, *, recipes: RecipeBook, records: StageRecords, starter: JobStarter) -> None:
         """Work over the ports of one request.
 
+        :param recipes: The recipes of the books and the check of their steps, which the undo of a replacement of the
+                        type of a step asks.
+        :type recipes: RecipeBook
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
-        :param starter: Queuer of the jobs, which cuts the pyramid of the version a clear makes current.
+        :param starter: Queuer of the jobs, which queues a clear and the cutting of the pyramid of the version it
+                        makes current.
         :type starter: JobStarter
         """
-        self._records = records
+        self._types = StepTypes(recipes=recipes, records=records)
         self._starter = starter
 
     async def list(self, book: Book, key: PageStepKey) -> StepHistory:
@@ -61,8 +70,8 @@ class PageHistoryService:
         :rtype: StepHistory
         :raises NotFoundError: If the book has no such page.
         """
-        records = self._records
-        return await book.read(lambda repos: StepOnPage(records, repos, key).history())
+        types = self._types
+        return await book.read(lambda repos: StepOnPage(types, repos, key).history())
 
     async def undo(
         self, book: Book, key: PageStepKey, change_id: PageHistoryEntryId | None
@@ -84,32 +93,66 @@ class PageHistoryService:
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
                                same page or of a page of the batch did.
         """
-        records = self._records
-        return await book.change(lambda repos, _book_record: StepOnPage(records, repos, key).undo(change_id))
+        types = self._types
+        return await book.change(lambda repos, _book_record: StepOnPage(types, repos, key).undo(change_id))
+
+    async def start_clear(self, book: Book, key: PageStepKey) -> Job:
+        """Queue a job that returns a step to its initial state on a page, behind the jobs the book has.
+
+        The step is checked first, so a request the clear would refuse queues nothing and cancels nothing. A preview of
+        the book, queued or running, is cancelled when the job is put, since the reader asked for the clear and a
+        preview is disposable: the editor of a step asks for one by itself when the step is opened.
+
+        :param book: The open book.
+        :type book: Book
+        :param key: The page, the stage and the step.
+        :type key: PageStepKey
+        :returns: The queued job.
+        :rtype: Job
+        :raises NotFoundError: If the book has no such page, or no recipe of the stage has the step.
+        """
+        types = self._types
+        await book.read(lambda repos: StepOnPage(types, repos, key).recipes())
+        return await self._starter.enqueue(book, JobKind.CLEAR_STEP, StepClearing(key=key))
+
+    async def clear_step(self, book: Book, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``clear-step`` job: the clear of one step on one page, which is one task.
+
+        :param book: The book of the queue the job was taken from.
+        :type book: Book
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after its task.
+        :type control: JobControl
+        :returns: How the job ended: failed with the reason when the page or the step is gone by the time the job runs,
+                  or the job is not valid, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled while its task ran.
+        """
+        control.plan(1)
+        try:
+            await self.clear(book, job.asked(StepClearing).key)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        await control.task_done()
+        return JobEnd(state=JobState.SUCCEEDED)
 
     async def clear(self, book: Book, key: PageStepKey) -> ClearedStep:
         """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
 
-        The results of the step on the page go with the versions that read them, directly or through a chain, whatever
-        their stage, and with the marks and comments of those versions. The stage of the page then stands on the version
-        the step read, marked stale, or has no current version when the step is the first of its recipe. A later stage
-        whose current version went has no record any longer, and the later stages of the page are marked stale. The
-        versions of other pages, of steps that did not read the step, and the changes of a batch that reached other
-        pages stay, and an undo of such a batch goes on working, since it takes back only the changes it finds.
+        It is the work of a ``clear-step`` job, which runs when the jobs put before it have ended. The results of the
+        step on the page go with the versions that read them, directly or through a chain, whatever their stage, and
+        with the marks and comments of those versions. The stage of the page then stands on the version the step read,
+        marked stale, or has no current version when the step is the first of its recipe. A later stage whose current
+        version went has no record any longer, and the later stages of the page are marked stale. The versions of other
+        pages, of steps that did not read the step, and the changes of a batch that reached other pages stay, and an
+        undo of such a batch goes on working, since it takes back only the changes it finds.
 
+        The page and the step are checked again inside the transaction, since they may have gone while the job waited.
         The version the stage stands on was made by a step in the middle of the recipe, which cuts no pyramid, and the
-        page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is queued once
-        the transaction of the clear has ended, which a book busy with another tile cutting or collection leaves
-        undone.
-
-        A preview of the book, queued or running, is cancelled first, since the reader asked for the clear and a
-        preview is disposable: the editor of a step asks for one by itself when the step is opened, so a clear a moment
-        later would otherwise be refused by a job the reader never started. It writes versions of the preview scale
-        only, and its last write finds the job cancelled and changes nothing, as for a run.
-
-        The cancelling and the queuing of the tile cutting are transactions of their own, so this use case opens one
-        ``Book.change`` for the rows. The files of the deleted versions are removed after it ended, so a store that
-        fails to remove them leaves them without a row for the next collection and does not fail the clear.
+        page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is put next up
+        once the transaction of the clear has ended. The files of the deleted versions are removed after it ended, so a
+        store that fails to remove them leaves them without a row for the next collection and does not fail the clear.
 
         :param book: The open book.
         :type book: Book
@@ -119,16 +162,9 @@ class PageHistoryService:
                   page.
         :rtype: ClearedStep
         :raises NotFoundError: If the book has no such page, or no recipe of the stage has the step.
-        :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the book is queued
-                               or running, which may be reading or deleting the versions the clear deletes.
         """
-        # The step is checked before the previews are cancelled, so a request the change would refuse cancels nothing
-        records = self._records
-        await book.read(lambda repos: StepOnPage(records, repos, key).recipes())
-        if await self._starter.free_of_previews(book):
-            raise ConflictError(BOOK_BUSY)
-
-        cleared, untiled = await book.change(lambda repos, _book_record: StepOnPage(records, repos, key).clear())
+        types = self._types
+        cleared, untiled = await book.change(lambda repos, _book_record: StepOnPage(types, repos, key).clear())
         await self._starter.enqueue_tiles(book, untiled)
         for version in cleared.versions:
             try:

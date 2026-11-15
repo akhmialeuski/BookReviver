@@ -3294,7 +3294,7 @@
           "processing"
         ],
         "summary": "Put Recipe",
-        "description": "Replace the steps of a recipe of a stage, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer.",
+        "description": "Replace the steps of a recipe of a stage, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer. A step the recipe keeps under another processor answers 409: its type is replaced by\n``PUT .../steps/{step_id}/type``.",
         "operationId": "put_recipe_api_v1_books__book_id__stages__stage__recipes__recipe_id__put",
         "parameters": [
           {
@@ -3338,6 +3338,128 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RecipeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/steps/{step_id}/type": {
+      "put": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Replace Step Type",
+        "description": "Give a step of a recipe another type, in every recipe of the stage that holds the step.\n\nThe step keeps its identifier and its place. Each recipe runs it with the parameters it kept for the new type, or\nthe defaults of the processor, and keeps those of the earlier type, which come back with it, as do the settings,\nthe edits and the values the pages keep for that type. The history of every page that keeps a setting or an edit of\nthe step under either type gains the replacement, as one batch whose undo brings the earlier type back. The pages\nthat run the step are marked stale and none is processed. A processor that is unknown or of another stage answers\n422, and so does one that would stand where it cannot work, unless the body asks for the free order. A step the\nrecipe does not hold answers 404. A recipe saved with another processor for a step it keeps answers 409, so this is\nthe one way to change a type.",
+        "operationId": "replace_step_type_api_v1_books__book_id__stages__stage__recipes__recipe_id__steps__step_id__type_put",
+        "parameters": [
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe",
+              "title": "Recipe Id"
+            },
+            "description": "Identifier of the recipe"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepTypeBody"
               }
             }
           }
@@ -3989,7 +4111,7 @@
           "processing"
         ],
         "summary": "Choose Version",
-        "description": "Make a version the current one of a stage of a page, which marks the later stages of the page stale.\n\nThe version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.",
+        "description": "Make a version the current one of a stage of a page in the background, and answer with the queued job.\n\nThe job marks the later stages of the page stale. The version must be ready and made by a full run of this page in\nthis stage: the answer is 409 for one that is not, and nothing is queued then. A book runs one job at a time in the\norder they were asked for, so a choice asked for while a run, a measure of the book, a tile cutting or a collection\nis queued or running waits behind it, and the job fails with nothing written when the version stopped being one\nthat can be chosen by its turn. A preview of the book is cancelled.",
         "operationId": "choose_version_api_v1_books__book_id__pages__page_id__stages__stage__put",
         "parameters": [
           {
@@ -4038,12 +4160,12 @@
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageStageSchema"
+                  "$ref": "#/components/schemas/JobSchema"
                 }
               }
             }
@@ -6611,7 +6733,7 @@
           "page-history"
         ],
         "summary": "Clear History",
-        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer\nis 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and\n404 when no recipe of the stage has the step.",
+        "description": "Return a step to its initial state on a page in the background, and answer with the queued job.\n\nThe job deletes the history of the step on the page, its settings, its edit and its results: the versions the step\nmade on the page and the versions that read them, with their files and their marks. The stage of the page stands\non the version the step read, marked stale, and has no current version when the step is the first of its recipe.\nThe clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages\nstay. A book runs one job at a time in the order they were asked for, so a clear asked for while a run, a measure\nof the book, a tile cutting or a collection is queued or running waits behind it. A preview of the book is\ncancelled. The answer is 404 when no recipe of the stage has the step, and nothing is queued then.",
         "operationId": "clear_history_api_v1_books__book_id__pages__page_id__history__stage___step_id__delete",
         "parameters": [
           {
@@ -6662,12 +6784,12 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClearedSchema"
+                  "$ref": "#/components/schemas/JobSchema"
                 }
               }
             }
@@ -9784,25 +9906,6 @@
         "title": "ChangeSource",
         "description": "What made a change of a layer of a step on a page."
       },
-      "ClearedSchema": {
-        "properties": {
-          "changes": {
-            "type": "integer",
-            "title": "Changes"
-          },
-          "versions": {
-            "type": "integer",
-            "title": "Versions"
-          }
-        },
-        "type": "object",
-        "required": [
-          "changes",
-          "versions"
-        ],
-        "title": "ClearedSchema",
-        "description": "What clearing a step on a page deleted.\n\n:ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.\n:ivar versions: How many versions were deleted: the results of the step on the page and the results that read them."
-      },
       "CollectionReportSchema": {
         "properties": {
           "versions": {
@@ -10164,7 +10267,9 @@
           "cut-tiles",
           "collect-versions",
           "measure-book",
-          "detect-content"
+          "detect-content",
+          "clear-step",
+          "choose-version"
         ],
         "title": "JobKind",
         "description": "What a background job does."
@@ -11143,16 +11248,17 @@
           "state": {
             "$ref": "#/components/schemas/StageState"
           },
-          "through_step": {
+          "through_step_id": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "string",
+                "format": "uuid"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Through Step"
+            "title": "Through Step Id"
           },
           "updated_at": {
             "type": "string",
@@ -11167,11 +11273,11 @@
           "recipe_id",
           "head_version_id",
           "state",
-          "through_step",
+          "through_step_id",
           "updated_at"
         ],
         "title": "PageStageSchema",
-        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar updated_at: When the record last changed."
+        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that\n                       is on, so the page is not ready for the next stage, or None.\n:ivar updated_at: When the record last changed."
       },
       "PageStageStatus": {
         "type": "string",
@@ -13251,16 +13357,17 @@
               }
             ]
           },
-          "through_step": {
+          "through_step_id": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "string",
+                "format": "uuid"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Through Step"
+            "title": "Through Step Id"
           },
           "review_processor": {
             "anyOf": [
@@ -13306,14 +13413,14 @@
           "recipe_id",
           "kind",
           "version",
-          "through_step",
+          "through_step_id",
           "review_processor",
           "step",
           "marked_bad",
           "picture"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage.\n:ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas\n               draw the same picture. With ``step`` it is the version the step reads on the page; a page that has\n               not come as far as the step has the last version of the stage before it, and one the stage has not\n               run on, or whose recipe has no such step switched on, has the version the stage reads. Without\n               ``step`` it is the current version of the stage, else the version the stage reads. It is never the\n               result of the step or of a later one, nor a version of a later stage. None when the page has no image\n               to draw, such as a placeholder."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step_id: The last step of the recipe the page was run through when that is before the last step that\n                       is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage.\n:ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas\n               draw the same picture. With ``step`` it is the version the step reads on the page; a page that has\n               not come as far as the step has the last version of the stage before it, and one the stage has not\n               run on, or whose recipe has no such step switched on, has the version the stage reads. Without\n               ``step`` it is the current version of the stage, else the version the stage reads. It is never the\n               result of the step or of a later one, nor a version of a later stage. None when the page has no image\n               to draw, such as a placeholder."
       },
       "StageProgressSchema": {
         "properties": {
@@ -13356,18 +13463,17 @@
             "title": "Confirm Unsplit",
             "default": false
           },
-          "through_step": {
+          "through_step_id": {
             "anyOf": [
               {
-                "type": "integer",
-                "exclusiveMaximum": 50.0,
-                "minimum": 0.0
+                "type": "string",
+                "format": "uuid"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Through Step"
+            "title": "Through Step Id"
           },
           "mode": {
             "$ref": "#/components/schemas/RunMode",
@@ -13382,7 +13488,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "StageRunBody",
-        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step\n                    that is on. The steps before it come from the cache of versions when their inputs did not\n                    change.\n:ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they\n            read: it keeps them, which is the usual run, or takes the edits or the settings away first.\n:ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without\n                         which such a run is refused with 409. A run that keeps the work needs none."
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar through_step_id: The last step to run, which the recipe of every page of the run must hold, or omitted to run\n                       through the last step that is on. The steps before it come from the cache of versions when\n                       their inputs did not change.\n:ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they\n            read: it keeps them, which is the usual run, or takes the edits or the settings away first.\n:ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without\n                         which such a run is refused with 409. A run that keeps the work needs none."
       },
       "StageState": {
         "type": "string",
@@ -13514,6 +13620,18 @@
               }
             ],
             "title": "Step Id"
+          },
+          "origin_step_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Step Id"
           }
         },
         "additionalProperties": false,
@@ -13522,7 +13640,7 @@
           "processor_key"
         ],
         "title": "StepBody",
-        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one."
+        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one.\n:ivar origin_step_id: The step of a profile the step is made from, which a recipe keeps for a step it stores for\n                      the first time, or omitted. A profile keeps no origin of its steps."
       },
       "StepFlag": {
         "type": "string",
@@ -13540,10 +13658,11 @@
         "enum": [
           "settings",
           "found",
-          "hand"
+          "hand",
+          "type"
         ],
         "title": "StepLayer",
-        "description": "One of the three layers a page keeps for a step, which a change of the history names."
+        "description": "What a change of the history of a page changed: one of the three layers a page keeps for a step, or its type.\n\nThe type is no layer of the page: it is the processor the step runs, which the recipe holds, and a change of it\nreaches every page that keeps a layer of the step, since what each page keeps belongs to the type it was made for."
       },
       "StepPageSchema": {
         "properties": {
@@ -13596,9 +13715,10 @@
       },
       "StepPagesSchema": {
         "properties": {
-          "through_step": {
-            "type": "integer",
-            "title": "Through Step"
+          "through_step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Through Step Id"
           },
           "pages": {
             "type": "integer",
@@ -13607,11 +13727,11 @@
         },
         "type": "object",
         "required": [
-          "through_step",
+          "through_step_id",
           "pages"
         ],
         "title": "StepPagesSchema",
-        "description": "How many pages of a stage a run stopped at one step.\n\n:ivar through_step: Index in the recipe of the last step the pages were run through, from zero.\n:ivar pages: Pages with an image, not failed, that stopped at the step."
+        "description": "How many pages of a stage a run stopped at one step.\n\n:ivar through_step_id: The last step the pages were run through.\n:ivar pages: Pages with an image, not failed, that stopped at the step."
       },
       "StepPreviewBody": {
         "properties": {
@@ -13664,6 +13784,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Step Id"
+          },
+          "origin_step_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Step Id"
           }
         },
         "type": "object",
@@ -13674,7 +13806,28 @@
           "step_id"
         ],
         "title": "StepSchema",
-        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.\n:ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name."
+        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.\n:ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.\n:ivar origin_step_id: The step of a profile the step was made from, by which the step is matched with the profile,\n                      or None."
+      },
+      "StepTypeBody": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Processor Key"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processor_key"
+        ],
+        "title": "StepTypeBody",
+        "description": "The type a step of a recipe is given in place of the one it has.\n\n:ivar processor_key: Key of the processor that becomes the type of the step, which must belong to the stage of the\n                     recipe.\n:ivar order: ``usual`` refuses a type that would stand where it cannot work at the place of the step in a recipe\n             that holds it, with the reason as the detail of a 422, and ``free`` gives it and reports it in the\n             answer."
       },
       "StepValuesSchema": {
         "properties": {

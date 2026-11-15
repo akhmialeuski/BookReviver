@@ -7,6 +7,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
@@ -240,9 +241,7 @@ class TestRecipes:
         stored_pages = await fx_cv_kit.databases.open(book_id).read(
             lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
-        picked = await fx_cv_kit.parts().recipes.for_pages(
-            await open_book(fx_cv_kit, book_id), Stage.CLEANUP, stored_pages
-        )
+        picked = await fx_cv_kit.recipes.for_pages(await open_book(fx_cv_kit, book_id), Stage.CLEANUP, stored_pages)
         assert [picked[page.id].kind for page in pages] == [
             RecipeKind.TEXT,
             RecipeKind.COLOR_PICTURE,
@@ -525,7 +524,7 @@ class TestStartRun:
         """
         actor, book_id = await fx_kit.seed_book()
         await fx_kit.service().start_run(fx_open_book(actor, book_id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        starter = fx_kit.parts().starter
+        starter = fx_kit.starter
         collection = starter.queue_collection(await open_book(fx_kit, book_id))
         expect(collection.state is JobState.QUEUED)
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE, JobKind.COLLECT_VERSIONS])
@@ -589,7 +588,7 @@ class ReadGate:
             :returns: The database of the book.
             :rtype: BookDatabase
             """
-            database = SqlAlchemyBookDatabase(dir_name, books=books)
+            database = SqlAlchemyBookDatabase(dir_name, books=books, order_keys=FractionalOrderKeys())
             self._hold_first_read(database, monkeypatch)
             return database
 
@@ -649,7 +648,9 @@ class TestDefaultRecipesInChanges:
         gate = ReadGate(parties=TASKS)
         BookDatabase.register(gate.opener(fx_books, monkeypatch))
         books = [await open_book(fx_kit, book_id) for _ in range(TASKS)]
-        BookDatabase.register(lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books))
+        BookDatabase.register(
+            lambda dir_name: SqlAlchemyBookDatabase(dir_name, books=fx_books, order_keys=FractionalOrderKeys())
+        )
         stored_sets: list[int] = []
         add_many = SqlAlchemyRecipeRepository.add_many
 
@@ -675,7 +676,7 @@ class TestDefaultRecipesInChanges:
             :param book: The open book of the task.
             :type book: Book
             """
-            answers.append(await fx_kit.parts().recipes.recipes(book, Stage.GEOMETRY))
+            answers.append(await fx_kit.recipes.recipes(book, Stage.GEOMETRY))
 
         async with anyio.create_task_group() as tasks:
             for book in books:

@@ -184,10 +184,14 @@ const READS_OF_PART: Record<BookResource, readonly BookRead[]> = {
   versions: [BookRead.Versions, BookRead.Collectable, BookRead.Pages, BookRead.StageRows],
   // The status of each stage and the next stage are part of the book, and its card in the library
   stages: [BookRead.StageSummary, BookRead.StageRows, BookRead.Book, BookRead.BookList],
-  settings: [BookRead.PageLayers],
+  // The rows of a stage say what each step holds on a page, such as a shape set by hand, and a change of the settings
+  // of a page whose stage is out of date already writes no record of a stage, so it names this part alone
+  settings: [BookRead.PageLayers, BookRead.StageRows],
   history: [BookRead.History],
-  // The recipe profiles of the book are kept with its recipes
-  recipes: [BookRead.Recipes, BookRead.Profiles],
+  // The recipe profiles of the book are kept with its recipes, and a step whose type is replaced runs with the settings
+  // and edits the pages kept for the new type, which no write of a setting names, so the layers of the pages and the
+  // rows of the stages that show them are read again
+  recipes: [BookRead.Recipes, BookRead.Profiles, BookRead.PageLayers, BookRead.StageRows],
 };
 
 /** The reads that show the jobs of a book, which change with every job and raise no version of the book. */

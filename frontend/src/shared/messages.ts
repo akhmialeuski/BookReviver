@@ -963,6 +963,8 @@ export const MESSAGES = {
       'collect-versions': 'Clearing old results',
       'measure-book': 'Measuring the book',
       'detect-content': 'Detecting what pages show',
+      'clear-step': 'Clearing a step on a page',
+      'choose-version': 'Choosing a result',
     } satisfies Record<JobKind, string>,
     stageRun: (stage: string) => `${stage} run`,
     chip: (kind: string, progress: { done: number; total: number }) =>
@@ -1303,6 +1305,15 @@ export const MESSAGES = {
       switchLabel: (title: string) => `Run the ${title} step`,
       remove: (title: string) => `Remove the ${title} step`,
       move: (title: string) => `Move the ${title} step`,
+      type: {
+        open: (title: string) => `Change the type of the ${title} step`,
+        title: 'Change type',
+        hint: 'The step keeps its place. The settings and hand edits of the earlier type are kept and come back with it.',
+        current: 'Current',
+        saveFirst:
+          'The steps have changes that are not saved. Save or discard them, then change a type.',
+        failed: 'The type could not be changed.',
+      },
       showSettings: (title: string) => `Show the settings of the ${title} step`,
       hideSettings: (title: string) => `Hide the settings of the ${title} step`,
       noSettings: 'This step has no settings.',
@@ -1587,6 +1598,7 @@ export const MESSAGES = {
         settings: 'Settings of the page',
         found: 'Found by the automatic run',
         hand: 'Set by hand',
+        type: 'Type of the step',
       },
       sources: {
         user: 'You',

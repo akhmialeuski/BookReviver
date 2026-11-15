@@ -74,7 +74,7 @@ class FakeSleep:
             raise StopLoop
 
 
-async def _store(container: AsyncContainer, owner: AccountId, token: str, created_at: datetime) -> None:
+async def _store_token(container: AsyncContainer, owner: AccountId, token: str, created_at: datetime) -> None:
     """Store a session token of ``owner``, created at ``created_at``.
 
     :param container: The application's container.
@@ -92,7 +92,7 @@ async def _store(container: AsyncContainer, owner: AccountId, token: str, create
         )
 
 
-async def _stored(container: AsyncContainer, *tokens: str) -> list[str]:
+async def _stored_tokens(container: AsyncContainer, *tokens: str) -> list[str]:
     """Return which of the tokens are stored.
 
     :param container: The application's container.
@@ -122,12 +122,12 @@ class TestSessionCleanup:
         """
         owner = await commit_account(await fx_container.get(SqlDatabase))
         lifetime = timedelta(seconds=fx_settings.auth.session_lifetime_seconds)
-        await _store(fx_container, owner, EXPIRED_TOKEN, datetime.now(UTC) - lifetime - MARGIN)
-        await _store(fx_container, owner, LIVE_TOKEN, datetime.now(UTC) - lifetime + MARGIN)
+        await _store_token(fx_container, owner, EXPIRED_TOKEN, datetime.now(UTC) - lifetime - MARGIN)
+        await _store_token(fx_container, owner, LIVE_TOKEN, datetime.now(UTC) - lifetime + MARGIN)
 
         await (await fx_container.get(SessionCleanup)).purge()
 
-        assert await _stored(fx_container, EXPIRED_TOKEN, LIVE_TOKEN) == [LIVE_TOKEN]
+        assert await _stored_tokens(fx_container, EXPIRED_TOKEN, LIVE_TOKEN) == [LIVE_TOKEN]
 
     async def test_loop_purges_at_the_start_and_after_every_interval(
         self, fx_container: AsyncContainer, fx_settings: Settings, monkeypatch: pytest.MonkeyPatch
@@ -145,14 +145,14 @@ class TestSessionCleanup:
         """
         owner = await commit_account(await fx_container.get(SqlDatabase))
         expired_at = datetime.now(UTC) - timedelta(seconds=fx_settings.auth.session_lifetime_seconds) - MARGIN
-        await _store(fx_container, owner, EXPIRED_TOKEN, expired_at)
-        await _store(fx_container, owner, LIVE_TOKEN, datetime.now(UTC))
+        await _store_token(fx_container, owner, EXPIRED_TOKEN, expired_at)
+        await _store_token(fx_container, owner, LIVE_TOKEN, datetime.now(UTC))
         seen_after_first_run: list[str] = []
 
         async def expire_one() -> None:
             """Record what the first run left, then store a session that is already past its lifetime."""
-            seen_after_first_run.extend(await _stored(fx_container, EXPIRED_TOKEN, LIVE_TOKEN))
-            await _store(fx_container, owner, LATER_EXPIRED_TOKEN, expired_at)
+            seen_after_first_run.extend(await _stored_tokens(fx_container, EXPIRED_TOKEN, LIVE_TOKEN))
+            await _store_token(fx_container, owner, LATER_EXPIRED_TOKEN, expired_at)
 
         sleep = FakeSleep(runs=2, at_first_sleep=expire_one)
         monkeypatch.setattr(accounts_module, SLEEP, sleep)
@@ -161,7 +161,7 @@ class TestSessionCleanup:
             await (await fx_container.get(SessionCleanup)).run()
 
         expect(seen_after_first_run == [LIVE_TOKEN])
-        expect(await _stored(fx_container, EXPIRED_TOKEN, LATER_EXPIRED_TOKEN, LIVE_TOKEN) == [LIVE_TOKEN])
+        expect(await _stored_tokens(fx_container, EXPIRED_TOKEN, LATER_EXPIRED_TOKEN, LIVE_TOKEN) == [LIVE_TOKEN])
         expect(sleep.intervals == [fx_settings.auth.session_cleanup_interval_seconds] * 2)
         assert_expectations()
 

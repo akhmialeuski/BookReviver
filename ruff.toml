@@ -25,6 +25,8 @@ runtime-evaluated-base-classes = [
     "advanced_alchemy.base.AdvancedDeclarativeBase",
     # Ruff resolves base classes only within one file, so the advanced-alchemy base the tables inherit is named too
     "advanced_alchemy.base.DefaultBase",
+    # The tables of a book derive from the base of their package, which ruff does not follow into another module
+    "bookreviver.adapters.persistence.sqlalchemy.tables.base.BookTable",
     "bookreviver.api.schemas.base.RequestModel",
     "bookreviver.api.schemas.base.ResponseModel",
 ]
@@ -186,6 +188,11 @@ max-complexity = 8
 "__init__.py" = [
     "module-import-not-at-top-of-file", # import violations
     "unused-import", # unused imports
+]
+# The annotations of the repositories of a transaction are read at runtime to list what a transaction holds, so the
+# repository ports they name are imported at runtime
+"src/bookreviver/ports/persistence/databases.py" = [
+    "typing-only-first-party-import", # import only used in annotations
 ]
 "tests/**" = [
     "unused-lambda-argument", # unused lambda argument

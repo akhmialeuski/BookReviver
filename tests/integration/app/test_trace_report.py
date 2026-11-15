@@ -94,6 +94,11 @@ TRANSACTION_SHARE_LINE: str = 'Share of the run with an SQLite write transaction
 LAG_VALUES_MS: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0, 10.0)
 WAIT_LINE: str = 'Wait for the write lock, ms: p50 20.00, p90 20.00, p99 20.00, max 20.00'
 LAG_LINE: str = 'Event-loop lag, ms: p50 3.00, p90 10.00, p99 10.00, max 10.00'
+# What one block counted of its statements, and the two lines the report prints for it
+SQL_COUNT: int = 4
+SQL_MS: float = 2.5
+STATEMENTS_LINE: str = 'Statements of a block: p50 4.00, p90 4.00, p99 4.00, max 4.00'
+SQL_LINE: str = 'SQL of a block, ms: p50 2.50, p90 2.50, p99 2.50, max 2.50'
 # The wait the block of the test that reads the exporter's file records, which one decimal shows exactly
 WRITTEN_WAIT_MS: float = 12.5
 
@@ -480,6 +485,26 @@ class TestReport:
         path = fx_write_spans([block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(20)), *ticks])
         lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
         assert lines[5:7] == [WAIT_LINE, LAG_LINE]
+
+    def test_statements_and_their_time_are_printed_for_the_blocks_that_counted_them(
+        self, fx_write_spans: Callable[[Sequence[str]], Path]
+    ) -> None:
+        """Verify the report prints how many statements a block ran and how long they took in SQLite.
+
+        One block ran four statements in 2.5 ms, so every percentile and the maximum are those values.
+
+        :param fx_write_spans: Function that writes lines of spans to a file.
+        :type fx_write_spans: Callable[[Sequence[str]], Path]
+        """
+        counted = {
+            SpanAttribute.BLOCK_OUTCOME: BlockOutcome.COMMITTED,
+            SpanAttribute.WAIT_MS: WRITTEN_WAIT_MS,
+            SpanAttribute.SQL_COUNT: SQL_COUNT,
+            SpanAttribute.SQL_MS: SQL_MS,
+        }
+        path = fx_write_spans([span_line(SpanName.WRITE_BLOCK, 0.0, 1.0, counted)])
+        lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
+        assert lines[-2:] == [STATEMENTS_LINE, SQL_LINE]
 
     def test_report_reads_the_file_the_exporter_writes(self, tmp_path: Path) -> None:
         """Verify the report of a file the real tracer wrote has the step type and the wait of the block inside it.

@@ -219,8 +219,8 @@ class RunPlan:
             stages = by_page.get(page.id, {})
             record = stages.get(stage)
             return (
-                not self._recipes.leaves_to_book(picked[page.id], through_step=self._run.through_step)
-                and self._is_fresh(record, picked[page.id], through_step=self._run.through_step)
+                not self._recipes.leaves_to_book(picked[page.id], through_step_id=self._run.through_step_id)
+                and self._is_fresh(record, picked[page.id], through_step_id=self._run.through_step_id)
                 and record is not None
                 and record.head_version_id in ready
                 and all(earlier.state is StageState.FRESH for key, earlier in stages.items() if key in stage.earlier)
@@ -229,15 +229,15 @@ class RunPlan:
         return [page for page in pages if not done(page)]
 
     @staticmethod
-    def _is_fresh(record: PageStage | None, recipe: Recipe, *, through_step: int | None) -> bool:
+    def _is_fresh(record: PageStage | None, recipe: Recipe, *, through_step_id: StepId | None) -> bool:
         """Tell whether the record of a stage holds what a run of the recipe through the step would make.
 
         :param record: The record of the stage on the page, or None when the stage has not run on it.
         :type record: PageStage | None
         :param recipe: The recipe the run picks for the page.
         :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step the run goes through, or None for every step.
-        :type through_step: int | None
+        :param through_step_id: The last step the run goes through, or None for every step.
+        :type through_step_id: StepId | None
         :returns: Whether the record is fresh, has a head version, and was made by the recipe through the same step.
         :rtype: bool
         """
@@ -246,7 +246,7 @@ class RunPlan:
             and record.state is StageState.FRESH
             and record.head_version_id is not None
             and record.recipe_id == recipe.id
-            and record.through_step == recipe.stopped_at(through_step)
+            and record.through_step_id == recipe.stopped_at(through_step_id)
         )
 
     async def _picked(self) -> dict[PageId, Recipe]:
@@ -294,7 +294,7 @@ class RunPlan:
         """
         by_step: dict[StepId, list[PageId]] = {}
         for page_id, recipe in picked.items():
-            for _, step in recipe.indexed_steps_through(self._run.through_step):
+            for _, step in recipe.indexed_steps_through(self._run.through_step_id):
                 by_step.setdefault(step.step_id, []).append(page_id)
         states: list[PageStepState] = []
         for step_id, page_ids in by_step.items():

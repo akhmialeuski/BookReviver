@@ -1,5 +1,5 @@
-import type { OrderRuleKind, ProcessorSchema } from '@/api';
-import { addStep, moveStep, type StepDraft } from '@/features/processing/recipe';
+import type { OrderMode, OrderRuleKind, ProcessorSchema } from '@/api';
+import { addStep, moveStep, retypeStep, type StepDraft } from '@/features/processing/recipe';
 
 /**
  * The order of the steps of a draft, as the processors ask for it in the catalogue.
@@ -148,6 +148,49 @@ export function refusalOfAdd(
   index: number,
 ): OrderIssue | undefined {
   return newRequiredIssue(steps, addStep(steps, processor, index), catalogue);
+}
+
+/**
+ * Find the required place that giving a step another processor would make the draft break, if there is one, which is
+ * the place the server refuses the type at in the usual order.
+ *
+ * @param steps The draft.
+ * @param catalogue The processors of the stage.
+ * @param id The step whose type is replaced.
+ * @param processor The processor of the new type.
+ */
+export function refusalOfType(
+  steps: readonly StepDraft[],
+  catalogue: readonly ProcessorSchema[],
+  id: string,
+  processor: ProcessorSchema,
+): OrderIssue | undefined {
+  return newRequiredIssue(steps, retypeStep(steps, id, processor), catalogue);
+}
+
+/**
+ * List the processors a step may take as its type where it stands, which are those the server accepts there: every
+ * processor of the stage in the free order, and in the usual order those that break no required place the draft keeps.
+ * The type the step has is listed whatever its place.
+ *
+ * @param steps The draft.
+ * @param catalogue The processors of the stage.
+ * @param id The step whose type is replaced.
+ * @param mode The order the replacement keeps.
+ */
+export function typesAt(
+  steps: readonly StepDraft[],
+  catalogue: readonly ProcessorSchema[],
+  id: string,
+  mode: OrderMode,
+): ProcessorSchema[] {
+  const current = steps.find((step) => step.id === id)?.processorKey;
+  return catalogue.filter(
+    (processor) =>
+      mode === 'free' ||
+      processor.key === current ||
+      refusalOfType(steps, catalogue, id, processor) === undefined,
+  );
 }
 
 /** How much a broken rule weighs when the places for a new step are compared: a required place far outweighs a usual one. */

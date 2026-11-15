@@ -29,13 +29,19 @@ from bookreviver.app.settings import ImagingSettings
 from bookreviver.core.book import Book
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.slices import SliceRequest
+from bookreviver.domain.sources import UploadedSource
 from bookreviver.plugins.pages.blank import BlankPage
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.services.base_versions import BaseVersions
-from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
-from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts
+from bookreviver.services.imports import ImportLimits, ImportService
+from bookreviver.services.job_starter import JobStarter, ProcessingConfig
+from bookreviver.services.processing import ProcessingService
+from bookreviver.services.recipe_order import RecipeOrder
+from bookreviver.services.recipes import RecipeBook
+from bookreviver.services.scan_cuts import ScanCutter
+from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRunner
 from tests.harness.adapters.storage import SharedBookDirectories, upload
 from tests.harness.builders.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
@@ -57,7 +63,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.jobs import Job, JobEnd
     from bookreviver.domain.pages import Page
     from bookreviver.domain.pagination import PaginationSection
-    from bookreviver.domain.sources import Scan, Source, SourceAnalysis, SourceKind, UploadedSource
+    from bookreviver.domain.sources import FileType, Scan, Source, SourceAnalysis, SourceKind
     from bookreviver.ports.persistence import BookRepositories, CatalogueDatabase
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.recipes import DefaultRecipes
@@ -562,26 +568,28 @@ class ImportRig:
         :rtype: ImportService
         """
         catalogue = catalogue or self.open_catalogue()
-        parts = ProcessingParts.build(
-            FakeCatalogue(self.processors),
-            self.defaults,
-            ProcessingConfig(
-                preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
-                preview_long_side_px=PREVIEW_LONG_SIDE_PX,
-            ),
+        processors = FakeCatalogue(self.processors)
+        config = ProcessingConfig(
+            preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
+            preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
+        records = StageRecords()
         return ImportService(
-            imaging=ImportImaging(
-                inspector=self.inspector,
+            inspector=self.inspector,
+            cutter=ScanCutter(
                 rasterizer=self.rasterizer,
                 base_versions=BaseVersions(tiler=self.tiler, processors=FakeCatalogue([SplitNone(), BlankPage()])),
                 runner=self.runner(),
+                records=records,
             ),
-            runtime=ImportRuntime(
-                order_keys=FractionalOrderKeys(),
-                limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
+            order_keys=FractionalOrderKeys(),
+            limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
+            processing=ProcessingService(
+                processors=processors,
+                recipes=RecipeBook(processors=processors, defaults=self.defaults, order=RecipeOrder(processors)),
+                records=records,
+                starter=JobStarter(config=config),
             ),
-            parts=parts,
         )
 
     def stored_job(self, job: Job) -> Job:
@@ -593,3 +601,31 @@ class ImportRig:
         :rtype: Job
         """
         return self.fakes.board.get(job.id)
+
+
+async def stored_sections(book_id: BookId, *, databases: LocatedBookDatabases) -> list[PaginationSection]:
+    """Read the pagination sections of a book as committed, in the order they were made.
+
+    :param book_id: Book owning the sections.
+    :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: LocatedBookDatabases
+    :returns: The sections.
+    :rtype: list[PaginationSection]
+    """
+    return (await stored_book(book_id, databases=databases)).sections
+
+
+def uploaded_source(kind: SourceKind, file_type: FileType, *names: str) -> UploadedSource:
+    """Return the source a reader is expected to group the named files into.
+
+    :param kind: Kind of the source.
+    :type kind: SourceKind
+    :param file_type: Type of the main file.
+    :type file_type: FileType
+    :param names: Names of the files, the main file first.
+    :type names: str
+    :returns: The source as the reader must group it.
+    :rtype: UploadedSource
+    """
+    return UploadedSource(kind=kind, file_type=file_type, names=list(names))

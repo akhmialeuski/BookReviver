@@ -70,7 +70,7 @@ async def fx_owned_book(
 
 
 @pytest.fixture
-async def fx_strangers_book(
+async def fx_strangers_book_id(
     fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory, fx_databases: BookDatabasesFactory
 ) -> BookId:
     """Commit a book of another account.
@@ -137,7 +137,7 @@ class TestStreamConnections:
         fx_client: httpx.AsyncClient,
         fx_fakes: JobFakes,
         fx_database: SqlDatabase,
-        fx_strangers_book: BookId,
+        fx_strangers_book_id: BookId,
     ) -> None:
         """Verify the owner check still refuses another account's book before the release, and holds nothing.
 
@@ -149,10 +149,10 @@ class TestStreamConnections:
         :type fx_fakes: JobFakes
         :param fx_database: SQL database of the running application.
         :type fx_database: SqlDatabase
-        :param fx_strangers_book: Book of another account.
-        :type fx_strangers_book: BookId
+        :param fx_strangers_book_id: Book of another account.
+        :type fx_strangers_book_id: BookId
         """
-        path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_strangers_book)
+        path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_strangers_book_id)
         before = checked_out_connections(fx_database)
         # A stream that started by mistake would never end, so the request is bounded
         with anyio.fail_after(STREAM_TIMEOUT_SECONDS):

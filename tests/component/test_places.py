@@ -60,7 +60,7 @@ def _path(book_id: BookId) -> str:
     return f'{BOOKS_PATH}/{book_id}/place'
 
 
-def _body() -> dict[str, Any]:
+def _place_body() -> dict[str, Any]:
     """Build the body of a place of a reader who zoomed into a page of a stage in the spread layout.
 
     :returns: The JSON body of a request.
@@ -121,7 +121,7 @@ class TestGetPlace:
         :param fx_book: A book of the signed-in account.
         :type fx_book: BookId
         """
-        body = _body()
+        body = _place_body()
         await fx_client.put(_path(fx_book), json=body)
         response = await fx_client.get(_path(fx_book))
         place = BookPlaceSchema.model_validate(response.json())
@@ -168,7 +168,7 @@ class TestPutPlace:
         :param fx_book: A book of the signed-in account.
         :type fx_book: BookId
         """
-        await fx_client.put(_path(fx_book), json=_body())
+        await fx_client.put(_path(fx_book), json=_place_body())
         response = await fx_client.put(_path(fx_book), json={MODE_FIELD: PlaceMode.READING, STAGE_FIELD: Stage.LAYOUT})
         place = BookPlaceSchema.model_validate(response.json())
         expect(response.status_code == status.HTTP_200_OK)
@@ -198,7 +198,7 @@ class TestPutPlace:
         strangers_id = await commit_record(
             fx_database, fx_catalogue(), make_record(), owner=new_account_id(), databases=fx_databases()
         )
-        response = await fx_client.put(_path(strangers_id), json=_body())
+        response = await fx_client.put(_path(strangers_id), json=_place_body())
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.parametrize(
@@ -227,7 +227,7 @@ class TestPutPlace:
         :param change: Fields of a valid body to replace with an invalid value.
         :type change: dict[str, Any]
         """
-        response = await fx_client.put(_path(fx_book), json={**_body(), **change})
+        response = await fx_client.put(_path(fx_book), json={**_place_body(), **change})
         expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect((await fx_client.get(_path(fx_book))).status_code == status.HTTP_204_NO_CONTENT)
         assert_expectations()

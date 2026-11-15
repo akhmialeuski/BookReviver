@@ -311,7 +311,11 @@ describe('useThisPage', () => {
       await render(
         {
           page: page('page'),
-          row: row('page', { version: first, recipe_id: 'r1', through_step: 0 }),
+          row: row('page', {
+            version: first,
+            recipe_id: 'r1',
+            through_step_id: 'id-geometry.deskew',
+          }),
         },
         null,
         state(),

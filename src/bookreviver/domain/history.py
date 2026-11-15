@@ -7,6 +7,10 @@ back together with the rest of its batch. A value set for several pages, a value
 pages or a group, which every page they reach keeps a change of, and a carry-over of a shape to other pages are such
 batches.
 
+A replacement of the type of a step is a batch too: one change of the type, which the history of every page that keeps a
+setting or an edit of the step under either type names, and whose undo brings the earlier type back with what the pages
+kept for it.
+
 The one exception to the growth is an explicit clear of one step on one page, which deletes that history, takes the
 settings and the edit of the step away from the page, and deletes the results of the step on it with the results that
 read them. The changes of a batch on other pages stay, and an undo of the batch takes back only the changes it still
@@ -31,9 +35,14 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import ChangeBatchId, PageId, StepId
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepState
+    from bookreviver.domain.recipes import StepTypeChange
     from bookreviver.domain.stages import Stage
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.versions import PageVersion
+
+
+# The field the content of a change of the type of a step names the processor of the type by
+TYPE_FIELD: str = 'processor_key'
 
 
 class ChangeSource(LabeledStrEnum):
@@ -117,6 +126,50 @@ class PageHistoryEntry:
             source=source,
             created_at=after.updated_at,
         )
+
+    @classmethod
+    def of_type(cls, pages: Sequence[PageId], stage: Stage, change: StepTypeChange, before: str) -> list[Self]:
+        """Describe a replacement of the type of a step, once for each page whose history keeps it.
+
+        The entries are one change, so they share its identifier and differ only in the page.
+
+        :param pages: The pages whose histories keep the change, which are those that keep a setting or an edit of the
+                      step under the type it leaves or the type it takes.
+        :type pages: Sequence[PageId]
+        :param stage: Stage of the step.
+        :type stage: Stage
+        :param change: The step, its new type and when it was replaced.
+        :type change: StepTypeChange
+        :param before: Key of the processor that was the type of the step.
+        :type before: str
+        :returns: The change for each page, made by the user, with one new identifier, no batch and no sequence yet.
+        :rtype: list[Self]
+        """
+        change_id = PageHistoryEntryId(uuid4())
+        return [
+            cls(
+                id=change_id,
+                page_id=page_id,
+                stage=stage,
+                step_id=change.step_id,
+                layer=StepLayer.TYPE,
+                before={TYPE_FIELD: before},
+                after={TYPE_FIELD: change.processor_key},
+                source=ChangeSource.USER,
+                created_at=change.moment,
+            )
+            for page_id in pages
+        ]
+
+    @property
+    def types(self) -> tuple[str, str]:
+        """The keys of the processors a change of the type of a step replaced and put, in that order.
+
+        :raises NotFoundError: If the change is not a change of the type.
+        """
+        if self.layer is not StepLayer.TYPE or self.before is None or self.after is None:
+            raise NotFoundError(self.id)
+        return str(self.before[TYPE_FIELD]), str(self.after[TYPE_FIELD])
 
     def taken_back(self, moment: datetime, batch_id: ChangeBatchId | None) -> Self:
         """Describe the undo of this change: the same layer changed from what it left to what it replaced.

@@ -73,6 +73,136 @@ class NumberingPlan:
             raise ConflictError(str(error)) from error
 
 
+class PlanWork:
+    """The plan of one numbering on the pages of one transaction, which finds the range and the sections around it.
+
+    :ivar pages: Every page of the book in book order.
+    """
+
+    def __init__(self, *, repos: BookRepositories, numbering: PageNumbering) -> None:
+        """Read the pages of the book and find the range of the numbering among them.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param numbering: The range, the style and the first number.
+        :type numbering: PageNumbering
+        :raises NotFoundError: If the book lacks the first or the last page.
+        :raises ReversedRangeError: If the range runs backwards.
+        """
+        self._repos = repos
+        self._numbering = numbering
+        self.pages = repos.pages.list_all()
+        self._position = {page.id: index for index, page in enumerate(self.pages)}
+        if numbering.first_page_id not in self._position:
+            raise NotFoundError(numbering.first_page_id)
+        if numbering.last_page_id not in self._position:
+            raise NotFoundError(numbering.last_page_id)
+        self._first = self._position[numbering.first_page_id]
+        self._last = self._position[numbering.last_page_id]
+        if self._first > self._last:
+            raise ReversedRangeError
+        moment = datetime.now(UTC)
+        self._make = partial(PaginationSection, created_at=moment, updated_at=moment)
+
+    def plan(self) -> NumberingPlan:
+        """Work out the sections the numbering makes and replaces, and the pages it numbers.
+
+        :returns: The plan, with nothing written.
+        :rtype: NumberingPlan
+        """
+        counted = self._counted()
+        added = self._numbering_sections()
+        # A section that starts inside the range is replaced, and a series only when it takes a kind that is skipped
+        existing = self._repos.pagination_sections.list_all()
+        removed = [section for section in existing if self._is_replaced(section)]
+        kept = [section for section in existing if section not in removed]
+        added.extend(self._after_section(kept))
+        return NumberingPlan(
+            sections=[*kept, *added],
+            removed=[section.id for section in removed],
+            added=added,
+            pages=self.pages,
+            counted=counted,
+        )
+
+    def _counted(self) -> frozenset[PageId]:
+        """Find the pages of the range that take a number.
+
+        :returns: Identifiers of the included pages of the range whose kind is not skipped.
+        :rtype: frozenset[PageId]
+        """
+        return frozenset(
+            page.id
+            for page in self.pages[self._first : self._last + 1]
+            if page.included and page.kind not in self._numbering.skip_kinds
+        )
+
+    def _numbering_sections(self) -> list[PaginationSection]:
+        """Make the section that numbers the range, and the series that leaves the skipped kinds out of it.
+
+        :returns: The sections that start at the first page of the range.
+        :rtype: list[PaginationSection]
+        """
+        numbering = self._numbering
+        added: list[PaginationSection] = [
+            self._make(
+                id=PaginationSectionId(uuid4()),
+                first_page_id=numbering.first_page_id,
+                name=NUMBERED_PAGES,
+                style=numbering.style,
+                start=numbering.start,
+                display=NumberDisplay.COUNTED if numbering.bracketed else NumberDisplay.PRINTED,
+            )
+        ]
+        if numbering.skip_kinds:
+            added.append(
+                self._make(
+                    id=PaginationSectionId(uuid4()),
+                    first_page_id=numbering.first_page_id,
+                    name=SKIPPED_KINDS,
+                    style=LabelStyle.ARABIC,
+                    display=NumberDisplay.NOT_COUNTED,
+                    kinds=numbering.skip_kinds,
+                )
+            )
+        return added
+
+    def _is_replaced(self, section: PaginationSection) -> bool:
+        """Tell whether the numbering replaces a section.
+
+        :param section: A section the book has.
+        :type section: PaginationSection
+        :returns: True if the section starts inside the range, unless it is a series that takes no skipped kind.
+        :rtype: bool
+        """
+        return self._first <= self._position.get(section.first_page_id, -1) <= self._last and (
+            not section.is_series or bool(section.kinds & self._numbering.skip_kinds)
+        )
+
+    def _after_section(self, kept: Sequence[PaginationSection]) -> list[PaginationSection]:
+        """Make the section that stops the numbering at the page after the range, unless a section starts there.
+
+        :param kept: The sections of the book the numbering does not replace.
+        :type kept: Sequence[PaginationSection]
+        :returns: The section that does not count, or nothing if the range ends the book or a section starts there.
+        :rtype: list[PaginationSection]
+        """
+        if self._last + 1 >= len(self.pages):
+            return []
+        after = self.pages[self._last + 1]
+        if any(section.first_page_id == after.id and not section.is_series for section in kept):
+            return []
+        return [
+            self._make(
+                id=PaginationSectionId(uuid4()),
+                first_page_id=after.id,
+                name=AFTER_NUMBERED_PAGES,
+                style=LabelStyle.NONE,
+                display=NumberDisplay.NOT_COUNTED,
+            )
+        ]
+
+
 class PaginationService:
     """Lists, makes, changes and removes the pagination sections of the acting account's books."""
 
@@ -298,71 +428,7 @@ class PaginationService:
         :raises NotFoundError: If the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         """
-        pages = repos.pages.list_all()
-        position = {page.id: index for index, page in enumerate(pages)}
-        if numbering.first_page_id not in position:
-            raise NotFoundError(numbering.first_page_id)
-        if numbering.last_page_id not in position:
-            raise NotFoundError(numbering.last_page_id)
-        first, last = position[numbering.first_page_id], position[numbering.last_page_id]
-        if first > last:
-            raise ReversedRangeError
-        counted = frozenset(
-            page.id for page in pages[first : last + 1] if page.included and page.kind not in numbering.skip_kinds
-        )
-
-        moment = datetime.now(UTC)
-        make = partial(PaginationSection, created_at=moment, updated_at=moment)
-        added = [
-            make(
-                id=PaginationSectionId(uuid4()),
-                first_page_id=numbering.first_page_id,
-                name=NUMBERED_PAGES,
-                style=numbering.style,
-                start=numbering.start,
-                display=NumberDisplay.COUNTED if numbering.bracketed else NumberDisplay.PRINTED,
-            )
-        ]
-        if numbering.skip_kinds:
-            added.append(
-                make(
-                    id=PaginationSectionId(uuid4()),
-                    first_page_id=numbering.first_page_id,
-                    name=SKIPPED_KINDS,
-                    style=LabelStyle.ARABIC,
-                    display=NumberDisplay.NOT_COUNTED,
-                    kinds=numbering.skip_kinds,
-                )
-            )
-
-        # A section that starts inside the range is replaced, and a series only when it takes a kind that is skipped
-        existing = repos.pagination_sections.list_all()
-        removed = [
-            section
-            for section in existing
-            if first <= position.get(section.first_page_id, -1) <= last
-            and (not section.is_series or section.kinds & numbering.skip_kinds)
-        ]
-        kept = [section for section in existing if section not in removed]
-        if last + 1 < len(pages) and not any(
-            section.first_page_id == pages[last + 1].id and not section.is_series for section in kept
-        ):
-            added.append(
-                make(
-                    id=PaginationSectionId(uuid4()),
-                    first_page_id=pages[last + 1].id,
-                    name=AFTER_NUMBERED_PAGES,
-                    style=LabelStyle.NONE,
-                    display=NumberDisplay.NOT_COUNTED,
-                )
-            )
-        return NumberingPlan(
-            sections=[*kept, *added],
-            removed=[section.id for section in removed],
-            added=added,
-            pages=pages,
-            counted=counted,
-        )
+        return PlanWork(repos=repos, numbering=numbering).plan()
 
     @staticmethod
     def _require_no_clash(repos: BookRepositories, section: PaginationSection) -> None:

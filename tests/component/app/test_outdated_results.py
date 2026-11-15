@@ -21,7 +21,7 @@ from tests.harness.builders.domain import (
 )
 from tests.harness.builders.processing import ProcessingFakesProvider
 from tests.harness.builders.seeding import store_book
-from tests.harness.fakes.jobs import JobFakes, JobFakesProvider
+from tests.harness.fakes.jobs import JobFakesProvider
 from tests.harness.fakes.processors import FakeProcessor
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
-    from tests.harness.fakes.jobs import RecordingEventBus
+    from tests.harness.fakes.jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 
@@ -65,18 +65,6 @@ class Book(NamedTuple):
     page: Page
     versions: tuple[PageVersion, PageVersion]
     records: tuple[PageStage, PageStage]
-
-
-@pytest.fixture
-def fx_fakes(fx_book_parts: RecordingEventBus) -> JobFakes:
-    """Build the adapters the application runs on besides its database.
-
-    :param fx_book_parts: The recording bus registered as the event channel of every book of the test.
-    :type fx_book_parts: RecordingEventBus
-    :returns: Fakes with nothing published.
-    :rtype: JobFakes
-    """
-    return JobFakes(events=fx_book_parts)
 
 
 @pytest.fixture

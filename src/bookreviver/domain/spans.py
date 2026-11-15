@@ -37,6 +37,8 @@ class SpanAttribute(LabeledStrEnum):
     )
     HOLD_MS = 'hold.ms', 'Milliseconds the work held the transaction, from BEGIN until its commit began'
     COMMIT_MS = 'commit.ms', 'Milliseconds the commit of the block took'
+    SQL_COUNT = 'sql.count', 'Number of SQL statements the work of the block ran'
+    SQL_MS = 'sql.ms', 'Milliseconds the statements of the work spent in SQLite'
     LAG_MS = 'lag.ms', 'Milliseconds a sleep of the probe overran its interval'
 
 
