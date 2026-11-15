@@ -2,10 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { row } from '@/features/pages/fixtures';
 import { processing, processor, recipe, step } from '@/features/processing/fixtures';
 import { draftOf } from '@/features/processing/recipe';
-import { row } from '@/features/workspace/fixtures';
-import { StepCatalogue } from '@/features/workspace/StepCatalogue';
+import { StepCatalogue } from '@/features/processing/StepCatalogue';
 import { MESSAGES } from '@/shared/messages';
 
 /**

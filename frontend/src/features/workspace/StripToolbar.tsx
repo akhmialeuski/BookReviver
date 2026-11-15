@@ -1,7 +1,7 @@
 import { LayoutGridIcon, ListIcon, TriangleAlertIcon } from 'lucide-react';
 import type { RecipeKind, StepFlag } from '@/api';
-import { PageFilter } from '@/features/workspace/params';
-import type { PageListFilters } from '@/features/workspace/strip';
+import { PageFilter } from '@/features/processing/stageParams';
+import type { PageListFilters } from '@/features/processing/strip';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 

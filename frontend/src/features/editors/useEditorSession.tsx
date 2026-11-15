@@ -2,10 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
 import { getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
-import { stepChain, stepVersion } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
 import { pictureOf } from '@/features/editors/picture';
-import { useEditChanges, useEdits } from '@/features/editors/queries';
 import {
   type EditableStep,
   editableStepsOf,
@@ -14,12 +12,13 @@ import {
 } from '@/features/editors/registry';
 import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession, StepChoice } from '@/features/editors/session';
-import type { Geometry } from '@/features/editors/shapes';
 import { type StepSettings, StepSettingsContext } from '@/features/editors/stepSettings';
 import type { PageContext } from '@/features/editors/types';
 import { useHeld } from '@/features/editors/useHeld';
 import { usePictureSize } from '@/features/editors/usePictureSize';
+import { stepChain, stepVersion } from '@/features/processing/chain';
 import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
+import { useEditChanges, useEdits } from '@/features/processing/editQueries';
 import { useUndo } from '@/features/processing/historyQueries';
 import { settingsOf } from '@/features/processing/pageSettings';
 import type { PreviewRequest } from '@/features/processing/preview';
@@ -32,11 +31,12 @@ import {
 } from '@/features/processing/queries';
 import { bodyOf, draftOf } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
+import type { Geometry } from '@/features/processing/shapes';
+import { useActiveJobs } from '@/features/processing/stageQueries';
+import type { StripItem } from '@/features/processing/strip';
 import { usePreview } from '@/features/processing/usePreview';
 import type { Processing } from '@/features/processing/useProcessing';
 import { isTypingTarget } from '@/features/viewer/keys';
-import { useActiveJobs } from '@/features/workspace/queries';
-import type { StripItem } from '@/features/workspace/strip';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';

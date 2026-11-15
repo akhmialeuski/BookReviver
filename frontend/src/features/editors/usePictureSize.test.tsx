@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Size } from '@/features/editors/shapes';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import { type ImageSource, SourceKind } from '@/features/processing/compare';
+import type { Size } from '@/features/processing/shapes';
 
 /** The size of a picture, read from the image information document of its pyramid and from nothing else. */
 

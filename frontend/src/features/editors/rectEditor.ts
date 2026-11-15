@@ -1,8 +1,8 @@
 import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { RectCanvas } from '@/features/editors/RectCanvas';
 import { rectOf } from '@/features/editors/rect';
-import { type RectShape, readRect, writeRect } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
+import { type RectShape, readRect, writeRect } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

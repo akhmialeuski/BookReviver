@@ -3,7 +3,9 @@ name = "bookreviver"
 version = "0.1.0"
 description = "Digitisation workbench for old printed books, one project per book"
 readme = "README.md"
-requires-python = ">=3.14"
+# 3.14.4 is the first release whose unittest.mock builds a spec from a class whose annotations name an import made
+# only for type checking, which every service is (https://github.com/python/cpython/issues/145754)
+requires-python = ">=3.14.4"
 
 # Every pin below is the latest release on PyPI as of 2026-09-26.
 dependencies = [

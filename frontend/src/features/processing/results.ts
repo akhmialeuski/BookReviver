@@ -1,5 +1,6 @@
 import type { RJSFSchema } from '@rjsf/utils';
 import type { PageVersionSchema } from '@/api';
+import { methodsOf } from '@/features/processing/schema';
 import {
   type MeshShape,
   type QuadShape,
@@ -10,8 +11,7 @@ import {
   readZone,
   type Size,
   type ZoneShape,
-} from '@/features/editors/shapes';
-import { methodsOf } from '@/features/processing/schema';
+} from '@/features/processing/shapes';
 
 /**
  * What a step did to a page, read from the data of its version, and the history of the results a stage has made on a

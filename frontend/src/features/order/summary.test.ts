@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { commonOf, spanOf } from '@/features/order/summary';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 describe('commonOf', () => {
   it('gives the value all the pages share', () => {

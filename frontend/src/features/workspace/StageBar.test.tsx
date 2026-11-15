@@ -15,7 +15,7 @@ import {
   listStagesApiV1BooksBookIdStagesGetOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { bookWith } from '@/features/about/fixtures';
-import { jobsOptions } from '@/features/workspace/queries';
+import { jobsOptions } from '@/features/processing/stageQueries';
 import { StageBar } from '@/features/workspace/StageBar';
 import { NARROW_QUERY } from '@/shared/hooks/useMediaQuery';
 

@@ -13,7 +13,7 @@ import {
   writeRect,
   writeRotation,
   writeSplit,
-} from '@/features/editors/shapes';
+} from '@/features/processing/shapes';
 
 /** Reading the shape of a stored edit, and writing it back as the server reads it. */
 

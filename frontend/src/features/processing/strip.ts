@@ -7,7 +7,7 @@ import type {
   StepFlag,
 } from '@/api';
 import { SourceKind, sourceOfResult } from '@/features/processing/compare';
-import { PageFilter } from '@/features/workspace/params';
+import { PageFilter } from '@/features/processing/stageParams';
 
 /**
  * The rows of the page strip: the pages of the book joined with where each stands in the open stage, and the filters

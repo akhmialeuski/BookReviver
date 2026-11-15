@@ -2,9 +2,9 @@ import { BrushCanvas } from '@/features/editors/BrushCanvas';
 import { BrushPanel } from '@/features/editors/BrushPanel';
 import { paintMask } from '@/features/editors/brush';
 import { INPUT_EDITOR } from '@/features/editors/inputEditor';
-import { type BrushShape, readBrush, writeBrush } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
+import { type BrushShape, readBrush, writeBrush } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

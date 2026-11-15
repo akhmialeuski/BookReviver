@@ -6,7 +6,7 @@ import type { SceneMapping } from '@/features/editors/mapping';
 import { HANDLE_ORDER, handlePoint, moveHandle, type RectHandle } from '@/features/editors/rect';
 import type { SceneFrame } from '@/features/editors/scene';
 import type { ShapeEditing } from '@/features/editors/shapeEditing';
-import { dashed, type Point, pairOf, type RectShape } from '@/features/editors/shapes';
+import { dashed, type Point, pairOf, type RectShape } from '@/features/processing/shapes';
 
 /**
  * The frame of the frame editor and of the margins editor: the outline of a rectangle with a handle on each corner and the

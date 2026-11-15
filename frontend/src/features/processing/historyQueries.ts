@@ -1,6 +1,5 @@
 import {
   type InfiniteData,
-  type QueryClient,
   useInfiniteQuery,
   useMutation,
   useQueryClient,
@@ -11,8 +10,7 @@ import {
   listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetInfiniteOptions,
   undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostMutation,
 } from '@/api/@tanstack/react-query.gen';
-import type * as sdk from '@/api/sdk.gen';
-import { invalidateVersions } from '@/features/books/queries';
+import { invalidatePageLayers, invalidateVersions } from '@/features/books/queries';
 
 /**
  * The history of a step on a page, the undo that takes its changes back and the clear that deletes it.
@@ -25,37 +23,6 @@ import { invalidateVersions } from '@/features/books/queries';
 
 /** How many changes the history loads at a time, which is the most the server gives a page of a list. */
 const HISTORY_PAGE_SIZE = 100;
-
-// The generated client names each query by the function that makes it, so these are checked against the client
-const HISTORY_QUERY: keyof typeof sdk =
-  'listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet';
-const SETTINGS_QUERY: keyof typeof sdk = 'listSettingsApiV1BooksBookIdPagesPageIdSettingsStageGet';
-const EDITS_QUERY: keyof typeof sdk = 'listEditsApiV1BooksBookIdPagesPageIdEditsStageGet';
-
-// What an undo and a carry-over change: the histories, the settings and the edits of the pages
-const UNDONE_QUERIES: ReadonlySet<unknown> = new Set([HISTORY_QUERY, SETTINGS_QUERY, EDITS_QUERY]);
-
-function queryIdOf(key: readonly unknown[]): unknown {
-  const head = key[0];
-  return typeof head === 'object' && head !== null && '_id' in head ? head._id : undefined;
-}
-
-/** Mark the histories of the steps out of date, so the ones on screen are read again. */
-export function invalidateHistory(queryClient: QueryClient): Promise<void> {
-  return queryClient.invalidateQueries({
-    predicate: (query) => queryIdOf(query.queryKey) === HISTORY_QUERY,
-  });
-}
-
-/**
- * Mark the settings, the edits and the histories of the pages out of date, which a change that reaches several pages
- * writes to, so the ones on screen are read again.
- */
-export function invalidatePageLayers(queryClient: QueryClient): Promise<void> {
-  return queryClient.invalidateQueries({
-    predicate: (query) => UNDONE_QUERIES.has(queryIdOf(query.queryKey)),
-  });
-}
 
 /** The changes loaded so far, the newest first, and how many the step has on the page in all. */
 interface LoadedHistory {

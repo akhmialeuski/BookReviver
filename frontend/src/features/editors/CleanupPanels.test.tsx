@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrushPanel } from '@/features/editors/BrushPanel';
 import { RegionsPanel } from '@/features/editors/RegionsPanel';
 import { newZone } from '@/features/editors/regions';
-import { ZoneMode } from '@/features/editors/shapes';
+import { ZoneMode } from '@/features/processing/shapes';
 
 /** The parts of the picture zone editor and of the brush editor in the panel. */
 

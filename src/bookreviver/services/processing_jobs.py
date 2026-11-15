@@ -8,19 +8,11 @@ board after each task, which is where the job learns that it was cancelled, so a
 and never inside one. The parameters of a job are read into the value of its kind, and a job whose parameters are not
 valid ends as failed with the reason. An error nobody expected passes to the board, which logs it and fails the job.
 
-A run goes by the pages of the stage and the steps of the recipe, which is the recipe of the kind of each page. A run
-of the whole book leaves out the pages whose result of the stage is fresh already (``RunPlan``), so a run after an
-interruption or a restart of the process makes only what is missing. The mode of the run says what it does first with
-the settings and the manual edits of the pages, which it keeps unless it was asked to take them away. A recipe with a
-step that leaves a field to the book, such as the page size, is run twice over: the pages are first taken as far as the
-step, then its plugin is asked once what the book gives, from what the step found on all of them, and the pages are run
-by it, so every page comes out of one size without a press of the button of the measure. The run reads the current
-version of the nearest earlier stage of a page, finds the versions it made before by their identifier, makes only what
-is new, and makes the last version the current one of the stage. A page that fails is recorded as failed and the job
-goes on to the next, and the job succeeds when it processed at least one page. When it ends well it queues a collection
-of the book's versions that are no longer current, behind itself, so their files go as soon as the run has replaced
-them, without the user asking. A run of the page split that made pages is followed by the detection of the content of
-the pages that have none.
+A run of a stage is the work of ``StageRunJob`` of ``services/stage_jobs.py``. A page that fails is recorded as
+failed and the job goes on to the next, and the job succeeds when it processed at least one page. When it ends well it
+queues a collection of the book's versions that are no longer current, behind itself, so their files go as soon as the
+run has replaced them, without the user asking. A run of the page split that made pages is followed by the detection
+of the content of the pages that have none.
 
 A measure of the book asks the plugins that read the whole book what their steps found on every page, and writes it
 into the parameters of those steps in every recipe that has one, which marks the pages of those recipes stale.
@@ -37,33 +29,26 @@ import logging
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
-from bookreviver.core.content import BookContent
-from bookreviver.domain.errors import DomainError, NotFoundError
+from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.images import Rendition
 from bookreviver.domain.jobs import JobEnd, JobState, StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.runs import RunOutcome
-from bookreviver.domain.spans import SpanAttribute, SpanName
 from bookreviver.domain.stages import Stage
 from bookreviver.domain.version_chains import readers_first
 from bookreviver.domain.versions import VersionState
 from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.content_detection import ContentDetector
-from bookreviver.services.run_plans import RunPlan
-from bookreviver.services.stage_runs import PreviewRun, RecipeRun
+from bookreviver.services.stage_jobs import StageRunJob
+from bookreviver.services.stage_runs import PreviewRun
 from bookreviver.services.version_clearing import VersionClearing
-from bookreviver.services.worker_group import WorkerGroup
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-
     from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+    from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.jobs import Job
-    from bookreviver.domain.pages import Page
-    from bookreviver.domain.recipes import Recipe
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
@@ -106,10 +91,7 @@ class ProcessingJobs:
         """
         self._runtime = runtime
         self._parts = parts
-        self._recipes = parts.recipes
-        self._records = parts.records
         self._measure = BookMeasure(recipes=parts.recipes, records=parts.records)
-        self._parallel_pages = runtime.parallel_pages
         self._detector = ContentDetector(runtime=runtime, records=parts.records)
         self._starter = parts.starter
         self._pages = pages
@@ -128,7 +110,7 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         try:
-            outcomes = await self._run_pages(book, job, control)
+            outcomes = await StageRunJob(self._runtime, self._parts, book, job.asked(StageRun)).outcomes(control)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         done, failed = outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED)
@@ -247,134 +229,6 @@ class ProcessingJobs:
         if failed and not read:
             return JobEnd(state=JobState.FAILED, error=NO_CONTENT_DETECTED)
         return JobEnd(state=JobState.SUCCEEDED)
-
-    async def _run_pages(self, book: Book, job: Job, control: JobControl) -> list[RunOutcome]:
-        """Run the recipe of a ``run-stage`` job over its pages, a task for each step of each page.
-
-        :param book: The open book the job runs on.
-        :type book: Book
-        :param job: The running job.
-        :type job: Job
-        :param control: What the job reports through.
-        :type control: JobControl
-        :returns: What the run came to on each page it went over, in book order.
-        :rtype: list[RunOutcome]
-        :raises DomainError: If the parameters of the job are not valid, or the recipe or a page it names is gone.
-        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
-        """
-        run = job.asked(StageRun)
-        book_record = await book.read(lambda repos: BookContent(repos).record)
-        plan = RunPlan(recipes=self._recipes, book=book, run=run)
-        pages = await plan.pages()
-        executor = RecipeRun(
-            book=book, book_record=book_record, runtime=self._runtime, control=control, parts=self._parts
-        )
-        recipes = await plan.recipes()
-        # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
-        await plan.apply_mode()
-        control.plan(
-            sum(
-                executor.task_count([step for _, step in recipes[page.id].indexed_steps_through(run.through_step)])
-                for page in pages
-            )
-        )
-        measured = [
-            page for page in pages if self._recipes.leaves_to_book(recipes[page.id], through_step=run.through_step)
-        ]
-        if measured:
-            await self._measure_book(executor, measured, recipes, run)
-        # A split puts the right half of a spread into the book right after the left, at a place it reads from the
-        # pages round it, so the pages of the page split are cut one after the other
-        workers = WorkerGroup(1 if run.stage is Stage.PAGE_SPLIT else self._parallel_pages)
-        return await workers.run(pages, lambda page: self._run_page(book, executor, page, recipes[page.id], run))
-
-    async def _measure_book(
-        self, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
-    ) -> None:
-        """Take the pages as far as the step that reads the book, and ask its plugin what the book gives the pages.
-
-        A page that fails on the way is left for the run to fail with its reason, and is not read. Every step of the
-        pass is a task of the job, which the executor counts as it makes the versions.
-
-        :param executor: Runner of recipes of the book, which holds what the book gives the pages of a recipe.
-        :type executor: RecipeRun
-        :param pages: The pages whose recipe has a step that leaves a field to the book.
-        :type pages: Sequence[Page]
-        :param recipes: The recipe of each page.
-        :type recipes: Mapping[PageId, Recipe]
-        :param run: What the job was asked to run, whose last step the pages are taken as far as.
-        :type run: StageRun
-        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
-        """
-
-        async def measure(page: Page) -> PageVersion | None:
-            """Take one page as far as the step that reads the book, so that a fault of the page fails only the page.
-
-            :param page: The page.
-            :type page: Page
-            :returns: The version of the step on the page, or None when the page could not be taken that far.
-            :rtype: PageVersion | None
-            """
-            try:
-                return await executor.measure(page, recipes[page.id], through_step=run.through_step)
-            except Exception:
-                logger.exception('Page %s could not be taken as far as the step that reads the book', page.id)
-                return None
-
-        made: dict[RecipeId, dict[PageId, PageVersion]] = {}
-        versions = await WorkerGroup(self._parallel_pages).run(pages, measure)
-        for page, version in zip(pages, versions, strict=True):
-            if version is not None:
-                made.setdefault(recipes[page.id].id, {})[page.id] = version
-        for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
-            await executor.settle_book(recipe, made.get(recipe.id, {}), through_step=run.through_step)
-
-    async def _run_page(self, book: Book, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun) -> RunOutcome:
-        """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
-
-        A cancellation is no fault of the page: ``JobCancelledError`` is no ``Exception``, so it passes this handler and
-        the page keeps the state it had.
-
-        :param book: The open book of the job.
-        :type book: Book
-        :param executor: Runner of recipes of the book.
-        :type executor: RecipeRun
-        :param page: Page to process.
-        :type page: Page
-        :param recipe: Recipe to run.
-        :type recipe: Recipe
-        :param run: What the job was asked to run, whose confirmation and last step apply to the page.
-        :type run: StageRun
-        :returns: What the run came to. A page that was deleted while its stage ran is failed without a record, since
-                  there is no page to hold one. The outcome is also set on the ``run.page`` span of the page.
-        :rtype: RunOutcome
-        """
-        attributes = {SpanAttribute.PAGE: str(page.id), SpanAttribute.STAGE: recipe.stage}
-        with self._runtime.tracer.span(SpanName.RUN_PAGE, attributes) as span:
-            try:
-                outcome = await executor.run(page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step)
-            except Exception:
-                logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
-
-                def fail(repos: BookRepositories, _book_record: BookRecord) -> None:
-                    """Record that the stage failed on the page, unless the page was deleted meanwhile.
-
-                    :param repos: Repositories of the transaction.
-                    :type repos: BookRepositories
-                    :param _book_record: The record of the book as the change finds it, which the record does not read.
-                    :type _book_record: BookRecord
-                    """
-                    try:
-                        repos.pages.get(page.id)
-                    except NotFoundError:
-                        logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
-                        return
-                    self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
-
-                await book.change(fail)
-                outcome = RunOutcome.FAILED
-            span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
-            return outcome
 
     async def _preview(self, book: Book, job: Job, control: JobControl) -> None:
         """Run the steps of a ``preview-step`` job.

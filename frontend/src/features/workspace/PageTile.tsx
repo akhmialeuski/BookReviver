@@ -5,12 +5,12 @@ import {
   ThumbsDownIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
-import { PageThumbnail } from '@/features/pages/PageThumbnail';
+import { describeContent, markOfContent } from '@/features/processing/content';
+import { isLeftOut, isMarkedBad, type StripItem, thumbnailOf } from '@/features/processing/strip';
 import { PAGE_STATUS_TONE } from '@/features/stages/stages';
-import { describeContent, markOfContent } from '@/features/workspace/content';
-import { isLeftOut, isMarkedBad, type StripItem, thumbnailOf } from '@/features/workspace/strip';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
+import { PageThumbnail } from '@/shared/ui/page-thumbnail';
 
 /**
  * One page of the strip or of the grid: the picture of the result of the stage, the page label, the dot of the state,

@@ -3,12 +3,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema, StagePageSchema } from '@/api';
+import { page, row } from '@/features/pages/fixtures';
+import type { BarStep } from '@/features/processing/barSteps';
 import { deskew, processing, processor, recipe, step, whole } from '@/features/processing/fixtures';
 import { RunControls } from '@/features/processing/RunControls';
+import { joinRows } from '@/features/processing/strip';
 import { useStageRun } from '@/features/processing/useStageRun';
-import { page, row } from '@/features/workspace/fixtures';
-import type { BarStep } from '@/features/workspace/steps';
-import { joinRows } from '@/features/workspace/strip';
 
 /**
  * The foot of the panel: what it counts, what its one button says, and what the run sends for each choice of its menu.

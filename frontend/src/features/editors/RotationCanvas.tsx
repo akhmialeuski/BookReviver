@@ -15,8 +15,8 @@ import {
 } from '@/features/editors/rotation';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing } from '@/features/editors/shapeEditing';
-import type { RotationShape } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
+import type { RotationShape } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

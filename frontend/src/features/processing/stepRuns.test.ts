@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { row } from '@/features/pages/fixtures';
 import { recipe, step, version } from '@/features/processing/fixtures';
 import {
   canRunThrough,
@@ -6,7 +7,6 @@ import {
   stepOfProcessor,
   versionOfStep,
 } from '@/features/processing/stepRuns';
-import { row } from '@/features/workspace/fixtures';
 
 describe('passedPages', () => {
   const rows = [

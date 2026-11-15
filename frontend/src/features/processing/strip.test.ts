@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PageVersionSchema } from '@/api';
-import { images, page, row, stepPage } from '@/features/workspace/fixtures';
-import { PageFilter } from '@/features/workspace/params';
+import { images, page, row, stepPage } from '@/features/pages/fixtures';
+import { PageFilter } from '@/features/processing/stageParams';
 import {
   applyFilter,
   applyFlag,
@@ -19,7 +19,7 @@ import {
   stripRowsOf,
   thumbnailOf,
   thumbnailsOf,
-} from '@/features/workspace/strip';
+} from '@/features/processing/strip';
 
 describe('joinRows', () => {
   it('keeps the order of the book and pairs each page with its row', () => {

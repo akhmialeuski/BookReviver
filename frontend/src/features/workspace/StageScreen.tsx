@@ -2,42 +2,27 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
 import type { PageSchema, RecipeKind, ScanSchema, Stage, StagePageSchema, StepFlag } from '@/api';
 import { bookApiV1BooksBookIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { CompareCanvas } from '@/features/editors/CompareCanvas';
 import { EDITOR_ROOM_SHARE } from '@/features/editors/scene';
 import { useEditorSession } from '@/features/editors/useEditorSession';
 import { useManifest } from '@/features/pages/manifest';
 import { pruneSelection } from '@/features/pages/selection';
-import { CompareCanvas } from '@/features/processing/CompareCanvas';
+import { barStepsOf, defaultStepOf, hasStepBar } from '@/features/processing/barSteps';
 import { ContentTypeMenu } from '@/features/processing/ContentTypeMenu';
 import { comparePairOf, placementOf, sameImage } from '@/features/processing/compare';
-import { ProcessingPanel } from '@/features/processing/ProcessingPanel';
 import { useAllScans } from '@/features/processing/queries';
 import { RecipePicker } from '@/features/processing/RecipePicker';
 import { reasonWithStep } from '@/features/processing/reasons';
 import { StageBanners } from '@/features/processing/StageBanners';
+import { StepCatalogue } from '@/features/processing/StepCatalogue';
 import { wideScanIds } from '@/features/processing/split';
-import { useProcessing } from '@/features/processing/useProcessing';
-import { stageBefore } from '@/features/stages/stages';
-import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
-import { FitMode, type StagePage } from '@/features/viewer/stage';
-import { usePageNavigation } from '@/features/viewer/usePageNavigation';
-import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
-import { GridOverlay } from '@/features/workspace/GridOverlay';
-import { useGrid, useGridKey } from '@/features/workspace/grid';
-import { CompareMode, PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
-import { useStageRows, useStageSummaries, useStepRows } from '@/features/workspace/queries';
-import { StageGrid } from '@/features/workspace/StageGrid';
-import { StagePanel } from '@/features/workspace/StagePanel';
-import { StageStrip } from '@/features/workspace/StageStrip';
-import { StageWorkspace } from '@/features/workspace/StageWorkspace';
-import { StepBar } from '@/features/workspace/StepBar';
-import { StepCatalogue } from '@/features/workspace/StepCatalogue';
-import { StepsWindow } from '@/features/workspace/StepsWindow';
 import {
-  type ClickModifiers,
-  type SelectionState,
-  selectionAfterClick,
-} from '@/features/workspace/selection';
-import { barStepsOf, defaultStepOf, hasStepBar } from '@/features/workspace/steps';
+  CompareMode,
+  PageFilter,
+  type StageSearch,
+  ViewMode,
+} from '@/features/processing/stageParams';
+import { useStageRows, useStageSummaries, useStepRows } from '@/features/processing/stageQueries';
 import {
   applyFilter,
   applyFlag,
@@ -56,11 +41,31 @@ import {
   type StripItem,
   stopOptions,
   stripRowsOf,
-} from '@/features/workspace/strip';
+} from '@/features/processing/strip';
+import { useProcessing } from '@/features/processing/useProcessing';
+import { useStepWorkspace } from '@/features/processing/useStepWorkspace';
+import { stageBefore } from '@/features/stages/stages';
+import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
+import { FitMode, type StagePage } from '@/features/viewer/stage';
+import { usePageNavigation } from '@/features/viewer/usePageNavigation';
+import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
+import { GridOverlay } from '@/features/workspace/GridOverlay';
+import { useGrid, useGridKey } from '@/features/workspace/grid';
+import { ProcessingPanel } from '@/features/workspace/ProcessingPanel';
+import { StageGrid } from '@/features/workspace/StageGrid';
+import { StageStrip } from '@/features/workspace/StageStrip';
+import { StageWorkspace } from '@/features/workspace/StageWorkspace';
+import { StepBar } from '@/features/workspace/StepBar';
+import { StepsWindow } from '@/features/workspace/StepsWindow';
+import {
+  type ClickModifiers,
+  type SelectionState,
+  selectionAfterClick,
+} from '@/features/workspace/selection';
 import { useCloseRemovedStep } from '@/features/workspace/useCloseRemovedStep';
-import { useStepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
+import { StagePanel } from '@/shared/panel/StagePanel';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**

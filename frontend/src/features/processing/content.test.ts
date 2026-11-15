@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { page } from '@/features/pages/fixtures';
 import {
   ContentMark,
   describeContent,
   markOfContent,
   pagesToChange,
-} from '@/features/workspace/content';
-import { page } from '@/features/workspace/fixtures';
+} from '@/features/processing/content';
 
 describe('markOfContent', () => {
   it('gives the mark of the pages of text to text, and the mark of the pictures to both pictures', () => {

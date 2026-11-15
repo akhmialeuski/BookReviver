@@ -1,10 +1,10 @@
 import type { StagePageSchema } from '@/api';
 import { draftIdAt } from '@/features/processing/recipe';
+import { StepCatalogue } from '@/features/processing/StepCatalogue';
 import { StepList, type StepProgress } from '@/features/processing/StepList';
 import { passedPages } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
-import { StepCatalogue } from '@/features/workspace/StepCatalogue';
 import { MESSAGES } from '@/shared/messages';
 
 /**

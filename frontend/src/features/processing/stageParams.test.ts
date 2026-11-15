@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CompareMode, PageFilter, parseStageSearch, ViewMode } from '@/features/workspace/params';
+import {
+  CompareMode,
+  PageFilter,
+  parseStageSearch,
+  ViewMode,
+} from '@/features/processing/stageParams';
 
 describe('parseStageSearch', () => {
   it('reads a complete address', () => {

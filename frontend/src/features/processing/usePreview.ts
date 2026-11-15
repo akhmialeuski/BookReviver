@@ -17,7 +17,7 @@ import {
   previewKey,
 } from '@/features/processing/preview';
 import { usePreviewStep } from '@/features/processing/queries';
-import { useActiveJobs } from '@/features/workspace/queries';
+import { useActiveJobs } from '@/features/processing/stageQueries';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatRuns, pageRunsOf, resolutionOf } from '@/features/import/facts';
 import { scan } from '@/features/import/fixtures';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 describe('pageRunsOf', () => {
   it('counts the places from 1 and joins neighbours into one run', () => {

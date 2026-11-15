@@ -1,5 +1,5 @@
 import type { ContentType } from '@/api';
-import type { StripItem } from '@/features/workspace/strip';
+import type { StripItem } from '@/features/processing/strip';
 
 /**
  * The pages a run of a stage goes over, and the counts the menu of the run shows.

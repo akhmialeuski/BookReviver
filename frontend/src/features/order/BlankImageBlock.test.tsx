@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema } from '@/api';
 import { BlankImageBlock } from '@/features/order/BlankImageBlock';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 import { ProblemError } from '@/shared/http/problem';
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { browserStorage } from '@/features/workspace/storage';
+import { browserStorage } from '@/shared/lib/storage';
 
 const BLOCKED_STORAGE = {
   getItem: () => {

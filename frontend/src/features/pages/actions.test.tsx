@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageCreate, PageSchema } from '@/api';
 import { applyBookEvent, BURST_DELAY_MS, EventName } from '@/features/books/events';
 import { useCreatePages, useUpdatePages } from '@/features/pages/actions';
+import { page } from '@/features/pages/fixtures';
 import { manifestOptions } from '@/features/pages/manifest';
-import { page } from '@/features/workspace/fixtures';
 
 /**
  * The cache of the manifest while a change of pages is applied to it before the server answers.

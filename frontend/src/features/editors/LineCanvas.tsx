@@ -4,8 +4,8 @@ import { HANDLE_STYLE } from '@/features/editors/handles';
 import { crossingX, LineEnd, moveEnd, nudgeLine } from '@/features/editors/line';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing, widthValue } from '@/features/editors/shapeEditing';
-import { type LineShape, type Point, pairOf } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
+import { type LineShape, type Point, pairOf } from '@/features/processing/shapes';
 import { isSplit, pagesOfScan } from '@/features/processing/split';
 import { MESSAGES } from '@/shared/messages';
 

@@ -3,6 +3,7 @@ import { ActivityIcon, AlertCircleIcon, CheckCircle2Icon, Loader2Icon, XIcon } f
 import { useState } from 'react';
 import type { JobSchema } from '@/api';
 import { cancelJobApiV1BooksBookIdJobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
+import { useActiveJobs, useRecentJobs } from '@/features/processing/stageQueries';
 import {
   formatTime,
   isStoppable,
@@ -10,7 +11,6 @@ import {
   jobMoment,
   latestActiveJob,
 } from '@/features/workspace/jobs';
-import { useActiveJobs, useRecentJobs } from '@/features/workspace/queries';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';

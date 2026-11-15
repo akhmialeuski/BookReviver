@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { row, stepPage } from '@/features/pages/fixtures';
 import {
   clampDivider,
   clipWidth,
@@ -12,7 +13,6 @@ import {
   sourceOfResult,
 } from '@/features/processing/compare';
 import { version } from '@/features/processing/fixtures';
-import { row, stepPage } from '@/features/workspace/fixtures';
 
 describe('sourceOfResult', () => {
   it('draws a result from its pyramid once the tiles are cut', () => {

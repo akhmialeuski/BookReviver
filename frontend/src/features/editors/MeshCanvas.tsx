@@ -7,8 +7,8 @@ import { curvesOf, GRID_ROWS, gridOf, moveNode } from '@/features/editors/mesh';
 import { useMoreControl } from '@/features/editors/moreControl';
 import { useSceneFrame } from '@/features/editors/scene';
 import { useShapeEditing } from '@/features/editors/shapeEditing';
-import { type MeshShape, pairOf } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
+import { type MeshShape, pairOf } from '@/features/processing/shapes';
 import { MESSAGES } from '@/shared/messages';
 
 /**

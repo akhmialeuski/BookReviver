@@ -2,12 +2,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import type { BookSchema, PageSchema } from '@/api';
 import { pageApiV1BooksBookIdPagesPageIdGetOptions } from '@/api/@tanstack/react-query.gen';
-import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { nextStageOf, progressSegments } from '@/features/stages/progress';
 import { STAGE_STATUS_TONE } from '@/features/stages/stages';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Card } from '@/shared/ui/card';
+import { PageThumbnail } from '@/shared/ui/page-thumbnail';
 
 /**
  * One book of the library: its cover, title and author, the ten stages as a bar, and the stage it goes to next.

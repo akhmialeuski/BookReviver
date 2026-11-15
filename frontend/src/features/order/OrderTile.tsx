@@ -5,10 +5,10 @@ import type { PageSchema } from '@/api';
 import type { SectionSpan } from '@/features/order/sections';
 import { sectionName } from '@/features/order/sections';
 import { AnchorSide } from '@/features/pages/order';
-import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
+import { PageThumbnail } from '@/shared/ui/page-thumbnail';
 
 /**
  * One page of the Order grid: its picture, printed number, kind and place in the book, which a click selects and a

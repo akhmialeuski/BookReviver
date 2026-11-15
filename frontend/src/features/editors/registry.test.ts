@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeEdit, editableStepsOf, editorOf, hasEditor } from '@/features/editors/registry';
-import type { EditableKind, Geometry } from '@/features/editors/shapes';
 import { Picture } from '@/features/editors/types';
+import { page, row } from '@/features/pages/fixtures';
 import {
   autoSplit,
   deskew,
@@ -12,7 +12,7 @@ import {
   step,
 } from '@/features/processing/fixtures';
 import { readResult, sourceSize } from '@/features/processing/results';
-import { page, row } from '@/features/workspace/fixtures';
+import type { EditableKind, Geometry } from '@/features/processing/shapes';
 
 /** The registry of page editors: which kinds have a component, and what each one is built to do. */
 

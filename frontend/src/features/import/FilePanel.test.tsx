@@ -14,7 +14,7 @@ import { bookWith } from '@/features/about/fixtures';
 import { FilePanel } from '@/features/import/FilePanel';
 import { scan, source } from '@/features/import/fixtures';
 import type { ImportedSource } from '@/features/import/queries';
-import { page } from '@/features/workspace/fixtures';
+import { page } from '@/features/pages/fixtures';
 
 /**
  * The panel of a file: its facts, what became of its pages, the box of what the file says about the book, and the two

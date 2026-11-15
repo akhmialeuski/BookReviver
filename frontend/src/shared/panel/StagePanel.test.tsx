@@ -1,9 +1,9 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HistoryFrame } from '@/features/workspace/HistoryFrame';
-import { HISTORY_OPEN_KEY } from '@/features/workspace/historyOpen';
-import { StagePanel } from '@/features/workspace/StagePanel';
+import { HistoryFrame } from '@/shared/panel/HistoryFrame';
+import { HISTORY_OPEN_KEY } from '@/shared/panel/historyOpen';
+import { StagePanel } from '@/shared/panel/StagePanel';
 
 /**
  * The layout of the panel of a stage: the slots in one fixed order, an empty slot left out, every setting in one frame the

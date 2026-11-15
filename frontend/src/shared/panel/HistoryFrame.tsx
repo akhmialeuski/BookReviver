@@ -1,8 +1,8 @@
 import { ChevronDownIcon, ClockIcon } from 'lucide-react';
-import { useHistoryOpen } from '@/features/workspace/historyOpen';
-import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
+import { useHistoryOpen } from '@/shared/panel/historyOpen';
+import { PanelHeading } from '@/shared/panel/PanelHeading';
 import { Badge } from '@/shared/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible';
 

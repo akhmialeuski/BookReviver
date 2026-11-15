@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { draftOf, newSectionDraft, sectionBody } from '@/features/order/sectionDraft';
-import { section } from '@/features/workspace/fixtures';
+import { section } from '@/features/pages/fixtures';
 
 /** The form of a section and the body the server takes for it. */
 
