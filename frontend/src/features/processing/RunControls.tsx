@@ -104,7 +104,7 @@ export function RunControls({
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [pageKey, setPageKey] = useState<string>(RunScope.Attention);
-  const [through, setThrough] = useState<Through>(Through.Stage);
+  const [through, setThrough] = useState<Through>(Through.Open);
   const [ownMode, setOwnMode] = useState<OwnMode>('keep');
 
   // The pages, each with a key the radio group holds, since a group of pages has no scope of its own
@@ -117,13 +117,17 @@ export function RunControls({
     pages.find((entry) => entry.key === pageKey) ??
     pages.find((entry) => entry.scope === RunScope.Attention);
 
-  // How far the run goes: up to the step open in the bar or the list of the recipe, or through the last step that is on
+  // How far the run goes: up to the step open in the bar or the list of the recipe, which is the default, or through
+  // the last step that is on. A step open at or after the last one that is on runs the whole stage
   const steps = recipe?.steps ?? [];
   const draftIndex = processing.steps.findIndex((step) => step.id === processing.openId);
   const openIndex = openStep?.index ?? (draftIndex < 0 ? undefined : draftIndex);
   const lastIndex = steps.findLastIndex((step) => step.enabled);
   const canStopAtOpen =
-    openIndex !== undefined && steps.length > 1 && canRunThrough(steps, openIndex);
+    openIndex !== undefined &&
+    openIndex < lastIndex &&
+    steps.length > 1 &&
+    canRunThrough(steps, openIndex);
   const throughIndex = through === Through.Open && canStopAtOpen ? openIndex : undefined;
   const throughStepId = throughIndex === undefined ? undefined : steps[throughIndex]?.step_id;
   const titleOf = (index: number | undefined): string => {

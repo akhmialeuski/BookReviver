@@ -192,7 +192,9 @@ def _blank_page(order_key: str) -> Page:
     return evolve(make_page(order_key=order_key), origin=PageOrigin.BLANK)
 
 
-async def _add_marked_head(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> PageVersionId:
+async def _add_marked_head(
+    book_id: BookId, page: Page, *, databases: LocatedBookDatabases, mark: ResultMark | None = None
+) -> PageVersionId:
     """Store a base version of a page and a version of the geometry stage marked for review.
 
     :param book_id: Identifier of the book of the page.
@@ -201,11 +203,13 @@ async def _add_marked_head(book_id: BookId, page: Page, *, databases: LocatedBoo
     :type page: Page
     :param databases: Opens the databases of the books of the test.
     :type databases: LocatedBookDatabases
+    :param mark: What the user judged of the marked version, or None.
+    :type mark: ResultMark | None
     :returns: The identifier of the marked version.
     :rtype: PageVersionId
     """
     base = make_page_version(page_id=page.id)
-    head = evolve(_version(base), review=ReviewReason.LOW_CONFIDENCE)
+    head = evolve(_version(base), review=ReviewReason.LOW_CONFIDENCE, mark=mark)
     await databases.open(book_id).change(lambda repos, _book_record: repos.page_versions.add_many([base, head]))
     return head.id
 
@@ -1277,6 +1281,34 @@ class TestPageStageRepository:
         await fx_databases().open(book_id).change(partial(_save_records, records=records))
         [tally] = await fx_databases().open(book_id).read(lambda repos: repos.page_stages.tally())
         assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
+
+    async def test_tally_leaves_out_a_marked_page_whose_result_the_user_marked_good(
+        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
+    ) -> None:
+        """Verify a good mark takes a page out of review and check, and a bad mark or none leaves it there.
+
+        :param fx_catalogue: Function opening a new catalogue database over the database of the test.
+        :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        catalogue = fx_catalogue()
+        pages = [_blank_page(f'a{number}') for number in range(3)]
+        book_id = await store_book(
+            catalogue, make_record(), *pages, owner=await fx_new_owner(), databases=fx_databases()
+        )
+        records = [
+            make_page_stage(
+                page_id=page.id,
+                head_version_id=await _add_marked_head(book_id, page, databases=fx_databases(), mark=mark),
+            )
+            for page, mark in zip(pages, (ResultMark.GOOD, ResultMark.BAD, None), strict=True)
+        ]
+        await fx_databases().open(book_id).change(partial(_save_records, records=records))
+        [tally] = await fx_databases().open(book_id).read(lambda repos: repos.page_stages.tally())
+        assert (tally.fresh, tally.review, tally.check) == (3, 2, 2)
 
     async def test_step_tally_counts_the_pages_stopped_at_each_step(
         self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory

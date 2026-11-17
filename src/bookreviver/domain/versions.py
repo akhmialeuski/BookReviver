@@ -313,6 +313,11 @@ class PageVersion:
         return VersionOrigin.HAND if self.edit_hash else VersionOrigin.AUTO
 
     @property
+    def open_review(self) -> ReviewReason | None:
+        """Why the page still asks for a look: the review of the step, unless the user marked the result good."""
+        return None if self.mark is ResultMark.GOOD else self.review
+
+    @property
     def has_image(self) -> bool:
         """Whether the version has an image and its files are ready, which makes it something a stage can read."""
         return self.renditions is not None and self.renditions.ready

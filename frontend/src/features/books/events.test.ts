@@ -113,6 +113,15 @@ describe('applyBookEvent', () => {
     expect(invalidated()).toContain('listStagePagesApiV1BooksBookIdStagesStagePagesGet');
   });
 
+  it('reads the status of the stages and the book again when a version changes, since a good mark takes a page out of the check', () => {
+    // A mark set on a result writes the version alone, and no record of a stage
+    applyBookEvent(queryClient, BOOK_ID, change(['versions']), sync);
+
+    expect(invalidated()).toEqual(
+      expect.arrayContaining(['listStagesApiV1BooksBookIdStagesGet', 'bookApiV1BooksBookIdGet']),
+    );
+  });
+
   it('marks the previews of a numbering stale when the pages change, and the count of a collection when the versions do', () => {
     const preview = [...numberingPreviewKey(BOOK_ID), { first: 'pg-1' }];
     const collectable = collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey({
