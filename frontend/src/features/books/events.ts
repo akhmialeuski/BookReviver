@@ -180,8 +180,17 @@ const READS_OF_PART: Record<BookResource, readonly BookRead[]> = {
     BookRead.BookList,
   ],
   // The rows of the stages draw the versions, the manifest shows the image of the latest one, and a collection counts
-  // the old ones
-  versions: [BookRead.Versions, BookRead.Collectable, BookRead.Pages, BookRead.StageRows],
+  // the old ones. A good mark on a version takes its page out of the check of its stage, which the status of the stage
+  // and the progress of the book follow
+  versions: [
+    BookRead.Versions,
+    BookRead.Collectable,
+    BookRead.Pages,
+    BookRead.StageSummary,
+    BookRead.StageRows,
+    BookRead.Book,
+    BookRead.BookList,
+  ],
   // The status of each stage and the next stage are part of the book, and its card in the library
   stages: [BookRead.StageSummary, BookRead.StageRows, BookRead.Book, BookRead.BookList],
   // The rows of a stage say what each step holds on a page, such as a shape set by hand, and a change of the settings

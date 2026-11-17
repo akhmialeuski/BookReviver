@@ -16,6 +16,7 @@ from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.pages import PageOrigin
 from bookreviver.domain.stage_summaries import StageTally, StepTally
 from bookreviver.domain.stages import PageStage, PageStageKey, Stage, StageState
+from bookreviver.domain.versions import ResultMark
 from bookreviver.ports.persistence import PageStageRepository
 
 if TYPE_CHECKING:
@@ -181,7 +182,11 @@ class SqlAlchemyPageStageRepository(
         :returns: One tally for each stage that has a record.
         :rtype: Sequence[StageTally]
         """
-        marked = and_(PageStageRow.state != StageState.FAILED, PageVersionRow.review.is_not(None))
+        marked = and_(
+            PageStageRow.state != StageState.FAILED,
+            PageVersionRow.review.is_not(None),
+            PageVersionRow.mark.is_distinct_from(ResultMark.GOOD),
+        )
         fresh_sum, stale_sum, failed_sum, review_sum, check_sum, partial_sum = (
             func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
             for condition in (

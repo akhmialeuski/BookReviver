@@ -213,7 +213,7 @@ class StageSummaries:
                   without a mark, or whose mark an earlier stage made, has no entry.
         :rtype: dict[PageVersionId, str]
         """
-        walking = {head.id: head for head in heads if head.review is not None}
+        walking = {head.id: head for head in heads if head.open_review is not None}
         markers: dict[PageVersionId, str] = {}
         while walking:
             inputs = {

@@ -112,7 +112,8 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
         """Count the records of every stage of the book by state, in one grouped query.
 
         Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
-        current version of its record carries a review mark and the record is not failed. A page counts toward check
+        current version of its record carries a review mark the user has not marked good, and the record is not failed,
+        which is ``PageVersion.open_review``. A page counts toward check
         when its record is stale or failed or the page is marked, once however many of these hold. A stage that no page
         has a record of has no tally.
 

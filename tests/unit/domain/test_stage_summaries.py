@@ -378,6 +378,28 @@ class TestStageRow:
         version = evolve(make_page_version(page_id=page_id), review=ReviewReason.NOT_APPLIED)
         assert StageRow(page_id=page_id, kind=RecipeKind.TEXT, head_version=version).review is ReviewReason.NOT_APPLIED
 
+    @pytest.mark.parametrize(
+        ('mark', 'left'),
+        [
+            pytest.param(None, ReviewReason.NOT_APPLIED, id='not-judged'),
+            pytest.param(ResultMark.BAD, ReviewReason.NOT_APPLIED, id='bad'),
+            pytest.param(ResultMark.GOOD, None, id='good'),
+        ],
+    )
+    def test_a_good_mark_on_the_current_version_takes_the_page_out_of_the_check(
+        self, mark: ResultMark | None, left: ReviewReason | None
+    ) -> None:
+        """Verify a page the user accepted asks for no second look, and a bad or missing mark leaves the review.
+
+        :param mark: The mark of the current version, or None.
+        :type mark: ResultMark | None
+        :param left: The review the row shows, or None.
+        :type left: ReviewReason | None
+        """
+        page_id = PageId(uuid4())
+        version = evolve(make_page_version(page_id=page_id), review=ReviewReason.NOT_APPLIED, mark=mark)
+        assert StageRow(page_id=page_id, kind=RecipeKind.TEXT, head_version=version).review is left
+
 
 def recipe_of(*steps: Step) -> Recipe:
     """Build a recipe of the geometry stage with the steps, in the order given.
@@ -553,6 +575,13 @@ class TestStepRowFlags:
         expect(StepRow.of(first.step_id, recipe, chain, None, edited=False).unsure)
         expect(not StepRow.of(second.step_id, recipe, chain, None, edited=False).unsure)
         assert_expectations()
+
+    def test_a_good_mark_on_the_version_of_the_step_clears_its_doubt(self) -> None:
+        """Verify a page the user accepted at the step that marked it is no longer unsure there."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        accepted = evolve(made_by(page_id, DESKEW_KEY, review=ReviewReason.NOT_APPLIED), mark=ResultMark.GOOD)
+        assert not StepRow.of(step.step_id, recipe_of(step), [accepted], None, edited=False).unsure
 
     def test_a_mark_an_earlier_stage_made_is_not_the_first_step_s_doubt(self) -> None:
         """Verify the first step that only carries the mark of the stage before it is not unsure of the page."""

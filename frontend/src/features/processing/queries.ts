@@ -403,8 +403,8 @@ export function useChooseVersion(bookId: string) {
  * Set the mark and the comment of a result, which are the user's notes and change nothing the step reads.
  *
  * Both are replaced together, so a caller that changes one sends the other as it is. The versions of the page are read
- * again, since every list of results shows the notes. The strip, which marks the pages whose result is marked bad,
- * follows the `book-changed` event.
+ * again, since every list of results shows the notes. The strip, which marks the pages whose result is marked bad, and
+ * the stage bar, whose check a good mark takes a page out of, follow the `book-changed` event.
  */
 export function useMarkResult(bookId: string) {
   const queryClient = useQueryClient();

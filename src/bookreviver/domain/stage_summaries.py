@@ -43,7 +43,7 @@ class StageTally:
     :ivar fresh: Pages whose current version of the stage matches its inputs.
     :ivar stale: Pages whose current version is out of date.
     :ivar failed: Pages the stage failed on.
-    :ivar review: Pages, not failed, whose current version carries a review mark.
+    :ivar review: Pages, not failed, whose current version carries a review mark the user has not marked good.
     :ivar check: Pages that are stale, failed or marked for review, each counted once.
     :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
     """
@@ -98,7 +98,7 @@ class StageSummary:
     :ivar stale: Pages whose result is out of date.
     :ivar failed: Pages the stage failed on.
     :ivar not_run: Pages the stage has not run on.
-    :ivar review: Pages, not failed, whose result carries a review mark.
+    :ivar review: Pages, not failed, whose result carries a review mark the user has not marked good.
     :ivar check: Pages the strip lists under Check: stale, failed or marked for review, each counted once.
     :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only, so the stage after
                    this one cannot read them yet.
@@ -382,7 +382,7 @@ class StepRow:
         unsure = (
             made is not None
             and not skipped
-            and made.review is not None
+            and made.open_review is not None
             and (read is None or read.review is not made.review)
         )
         return cls(
@@ -459,5 +459,5 @@ class StageRow:
 
     @property
     def review(self) -> ReviewReason | None:
-        """Why the current version asks for a second look, or None when it does not or there is no version."""
-        return None if self.head_version is None else self.head_version.review
+        """Why the current version asks for a second look, or None when it does not, was marked good, or is missing."""
+        return None if self.head_version is None else self.head_version.open_review
