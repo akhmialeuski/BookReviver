@@ -498,7 +498,7 @@ describe('RunControls', () => {
         catalogue: [deskew(), whole()],
       });
 
-    it('goes through the last step of the stage by default, which sends no step', async () => {
+    it('goes through the whole stage when the last step is open, which sends no step', async () => {
       render(state(), new Set(), ITEMS, OPEN_SECOND_STEP);
 
       await start();
@@ -506,16 +506,32 @@ describe('RunControls', () => {
       expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
     });
 
-    it('stops at the step that is open when asked, naming it by its identifier', async () => {
+    it('stops at the step that is open by default, naming it by its identifier', async () => {
       render(state(), new Set(), ITEMS, { ...OPEN_SECOND_STEP, index: 0, number: 1 });
 
-      await choose('run-through-open');
       await start();
 
       expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
         page_ids: ['b', 'c'],
         through_step_id: 'id-geometry.deskew',
       });
+    });
+
+    it('goes through the whole stage when asked, though an earlier step is open', async () => {
+      render(state(), new Set(), ITEMS, { ...OPEN_SECOND_STEP, index: 0, number: 1 });
+
+      await choose('run-through-stage');
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
+    });
+
+    it('offers no stop at the open step when it is the last step that is on', async () => {
+      render(state(), new Set(), ITEMS, OPEN_SECOND_STEP);
+
+      await openMenu();
+
+      expect(document.body.querySelector('[data-testid="run-through-open"]')).toBeNull();
     });
 
     it('offers nothing to choose for a recipe of one step', async () => {
