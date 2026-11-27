@@ -23,7 +23,10 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories.step_state import 
     SqlAlchemyPageStepStateRepository,
     SqlAlchemyStepValuesRepository,
 )
-from bookreviver.adapters.persistence.sqlalchemy.repositories.versions import SqlAlchemyPageVersionRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories.versions import (
+    SqlAlchemyPageVersionRepository,
+    SqlAlchemyReadPageVersionRepository,
+)
 from bookreviver.adapters.persistence.sqlalchemy.step_types import StepTypes
 from bookreviver.ports.persistence import BookRepositories
 
@@ -78,3 +81,22 @@ class SqlAlchemyBookRepositories(BookRepositories):
         self.recipes = SqlAlchemyRecipeRepository(session, order_keys)
         self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)
+
+
+class SqlAlchemyReadBookRepositories(SqlAlchemyBookRepositories):
+    """Every repository of a book bound to the session of a transaction that only reads.
+
+    They are the repositories of any transaction, but for the versions of the pages, which keep each version read by its
+    identifier for the rest of the transaction, since nothing changes it there.
+    """
+
+    def __init__(self, session: Session, *, order_keys: OrderKeys) -> None:
+        """Bind every repository of a book to ``session``, whose transaction only reads.
+
+        :param session: Session of the transaction, owned and closed by the database that runs the work.
+        :type session: Session
+        :param order_keys: The order keys that place the steps of a recipe.
+        :type order_keys: OrderKeys
+        """
+        super().__init__(session, order_keys=order_keys)
+        self.page_versions = SqlAlchemyReadPageVersionRepository(session)

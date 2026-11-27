@@ -8,8 +8,13 @@ change of domain, port or device address.
 The ``full`` image is a JPEG or a PNG, and its address names the format recorded with the scan or the page version when
 the image was written, never one worked out from the book's image policy as it is now, since a later change of the
 policy does not change the files already stored.
+
+Finding a route by its name walks every route of the application, which a list of a thousand pages with four images on
+each of several versions would do tens of thousands of times. The path of the route for a book with an empty key is
+found once and kept, and every file of the book extends it, since the route writes the key into the path as it is.
 """
 
+from functools import lru_cache
 from typing import TYPE_CHECKING, Self
 
 from bookreviver.api.route_names import RouteName
@@ -21,6 +26,7 @@ from bookreviver.domain.keys import BookKeys
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from starlette.applications import Starlette
     from starlette.requests import Request
 
     from bookreviver.domain.ids import BookId, StorageKey
@@ -38,7 +44,21 @@ def iiif_path(request: Request, book_id: BookId, key: str) -> str:
     :returns: The path of the file below the API prefix, without scheme or host.
     :rtype: str
     """
-    return str(request.app.url_path_for(RouteName.IIIF_FILE, book_id=str(book_id), key=key))
+    return f'{_book_files_path(request.app, book_id)}{key}'
+
+
+@lru_cache(maxsize=1024)
+def _book_files_path(app: Starlette, book_id: BookId) -> str:
+    """Return the path of the IIIF route for a book with an empty key, which the path of every file of the book extends.
+
+    :param app: The application, which knows the IIIF route.
+    :type app: Starlette
+    :param book_id: The book.
+    :type book_id: BookId
+    :returns: The path of the route below the API prefix with the book and an empty key, ending in a slash.
+    :rtype: str
+    """
+    return str(app.url_path_for(RouteName.IIIF_FILE, book_id=str(book_id), key=''))
 
 
 class ImagePathsSchema(ResponseModel):

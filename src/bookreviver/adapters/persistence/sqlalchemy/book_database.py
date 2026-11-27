@@ -36,7 +36,10 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import DatabaseError
 
 from bookreviver.adapters.persistence.sqlalchemy.changes import WrittenParts
-from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
+from bookreviver.adapters.persistence.sqlalchemy.repositories import (
+    SqlAlchemyBookRepositories,
+    SqlAlchemyReadBookRepositories,
+)
 from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
 from bookreviver.domain.events import BookChanged
@@ -101,7 +104,9 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :raises NoChangeOpenError: If the work writes.
         """
         async with self._books.use(self._dir_name) as database:
-            return await database.read(lambda session: work(self._repositories(session)))
+            return await database.read(
+                lambda session: work(SqlAlchemyReadBookRepositories(session, order_keys=self._order_keys))
+            )
 
     @override
     async def change[T](self, work: Callable[[BookRepositories, BookRecord], T]) -> T:
