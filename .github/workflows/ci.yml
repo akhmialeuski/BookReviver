@@ -1,0 +1,150 @@
+# The checks of every pull request and of every push to main: the pre-commit gate, pytest under the crap gate, the
+# frontend checks with Vitest, and the Playwright scenarios against the real backend. Each job runs the commands that
+# CLAUDE.md names, so a change of the dependencies or of the configuration of a tool needs no change here.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# A new push to a branch cancels the run of the push before it, which nobody reads any more
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The release of the uv-sync hook in .pre-commit-config.yaml, so CI and the hooks resolve the lock file alike
+  UV_VERSION: 0.12.9
+  # Every job syncs the environment once and uv run keeps it as it is, so no run removes what the sync installed
+  UV_NO_SYNC: '1'
+  # The release of Node the frontend is checked with, one that package.json allows
+  NODE_VERSION: 24
+  FORCE_COLOR: '1'
+
+jobs:
+  gate:
+    name: Gate (pre-commit, OpenAPI schema)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      # Every extra and every group, whatever pyproject.toml declares, since the type checkers resolve every plugin
+      - run: uv sync --locked --all-extras --all-groups
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: pre-commit
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+      - name: The committed OpenAPI schema matches the routes
+        run: |
+          uv run bookreviver-openapi
+          git diff --exit-code -- docs/openapi.json
+
+  pytest:
+    name: pytest and the crap gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The changed-line coverage compares the branch with its base, so the history of both is needed
+          fetch-depth: 0
+      - name: System packages (DjVuLibre)
+        run: sudo scripts/install-system-deps.sh
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-extras --all-groups
+      - name: Tests, CRAP per function and changed-line coverage
+        env:
+          # The base of the pull request, or main itself for a push, where no line has changed
+          CRAP_GATE_BASE: origin/${{ github.base_ref || github.event.repository.default_branch }}
+        run: bash tools/crap-gate.sh
+      - name: Upload the coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            coverage.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Frontend (Biome, tsc, generated client, Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Biome
+        run: npm run lint
+      - name: TypeScript
+        run: npm run typecheck
+      - name: The generated client matches the committed OpenAPI schema
+        run: |
+          npm run generate
+          git diff --exit-code -- src/api
+          test -z "$(git status --porcelain -- src/api)"
+      - name: Vitest
+        run: npm run test
+
+  e2e:
+    name: Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: System packages (DjVuLibre)
+        run: sudo scripts/install-system-deps.sh
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-extras --all-groups
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm --prefix frontend ci
+      - name: Chromium of Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Build, then the scenarios against the backend
+        # The HTML report beside the list one, so a failure can be read with its trace and its screenshot
+        run: npm --prefix frontend run e2e -- --reporter=list,html
+      - name: Upload the report, the traces and the screenshots
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: playwright
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+            frontend/.e2e-data/server.log
+          if-no-files-found: ignore
+          retention-days: 14
