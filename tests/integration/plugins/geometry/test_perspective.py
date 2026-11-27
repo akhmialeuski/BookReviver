@@ -1,7 +1,4 @@
-"""Tests for the geometry.perspective processor, on sheets drawn for the tests and on two public-domain book scans.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the geometry.perspective processor, on sheets drawn for the tests and on two public-domain book scans."""
 
 from pathlib import Path
 from typing import TYPE_CHECKING

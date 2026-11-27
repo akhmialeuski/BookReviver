@@ -7,9 +7,11 @@ readme = "README.md"
 # only for type checking, which every service is (https://github.com/python/cpython/issues/145754)
 requires-python = ">=3.14.4"
 
-# Every pin below is the latest release on PyPI as of 2026-09-26.
+# Every pin below is the latest release on PyPI as of 2026-09-26, but for the packages the code imports that came only
+# through another dependency or through the optional group cv (numpy, OpenCV, onnxruntime, doxapy, httpx, pydantic,
+# PyJWT and starlette), which are pinned to the release uv.lock held when they were declared. A package the code imports
+# is declared here, even when a dependency brings it, so an upgrade of that dependency cannot take it away
 dependencies = [
-    # Runtime dependencies
     "advanced-alchemy==1.11.0",
     "aiosmtplib==5.1.3",
     "alembic==1.20.0",
@@ -18,35 +20,34 @@ dependencies = [
     "cryptography==50.0.1",
     "defusedxml==0.7.1",
     "dishka==1.10.1",
+    # The local thresholds of the Doxa framework, which the step cleanup.binarize computes its black and white with
+    "doxapy==0.9.9",
     "fastapi[standard-no-fastapi-cloud-cli]==0.141.1",
     "fastapi-pagination==0.16.0",
     "fastapi-problem==0.12.1",
     "fastapi-users[oauth]==15.0.5",
     "fractional-indexing==0.1.3",
+    # Downloads the UVDoc model of geometry.dewarp the first time it is used
+    "httpx==0.28.1",
     "httpx-oauth==0.17.0",
+    # The arrays every built-in plugin but the base ones reads, computes and writes a page as
+    "numpy==2.5.3",
+    # Runs the UVDoc model of geometry.dewarp on the CPU
+    "onnxruntime==1.30.0",
+    # Most built-in plugins of the stages split, pages, geometry and cleanup are built on it
+    "opencv-python-headless==5.0.0.93",
     "opentelemetry-api==1.45.1",
     "opentelemetry-sdk==1.45.1",
     "pillow==12.3.0",
+    "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
+    # The errors of the tokens fastapi-users signs, which the sign-in catches
+    "pyjwt==2.15.0",
     "pymupdf==1.28.2",
     "pyvips[binary]==3.2.0",
     "slowapi==0.1.10",
     "sqlalchemy==2.1.4",
-    # Dev and test dependencies
-    "delayed-assert==0.4.2",
-    "httpx==0.28.1",
-    "import-linter==2.15",
-    "pre-commit==4.6.2",
-    "pytest==9.1.1",
-    "pytest-cov==7.1.0",
-    "pytest-xdist==3.8.0",
-    # UV build backend
-    "uv_build==0.12.19",
-    # Linters and type checkers
-    "mypy==2.3.1",
-    "pyrefly==1.4.0",
-    "ruff==0.16.9",
-    "ty==0.0.84",
+    "starlette==1.7.0",
 ]
 
 [project.scripts]
@@ -75,13 +76,21 @@ bookreviver-trace-report = "bookreviver.app.trace_report:main"
 "cleanup.eraser" = "bookreviver.plugins.cleanup.eraser:Eraser"
 "cleanup.thickness" = "bookreviver.plugins.cleanup.thickness:Thickness"
 
-[project.optional-dependencies]
-cv = [
-    "opencv-python-headless>=5.0.0.93",
-    # Runs the UVDoc model of geometry.dewarp on the CPU
-    "onnxruntime>=1.23.0",
-    # The local thresholds of the Doxa framework, which the step cleanup.binarize computes its black and white with
-    "doxapy>=0.9.9",
+# What develops and checks the project, which uv installs with the project and leaves out of the package. The build
+# backend uv_build is no dependency at all: [build-system] names it, and the build installs it on its own
+[dependency-groups]
+dev = [
+    "delayed-assert==0.4.2",
+    "import-linter==2.15",
+    "pre-commit==4.6.2",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "pytest-xdist==3.8.0",
+    # Linters and type checkers
+    "mypy==2.3.1",
+    "pyrefly==1.4.0",
+    "ruff==0.16.9",
+    "ty==0.0.84",
 ]
 
 [tool.fastapi]

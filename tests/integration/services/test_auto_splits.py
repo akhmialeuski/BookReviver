@@ -1,7 +1,4 @@
-"""Tests for the automatic split of a book and the choice of one page or two, with the real OpenCV plugin.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the automatic split of a book and the choice of one page or two, with the real OpenCV plugin."""
 
 from typing import TYPE_CHECKING
 

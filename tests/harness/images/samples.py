@@ -2,7 +2,7 @@
 
 A page of text is drawn as lines of black blocks, the words, on white paper, which is what the projection of the ink on
 the rows of a page cares about. A spread is two such pages side by side with a dark strip between them, the gutter. The
-images are made with Pillow alone, so a test module that only builds them runs without OpenCV.
+images are made with Pillow alone.
 """
 
 import io
@@ -14,8 +14,6 @@ from PIL import Image, ImageChops, ImageDraw
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Why the tests of the OpenCV plugins are skipped on a machine that lacks it
-CV_MISSING: str = 'OpenCV is not installed; install the optional group with `uv sync --extra cv`.'
 PAPER: int = 255
 INK: int = 0
 LINE_PITCH_PX: int = 28

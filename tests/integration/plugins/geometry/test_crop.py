@@ -1,11 +1,8 @@
-"""Tests for the geometry.crop processor, on pages drawn for the tests and on two public-domain book scans.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the geometry.crop processor, on pages drawn for the tests and on two public-domain book scans."""
 
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -20,9 +17,10 @@ from bookreviver.domain.sides import SheetEdge
 from bookreviver.domain.stages import ReviewReason, Stage
 from bookreviver.domain.step_settings import Binarization, CropMethod
 from bookreviver.domain.versions import VersionData
+from bookreviver.plugins.geometry.crop import CropParams, FrameSearch
 from bookreviver.ports.processing import StepInput
 from tests.harness.images.runner import run_on
-from tests.harness.images.samples import CV_MISSING, LINE_PITCH_PX, PAPER, save, text_page
+from tests.harness.images.samples import LINE_PITCH_PX, PAPER, save, text_page
 from tests.harness.images.scans import SCANS_DIR
 from tests.harness.images.synthetic import SHEET_SIZE_PX, draw_sheet
 
@@ -33,7 +31,6 @@ if TYPE_CHECKING:
 
     from bookreviver.core.plugins import Processor
     from bookreviver.domain.metadata import MetadataMap
-    from bookreviver.plugins.geometry.crop import FrameSearch
 
 SCAN_ON_BINDING: Path = SCANS_DIR / 'book_scan_on_binding.jpg'
 CLEAN_PAGE: Path = SCANS_DIR / 'book_clean_page.jpg'
@@ -189,13 +186,12 @@ def text_box() -> tuple[int, int, int, int]:
 
 @pytest.fixture
 def fx_frame_search() -> Callable[..., FrameSearch]:
-    """Offer a builder of the search of the content frame, or skip the test where OpenCV is not installed.
+    """Offer a builder of the search of the content frame.
 
     :returns: A function that builds a ``FrameSearch`` with the default parameters of the step, from the samples of a
               page and the sides of the sheet that lie on the edge of the scan.
     :rtype: Callable[..., FrameSearch]
     """
-    crop = pytest.importorskip('bookreviver.plugins.geometry.crop', reason=CV_MISSING)
 
     def build(image: NDArray[np.uint8], cut_edges: frozenset[SheetEdge]) -> FrameSearch:
         """Build a search of the frame.
@@ -207,7 +203,7 @@ def fx_frame_search() -> Callable[..., FrameSearch]:
         :returns: The search.
         :rtype: FrameSearch
         """
-        return cast('FrameSearch', crop.FrameSearch(image, crop.CropParams(), cut_edges))
+        return FrameSearch(image, CropParams(), cut_edges)
 
     return build
 

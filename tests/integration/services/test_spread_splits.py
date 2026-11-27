@@ -1,7 +1,4 @@
-"""Tests for splitting a scan into the two pages of a spread, and undoing the split, with the real OpenCV plugin.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for splitting a scan into the two pages of a spread, and undoing the split, with the real OpenCV plugin."""
 
 import io
 from functools import partial

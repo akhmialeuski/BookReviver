@@ -93,7 +93,7 @@ class ContentDetector:
         :raises JobCancelledError: If the job was cancelled, which stops it between two pages.
         """
         detection = job.asked(ContentDetection)
-        # A machine without OpenCV offers no such processor, and then the kind of a page is all that says what it shows
+        # A catalogue without such a processor leaves the kind of a page as all that says what it shows
         if all(spec.role is not ProcessorRole.CONTENT_PROBE for spec in self.processors.specs()):
             return 0, 0
         return await DetectionWork(self, book, detection).run(control)

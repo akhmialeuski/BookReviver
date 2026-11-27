@@ -15,7 +15,7 @@ the gutter, does not pull the line away from the rest. The slant of the line is 
 The confidence of a cut is the product of two numbers: the share of the strips whose point lies near the line, and the
 strength of the gutter, which is the depth of the shadow or the width of the ink-free run as a share of the band.
 
-The module depends on OpenCV and NumPy alone and lives in the optional group ``bookreviver[cv]``.
+The module depends on OpenCV and NumPy alone.
 """
 
 import math

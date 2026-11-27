@@ -40,8 +40,8 @@ class ProcessorRole(LabeledStrEnum):
         """Return the roles the application cannot work without, which the base plugins that are always installed fill.
 
         A page has no image until the processor of one of them has made its base version, so an application without
-        them refuses to start. The probe of the content of a page is not one of them: it needs OpenCV, and a machine
-        that has none tells what a page shows by the kind of the page alone.
+        them refuses to start. The probe of the content of a page is not one of them: a catalogue without it tells
+        what a page shows by the kind of the page alone.
 
         :returns: The copy of a whole scan and the blank leaf.
         :rtype: frozenset[ProcessorRole]

@@ -1,50 +1,56 @@
-"""Fixtures of the tests of the processor plugins, which skip those of the OpenCV plugins where OpenCV is missing."""
+"""Fixtures of the tests of the processor plugins, one for each built-in processor that needs OpenCV."""
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.core.plugins import Processor
-from tests.harness.images.samples import CV_MISSING
+from bookreviver.plugins.cleanup.binarize import Binarize
+from bookreviver.plugins.cleanup.despeckle import Despeckle
+from bookreviver.plugins.cleanup.eraser import Eraser
+from bookreviver.plugins.cleanup.thickness import Thickness
+from bookreviver.plugins.geometry.crop import Crop
+from bookreviver.plugins.geometry.deskew import Deskew
+from bookreviver.plugins.geometry.dewarp import Dewarp
+from bookreviver.plugins.geometry.normalize import Normalize
+from bookreviver.plugins.geometry.perspective import Perspective
+from bookreviver.plugins.pages.content_type import ContentTypeProbe
+from bookreviver.plugins.split.gutter import GutterParams, GutterSearch
+from bookreviver.plugins.split.split_auto import SplitAuto
+from bookreviver.plugins.split.split_spread import SplitSpread
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.plugins.split.gutter import GutterSearch
+    from bookreviver.core.plugins import Processor
 
 
 @pytest.fixture
 def fx_deskew() -> Processor:
-    """Build the deskew processor, or skip the test where OpenCV is not installed.
+    """Build the deskew processor.
 
     :returns: The processor ``geometry.deskew``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.geometry.deskew', reason=CV_MISSING).Deskew()
-    assert isinstance(processor, Processor)
-    return processor
+    return Deskew()
 
 
 @pytest.fixture
 def fx_split_spread() -> Processor:
-    """Build the spread splitter, or skip the test where OpenCV is not installed.
+    """Build the spread splitter.
 
     :returns: The processor ``split.spread``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.split.split_spread', reason=CV_MISSING).SplitSpread()
-    assert isinstance(processor, Processor)
-    return processor
+    return SplitSpread()
 
 
 @pytest.fixture
 def fx_gutter_search() -> Callable[..., GutterSearch]:
-    """Offer a builder of the gutter search, or skip the test where OpenCV is not installed.
+    """Offer a builder of the gutter search.
 
     :returns: A function that builds a ``GutterSearch`` from the parameters it is given, the defaults for any it lacks.
     :rtype: Callable[..., GutterSearch]
     """
-    gutter = pytest.importorskip('bookreviver.plugins.split.gutter', reason=CV_MISSING)
 
     def build(**params: float) -> GutterSearch:
         """Build a gutter search.
@@ -54,126 +60,106 @@ def fx_gutter_search() -> Callable[..., GutterSearch]:
         :returns: The search.
         :rtype: GutterSearch
         """
-        return cast('GutterSearch', gutter.GutterSearch(gutter.GutterParams(**params)))
+        return GutterSearch(GutterParams(**params))
 
     return build
 
 
 @pytest.fixture
 def fx_split_auto() -> Processor:
-    """Build the automatic splitter, or skip the test where OpenCV is not installed.
+    """Build the automatic splitter.
 
     :returns: The processor ``split.auto``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.split.split_auto', reason=CV_MISSING).SplitAuto()
-    assert isinstance(processor, Processor)
-    return processor
+    return SplitAuto()
 
 
 @pytest.fixture
 def fx_perspective() -> Processor:
-    """Build the perspective processor, or skip the test where OpenCV is not installed.
+    """Build the perspective processor.
 
     :returns: The processor ``geometry.perspective``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.geometry.perspective', reason=CV_MISSING).Perspective()
-    assert isinstance(processor, Processor)
-    return processor
+    return Perspective()
 
 
 @pytest.fixture
 def fx_dewarp() -> Processor:
-    """Build the dewarping processor, or skip the test where OpenCV is not installed.
+    """Build the dewarping processor.
 
     :returns: The processor ``geometry.dewarp``, which is not given a models directory.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.geometry.dewarp', reason=CV_MISSING).Dewarp()
-    assert isinstance(processor, Processor)
-    return processor
+    return Dewarp()
 
 
 @pytest.fixture
 def fx_crop() -> Processor:
-    """Build the crop processor, or skip the test where OpenCV is not installed.
+    """Build the crop processor.
 
     :returns: The processor ``geometry.crop``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.geometry.crop', reason=CV_MISSING).Crop()
-    assert isinstance(processor, Processor)
-    return processor
+    return Crop()
 
 
 @pytest.fixture
 def fx_normalize() -> Processor:
-    """Build the normalize processor, or skip the test where OpenCV is not installed.
+    """Build the normalize processor.
 
     :returns: The processor ``geometry.normalize``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.geometry.normalize', reason=CV_MISSING).Normalize()
-    assert isinstance(processor, Processor)
-    return processor
+    return Normalize()
 
 
 @pytest.fixture
 def fx_binarize() -> Processor:
-    """Build the binarize processor, or skip the test where OpenCV and Doxa are not installed.
+    """Build the binarize processor.
 
     :returns: The processor ``cleanup.binarize``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.cleanup.binarize', reason=CV_MISSING).Binarize()
-    assert isinstance(processor, Processor)
-    return processor
+    return Binarize()
 
 
 @pytest.fixture
 def fx_despeckle() -> Processor:
-    """Build the despeckle processor, or skip the test where OpenCV is not installed.
+    """Build the despeckle processor.
 
     :returns: The processor ``cleanup.despeckle``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.cleanup.despeckle', reason=CV_MISSING).Despeckle()
-    assert isinstance(processor, Processor)
-    return processor
+    return Despeckle()
 
 
 @pytest.fixture
 def fx_thickness() -> Processor:
-    """Build the thickness processor, or skip the test where OpenCV is not installed.
+    """Build the thickness processor.
 
     :returns: The processor ``cleanup.thickness``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.cleanup.thickness', reason=CV_MISSING).Thickness()
-    assert isinstance(processor, Processor)
-    return processor
+    return Thickness()
 
 
 @pytest.fixture
 def fx_eraser() -> Processor:
-    """Build the eraser processor, or skip the test where OpenCV is not installed.
+    """Build the eraser processor.
 
     :returns: The processor ``cleanup.eraser``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.cleanup.eraser', reason=CV_MISSING).Eraser()
-    assert isinstance(processor, Processor)
-    return processor
+    return Eraser()
 
 
 @pytest.fixture
 def fx_content_type() -> Processor:
-    """Build the processor that tells what a page shows, or skip the test where OpenCV is not installed.
+    """Build the processor that tells what a page shows.
 
     :returns: The processor ``pages.content``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.pages.content_type', reason=CV_MISSING).ContentTypeProbe()
-    assert isinstance(processor, Processor)
-    return processor
+    return ContentTypeProbe()

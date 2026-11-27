@@ -2,8 +2,7 @@
 
 A flat page of lines of words is bent by moving its columns by a known shift, as a book bends a page at its gutter. A
 dewarped page is straight when the middle of each of its lines stays at one height over the width of the page, so the
-tests measure how far the middle of the ink of a line wanders from band to band of the page. The tests need OpenCV, and
-are skipped with the reason where the optional group ``cv`` is not installed.
+tests measure how far the middle of the ink of a line wanders from band to band of the page.
 """
 
 import json

@@ -1,7 +1,4 @@
-"""Tests for the cleanup.eraser processor, on pages and brush masks drawn for the tests.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the cleanup.eraser processor, on pages and brush masks drawn for the tests."""
 
 from typing import TYPE_CHECKING
 

@@ -2,8 +2,7 @@
 
 The preview goes through the processing services as a request and a worker would take it, with the real
 ``geometry.deskew``, so the span of the job covers every step of the preview, the values laid over the recipe, the
-processor, the version written and the files stored, which is what the report of a run measures as well. The tests need
-OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
+processor, the version written and the files stored, which is what the report of a run measures as well.
 """
 
 from typing import TYPE_CHECKING

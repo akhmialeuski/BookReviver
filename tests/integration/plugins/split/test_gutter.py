@@ -1,7 +1,4 @@
-"""Tests for the gutter search, on spreads drawn for the tests and on one real spread of a book of the 1880s.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the gutter search, on spreads drawn for the tests and on one real spread of a book of the 1880s."""
 
 from pathlib import Path
 from typing import TYPE_CHECKING

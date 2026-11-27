@@ -41,7 +41,7 @@ from tests.harness.adapters.step_executors import (
     make_step_input,
     open_executor_under_test,
 )
-from tests.harness.images.samples import CV_MISSING, save, text_page
+from tests.harness.images.samples import save, text_page
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -284,7 +284,6 @@ class TestProcessPoolStepExecutor:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        pytest.importorskip('cv2', reason=CV_MISSING)
         source = EntryPointCatalogSource(pools=frozenset(WorkerPool))
         workdir = tmp_path / 'work'
         workdir.mkdir()

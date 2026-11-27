@@ -1,10 +1,7 @@
-"""Tests for the field that straightens a bent page, and for the mesh file that records it.
-
-The tests need OpenCV, and the module is skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the field that straightens a bent page, and for the mesh file that records it."""
 
 import json
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -13,14 +10,10 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Mesh, Point
 from bookreviver.domain.images import ColorMode
-from tests.harness.images.samples import CV_MISSING
+from bookreviver.plugins.geometry.mesh_warp import FlatteningField
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from bookreviver.plugins.geometry.mesh_warp import FlatteningField
-
-mesh_warp = pytest.importorskip('bookreviver.plugins.geometry.mesh_warp', reason=CV_MISSING)
 
 WIDTH_PX: int = 600
 HEIGHT_PX: int = 400
@@ -84,7 +77,7 @@ class TestFlatteningFieldFromMesh:
         The curves have one shape, so the page between them and beyond them moves as the curves do, which is the height
         of the row plus how far the curve is below its ends at the column, less the bow it has at the middle.
         """
-        field = mesh_warp.FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX)
+        field = FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX)
         grid = field.grid(HEIGHT_PX)
         rows = np.linspace(0, HEIGHT_PX - 1, GRID_ROWS)
         columns = np.round(np.linspace(0, WIDTH_PX - 1, GRID_COLUMNS))
@@ -95,7 +88,7 @@ class TestFlatteningFieldFromMesh:
 
     def test_the_bend_is_how_far_a_curve_departs_from_its_straight_line(self) -> None:
         """Verify the bend of curves that bow by 12 pixels over 600 is the departure of a parabola from its best line."""
-        bend = mesh_warp.FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX).bend()
+        bend = FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX).bend()
         assert abs(bend - PARABOLA_BEND) < BEND_TOLERANCE
 
     def test_curves_that_are_only_slanted_are_not_bent(self) -> None:
@@ -104,18 +97,18 @@ class TestFlatteningFieldFromMesh:
         leaning = Mesh(
             rows=tuple(tuple(Point(x=float(x), y=float(row + x * LEAN)) for x in xs) for row in (TOP_PX, BOTTOM_PX))
         )
-        assert mesh_warp.FlatteningField.from_mesh(leaning, WIDTH_PX).bend() < BEND_TOLERANCE
+        assert FlatteningField.from_mesh(leaning, WIDTH_PX).bend() < BEND_TOLERANCE
 
     def test_curves_that_lie_on_one_line_cannot_be_straightened_between(self) -> None:
         """Reject two curves that are at the same height at the middle of the page, which have nothing between them."""
         with pytest.raises(ConflictError, match='one line'):
-            mesh_warp.FlatteningField.from_mesh(bowed(TOP_PX, TOP_PX), WIDTH_PX)
+            FlatteningField.from_mesh(bowed(TOP_PX, TOP_PX), WIDTH_PX)
 
     def test_the_curves_may_be_given_in_any_order(self) -> None:
         """Verify a bottom curve given first makes the same field as the top one first."""
         mesh = bowed(TOP_PX, BOTTOM_PX)
-        first = mesh_warp.FlatteningField.from_mesh(mesh, WIDTH_PX).grid(HEIGHT_PX)
-        swapped = mesh_warp.FlatteningField.from_mesh(Mesh(rows=mesh.rows[::-1]), WIDTH_PX).grid(HEIGHT_PX)
+        first = FlatteningField.from_mesh(mesh, WIDTH_PX).grid(HEIGHT_PX)
+        swapped = FlatteningField.from_mesh(Mesh(rows=mesh.rows[::-1]), WIDTH_PX).grid(HEIGHT_PX)
         assert bool(np.allclose(first, swapped))
 
 
@@ -134,7 +127,7 @@ class TestFlatteningFieldFromGrid:
 
     def test_a_grid_that_takes_every_pixel_from_itself_changes_nothing(self) -> None:
         """Verify the identity grid has no bend and gives the page back as it was."""
-        field = mesh_warp.FlatteningField.from_grid(self.identity(), WIDTH_PX, HEIGHT_PX)
+        field = FlatteningField.from_grid(self.identity(), WIDTH_PX, HEIGHT_PX)
         page = np.random.default_rng(TONE_SEED).integers(0, 255, (HEIGHT_PX, WIDTH_PX), dtype=np.uint8)
         flat = field.remap(page, ColorMode.GRAY)
         expect(field.bend() < TOLERANCE_PX)
@@ -145,7 +138,7 @@ class TestFlatteningFieldFromGrid:
         """Verify a grid whose middle columns are taken from lower in the page has the bend of that move."""
         grid = self.identity()
         grid[:, :, 1] += np.array([shift_at(x) for x in grid[0, :, 0]])[None, :]
-        field = mesh_warp.FlatteningField.from_grid(grid, WIDTH_PX, HEIGHT_PX)
+        field = FlatteningField.from_grid(grid, WIDTH_PX, HEIGHT_PX)
         assert abs(field.bend() - PARABOLA_BEND) < BEND_TOLERANCE
 
 
@@ -159,7 +152,7 @@ class TestFlatteningFieldRemap:
         :returns: The field.
         :rtype: FlatteningField
         """
-        return cast('FlatteningField', mesh_warp.FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX))
+        return FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX)
 
     def test_a_bilevel_page_stays_black_and_white(self) -> None:
         """Verify the grays the resampling makes at the edges of the ink are made black or white again."""
@@ -204,7 +197,7 @@ class TestMeshFile:
         :type tmp_path: Path
         """
         target = tmp_path / MESH_NAME
-        mesh_warp.FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX).write(HEIGHT_PX, target)
+        FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX).write(HEIGHT_PX, target)
         document = json.loads(target.read_text(encoding=ENCODING))
         grid = np.array(document['grid'])
         expect((document['width'], document['height']) == (WIDTH_PX, HEIGHT_PX))
@@ -220,6 +213,6 @@ class TestMeshFile:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        field = mesh_warp.FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX)
+        field = FlatteningField.from_mesh(bowed(TOP_PX, BOTTOM_PX), WIDTH_PX)
         with pytest.raises(ConflictError, match='cannot be written'):
             field.write(HEIGHT_PX, tmp_path / 'missing' / MESH_NAME)

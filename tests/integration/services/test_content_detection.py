@@ -324,12 +324,12 @@ class TestDetectionJob:
         expect('no page' in job.error)
         assert_expectations()
 
-    async def test_a_machine_without_the_processor_leaves_the_pages_to_their_kind(
+    async def test_a_catalogue_without_the_processor_leaves_the_pages_to_their_kind(
         self,
         fx_database: SqlDatabase,
         fx_open_book: BookOpener,
     ) -> None:
-        """Verify a catalogue without the processor, as a machine without OpenCV has, gives a job that reads nothing.
+        """Verify a catalogue without the processor gives a job that reads nothing.
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase

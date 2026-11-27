@@ -14,8 +14,6 @@ The application is a JSON API with a React frontend. `docs/openapi.json` describ
   interface. Install it before the first start, and again after the frontend changes.
 - DjVuLibre reads DjVu books. Install it before the first start, or at the latest before the first DjVu upload, with
   `sudo scripts/install-system-deps.sh`.
-- OpenCV, the optional group `cv`, runs the processing steps that split a spread and straighten a page. Install it only
-  when you use those steps, with `uv sync --extra cv`.
 - An SMTP server sends real confirmation and password reset mail. It is optional, and without it the mail is written to
   the server log. Set `BOOKREVIVER_MAIL__*` in `.env`, see [Mail](#mail).
 - Google and Facebook keys switch on the sign-in buttons of the two providers. They are optional, until other people
@@ -93,9 +91,8 @@ Run these once on a new machine, in this order, from the root of the repository.
   `uv run bookreviver-migrate move-book-directories` once, with the server stopped, together with `upgrade head` for the
   catalogue. The command renames every book directory into `data/storage/books/`, refuses to overwrite one that is
   there, and does nothing when `projects/` is gone, so running it again is harmless.
-- A change of `pyproject.toml` or `uv.lock` needs `uv sync --extra cv`. Plain `uv sync` removes OpenCV, and the server
-  then starts without the steps that split a spread and straighten a page. With the pre-commit hooks installed, the
-  `uv-sync` hook does this by itself after every checkout, merge and rebase, with every optional group.
+- A change of `pyproject.toml` or `uv.lock` needs `uv sync`. With the pre-commit hooks installed, the `uv-sync` hook
+  does this by itself after every checkout, merge and rebase.
 - A change under `frontend/` needs `npm --prefix frontend ci` and `npm --prefix frontend run build`.
 - A new route or schema of the API needs `uv run bookreviver-openapi`, then `npm --prefix frontend run generate`, and
   both results are committed.
@@ -107,15 +104,9 @@ Run these once on a new machine, in this order, from the root of the repository.
 `uv run fastapi dev` restarts the server when the code changes and is meant for development. `uv run fastapi run` is the
 same server without the reload. Settings are read from `BOOKREVIVER_*` environment variables or a `.env` file.
 
-The processing steps `split.spread` and `geometry.deskew` need OpenCV, the optional group `cv`. Start the server with
-the group, so that `uv` keeps it installed:
-
-```bash
-uv run --extra cv fastapi dev
-```
-
-A plain `uv run` or `uv sync` installs the environment without the group and removes OpenCV again, so do not mix the
-two forms in one checkout. The rest of the application works without it.
+OpenCV, onnxruntime and doxapy, which the processing steps are built on, are ordinary dependencies of the project, so
+`uv sync` installs them with everything else. A built-in plugin that cannot be imported stops the server at the start,
+since it means a broken environment. A plugin of another package that cannot be imported is left out with a warning.
 
 ## Frontend
 
@@ -327,14 +318,10 @@ uv run pre-commit install --install-hooks
 uv run pre-commit run --all-files
 ```
 
-The `ty` hook needs OpenCV to resolve the processing plugins. Run the checks in an environment made with
-`uv sync --extra cv`, and tell `uv run` not to change it with `UV_NO_SYNC=1`. The `uv-sync` hook keeps every optional
-group installed after a checkout, a merge or a rebase, so a change of branch does not take OpenCV away:
-
-```bash
-uv sync --extra cv
-UV_NO_SYNC=1 uv run pre-commit run --all-files
-```
+The tools of development and the checks (pytest, the type checkers, ruff, import-linter and pre-commit) are the
+dependency group `dev`, which `uv sync` and `uv run` install by default and a build of the package leaves out. The
+`uv-sync` hook syncs the environment after a checkout, a merge or a rebase, so a dependency a branch adds is there
+before the checks run.
 
 ## License
 
