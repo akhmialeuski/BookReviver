@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BookPlaceBody, BookPlaceSchema, CanvasPositionSchema } from '@/api';
 import type { PlaceAddress } from '@/features/place/address';

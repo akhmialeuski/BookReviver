@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { CanvasPositionSchema } from '@/api';
 import { FitMode, ViewerStage } from '@/features/viewer/stage';

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { extendStroke, paintMask, radiusOf, startStroke } from '@/features/editors/brush';
 import { readBrush, writeBrush } from '@/features/processing/shapes';

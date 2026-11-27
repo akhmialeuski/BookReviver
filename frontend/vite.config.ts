@@ -9,6 +9,10 @@ import { defineConfig } from 'vitest/config';
  *
  * The router plugin generates the route tree from the route files, and `/api` is proxied to the
  * backend, so the browser sees one origin and the session and CSRF cookies work as they do in production.
+ *
+ * The tests run in two projects. A test of a component (`*.test.tsx`) gets the DOM of jsdom, and a test of logic
+ * (`*.test.ts`) runs in Node, since starting jsdom for every file costs most of the run. A file that differs from
+ * its extension says so on its first line with `// @vitest-environment jsdom` or `node`.
  */
 
 const BACKEND_URL = process.env.BOOKREVIVER_BACKEND_URL ?? 'http://127.0.0.1:8000';
@@ -22,7 +26,15 @@ export default defineConfig({
     proxy: { '/api': { target: BACKEND_URL, changeOrigin: false } },
   },
   test: {
-    environment: 'jsdom',
-    include: ['src/**/*.test.{ts,tsx}'],
+    projects: [
+      {
+        extends: true,
+        test: { name: 'logic', environment: 'node', include: ['src/**/*.test.ts'] },
+      },
+      {
+        extends: true,
+        test: { name: 'components', environment: 'jsdom', include: ['src/**/*.test.tsx'] },
+      },
+    ],
   },
 });

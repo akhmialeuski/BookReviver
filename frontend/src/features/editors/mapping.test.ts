@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import OpenSeadragon from 'openseadragon';
 import { describe, expect, it } from 'vitest';
 import { SceneMapping } from '@/features/editors/mapping';

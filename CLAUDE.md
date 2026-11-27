@@ -185,6 +185,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   enforces it, and a failure is fixed by moving what is shared down, never by editing the rule. Code outside the tests
   imports another directory only through the `@/` alias, which the rule refuses otherwise, since it sees the import as
   written. A test may put features of any layer together.
+- A frontend test of a component (`*.test.tsx`) runs in jsdom and a test of logic (`*.test.ts`) in Node, the two
+  projects of Vitest in `frontend/vite.config.ts`. A file that needs the other environment says so on its first line
+  with `// @vitest-environment jsdom` or `node`.
 - The frontend client in `frontend/src/api/` is generated from the committed OpenAPI schema and never edited by hand.
   Every text the interface shows is in `frontend/src/shared/messages.ts`, and TypeScript runs without `any` or
   suppressions.
