@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { describeEdit, editableStepsOf, editorOf, hasEditor } from '@/features/editors/registry';
 import { Picture } from '@/features/editors/types';

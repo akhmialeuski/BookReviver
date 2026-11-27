@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type PairPlacement, Side, SourceKind } from '@/features/processing/compare';
 import { CompareStage } from '@/features/processing/compareStage';

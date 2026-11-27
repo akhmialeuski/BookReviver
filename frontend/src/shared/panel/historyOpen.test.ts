@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceStorage } from '@/shared/lib/storage';
 import { HISTORY_OPEN_KEY, readHistoryOpen, writeHistoryOpen } from '@/shared/panel/historyOpen';

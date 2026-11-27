@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type OpenSeadragon from 'openseadragon';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CanvasStage } from '@/features/viewer/canvasStage';
