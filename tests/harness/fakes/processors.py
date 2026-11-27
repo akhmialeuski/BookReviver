@@ -212,7 +212,7 @@ class BookSizedProcessor(FakeProcessor):
     """A processor under the key of the normalize step whose half that reads the book is the real one.
 
     The step itself needs OpenCV, and its half that reads the book does not, so a test of what the book gives a step
-    runs with this processor on a machine that has none.
+    runs with this processor and does no work on images.
     """
 
     spec = evolve(FakeProcessor.spec, key=BOOK_SIZED_KEY, title='Book sized')
@@ -251,7 +251,7 @@ class CleanupProcessor(FakeProcessor):
 
 
 class AutoSplitProcessor(FakeProcessor):
-    """A stand-in for ``split.auto``, which a test of the recipes and the queues needs in the catalogue without OpenCV."""
+    """A stand-in for ``split.auto``, which a test of the recipes and the queues needs in the catalogue without its work."""
 
     spec = ProcessorSpec(
         key='split.auto',

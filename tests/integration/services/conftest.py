@@ -7,7 +7,18 @@ import pytest
 from bookreviver.core.book import Book
 from bookreviver.domain.accounts import Actor
 from bookreviver.domain.jobs import JobEnd, JobKind, JobState
+from bookreviver.plugins.cleanup.binarize import Binarize
+from bookreviver.plugins.cleanup.despeckle import Despeckle
+from bookreviver.plugins.cleanup.eraser import Eraser
+from bookreviver.plugins.cleanup.thickness import Thickness
+from bookreviver.plugins.geometry.crop import Crop
+from bookreviver.plugins.geometry.deskew import Deskew
+from bookreviver.plugins.geometry.dewarp import Dewarp
+from bookreviver.plugins.geometry.normalize import Normalize
+from bookreviver.plugins.geometry.perspective import Perspective
+from bookreviver.plugins.split.split_auto import SplitAuto
 from bookreviver.plugins.split.split_none import SplitNone
+from bookreviver.plugins.split.split_spread import SplitSpread
 from bookreviver.services.pagination import PaginationService
 from tests.harness.adapters.page_stage_writes import PageStageWrites
 from tests.harness.adapters.page_writes import PageWrites
@@ -23,7 +34,6 @@ from tests.harness.fakes.processors import (
     SecondProcessor,
     ThirdProcessor,
 )
-from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -143,7 +153,7 @@ def fx_cv_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
 ) -> ProcessingKit:
-    """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
+    """Build the processing kit with the real OpenCV plugins.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
@@ -153,33 +163,22 @@ def fx_cv_kit(
               processors and the four cleanup processors, which the default recipes of those stages need.
     :rtype: ProcessingKit
     """
-    split = pytest.importorskip('bookreviver.plugins.split.split_spread', reason=CV_MISSING).SplitSpread()
-    auto = pytest.importorskip('bookreviver.plugins.split.split_auto', reason=CV_MISSING).SplitAuto()
-    perspective = pytest.importorskip('bookreviver.plugins.geometry.perspective', reason=CV_MISSING).Perspective()
-    deskew = pytest.importorskip('bookreviver.plugins.geometry.deskew', reason=CV_MISSING).Deskew()
-    dewarp = pytest.importorskip('bookreviver.plugins.geometry.dewarp', reason=CV_MISSING).Dewarp()
-    crop = pytest.importorskip('bookreviver.plugins.geometry.crop', reason=CV_MISSING).Crop()
-    normalize = pytest.importorskip('bookreviver.plugins.geometry.normalize', reason=CV_MISSING).Normalize()
-    binarize = pytest.importorskip('bookreviver.plugins.cleanup.binarize', reason=CV_MISSING).Binarize()
-    despeckle = pytest.importorskip('bookreviver.plugins.cleanup.despeckle', reason=CV_MISSING).Despeckle()
-    thickness = pytest.importorskip('bookreviver.plugins.cleanup.thickness', reason=CV_MISSING).Thickness()
-    eraser = pytest.importorskip('bookreviver.plugins.cleanup.eraser', reason=CV_MISSING).Eraser()
     return ProcessingKit(
         fx_database,
         fx_open_book,
         processors=[
             SplitNone(),
-            split,
-            auto,
-            perspective,
-            deskew,
-            dewarp,
-            crop,
-            normalize,
-            binarize,
-            despeckle,
-            thickness,
-            eraser,
+            SplitSpread(),
+            SplitAuto(),
+            Perspective(),
+            Deskew(),
+            Dewarp(),
+            Crop(),
+            Normalize(),
+            Binarize(),
+            Despeckle(),
+            Thickness(),
+            Eraser(),
         ],
         defaults=CV_DEFAULTS,
     )

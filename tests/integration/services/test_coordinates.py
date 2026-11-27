@@ -1,8 +1,7 @@
 """Tests of the chain of transforms from a scan to the page versions made from it, with the real OpenCV plugins.
 
 A landmark is drawn on a generated scan, the scan is split and deskewed, the landmark is found again on the image of a
-version, and the transforms of the chain have to give its place in the scan to within a pixel. The tests need OpenCV,
-and are skipped with the reason where the optional group ``cv`` is not installed.
+version, and the transforms of the chain have to give its place in the scan to within a pixel.
 """
 
 import io

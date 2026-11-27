@@ -1,7 +1,4 @@
-"""Tests for the split.spread processor, on spreads generated for the tests.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the split.spread processor, on spreads generated for the tests."""
 
 from typing import TYPE_CHECKING
 from uuid import uuid4

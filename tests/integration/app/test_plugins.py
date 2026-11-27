@@ -12,7 +12,6 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.processors import WorkerPool
 from bookreviver.domain.step_measures import StepMeasure
 from bookreviver.plugins.kit.base import ModelProcessor
-from tests.harness.images.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -42,8 +41,7 @@ class TestEntryPointCatalog:
         assert {'split.none', 'pages.blank'} <= set(keys)
 
     def test_opencv_processors_are_found_through_their_entry_points(self) -> None:
-        """Verify the processors that need OpenCV are in the catalogue where the group ``cv`` is installed."""
-        pytest.importorskip('cv2', reason=CV_MISSING)
+        """Verify the processors that need OpenCV are in the catalogue, since OpenCV is a dependency of the project."""
         keys = [spec.key for spec in EntryPointCatalog(pools=set(WorkerPool)).specs()]
         assert {
             'split.spread',
@@ -57,7 +55,6 @@ class TestEntryPointCatalog:
 
     def test_the_steps_that_find_a_number_on_each_page_say_what_to_compare_with_the_book(self) -> None:
         """Verify the deskew names the angle and the content selection the size of its frame, and nothing else does."""
-        pytest.importorskip('cv2', reason=CV_MISSING)
         measures = {spec.key: spec.measure for spec in EntryPointCatalog(pools=set(WorkerPool)).specs() if spec.measure}
         assert measures == {'geometry.deskew': StepMeasure.ANGLE, 'geometry.crop': StepMeasure.FRAME_SIZE}
 
@@ -66,8 +63,7 @@ class TestEntryPointCatalog:
 
         Pydantic fills a title in from the name of the field, such as ``Overlap Px``, so the JSON Schema alone cannot
         tell a title written for the form from one made of the name. The check reads the model, where a title that
-        nobody wrote is None. A processor with several methods has a model for each, and each is checked. The
-        processors that need OpenCV are checked where it is installed.
+        nobody wrote is None. A processor with several methods has a model for each, and each is checked.
         """
         catalog = EntryPointCatalog(pools=set(WorkerPool))
         unlabelled = [
@@ -86,7 +82,6 @@ class TestEntryPointCatalog:
         The title of a model is its class name unless it is set, and the form lists the methods of a processor by the
         titles of their models, so a title that is the name of the class would reach the reader.
         """
-        pytest.importorskip('cv2', reason=CV_MISSING)
         catalog = EntryPointCatalog(pools=set(WorkerPool))
         untitled = [
             f'{spec.key}: {model.__name__}'
@@ -143,10 +138,10 @@ class TestEntryPointCatalog:
         catalog = EntryPointCatalog(pools=pools, registered=registered)
         assert [spec.key for spec in catalog.specs()] == expected
 
-    def test_processor_whose_dependency_is_missing_is_left_out_with_a_warning(
+    def test_processor_of_another_package_whose_dependency_is_missing_is_left_out_with_a_warning(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Verify a plugin that cannot be imported does not stop the application, and the log says which one.
+        """Verify a plugin of another package that cannot be imported does not stop the application, and the log says so.
 
         :param caplog: Capture of the log records of the test.
         :type caplog: pytest.LogCaptureFixture
@@ -160,6 +155,12 @@ class TestEntryPointCatalog:
         expect([spec.key for spec in catalog.specs()] == ['geometry.fake'])
         expect('geometry.needs-cv' in caplog.text)
         assert_expectations()
+
+    def test_built_in_processor_that_cannot_be_imported_stops_the_catalogue(self) -> None:
+        """Verify a built-in plugin that cannot be imported is an error, since the project's dependencies bring all it needs."""
+        registered = [entry_point('geometry.broken', 'bookreviver.plugins.geometry.not_installed:Processor')]
+        with pytest.raises(ImportError):
+            EntryPointCatalog(pools=set(WorkerPool), registered=registered)
 
     def test_processor_registered_under_another_name_is_rejected(self) -> None:
         """Reject a registration whose name is not the key of its processor, since a recipe addresses it by the name."""

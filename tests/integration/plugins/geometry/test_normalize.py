@@ -1,7 +1,4 @@
-"""Tests for the geometry.normalize processor, on blocks of text and on sheets with a block, drawn at different scales.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the geometry.normalize processor, on blocks of text and on sheets with a block, drawn at different scales."""
 
 from typing import TYPE_CHECKING, ClassVar, Unpack
 

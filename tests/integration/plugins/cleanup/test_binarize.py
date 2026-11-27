@@ -1,7 +1,4 @@
-"""Tests for the cleanup.binarize processor, on pages drawn for the tests with the ground truth of their ink.
-
-The tests need OpenCV and Doxa, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
+"""Tests for the cleanup.binarize processor, on pages drawn for the tests with the ground truth of their ink."""
 
 from typing import TYPE_CHECKING
 

@@ -1,7 +1,7 @@
 """Tests for the order of steps the built-in processors ask for in their specs.
 
 The specs are read through the entry points as the application reads them, so a rule that names a processor under a
-wrong key is found here. The processors that need OpenCV are checked where the optional group ``cv`` is installed.
+wrong key is found here.
 """
 
 from graphlib import TopologicalSorter

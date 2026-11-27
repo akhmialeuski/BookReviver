@@ -9,9 +9,8 @@ gate describe the structure the code keeps, and the OpenAPI schema in `docs/open
 ## Commands
 
 ```bash
-uv sync                                  # backend environment
-uv sync --extra cv                       # with OpenCV, for the plugins split.spread and geometry.deskew
-                                         # the uv-sync hook syncs every extra after a checkout, merge or rebase
+uv sync                                  # backend environment with the group dev, OpenCV and the plugins included
+                                         # the uv-sync hook syncs it after a checkout, merge or rebase
 uv run bookreviver-migrate upgrade head  # apply the migrations of the catalogue of the settings, by hand only
 uv run fastapi dev                       # API on http://127.0.0.1:8000, data in ./data, needs .env and migrations
 uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # catalogue revision

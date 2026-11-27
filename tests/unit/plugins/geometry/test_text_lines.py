@@ -1,16 +1,12 @@
-"""Tests for the search of the lines of text of a page, which the dewarping and the baselines of deskewing share.
-
-The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
-"""
-
-from typing import cast
+"""Tests for the search of the lines of text of a page, which the dewarping and the baselines of deskewing share."""
 
 import numpy as np
 import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from tests.harness.images.samples import CV_MISSING, LINE_PITCH_PX, MARGIN_PX, text_page
+from bookreviver.plugins.geometry.text_lines import TextLineSearch
+from tests.harness.images.samples import LINE_PITCH_PX, MARGIN_PX, text_page
 from tests.harness.images.synthetic import bend_columns
 
 PAGE_SIZE_PX: tuple[int, int] = (900, 1_200)
@@ -35,14 +31,12 @@ OUTLIER_PX: float = 40.0
 
 @pytest.fixture
 def fx_search() -> type:
-    """Give the class of the search of lines, or skip the test where OpenCV is not installed.
+    """Give the class of the search of lines.
 
     :returns: The class ``TextLineSearch``.
     :rtype: type
     """
-    return cast(
-        'type', pytest.importorskip('bookreviver.plugins.geometry.text_lines', reason=CV_MISSING).TextLineSearch
-    )
+    return TextLineSearch
 
 
 def samples(image: Image.Image) -> np.ndarray:

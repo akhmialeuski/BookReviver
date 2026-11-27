@@ -186,7 +186,7 @@ class TestFillBlankPages:
     async def test_the_job_that_drew_the_leaf_is_followed_by_the_detection_of_the_content_of_the_pages(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify a preparation of images that made a version asks for the detection, which ends well without OpenCV.
+        """Verify a preparation of images that made a version asks for the detection, which ends well.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

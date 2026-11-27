@@ -10,7 +10,7 @@ unknown.
 With the fill ``paper`` the leaf takes the colour of the paper of the neighbouring pages, whose images the step is given
 as its references. The paper of a page is the median colour of the pixels on the bright side of the split of Otsu, as
 ``cv_image.paper_colour`` finds it for the steps of the geometry, and the leaf takes the median of the pages. It is
-measured here on a sample of the page with libvips, since a leaf is made on a machine without the OpenCV extra too. The
+measured here on a sample of the page with libvips, which the base plugins do their work with instead of OpenCV. The
 sample is large enough to keep the text of a scan apart from its paper: a smaller one blurs the words into a grey that
 lies too near the paper for the split to find any ink. A page with no paper to part from its ink, such as an empty
 scan, says nothing, and a leaf with no paper to take is white. A leaf whose paper is gray is a gray page, and one whose

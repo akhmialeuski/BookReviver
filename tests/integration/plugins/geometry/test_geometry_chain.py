@@ -2,7 +2,7 @@
 
 Each step reads the image and the data of the one before. The tests check what has to survive the hand-over: the sides the
 scanner cut, and the reason an early step marked the page, since only the version of the last step is the one the stage
-stands on. They need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
+stands on.
 """
 
 from pathlib import Path

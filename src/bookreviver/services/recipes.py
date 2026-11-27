@@ -2,8 +2,8 @@
 
 A stage that has recipes has exactly one for each kind of page (``RecipeKind``), and a page is processed by the recipe
 of its kind. The first time a stage is asked for, ``RecipeBook`` creates all of them from ``DefaultRecipes``. A kind
-whose template the catalogue cannot build, such as one that needs OpenCV on a machine that has none, takes the steps of
-the recipe of text pages, and a stage with no template of text pages has no recipe at all.
+whose template the catalogue cannot build, because a processor it names is not in the catalogue, takes the steps of the
+recipe of text pages, and a stage with no template of text pages has no recipe at all.
 
 Every step is checked before it is saved: its processor must exist, belong to the stage of the recipe, and accept its
 parameters, which are stored in the form ``validate_params`` returns, defaults filled in, so two recipes that differ in

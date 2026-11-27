@@ -8,6 +8,7 @@ the network, after which these tests run.
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -15,14 +16,17 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.app.settings import ProcessingSettings
-from bookreviver.core.plugins import Processor
 from bookreviver.domain.step_settings import DewarpMethod
 from bookreviver.domain.versions import VersionData
+from bookreviver.plugins.geometry.dewarp import Dewarp
 from bookreviver.ports.processing import ProcessorSettings
 from tests.harness.images.runner import run_on
-from tests.harness.images.samples import CV_MISSING, save
+from tests.harness.images.samples import save
 from tests.harness.images.scans import SCANS_DIR
 from tests.harness.images.synthetic import bend_columns
+
+if TYPE_CHECKING:
+    from bookreviver.core.plugins import Processor
 
 MODELS_DIR: Path = ProcessingSettings().models_dir.resolve()
 GRAPH: Path = MODELS_DIR / 'UVDoc_grid.onnx'
@@ -41,13 +45,12 @@ pytestmark = pytest.mark.skipif(not GRAPH.is_file(), reason=MODEL_MISSING)
 
 @pytest.fixture
 def fx_uvdoc() -> Processor:
-    """Build the dewarping processor with the models directory of the settings, or skip where OpenCV is missing.
+    """Build the dewarping processor with the models directory of the settings.
 
     :returns: The processor ``geometry.dewarp``.
     :rtype: Processor
     """
-    processor = pytest.importorskip('bookreviver.plugins.geometry.dewarp', reason=CV_MISSING).Dewarp()
-    assert isinstance(processor, Processor)
+    processor = Dewarp()
     processor.configure(ProcessorSettings(models_dir=MODELS_DIR))
     return processor
 

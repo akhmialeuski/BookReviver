@@ -5,11 +5,12 @@ nothing of how a plugin is found. A built-in plugin and one from an external pac
 group of their ``pyproject.toml``, and so are indistinguishable here. ``importlib.metadata.entry_points`` lists the
 registered names and ``EntryPoint.load`` imports each plugin's class.
 
-A plugin that cannot be imported, because an optional group of dependencies such as ``bookreviver[cv]`` is not installed
-on this machine, is left out with a warning, so the application starts on a machine that has no OpenCV and offers the
-processors that can run there. A processor of a pool this process does not serve is left out too. A key registered under
-a name that is not the key of its processor is an error, since a recipe would address it by one name and the version
-records the other.
+A built-in plugin, one under ``bookreviver.plugins``, needs only what the project itself depends on, so one that
+cannot be imported is a broken installation and stops the application from starting. A plugin of another package that
+cannot be imported, because something it needs is not installed on this machine, is left out with a warning, so the
+application offers the processors that can run there. A processor of a pool this process does not serve is left out
+too. A key registered under a name that is not the key of its processor is an error, since a recipe would address it by
+one name and the version records the other.
 """
 
 import logging
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
 
 # The entry point group the processors are registered in
 PROCESSOR_GROUP: str = 'bookreviver.processors'
+# The package of the built-in plugins, whose import never fails on an installation the project's dependencies make
+BUILT_IN_PACKAGE: str = 'bookreviver.plugins.'
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +57,15 @@ class EntryPointCatalog(ProcessorCatalog):
         :type settings: ProcessorSettings | None
         :raises ValueError: If a processor is registered under a name that is not its key.
         :raises TypeError: If an entry point registers something that is not a processor.
+        :raises ImportError: If a built-in plugin cannot be imported.
         """
         self._processors: dict[str, Processor] = {}
         for entry_point in registered if registered is not None else entry_points(group=PROCESSOR_GROUP):
             try:
                 processor_class = entry_point.load()
             except ImportError:
+                if entry_point.module.startswith(BUILT_IN_PACKAGE):
+                    raise
                 logger.warning(
                     'The processor %s is not offered, since what it needs is not installed.',
                     entry_point.name,

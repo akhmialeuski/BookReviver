@@ -2,8 +2,7 @@
 
 The sheets are scans with a block of text of another size on each, as the pages of a book without Select content are.
 The recipe is the one step, Margins, with the parameters a book starts with, so the page size is 0 and no press of
-"Measure the book" gives it a value. The tests need OpenCV, and are skipped with the reason where the optional group
-``cv`` is not installed.
+"Measure the book" gives it a value.
 """
 
 from typing import TYPE_CHECKING
