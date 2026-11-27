@@ -319,6 +319,20 @@ a line for each budget and exits with 1 when a budget is exceeded:
 uv run bookreviver-trace-report --check path/to/spans.jsonl
 ```
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`, in four jobs side by side, each with the
+commands of this file:
+
+- `gate`: `pre-commit run --all-files`, then `bookreviver-openapi`, which must leave `docs/openapi.json` unchanged.
+- `pytest`: `tools/crap-gate.sh`, with the base branch of the pull request as the base of the changed-line coverage.
+- `frontend`: Biome, `tsc`, `npm run generate`, which must leave `frontend/src/api` unchanged, and Vitest.
+- `e2e`: `npm --prefix frontend run e2e`. A failed run keeps the HTML report, the traces, the screenshots and the log of
+  the server as the artifact `playwright`.
+
+The jobs install the environment once with `uv sync --locked` and every extra and group, so a dependency added to
+`pyproject.toml` needs no change of the workflow, and the lock file must match it.
+
 ## Development
 
 ```bash
