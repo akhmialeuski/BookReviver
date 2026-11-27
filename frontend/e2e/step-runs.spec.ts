@@ -106,10 +106,13 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await expect(steps.nth(index)).toHaveAttribute('data-open', 'true');
   };
 
-  /** Run the recipe up to a step on all pages with the step open, and wait for the run to end. */
+  /**
+   * Run the recipe up to a step on all pages with the step open, and wait for the run to end. With the last step open
+   * the run goes through the whole stage, and the menu offers no choice of how far it goes.
+   */
   const runThrough = async (index: number): Promise<void> => {
     await openStep(index);
-    await runPages(page, { throughOpenStep: true });
+    await runPages(page, { throughOpenStep: index < stepCount - 1 });
   };
 
   await test.step('a book opens on the Geometry stage, whose recipe has several steps', async () => {
