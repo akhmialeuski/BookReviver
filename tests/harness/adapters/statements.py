@@ -10,8 +10,14 @@ if TYPE_CHECKING:
 # The key of the statement text among the named arguments of the event
 STATEMENT_KEY: str = 'statement'
 
+# The key of the values the statement binds among the named arguments of the event
+PARAMETERS_KEY: str = 'parameters'
+
 # The engine event fired once for every statement sent to the database
 STATEMENT_EVENT: str = 'before_cursor_execute'
+
+# The statement that begins a transaction, which the counts of the values bound leave out
+TRANSACTION_BEGIN: str = 'BEGIN'
 
 
 class StatementCounter:
@@ -72,3 +78,45 @@ class StatementLog:
         :type arguments: Any
         """
         self.statements.append(arguments[STATEMENT_KEY])
+
+
+class BoundValues:
+    """The number of values each statement of a block of reads bound.
+
+    :ivar bound: The number of parameters of every statement, in the order they ran.
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        """Listen to the statements of an engine.
+
+        :param engine: The engine whose statements are counted.
+        :type engine: Engine
+        """
+        self._engine = engine
+        self.bound: list[int] = []
+
+    def __enter__(self) -> Self:
+        """Start counting.
+
+        :returns: The counter.
+        :rtype: Self
+        """
+        event.listen(self._engine, STATEMENT_EVENT, self._count, named=True)
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        """Stop counting.
+
+        :param exception: The exception the block raised, if any.
+        :type exception: object
+        """
+        event.remove(self._engine, STATEMENT_EVENT, self._count)
+
+    def _count(self, **arguments: Any) -> None:
+        """Record how many values a statement binds, leaving out the BEGIN a read sends with its first statement.
+
+        :param arguments: What SQLAlchemy tells of the statement, by name: its text, its values and its cursor.
+        :type arguments: Any
+        """
+        if not str(arguments[STATEMENT_KEY]).startswith(TRANSACTION_BEGIN):
+            self.bound.append(len(arguments[PARAMETERS_KEY]))

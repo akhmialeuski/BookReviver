@@ -6,15 +6,19 @@ Each port repository works on two levels. A row repository of
 adds only the queries specific to BookReviver, such as the counts of a book. The repositories are
 synchronous, because the catalogue database runs the whole work of a use case in one worker thread.
 :class:`SqlAlchemyCatalogueRepositories` binds the repositories of the catalogue to the session of a transaction of the
-catalogue, and :class:`SqlAlchemyBookRepositories` those of a book to a session of the file of that book. The row
-repositories report the database's checks as the domain errors the port promises.
+catalogue, and :class:`SqlAlchemyBookRepositories` those of a book to a session of the file of that book, or
+:class:`SqlAlchemyReadBookRepositories` to one that only reads. The row repositories report the database's checks as the
+domain errors the port promises.
 """
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories.base import (
     SqlAlchemyKeyedRepository,
     SqlAlchemyRepository,
 )
-from bookreviver.adapters.persistence.sqlalchemy.repositories.book import SqlAlchemyBookRepositories
+from bookreviver.adapters.persistence.sqlalchemy.repositories.book import (
+    SqlAlchemyBookRepositories,
+    SqlAlchemyReadBookRepositories,
+)
 from bookreviver.adapters.persistence.sqlalchemy.repositories.library import (
     SqlAlchemyCatalogueRepositories,
     SqlAlchemyLibraryRepository,
@@ -50,6 +54,7 @@ __all__ = [
     'SqlAlchemyPageStepStateRepository',
     'SqlAlchemyPageVersionRepository',
     'SqlAlchemyPaginationSectionRepository',
+    'SqlAlchemyReadBookRepositories',
     'SqlAlchemyRecipeProfileRepository',
     'SqlAlchemyRecipeRepository',
     'SqlAlchemyRepository',

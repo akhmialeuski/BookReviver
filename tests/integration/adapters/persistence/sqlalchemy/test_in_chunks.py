@@ -5,19 +5,17 @@ identifiers than that in one read. The tests make the chunk small, so seven iden
 """
 
 from math import ceil
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING
 
 import pytest
 from delayed_assert import assert_expectations, expect
-from sqlalchemy import event
 
 from bookreviver.adapters.persistence.sqlalchemy.rows import RowRepository
+from tests.harness.adapters.statements import BoundValues
 from tests.harness.builders.domain import directory_of, make_page, make_page_stage, make_page_version, make_record
 from tests.harness.builders.seeding import store_book
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
-
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.books import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
@@ -30,51 +28,6 @@ pytestmark = pytest.mark.anyio
 
 CHUNK: int = 3
 COUNT: int = 7
-BEFORE_EXECUTE: str = 'before_cursor_execute'
-# The statement that begins a transaction, which the counts leave out
-TRANSACTION_BEGIN: str = 'BEGIN'
-
-
-class Statements:
-    """The number of values each statement of a block of reads bound.
-
-    :ivar bound: The number of parameters of every statement, in the order they ran.
-    """
-
-    def __init__(self, engine: Engine) -> None:
-        """Listen to the statements of an engine.
-
-        :param engine: The engine whose statements are counted.
-        :type engine: Engine
-        """
-        self._engine = engine
-        self.bound: list[int] = []
-
-    def __enter__(self) -> Self:
-        """Start counting.
-
-        :returns: The counter.
-        :rtype: Self
-        """
-        event.listen(self._engine, BEFORE_EXECUTE, self._count, named=True)
-        return self
-
-    def __exit__(self, *exception: object) -> None:
-        """Stop counting.
-
-        :param exception: The exception the block raised, if any.
-        :type exception: object
-        """
-        event.remove(self._engine, BEFORE_EXECUTE, self._count)
-
-    def _count(self, **arguments: Any) -> None:
-        """Record how many values a statement binds, leaving out the BEGIN a read sends with its first statement.
-
-        :param arguments: What SQLAlchemy tells of the statement, by name: its text, its values and its cursor.
-        :type arguments: Any
-        """
-        if not str(arguments['statement']).startswith(TRANSACTION_BEGIN):
-            self.bound.append(len(arguments['parameters']))
 
 
 async def _seed_book(
@@ -178,7 +131,7 @@ class TestListsLongerThanAChunk:
         book_id, pages, versions = await _seed_book(catalogue, fx_owner_id, databases=fx_databases())
         version_ids = [version.id for version in versions]
 
-        def list_versions(repos: BookRepositories) -> Statements:
+        def list_versions(repos: BookRepositories) -> BoundValues:
             """List the versions by their identifiers, and count the statements that took.
 
             Only the statements of the read are counted, not the ones that begin and end its transaction.
@@ -186,13 +139,13 @@ class TestListsLongerThanAChunk:
             :param repos: BookRepositories of the transaction.
             :type repos: BookRepositories
             :returns: The counter of the statements the listing sent.
-            :rtype: Statements
+            :rtype: BoundValues
             """
-            with Statements(book.read_engine) as counted:
+            with BoundValues(book.read_engine) as counted:
                 repos.page_versions.list_by_ids(version_ids)
             return counted
 
-        def delete_versions(repos: BookRepositories, _book_record: BookRecord) -> Statements:
+        def delete_versions(repos: BookRepositories, _book_record: BookRecord) -> BoundValues:
             """Delete the versions by their identifiers, and count the statements that took.
 
             Only the deletion is counted, not the statements that begin the transaction or read the book.
@@ -202,9 +155,9 @@ class TestListsLongerThanAChunk:
             :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :returns: The counter of the statements the deletion sent.
-            :rtype: Statements
+            :rtype: BoundValues
             """
-            with Statements(book.engine) as counted:
+            with BoundValues(book.engine) as counted:
                 repos.page_versions.delete_many(version_ids)
             return counted
 

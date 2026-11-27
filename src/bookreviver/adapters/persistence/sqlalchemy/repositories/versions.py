@@ -235,3 +235,55 @@ class SqlAlchemyPageVersionRepository(
         """
         for chunk in batched(version_ids, self._rows.IN_CHUNK_SIZE, strict=False):
             self._rows.session.execute(delete(PageVersionRow).where(PageVersionRow.id.in_(chunk)))
+
+
+class SqlAlchemyReadPageVersionRepository(SqlAlchemyPageVersionRepository):
+    """Versions of the pages in a transaction that only reads, each built from its row once.
+
+    The work of a read often walks the same versions more than once, as the rows of a stage do when they follow the
+    marks of the review and the steps of a recipe back from the current versions and then find what the stage reads.
+    Nothing changes a version while the transaction reads, so a version read by its identifier is kept for the rest of
+    the transaction and given again without a query.
+
+    :ivar _known: The versions read by their identifiers so far, by identifier.
+    """
+
+    def __init__(self, session: Session) -> None:
+        """Create the repository over the ``page_versions`` table with nothing read yet.
+
+        :param session: Session of a transaction that only reads.
+        :type session: Session
+        """
+        super().__init__(session)
+        self._known: dict[PageVersionId, PageVersion] = {}
+
+    @override
+    def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+        """Return the stored versions among the given identifiers, querying only those not read before.
+
+        :param version_ids: Identifiers of the versions to read.
+        :type version_ids: Collection[PageVersionId]
+        :returns: The versions found, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        asked = set(version_ids)
+        if missing := asked - self._known.keys():
+            self._known.update((version.id, version) for version in super().list_by_ids(missing))
+        found = [self._known[version_id] for version_id in asked if version_id in self._known]
+        return sorted(found, key=lambda version: (version.created_at, version.id))
+
+    @override
+    def find(self, version_id: PageVersionId) -> PageVersion | None:
+        """Return the version with this identifier, from the versions read before when it is one of them.
+
+        :param version_id: Identifier of the version.
+        :type version_id: PageVersionId
+        :returns: The stored version, or None.
+        :rtype: PageVersion | None
+        """
+        if (known := self._known.get(version_id)) is not None:
+            return known
+        found = super().find(version_id)
+        if found is not None:
+            self._known[found.id] = found
+        return found
