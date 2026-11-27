@@ -1,4 +1,4 @@
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import type { Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
   bookApiV1BooksBookIdGetQueryKey,
@@ -30,19 +30,54 @@ const ANY_STAGE: Stage = 'import';
  * named, and the changes of the pages call them as they end.
  */
 
+// The queries that are read once more when their read in flight ends, so the changes that arrive during one read ask
+// for one read after it and not one each
+const readingAgain = new WeakSet<Query>();
+
 /**
  * Mark the queries of a key stale and read them again after a change the screen has just made.
  *
  * `invalidateQueries` on a query whose first read is still in flight joins that read instead of starting a new one, so
- * the answer it brings was asked for before the change and lacks it. The reads in flight are cancelled first, which
- * leaves the query without a read, and the invalidation then starts a read that comes after the change.
+ * the answer it brings was asked for before the change and lacks it. Cancelling that read loses it instead: during a
+ * run the changes come faster than a read of the rows of a stage ends, so each read is cancelled by the next change
+ * and a step opened during the run shows no rows until the run is over. A read in flight is therefore left to end and
+ * show what it brings, and the query is read once more right after it, however many changes arrived meanwhile. The
+ * other queries are read again at once.
  *
  * @param queryClient The client that holds the queries.
  * @param queryKey The key of the queries to refresh; a key that is a prefix matches every query that extends it.
  */
 export async function refreshQueries(queryClient: QueryClient, queryKey: QueryKey): Promise<void> {
-  await queryClient.cancelQueries({ queryKey });
-  await queryClient.invalidateQueries({ queryKey });
+  for (const query of queryClient.getQueryCache().findAll({ queryKey })) {
+    if (query.state.fetchStatus !== 'idle') {
+      readAgainAfter(queryClient, query);
+    }
+  }
+  await queryClient.invalidateQueries({ queryKey, fetchStatus: 'idle' });
+}
+
+/**
+ * Read a query again once its read in flight ends, unless that is already arranged.
+ *
+ * The read that follows starts after the change that asked for it, so it may join a read someone else started in the
+ * meantime, which came after the change as well.
+ */
+function readAgainAfter(queryClient: QueryClient, query: Query): void {
+  const read = query.promise;
+  if (read === undefined || readingAgain.has(query)) {
+    return;
+  }
+  readingAgain.add(query);
+  // A read that fails or is cancelled is followed all the same, since the query still lacks the change
+  void read
+    .catch(() => undefined)
+    .then(() => {
+      readingAgain.delete(query);
+      return queryClient.invalidateQueries(
+        { queryKey: query.queryKey, exact: true },
+        { cancelRefetch: false },
+      );
+    });
 }
 
 /** Refresh the list of books, whose counts and order change when a book is created, deleted or imported into. */

@@ -1,8 +1,9 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema } from '@/api';
 import {
   collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey,
   readJobApiV1BooksBookIdJobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { numberingPreviewKey, pagesScope, versionReadyKey } from '@/features/books/queries';
@@ -104,11 +105,9 @@ describe('applyBookEvent', () => {
     expect(sync.version).toBe(2);
   });
 
-  it('reads the rows of the stages again when the settings of a page change, since a row says what a step holds on a page', async () => {
+  it('reads the rows of the stages again when the settings of a page change, since a row says what a step holds on a page', () => {
     // An undo on a page whose stage is out of date already writes no record of a stage, so the change names the settings alone
     applyBookEvent(queryClient, BOOK_ID, change(['settings']), sync);
-    // The rows of the stages cancel their reads in flight first, and ask for the new read a turn later
-    await vi.advanceTimersByTimeAsync(0);
 
     expect(invalidated()).toContain('listStagePagesApiV1BooksBookIdStagesStagePagesGet');
   });
@@ -153,15 +152,13 @@ describe('applyBookEvent', () => {
     expect(stageReads()).toHaveLength(2);
   });
 
-  it('reads the rows of each stage once for a change that names several parts drawn in them', async () => {
+  it('reads the rows of each stage once for a change that names several parts drawn in them', () => {
     applyBookEvent(
       queryClient,
       BOOK_ID,
       change(['versions', 'stages', 'settings', 'history']),
       sync,
     );
-    // The rows of the stages cancel their reads in flight first, and ask for the new read a turn later
-    await vi.advanceTimersByTimeAsync(0);
 
     const reads = invalidated();
     expect(
@@ -264,15 +261,13 @@ describe('applyBookEvent', () => {
     ).toEqual(job('running'));
   });
 
-  it('reads the reads that show the jobs when a job ends, and not the pages', async () => {
+  it('reads the reads that show the jobs when a job ends, and not the pages', () => {
     applyBookEvent(
       queryClient,
       BOOK_ID,
       { event: EventName.JobChanged, data: job('succeeded', 4) },
       sync,
     );
-    // The rows of the stages cancel their reads in flight first, and ask for the new read a turn later
-    await vi.advanceTimersByTimeAsync(0);
 
     // The rows are read once for each stage, so the endpoints are compared as a set
     expect([...new Set(invalidated())].sort()).toEqual([
@@ -339,6 +334,106 @@ describe('applyBookEvent', () => {
 
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
     expect(invalidated()).toEqual([]);
+  });
+});
+
+describe('the rows of a stage during a run', () => {
+  // A read of the rows of a step, which takes longer under a run than the bursts of its changes are apart
+  const READ_MS = 1000;
+  // A run commits a change of the book for each step of each page, far more often than a burst is folded
+  const CHANGE_EVERY_MS = 100;
+  const RUN_MS = 5000;
+
+  let queryClient: QueryClient;
+  let sync: BookSync;
+  let unsubscribe: () => void;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    sync = { version: 1 };
+    unsubscribe = () => undefined;
+  });
+
+  afterEach(() => {
+    unsubscribe();
+    queryClient.clear();
+    vi.useRealTimers();
+  });
+
+  /** Open the rows of a step, as the strip does, each read of which answers after `READ_MS` with what it counts. */
+  function openStep() {
+    let reads = 0;
+    const queryFn = vi.fn(({ signal }: { signal: AbortSignal }) => {
+      reads += 1;
+      const answer = `rows ${reads}`;
+      return new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(answer), READ_MS);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('cancelled'));
+        });
+      });
+    });
+    const observer = new QueryObserver<string>(queryClient, {
+      queryKey: listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey({
+        path: { book_id: BOOK_ID, stage: 'geometry' },
+        query: { step: 'deskew' },
+      }),
+      queryFn,
+    });
+    unsubscribe = observer.subscribe(() => undefined);
+    return { observer, queryFn };
+  }
+
+  /** Send the changes of a run of the stage for some time, while the rows are read. */
+  async function run(forMs: number): Promise<void> {
+    for (let at = 0; at < forMs; at += CHANGE_EVERY_MS) {
+      applyBookEvent(
+        queryClient,
+        BOOK_ID,
+        change(['versions', 'stages'], (sync.version ?? 1) + 1),
+        sync,
+      );
+      await vi.advanceTimersByTimeAsync(CHANGE_EVERY_MS);
+    }
+  }
+
+  it('shows the rows of a step opened without a change of the book after one read', async () => {
+    const { observer, queryFn } = openStep();
+
+    await vi.advanceTimersByTimeAsync(READ_MS);
+
+    expect(observer.getCurrentResult().data).toBe('rows 1');
+    expect(queryFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the rows of a step opened while a run changes the book, before the run ends', async () => {
+    const { observer } = openStep();
+
+    await run(READ_MS + CHANGE_EVERY_MS);
+
+    // The first read ends and shows its rows, though the book changed while it was in flight
+    expect(observer.getCurrentResult().data).toBe('rows 1');
+
+    await run(RUN_MS);
+
+    // The rows follow the run, about one read after another, and are not cancelled by the next change
+    const shown = observer.getCurrentResult().data ?? '';
+    expect(Number(shown.split(' ')[1])).toBeGreaterThanOrEqual(RUN_MS / READ_MS);
+  });
+
+  it('reads the rows once more after the run, so the last change shows', async () => {
+    const { observer, queryFn } = openStep();
+
+    await run(RUN_MS);
+    const during = queryFn.mock.calls.length;
+    // A read is in flight when the run ends, and the last change came while it was
+    await vi.advanceTimersByTimeAsync(3 * READ_MS);
+
+    expect(queryFn.mock.calls.length).toBeGreaterThan(during);
+    expect(observer.getCurrentResult().data).toBe(`rows ${queryFn.mock.calls.length}`);
+    expect(observer.getCurrentResult().isFetching).toBe(false);
   });
 });
 

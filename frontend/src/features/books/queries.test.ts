@@ -64,6 +64,29 @@ describe('refreshQueries', () => {
     expect(queryFn).toHaveBeenCalledTimes(2);
   });
 
+  it('shows what a read in flight brings, and reads once more after it however many changes came meanwhile', async () => {
+    const key = ['rows'];
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const queryFn = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const observer = new QueryObserver<string>(client, { queryKey: key, queryFn });
+    const seen: (string | undefined)[] = [];
+    unsubscribe = observer.subscribe((result) => seen.push(result.data));
+
+    // A run commits changes faster than a read of the rows ends
+    for (let change = 0; change < 5; change += 1) {
+      await refreshQueries(client, key);
+    }
+    first.resolve('old');
+    await vi.waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+    second.resolve('new');
+
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toBe('new'));
+    // The first read was not cancelled: the strip shows its rows while the next read is in flight
+    expect(seen).toContain('old');
+    expect(queryFn).toHaveBeenCalledTimes(2);
+  });
+
   it('reads again the rows of a stage whose first read is still in flight', async () => {
     const key = listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey({
       path: { book_id: 'book', stage: 'cleanup' },
