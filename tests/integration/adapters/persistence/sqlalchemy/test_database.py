@@ -18,6 +18,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.library import LibraryEntry
+from bookreviver.domain.slices import SliceRequest
 from tests.harness.builders.domain import EPOCH, directory_of, make_record, new_book_id
 from tests.harness.builders.seeding import store_book
 
@@ -256,7 +257,7 @@ class TestSqliteTransactions:
         assert statements == [BEGIN_WRITE, ROLLBACK_STATEMENT]
 
     async def test_read_begins_deferred_and_ends_with_rollback_on_a_connection_of_the_readers(
-        self, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory
+        self, fx_database: SqlDatabase, fx_catalogue: CatalogueDatabaseFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify a read begins a deferred transaction on the engine of the readers and ends it with a rollback.
 
@@ -267,10 +268,12 @@ class TestSqliteTransactions:
         :type fx_database: SqlDatabase
         :param fx_catalogue: Function opening a catalogue database over the catalogue and the books of the test.
         :type fx_catalogue: CatalogueDatabaseFactory
+        :param fx_owner_id: An account the catalogue stores, whose library is read.
+        :type fx_owner_id: AccountId
         """
         catalogue = fx_catalogue()
         with traced_sql(fx_database.read_engine) as reading, traced_sql(fx_database.engine) as writing:
-            await catalogue.read(lambda repos: repos.library.list_all())
+            await catalogue.read(lambda repos: repos.library.list_for_owner(fx_owner_id, SliceRequest()))
         assert (transaction_statements(reading), writing) == ([BEGIN_READ, ROLLBACK_STATEMENT], [])
 
     async def test_change_commits_while_a_reader_sits_in_a_read_transaction(

@@ -32,9 +32,6 @@ from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.ports.storage import BookDirectory
 from bookreviver.ports.tracing import Tracer
-from bookreviver.services.books import BooksService
-from bookreviver.services.outdated_results import OutdatedResults
-from bookreviver.services.pages import PageService
 from bookreviver.services.recipes import DefaultRecipes
 
 if TYPE_CHECKING:
@@ -66,14 +63,10 @@ async def prepare_start(container: AsyncContainer) -> None:
     plugins is asked for the base plugins, without which no page gets an image, so a start without one of them stops.
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
-    left half done is left as it is. The upload an import was receiving or running on is removed from each book the
-    library lists, since no job can use it any more, and its sources that were stored stay. The stages whose result a
-    replaced version of a processor made are marked stale, so the workspace never shows them as up to date, and the
-    blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the book writes. The
-    passes run in a request scope of their own, as a job does, go over the books the library lists and write one book
-    at a time, in a ``Book.change`` of that book.
+    left half done is left as it is. No book is opened: what the process before left in a book, and the results of
+    processors replaced since, are seen to when a request first opens the book, by ``BookOpening``.
 
-    :param container: Application container, which the passes take their services from.
+    :param container: Application container.
     :type container: AsyncContainer
     :raises RuntimeError: When the database is not at the head revision of the migrations, or a base plugin is not
                           installed.
@@ -87,11 +80,6 @@ async def prepare_start(container: AsyncContainer) -> None:
         raise RuntimeError(BASE_PLUGINS_MISSING.format(roles=ROLE_SEPARATOR.join(role.label for role in missing)))
     await container.get(StepExecutor)
     await container.get(DefaultRecipes)
-    async with container() as request:
-        for book in await (await request.get(BooksService)).listed():
-            await book.sources.discard_all_staged()
-        await (await request.get(OutdatedResults)).mark_stale()
-        await (await request.get(PageService)).remake_outdated_leaves()
 
 
 def create_app(

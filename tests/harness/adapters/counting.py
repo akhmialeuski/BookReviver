@@ -86,6 +86,11 @@ class CountingBookDatabase(BookDatabase):
         await self._inner.adopt()
 
     @override
+    async def release(self) -> None:
+        """Let go of the wrapped book database."""
+        await self._inner.release()
+
+    @override
     async def close(self) -> None:
         """Close the wrapped book database for good."""
         await self._inner.close()

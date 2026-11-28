@@ -69,15 +69,6 @@ class BooksService:
         async with Book(entry.directory).assets.readable(key) as path:
             yield path
 
-    async def listed(self) -> list[Book]:
-        """Open every book the library lists, whoever owns it, for the passes of the start.
-
-        :returns: The open books, one for each entry of the library.
-        :rtype: list[Book]
-        """
-        entries = await self._catalogue.read(lambda repos: repos.library.list_all())
-        return [Book(entry.directory) for entry in entries]
-
     async def create(self, owner: Actor, details: BookDetails) -> BookId:
         """Create an empty book of an account: its directory, its database with its description, then its entry.
 

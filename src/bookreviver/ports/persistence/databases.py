@@ -146,8 +146,9 @@ class BookDatabase(BookPart, ABC):
     ``BookBusyError``. Changes of different books never wait for each other.
 
     A new book has a database that ``create`` makes from the blank database of the schema and gives its first record,
-    the database of an imported book is taken in by ``adopt``, and ``close`` ends the use of the database before its
-    file is deleted. The file lies in the directory of the book, which the storage port makes and deletes.
+    the database of an imported book is taken in by ``adopt``, ``release`` lets go of an open database the user left,
+    and ``close`` ends the use of the database before its file is deleted. The file lies in the directory of the book,
+    which the storage port makes and deletes.
     """
 
     @abstractmethod
@@ -221,6 +222,14 @@ class BookDatabase(BookPart, ABC):
 
         :raises BookTooNewError: If the file is at a revision this code does not ship.
         :raises InvalidArchiveError: If the file is not a database of a book, or holds no record of a book.
+        """
+
+    @abstractmethod
+    async def release(self) -> None:
+        """Let go of what the database of the book holds open between its calls, when the user leaves the book.
+
+        Nothing in progress is cut off: a transaction in progress keeps the database open, and the next call opens it
+        again.
         """
 
     @abstractmethod

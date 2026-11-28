@@ -9,11 +9,11 @@ from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageVersionRepository
+from bookreviver.core.book import Book
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import ProcessorRef, VersionState
-from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
-from tests.harness.builders.domain import EPOCH, make_page_stage, make_page_version
+from tests.harness.builders.domain import EPOCH, directory_of, make_page_stage, make_page_version
 from tests.harness.fakes.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
@@ -148,19 +148,15 @@ class SeededPage:
         )
 
 
-async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
-    """Check the records of every book.
+async def mark_stale(page: SeededPage) -> list[PageStage]:
+    """Check the records of the book of a page.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
+    :param page: The page, whose book is checked.
+    :type page: SeededPage
     :returns: The records that became stale.
     :rtype: list[PageStage]
     """
-    catalogue = kit.catalogue()
-    return await OutdatedResults(
-        books=BooksService(catalogue=catalogue),
-        processors=kit.processors,
-    ).mark_stale()
+    return await OutdatedResults(processors=page.kit.processors).mark_stale(Book(directory_of(page.book_id)))
 
 
 class TestMarkStale:
@@ -199,7 +195,6 @@ class TestMarkStale:
         await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY)
         record = await page.stored(Stage.GEOMETRY)
         left = meanwhile(record, (await page.base()).id)
-        catalogue = fx_kit.catalogue()
         read = SqlAlchemyBookDatabase.read
         changed = False
 
@@ -234,10 +229,7 @@ class TestMarkStale:
             return found
 
         monkeypatch.setattr(SqlAlchemyBookDatabase, 'read', read_then_change)
-        marked = await OutdatedResults(
-            books=BooksService(catalogue=catalogue),
-            processors=fx_kit.processors,
-        ).mark_stale()
+        marked = await mark_stale(page)
 
         stored = await fx_kit.databases.open(page.book_id).read(lambda repos: repos.page_stages.find(record.key))
         assert (marked, stored) == ([], left)
@@ -257,7 +249,7 @@ class TestMarkStale:
         geometry = await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY, state=StageState.STALE)
         await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
 
-        marked = await mark_stale(fx_kit)
+        marked = await mark_stale(page)
 
         assert [record.stage for record in marked] == [Stage.CLEANUP]
         assert (await page.stored(Stage.CLEANUP)).state is StageState.STALE
@@ -273,7 +265,7 @@ class TestMarkStale:
         await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
         before = [await page.stored(stage) for stage in CHECKED_STAGES]
 
-        marked = await mark_stale(fx_kit)
+        marked = await mark_stale(page)
 
         after = [await page.stored(stage) for stage in CHECKED_STAGES]
         assert (marked, after) == ([], before)
@@ -293,7 +285,7 @@ class TestMarkStale:
         await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY, state=state)
         before = await page.stored(Stage.GEOMETRY)
 
-        marked = await mark_stale(fx_kit)
+        marked = await mark_stale(page)
 
         assert (marked, await page.stored(Stage.GEOMETRY)) == ([], before)
 
@@ -306,30 +298,9 @@ class TestMarkStale:
         page = await SeededPage.seed(fx_kit)
         await page.result(Stage.GEOMETRY, UNINSTALLED)
 
-        marked = await mark_stale(fx_kit)
+        marked = await mark_stale(page)
 
         assert (marked, (await page.stored(Stage.GEOMETRY)).state) == ([], StageState.FRESH)
-
-    async def test_the_records_of_every_book_are_checked_and_only_the_outdated_ones_are_marked(
-        self, fx_kit: ProcessingKit
-    ) -> None:
-        """Verify the records of two books are read together, and the book whose results are current keeps its own.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        outdated_page = await SeededPage.seed(fx_kit)
-        current_page = await SeededPage.seed(fx_kit)
-        await outdated_page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY)
-        await current_page.result(Stage.GEOMETRY, CURRENT_GEOMETRY)
-
-        marked = await mark_stale(fx_kit)
-
-        assert (
-            [record.page_id for record in marked],
-            (await outdated_page.stored(Stage.GEOMETRY)).state,
-            (await current_page.stored(Stage.GEOMETRY)).state,
-        ) == ([outdated_page.page.id], StageState.STALE, StageState.FRESH)
 
     async def test_a_version_that_several_records_lead_to_is_read_once(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
@@ -367,11 +338,7 @@ class TestMarkStale:
 
         monkeypatch.setattr(SqlAlchemyPageVersionRepository, 'list_by_ids', counting_list_by_ids)
 
-        catalogue = fx_kit.catalogue()
-        await OutdatedResults(
-            books=BooksService(catalogue=catalogue),
-            processors=fx_kit.processors,
-        ).mark_stale()
+        await mark_stale(page)
 
         assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}
 
@@ -393,6 +360,6 @@ class TestMarkStale:
         await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
         fx_page_stage_writes.start()
 
-        marked = await mark_stale(fx_kit)
+        marked = await mark_stale(page)
 
         assert (len(marked), fx_page_stage_writes.batches, fx_page_stage_writes.saves) == (2, [marked], [])

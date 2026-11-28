@@ -1297,7 +1297,8 @@ class TestRecordsTableRevision:
 
         expect(len(committed) == 1)
         expect(checks == RECORD_CHECKS)
-        expect(downgraded == committed)
+        # A later revision adds the processors a book was checked against as the last column, which goes on the way down
+        expect(downgraded == [row[:-1] for row in committed])
         expect(OLD_RECORDS_TABLE in tables and RECORDS_TABLE not in tables)
         expect(upgraded == committed)
         assert_expectations()

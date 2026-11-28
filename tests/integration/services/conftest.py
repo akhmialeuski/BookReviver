@@ -62,14 +62,12 @@ def fx_page_writes(monkeypatch: pytest.MonkeyPatch) -> PageWrites:
 
 
 @pytest.fixture
-def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobBoard:
+def fx_board(fx_events: RecordingEventBus) -> FakeJobBoard:
     """Build a job board that records what is put on it and runs it when a test says so.
 
     A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
     ends at once, since the page tests look at the queueing of those and not at their work.
 
-    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
-    :type fx_open_book: BookOpener
     :param fx_events: Recording event bus.
     :type fx_events: RecordingEventBus
     :returns: Board the page service puts its jobs on.
@@ -90,7 +88,7 @@ def fx_board(fx_open_book: BookOpener, fx_events: RecordingEventBus) -> FakeJobB
         """
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
-        service = make_page_service(fx_open_book, (fx_events, board))
+        service = make_page_service((fx_events, board))
         return await service.prepare_images(Book(dir_name), job, control)
 
     board = FakeJobBoard(runner=run)
@@ -112,20 +110,15 @@ def fx_runtime(fx_events: RecordingEventBus, fx_board: FakeJobBoard) -> tuple[Re
 
 
 @pytest.fixture
-def fx_service(
-    fx_open_book: BookOpener,
-    fx_runtime: tuple[RecordingEventBus, FakeJobBoard],
-) -> Callable[[], PageService]:
+def fx_service(fx_runtime: tuple[RecordingEventBus, FakeJobBoard]) -> Callable[[], PageService]:
     """Return a function building the page service for one request or job.
 
-    :param fx_open_book: Opens the catalogue databases and the databases of the books of the test.
-    :type fx_open_book: BookOpener
     :param fx_runtime: The recording bus and the job board the service reports through.
     :type fx_runtime: tuple[RecordingEventBus, FakeJobBoard]
-    :returns: Function building a service over a new catalogue database.
+    :returns: Function building a service.
     :rtype: Callable[[], PageService]
     """
-    return lambda: make_page_service(fx_open_book, fx_runtime)
+    return lambda: make_page_service(fx_runtime)
 
 
 @pytest.fixture

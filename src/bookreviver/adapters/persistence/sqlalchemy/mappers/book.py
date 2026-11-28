@@ -23,9 +23,10 @@ from bookreviver.domain.ids import (
     SourceId,
 )
 from bookreviver.domain.places import BookPlace, CanvasPosition
+from bookreviver.domain.versions import ProcessorRef
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
 
 def contributors_to_json(contributors: Sequence[Contributor]) -> list[dict[str, str]]:
@@ -70,6 +71,29 @@ def identifiers_from_json(stored: Sequence[Mapping[str, str]]) -> tuple[BookIden
     :rtype: tuple[BookIdentifier, ...]
     """
     return tuple(BookIdentifier(scheme=IdentifierScheme(item['scheme']), value=item['value']) for item in stored)
+
+
+def processors_to_json(processors: Collection[ProcessorRef]) -> list[dict[str, str]]:
+    """Turn processors into the JSON list of ``{key, version}`` objects the record of a book stores, sorted by key.
+
+    :param processors: Processors by key and version.
+    :type processors: Collection[ProcessorRef]
+    :returns: One object per processor, in the order of their keys and versions, so equal sets store equal lists.
+    :rtype: list[dict[str, str]]
+    """
+    ordered = sorted(processors, key=lambda processor: (processor.key, processor.version))
+    return [{'key': processor.key, 'version': processor.version} for processor in ordered]
+
+
+def processors_from_json(stored: Sequence[Mapping[str, str]]) -> frozenset[ProcessorRef]:
+    """Build processors from the JSON list ``processors_to_json`` wrote.
+
+    :param stored: Stored ``{key, version}`` objects.
+    :type stored: Sequence[Mapping[str, str]]
+    :returns: The processors.
+    :rtype: frozenset[ProcessorRef]
+    """
+    return frozenset(ProcessorRef(key=item['key'], version=item['version']) for item in stored)
 
 
 class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
@@ -118,6 +142,7 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
             image_policy=row.image_policy,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            checked_processors=processors_from_json(row.checked_processors),
         )
 
     @override
@@ -162,6 +187,7 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
             image_policy=entity.image_policy,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
+            checked_processors=processors_to_json(entity.checked_processors),
         )
 
 

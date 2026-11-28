@@ -61,6 +61,8 @@ class BookRecordRow(BookTable):
     :ivar image_policy: How the images of the book's scans and page versions are stored, stored by value.
     :ivar created_at: Time the book was created.
     :ivar updated_at: Time of the last change, set by the domain.
+    :ivar checked_processors: The processors the results of the book were last checked against, as a JSON list of
+                              ``{key, version}`` objects sorted by key.
     :ivar version: Number of the changes of the book committed so far, which only a change of the book raises, by one
                    for every change that wrote a part of the book a reader asks for.
     """
@@ -99,6 +101,7 @@ class BookRecordRow(BookTable):
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
+    checked_processors: Mapped[list[dict[str, str]]] = mapped_column(JSON, server_default=EMPTY_LIST)
     version: Mapped[int] = mapped_column(server_default=FIRST_VERSION)
 
 

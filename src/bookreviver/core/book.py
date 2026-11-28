@@ -194,6 +194,10 @@ class Book:
             await self.delete()
             raise
 
+    async def release(self) -> None:
+        """Let go of the open database of the book when the user leaves it, which opens again on the next use."""
+        await self._database.release()
+
     async def delete(self) -> None:
         """Close the database of the book once its transactions have ended, then delete its directory whole.
 

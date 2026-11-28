@@ -185,6 +185,11 @@ class SqlAlchemyBookDatabase(BookDatabase):
             raise InvalidArchiveError(NOT_A_DATABASE) from error
 
     @override
+    async def release(self) -> None:
+        """Close the book in the registry now if no transaction uses it, which opens it again on its next use."""
+        await self._books.release(self._dir_name)
+
+    @override
     async def close(self) -> None:
         """Close the book in the registry for good, once the transactions using it have ended."""
         await self._books.close(self._dir_name)

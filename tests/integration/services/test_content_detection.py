@@ -83,7 +83,7 @@ def pages_of(kit: ProcessingKit) -> PageService:
     :returns: The service.
     :rtype: PageService
     """
-    return make_page_service(kit.stores, (kit.events, kit.board))
+    return make_page_service((kit.events, kit.board))
 
 
 async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookId, list[Page]]:

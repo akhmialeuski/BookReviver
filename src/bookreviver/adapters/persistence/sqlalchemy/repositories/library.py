@@ -17,8 +17,6 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from sqlalchemy.orm import Session
 
     from bookreviver.domain.ids import AccountId
@@ -56,15 +54,6 @@ class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, BookId, Lib
             owner_id=owner_id,
         )
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=self._rows.count(owner_id=owner_id))
-
-    @override
-    def list_all(self) -> Sequence[LibraryEntry]:
-        """Return the entry of every book, by identifier.
-
-        :returns: Every entry of the library.
-        :rtype: Sequence[LibraryEntry]
-        """
-        return [self._mapper.to_entity(row) for row in self._rows.get_many(order_by=LibraryRow.book_id.asc())]
 
 
 class SqlAlchemyCatalogueRepositories(CatalogueRepositories):

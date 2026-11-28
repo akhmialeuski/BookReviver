@@ -275,7 +275,6 @@ class TestMove:
         """
         book = await seed_book(fx_catalogue(), LAYOUT, owner=fx_actor.account_id, databases=fx_open_book.databases)
         service = make_page_service(
-            fx_open_book,
             fx_runtime,
             order_keys=TakenKey(book.pages[2].order_key),
         )

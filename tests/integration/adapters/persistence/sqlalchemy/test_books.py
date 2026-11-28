@@ -339,3 +339,51 @@ class TestCloseIdle:
         await fx_books.close_idle()
         async with fx_books.use(dir_name) as second:
             assert second is first
+
+
+class TestRelease:
+    """Tests for letting go of a book the user left, whatever the idle limit."""
+
+    async def test_an_unused_book_is_closed_at_once_and_opened_again_by_its_next_use(
+        self, fx_books: BookRegistry, fx_storage_root: Path
+    ) -> None:
+        """Verify a released book is closed within the idle limit, and the next use opens a new database.
+
+        :param fx_books: Registry of the books of the test, whose idle limit no test reaches.
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
+        """
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        async with fx_books.use(dir_name) as first:
+            pass
+        await fx_books.release(dir_name)
+        async with fx_books.use(dir_name) as second:
+            assert second is not first
+
+    async def test_a_book_in_use_stays_open(self, fx_books: BookRegistry, fx_storage_root: Path) -> None:
+        """Verify a book that a transaction holds, as a job of a book the user left does, is not closed.
+
+        :param fx_books: Registry of the books of the test, whose idle limit no test reaches.
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
+        """
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        async with fx_books.use(dir_name) as held:
+            await fx_books.release(dir_name)
+            async with fx_books.use(dir_name) as again:
+                assert again is held
+
+    async def test_a_book_never_opened_is_left_usable(self, fx_books: BookRegistry, fx_storage_root: Path) -> None:
+        """Verify releasing a book nobody opened neither fails nor closes it for good.
+
+        :param fx_books: Registry of the books of the test, whose idle limit no test reaches.
+        :type fx_books: BookRegistry
+        :param fx_storage_root: Storage root of the test, which holds the files of its books.
+        :type fx_storage_root: Path
+        """
+        dir_name = await _new_book(fx_books, fx_storage_root)
+        await fx_books.release(dir_name)
+        async with fx_books.use(dir_name) as database:
+            assert await database.current_revisions()
