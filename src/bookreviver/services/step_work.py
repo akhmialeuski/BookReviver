@@ -29,9 +29,9 @@ from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.page_steps import PageStepKey
 from bookreviver.domain.processors import ProcessorScope
-from bookreviver.domain.sides import PageSide
 from bookreviver.domain.spans import SpanAttribute, SpanName, StepOutcome
-from bookreviver.domain.versions import PageVersion, VersionData, VersionInputs, VersionState
+from bookreviver.domain.versions import PageVersion, VersionData, VersionState
+from bookreviver.services.step_params import StepRead
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageEdit
     from bookreviver.domain.recipes import Step
+    from bookreviver.domain.versions import VersionInputs
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.tracing import Span
     from bookreviver.services.page_work import PageWork
@@ -199,10 +200,7 @@ class StepWork:
     def _look(self, repos: BookRepositories) -> tuple[VersionInputs, PageEdit | None, PageVersion | None]:
         """Work out what the step depends on, and find the version an earlier run made of it, from one snapshot.
 
-        The values of the page and of the parts of the book it is in are laid over the parameters of the step before
-        they are checked, so the identifier of the version hashes the parameters the step runs with, and two pages that
-        end up with equal ones share it. The side is part of what a step depends on, so a page moved to the other side
-        of the book is made again.
+        The inputs are worked out by ``PageLayers.inputs``, the one rule the freshness of a stage asks as well.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
@@ -211,26 +209,18 @@ class StepWork:
         :rtype: tuple[VersionInputs, PageEdit | None, PageVersion | None]
         :raises InvalidParametersError: If the parameters do not fit the processor.
         """
-        page_work, step, source, processor = self.page_work, self.step, self.source, self.processor
-        layers, skipped = page_work.layers, self.skipped
+        page_work, step, source = self.page_work, self.step, self.source
         key = PageStepKey(page_work.page.id, page_work.stage, step.step_id)
-        state = None if skipped else repos.page_step_states.find(key)
+        state = None if self.skipped else repos.page_step_states.find(key)
         reads_book = source.book and page_work.work.engine.book_steps.of(step) is not None
-        base = {**step.params, **(source.book or {})} if reads_book else step.params
-        laid = base if skipped else layers.lay(repos, step.step_id, base, None if state is None else state.params)
-        checked = processor.validate_params(laid)
-        edit = None if state is None else state.edit
-        by_side = processor.spec.by_page_side and not skipped
-        inputs = VersionInputs(
-            page_id=page_work.page.id,
-            processor=processor.spec.ref,
-            params={} if skipped else checked,
-            input_id=source.version_id,
-            edit_hash='' if edit is None else edit.edit_hash,
-            scale=source.scale,
-            side=PageSide.of_position(layers.position(repos)) if by_side else None,
-            skipped=skipped,
+        inputs = page_work.layers.inputs(
+            repos,
+            step,
+            self.processor,
+            state,
+            StepRead(input_id=source.version_id, scale=source.scale, book=source.book if reads_book else None),
         )
+        edit = None if state is None else state.edit
         return inputs, edit, repos.page_versions.find(inputs.identify())
 
     def _begin(self, repos: BookRepositories, inputs: VersionInputs) -> tuple[PageVersion, bool]:

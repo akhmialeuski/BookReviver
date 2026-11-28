@@ -20,6 +20,7 @@ from bookreviver.domain.pages import PageKind, RecipeKind
 from bookreviver.domain.recipes import RecipeDraft, RecipeKey, Step
 from bookreviver.domain.slices import SliceRequest
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
+from bookreviver.domain.step_values import ValueField, ValueScope, ValueTarget
 from bookreviver.domain.versions import ResultMark, VersionData, VersionScale, VersionState
 from bookreviver.plugins.split.split_none import SplitNone
 from bookreviver.ports.persistence import BookDatabase
@@ -1013,6 +1014,20 @@ async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
     )
 
 
+async def set_a_value_for_the_odd_pages(kit: ProcessingKit, seeded: SeededPage) -> None:
+    """Give the odd pages, the first of which is the page, their own strength for the geometry step.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param seeded: The page and its book.
+    :type seeded: SeededPage
+    """
+    recipe = await kit.recipe_of(seeded.actor, seeded.book_id, Stage.GEOMETRY)
+    target = ValueTarget(scope=ValueScope.ODD, page_ids=(), group_label='')
+    field = ValueField(stage=Stage.GEOMETRY, step_id=recipe.steps[0].step_id, name=STRENGTH_PARAMETER, target=target)
+    await kit.page_settings().change(open_for(seeded.actor, seeded.book_id), field, STRENGTH_BY_HAND)
+
+
 class TestRunApplyStep:
     """Tests for the change that makes the result of a run current, which reads again what the run went by."""
 
@@ -1023,6 +1038,7 @@ class TestRunApplyStep:
             pytest.param(set_a_setting_by_hand, id='setting-set-by-hand'),
             pytest.param(replace_the_input, id='input-replaced'),
             pytest.param(save_the_recipe, id='recipe-saved'),
+            pytest.param(set_a_value_for_the_odd_pages, id='value-of-the-side-set'),
         ],
     )
     async def test_a_run_whose_basis_changed_meanwhile_is_skipped_and_makes_nothing_current(

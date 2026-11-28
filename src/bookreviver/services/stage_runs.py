@@ -33,6 +33,7 @@ once the version is stored, outside any transaction. The control raises ``JobCan
 cancelled, which is no failure of the page, so it passes every handler that records one.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, override
 
 from attrs import evolve, frozen
@@ -42,20 +43,20 @@ from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pages import Page
 from bookreviver.domain.runs import RunOutcome
-from bookreviver.domain.stages import PageStageKey, Stage
+from bookreviver.domain.stages import PageStage, PageStageKey, Stage
 from bookreviver.domain.versions import VersionData, VersionScale, VersionState
 from bookreviver.services.page_work import PageWork
 from bookreviver.services.spread_splits import SpreadSplit
+from bookreviver.services.stage_freshness import StageFreshness
 from bookreviver.services.stage_work import StageWork
 from bookreviver.services.step_work import StepChain
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from datetime import datetime
 
     from bookreviver.core.book import Book
     from bookreviver.domain.books import BookRecord
-    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
+    from bookreviver.domain.ids import PageId, RecipeId, StepId
     from bookreviver.domain.jobs import StepPreview
     from bookreviver.domain.metadata import MetadataMap
     from bookreviver.domain.page_steps import PageStepState
@@ -78,13 +79,14 @@ NO_STEP_TO_PREVIEW: str = 'Every step up to this one is switched off, so there i
 class RunBasis:
     """What a run of a recipe read to decide what to make, which the change that makes its result current reads again.
 
-    :ivar input_id: Version the first step read, or None when it read a scan.
+    The page split compares the recipe and the states of its steps, since it reads a scan, and every other stage asks
+    ``StageFreshness`` whether the version made is still the one its inputs give.
+
     :ivar recipe_updated_at: When the recipe the run followed was last saved.
     :ivar states: The settings and the manual edits of the steps of the stage on the page.
     :ivar undoing: The split the run undoes, or None.
     """
 
-    input_id: PageVersionId | None
     recipe_updated_at: datetime
     states: tuple[PageStepState, ...]
     undoing: Unsplit | None
@@ -205,7 +207,6 @@ class PageRun(PageWork):
             :rtype: RunBasis
             """
             return RunBasis(
-                input_id=source.version_id,
                 recipe_updated_at=recipe.updated_at,
                 states=tuple(repos.page_step_states.list_for_page(page.id, recipe.stage)),
                 undoing=splits.undoing(repos, page, recipe, confirmed=confirmed),
@@ -241,8 +242,8 @@ class PageRun(PageWork):
         Called with no transaction open, and it opens a ``Book.change`` of its own. The page and the version are read
         again, so a page deleted while the steps ran writes nothing, and the page that undoes a split is the one the
         change reads, not the one the run started with. What the run went by is read again too: a change of the input,
-        of the recipe, or of the settings and the edits of the page's steps marked the stage stale while the steps ran,
-        and making the version current would hide that mark, so the run is skipped and nothing is written. Whatever
+        of the recipe, of the settings and the edits of the page's steps, or of anything else the stage reads means the
+        version made is no longer the one its inputs give, so the run is skipped and nothing is written. Whatever
         this stores is rolled back if the change fails.
 
         :param version: Version of the last step, with its pyramid cut.
@@ -265,7 +266,15 @@ class PageRun(PageWork):
             :rtype: tuple[bool, Unsplit | None]
             :raises NotFoundError: If the page or the version was deleted meanwhile.
             """
-            holds, undoing = self._basis_holds(repos, basis)
+            made = PageStage(
+                page_id=key.page_id,
+                stage=key.stage,
+                recipe_id=recipe.id,
+                head_version_id=version.id,
+                through_step_id=stopped_at,
+                updated_at=datetime.now(UTC),
+            )
+            holds, undoing = self._basis_holds(repos, basis, made)
             if not holds:
                 return False, None
             stored = repos.page_versions.get(version.id)
@@ -285,27 +294,35 @@ class PageRun(PageWork):
             await run.splits.finish_unsplit(undoing)
         return RunOutcome.DONE
 
-    def _basis_holds(self, repos: BookRepositories, basis: RunBasis) -> tuple[bool, Unsplit | None]:
+    def _basis_holds(self, repos: BookRepositories, basis: RunBasis, made: PageStage) -> tuple[bool, Unsplit | None]:
         """Tell whether what the run went by is still what the book holds, in the transaction of the caller.
+
+        The version the run made is still the one the inputs of the stage give when ``StageFreshness`` finds the record
+        it would write up to date, which covers every input at once: the version the stage reads, the recipe of the
+        kind of the page, the settings and the edits of the page, the values of its group and its side, and its place.
+        The page split reads a scan, which the freshness of a stage does not work out, so it is compared with the
+        recipe and the states of the steps the run read.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
         :param basis: What the run read before it computed.
         :type basis: RunBasis
+        :param made: The record the run would write, whose current version is the one it made.
+        :type made: PageStage
         :returns: Whether nothing the run went by changed, and what undoing the split deletes, or None.
         :rtype: tuple[bool, Unsplit | None]
         :raises NotFoundError: If the page or the recipe was deleted meanwhile.
         """
         page_id, recipe = self.page.id, self.recipe
         fresh = repos.pages.get(page_id)
-        current = BookContent(repos).pages.inputs(recipe.stage, [page_id]).get(page_id)
         undoing = None if basis.undoing is None else self._run.splits.undoing(repos, fresh, recipe, confirmed=True)
-        holds = (
-            (basis.input_id is None or (current is not None and current.id == basis.input_id))
-            and repos.recipes.get(recipe.id).updated_at == basis.recipe_updated_at
-            and tuple(repos.page_step_states.list_for_page(page_id, recipe.stage)) == basis.states
-            and (basis.undoing is None or basis.undoing.deletes_as(undoing))
-        )
+        if self.stage is Stage.PAGE_SPLIT:
+            inputs_hold = repos.recipes.get(recipe.id).updated_at == basis.recipe_updated_at and (
+                tuple(repos.page_step_states.list_for_page(page_id, recipe.stage)) == basis.states
+            )
+        else:
+            inputs_hold = not self._run.runs.freshness.stale(repos, [made])
+        holds = inputs_hold and (basis.undoing is None or basis.undoing.deletes_as(undoing))
         return holds, undoing
 
     async def _book(self, source: StepSource) -> MetadataMap:
@@ -502,6 +519,7 @@ class StageRuns:
     :ivar recipes: The recipes of the book, by which a run goes and an earlier stage that is stale is run again.
     :ivar records: Writer of the stage records.
     :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
+    :ivar freshness: What tells whether the version a run made is still the one the inputs of its stage give.
     """
 
     def __init__(
@@ -522,6 +540,7 @@ class StageRuns:
         self.recipes = recipes
         self.records = records
         self.order_keys = order_keys
+        self.freshness = StageFreshness(processors=engine.processors)
 
     def recipe_run(self, book: Book, book_record: BookRecord, control: JobControl) -> RecipeRun:
         """Open the work of a ``run-stage`` job on a book.
