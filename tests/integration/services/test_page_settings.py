@@ -875,7 +875,10 @@ class TestRunWithPageSettings:
     async def test_a_page_counts_its_place_once_however_many_steps_the_recipe_has(
         self, counting: MagicMock, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
-        """Verify the place of a page is counted once for the chain of its steps, when a part of the pages has a value.
+        """Verify the place of a page is counted once for its steps and once when its result is made current.
+
+        A part of the pages has a value, so the steps read the place, and the change that makes the result current
+        reads it again to tell that the inputs of the stage still give it.
 
         :param counting: The count of the pages before a page, which still counts.
         :type counting: MagicMock
@@ -893,7 +896,8 @@ class TestRunWithPageSettings:
         )
         counting.reset_mock()
         await run_stage(fx_kit, actor, book_id, GEOMETRY_RUN)
-        assert counting.call_count == len(pages)
+        # Once for the chain of the steps, and once more by the check before the result is made current
+        assert counting.call_count == 2 * len(pages)
 
     async def test_the_page_keeps_its_value_when_the_recipe_changes_and_the_others_follow_it(
         self, fx_kit: ProcessingKit
