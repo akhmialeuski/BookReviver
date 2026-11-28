@@ -681,7 +681,7 @@ class TestAttachScan:
             fx_catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
-        binding = make_page_service(fx_open_book, fx_runtime)
+        binding = make_page_service(fx_runtime)
         bound: list[PageOverview] = []
 
         def write_the_number(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -1190,7 +1190,7 @@ class TestPrepareImages:
             fx_open_book.catalogue(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
-        service = make_page_service(fx_open_book, fx_runtime)
+        service = make_page_service(fx_runtime)
         await service.attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
         await fx_runtime[1].run_queued()
@@ -1268,7 +1268,6 @@ class TestPrepareImages:
             :rtype: PageService
             """
             return make_page_service(
-                fx_open_book,
                 (fx_events, board),
                 renditions=flaky,
             )
@@ -1471,7 +1470,7 @@ class TestPrepareImagesWhileTheBookChanges:
             fx_open_book.catalogue(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases
         )
         pages = await _add_leaves(
-            lambda: make_page_service(fx_open_book, fx_runtime),
+            lambda: make_page_service(fx_runtime),
             fx_actor,
             book_id,
             2,
@@ -1516,7 +1515,6 @@ class TestPrepareImagesWhileTheBookChanges:
             deleted.append(page_id)
 
         service = make_page_service(
-            fx_open_book,
             fx_runtime,
             renditions=ActingRenditionWriter(delete_in_another_transaction),
         )
@@ -1572,7 +1570,6 @@ class TestPrepareImagesWhileTheBookChanges:
             :rtype: PageService
             """
             return make_page_service(
-                fx_open_book,
                 (fx_events, board),
                 renditions=flaky,
             )
@@ -1621,7 +1618,7 @@ class TestPrepareImagesWhileTheBookChanges:
             :returns: The page service of a new catalogue database.
             :rtype: PageService
             """
-            return make_page_service(fx_open_book, (fx_events, board))
+            return make_page_service((fx_events, board))
 
         async def add_a_leaf(_: PageId) -> None:
             """Add a leaf in a request of its own, and note how many jobs are put afterwards.
@@ -1641,7 +1638,6 @@ class TestPrepareImagesWhileTheBookChanges:
             :rtype: PageService
             """
             return make_page_service(
-                fx_open_book,
                 (fx_events, board),
                 renditions=acting,
             )
@@ -1832,7 +1828,7 @@ class TestAddMany:
             files=fx_directories,
         )
         keys = CountingOrderKeys()
-        service = make_page_service(fx_open_book, fx_runtime, order_keys=keys)
+        service = make_page_service(fx_runtime, order_keys=keys)
         fx_book_changes.published.clear()
 
         added = await service.add_many(
@@ -1877,7 +1873,7 @@ class TestAddMany:
         )
         first, _, last = book.pages
         keys = CountingOrderKeys()
-        service = make_page_service(fx_open_book, fx_runtime, order_keys=keys)
+        service = make_page_service(fx_runtime, order_keys=keys)
         before_last = PageAnchor(page_id=last.id, side=Side.BEFORE)
         after_first = PageAnchor(page_id=first.id, side=Side.AFTER)
         # The labels of the scan pages are empty, so the new ones tell the places apart

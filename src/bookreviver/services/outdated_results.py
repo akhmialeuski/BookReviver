@@ -12,9 +12,9 @@ built on an outdated version of an earlier stage is caught as well. A processor 
 taken as outdated, since a plugin that is not installed says nothing about its version, and a record that is stale or
 failed already is left as it is.
 
-The records of every book of the library are checked, once, when the application starts. No event is published, because
-nothing is listening yet: a browser reads the stages of a book when it opens the book, after the application has
-started.
+The records of a book are checked when the book is first opened in the process and the processors installed differ
+from those its record says it was last checked against, which ``BookOpening`` decides. No event is published, because
+the check runs before the request that opened the book reads it.
 """
 
 import logging
@@ -35,27 +35,23 @@ if TYPE_CHECKING:
     from bookreviver.domain.stages import PageStage
     from bookreviver.domain.versions import PageVersion
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.services.books import BooksService
 
 logger = logging.getLogger(__name__)
 
 
 class OutdatedResults:
-    """Marks the fresh stage records of all books stale when a processor that made their result has a new version."""
+    """Marks the fresh stage records of a book stale when a processor that made their result has a new version."""
 
-    def __init__(self, *, books: BooksService, processors: ProcessorCatalog) -> None:
-        """Work over the books of the application and the processors it can run.
+    def __init__(self, *, processors: ProcessorCatalog) -> None:
+        """Work over the processors the application can run.
 
-        :param books: Books service that opens each listed book, whose transactions read the records and mark them.
-        :type books: BooksService
         :param processors: The processors the application can run, with the versions that are installed.
         :type processors: ProcessorCatalog
         """
-        self._books = books
         self._processors = processors
 
-    async def mark_stale(self) -> list[PageStage]:
-        """Mark every fresh record whose result a replaced version of a processor made stale, one book at a time.
+    async def mark_stale(self, book: Book) -> list[PageStage]:
+        """Mark every fresh record of the book whose result a replaced version of a processor made stale.
 
         The versions of all the chains of a book are read a level at a time, each distinct version once however many
         records, pages and stages lead to it, so the number of queries follows the depth of the chains, and the number
@@ -64,6 +60,8 @@ class OutdatedResults:
         records are then written by one ``Book.change`` for the book, which reads each record again and marks it only
         if it is still fresh and still stands on the same version.
 
+        :param book: The open book.
+        :type book: Book
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
@@ -86,10 +84,9 @@ class OutdatedResults:
                 if record.head_version_id is not None and verdicts.get(record.head_version_id)
             ]
 
-        stale: list[PageStage] = []
-        for book in await self._books.listed():
-            if outdated := await book.read(find):
-                stale.extend(await self._mark_book(book, outdated))
+        if not (outdated := await book.read(find)):
+            return []
+        stale = await self._mark_book(book, outdated)
         logger.info('Marked %d stage records stale because a processor of their result has a new version.', len(stale))
         return stale
 

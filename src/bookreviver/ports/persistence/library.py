@@ -8,8 +8,6 @@ from bookreviver.domain.library import LibraryEntry
 from bookreviver.ports.persistence.base import Repository
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.slices import Slice, SliceRequest
 
@@ -31,12 +29,4 @@ class LibraryRepository(Repository[LibraryEntry, BookId]):
         :type request: SliceRequest
         :returns: The entries of the window and the number of all the owner's books.
         :rtype: Slice[LibraryEntry]
-        """
-
-    @abstractmethod
-    def list_all(self) -> Sequence[LibraryEntry]:
-        """Return the entry of every book of every account, for the passes of the start over all books.
-
-        :returns: Every entry, by identifier.
-        :rtype: Sequence[LibraryEntry]
         """

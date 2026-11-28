@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from attrs import Attribute
 
+    from bookreviver.domain.versions import ProcessorRef
+
 
 # An ISBN without hyphens: ten characters whose last may be the check digit ``X``, or thirteen digits
 ISBN_10: Final = re.compile(r'[0-9]{9}[0-9X]')
@@ -392,6 +394,8 @@ class BookRecord:
     :ivar image_policy: How the ``full`` images of the book's scans and page versions are stored.
     :ivar created_at: When the book was created.
     :ivar updated_at: When the book was last changed.
+    :ivar checked_processors: The processors, by key and version, that were installed when the results of the book were
+                              last checked against them. Empty for a book never checked.
     """
 
     DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
@@ -400,3 +404,4 @@ class BookRecord:
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     created_at: datetime
     updated_at: datetime
+    checked_processors: frozenset[ProcessorRef] = frozenset()

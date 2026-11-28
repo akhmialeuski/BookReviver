@@ -155,7 +155,7 @@ class LeafDesk:
         :returns: A service over a new catalogue database.
         :rtype: PageService
         """
-        return make_page_service(self.stores, self._runtime, renditions=renditions)
+        return make_page_service(self._runtime, renditions=renditions)
 
     async def book(self, kinds: Sequence[PageKind]) -> LeafBook:
         """Commit a book with a page of each kind, cut from a scan of text on yellowed paper, and store the images.
@@ -734,7 +734,7 @@ class TestGetTheScanBack:
 
 
 class TestRemakeOutdatedLeaves:
-    """Tests for PageService.remake_outdated_leaves() making the leaves of a replaced version of the processor again."""
+    """Tests for PageService.remake_outdated_leaves() making the leaves of a replaced version again in a book."""
 
     async def outdate(self, desk: LeafDesk, book: LeafBook, position: int) -> None:
         """Turn the leaf the page shows into one that the version 1 of the processor made, and mark its stage stale.
@@ -796,7 +796,7 @@ class TestRemakeOutdatedLeaves:
         await self.outdate(fx_desk, book, 1)
         queued = len(fx_desk.prepare_jobs())
 
-        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.service().remake_outdated_leaves(open_for(fx_desk.actor, book.book_id))
         expect(len(fx_desk.prepare_jobs()) == queued)
         await fx_desk.add_blank_page(book)
         await fx_desk.prepare()
@@ -822,10 +822,10 @@ class TestRemakeOutdatedLeaves:
         await fx_desk.choose(book, [1], BlankFill.PAPER)
         await fx_desk.prepare()
         await self.outdate(fx_desk, book, 1)
-        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.service().remake_outdated_leaves(open_for(fx_desk.actor, book.book_id))
         [pending] = await fx_desk.leaves(book.book_id, blank)
 
-        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.service().remake_outdated_leaves(open_for(fx_desk.actor, book.book_id))
         await fx_desk.add_blank_page(book)
         await fx_desk.prepare()
 
@@ -848,7 +848,7 @@ class TestRemakeOutdatedLeaves:
         await fx_desk.prepare()
         queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(book.book_id, blank)
 
-        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.service().remake_outdated_leaves(open_for(fx_desk.actor, book.book_id))
 
         expect(len(fx_desk.prepare_jobs()) == queued)
         expect(await fx_desk.leaves(book.book_id, blank) == leaves)
@@ -1028,7 +1028,7 @@ class TestJobsReCheckWhatTheyApply:
             return result
 
         monkeypatch.setattr(SqlAlchemyBookDatabase, 'read', read_then_take_the_scan_back)
-        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.service().remake_outdated_leaves(open_for(fx_desk.actor, book.book_id))
 
         expect(len(fx_desk.prepare_jobs()) == queued)
         expect(await fx_desk.leaves(book.book_id, blank) == leaves)

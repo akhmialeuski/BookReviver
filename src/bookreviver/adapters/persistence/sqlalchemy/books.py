@@ -13,7 +13,8 @@ A new book starts as a copy of a blank file at the head revision, made once for 
 second, and copying a file a few milliseconds.
 
 A book that no transaction has used for the idle limit is closed, which disposes of its engines and their
-connections, and the next use opens it again. :meth:`BookRegistry.keep_closing_idle` looks for such books ten times
+connections, and the next use opens it again. :meth:`BookRegistry.release` closes an unused book at once, when the user
+leaves it. :meth:`BookRegistry.keep_closing_idle` looks for such books ten times
 within the limit, run by the application in a task group of its own. Closing a book for good waits until the
 transactions using it have ended, so no transaction is cut off, and every later use of the book is refused, so the
 storage can delete its file.
@@ -153,6 +154,22 @@ class BookRegistry:
         if book.users:
             released = book.released = anyio.Event()
             await released.wait()
+        await book.database.dispose()
+
+    async def release(self, dir_name: BookDirectoryName) -> None:
+        """Close the database of a book now if no transaction uses it, so it holds no connection until its next use.
+
+        A book in use, such as by a job, stays open and is closed by the idle check once it has been idle for the limit.
+        The next use of a book that was closed opens it again.
+
+        :param dir_name: Name of the directory of the book.
+        :type dir_name: BookDirectoryName
+        """
+        async with self._lock:
+            book = self._open.get(dir_name)
+            if book is None or book.users:
+                return
+            del self._open[dir_name]
         await book.database.dispose()
 
     async def close_idle(self) -> None:

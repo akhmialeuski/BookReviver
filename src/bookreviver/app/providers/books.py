@@ -7,9 +7,11 @@ from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import CatalogueDatabase
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.book_opening import BookOpening
 from bookreviver.services.book_steps import BookSteps
 from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
+from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
 from bookreviver.services.pages_work import PageKeeping
 from bookreviver.services.pagination import PaginationService
@@ -101,18 +103,42 @@ class BooksProvider(Provider):
             records=records,
         )
 
-    @provide
-    def pages(self, books: BooksService, keeping: PageKeeping) -> PageService:
-        """Build the page service over the request's or job's books service.
+    @provide(scope=Scope.APP)
+    def pages(self, keeping: PageKeeping) -> PageService:
+        """Build the page service, which works on the book it is given and keeps no state of a request.
 
-        :param books: Books service of the current request or job, which opens the books a job runs on.
-        :type books: BooksService
         :param keeping: What keeps the pages of the books.
         :type keeping: PageKeeping
-        :returns: The page service of the request or job.
+        :returns: The page service of the application.
         :rtype: PageService
         """
-        return PageService(books=books, keeping=keeping)
+        return PageService(keeping=keeping)
+
+    @provide(scope=Scope.APP)
+    def outdated_results(self, processors: ProcessorCatalog) -> OutdatedResults:
+        """Build the finder of the results a replaced version of a processor made, which works on the book it is given.
+
+        :param processors: The processors the application can run, with the versions that are installed.
+        :type processors: ProcessorCatalog
+        :returns: The outdated results service.
+        :rtype: OutdatedResults
+        """
+        return OutdatedResults(processors=processors)
+
+    @provide(scope=Scope.APP)
+    def book_opening(self, processors: ProcessorCatalog, outdated: OutdatedResults, pages: PageService) -> BookOpening:
+        """Build the opening of the books, built once, since it keeps which books the process has prepared.
+
+        :param processors: The processors the application can run, which the books are checked against.
+        :type processors: ProcessorCatalog
+        :param outdated: What marks the stages a replaced version of a processor made stale.
+        :type outdated: OutdatedResults
+        :param pages: The page service, which makes again the leaves a replaced version made.
+        :type pages: PageService
+        :returns: The opening of the books.
+        :rtype: BookOpening
+        """
+        return BookOpening(processors=processors, outdated=outdated, pages=pages)
 
     @provide(scope=Scope.APP)
     def pagination(self) -> PaginationService:

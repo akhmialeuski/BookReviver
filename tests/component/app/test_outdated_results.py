@@ -1,12 +1,18 @@
-"""Tests for the start of the application: the results a replaced version of a processor made are marked stale."""
+"""Tests for the opening of a book: the results a replaced version of a processor made are marked stale then.
+
+The application starts without opening a book, so the outdated results of a book are found when a request first opens
+the book, whether the user opens it or the library shows it, and the record of the book keeps the processors it was
+checked against, so a book checked against the processors installed is not checked again.
+"""
 
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
+from fastapi import status
 
-from bookreviver.domain.books import BookResource
-from bookreviver.domain.events import BookChanged
+from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.domain.images import Renditions
 from bookreviver.domain.stages import PageStageKey, Stage, StageState
 from bookreviver.domain.versions import VersionState
@@ -27,7 +33,8 @@ from tests.harness.fakes.processors import FakeProcessor
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from dishka import Provider
+    import httpx
+    from dishka import AsyncContainer, Provider
 
     from bookreviver.domain.accounts import Actor
     from bookreviver.domain.books import BookRecord
@@ -35,13 +42,15 @@ if TYPE_CHECKING:
     from bookreviver.domain.pages import Page
     from bookreviver.domain.sources import Scan, Source
     from bookreviver.domain.stages import PageStage
-    from bookreviver.domain.versions import PageVersion
+    from bookreviver.domain.versions import PageVersion, ProcessorRef
     from bookreviver.ports.persistence import BookRepositories
     from tests.harness.adapters.database import BookDatabasesFactory, CatalogueDatabaseFactory
     from tests.harness.fakes.jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 
+BOOKS_PATH: str = '/api/v1/books'
+BOOK_PATH: str = '/api/v1/books/{book_id}'
 # A version of the geometry processor that is older than the one of the catalogue of the fakes, which has the version 1
 OUTDATED_GEOMETRY = evolve(FakeProcessor.spec.ref, version='0')
 
@@ -110,7 +119,7 @@ async def fx_extra_providers(
 ) -> Sequence[Provider]:
     """Store the book before the application starts, and give the application the fakes and the fake catalogue.
 
-    The changes that store the book are not recorded as published, so the events the test sees are the start's.
+    The changes that store the book are not recorded as published, so the events the test sees are the application's.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
@@ -153,17 +162,47 @@ async def fx_extra_providers(
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 
-class TestStart:
-    """Tests for what the lifespan of the application does before it serves a request."""
+async def states(databases: BookDatabasesFactory, book: Book) -> list[StageState]:
+    """Read the states of the records of the page split and of the geometry of the page of the book.
+
+    :param databases: Function opening a new opener of the databases of the books of the test.
+    :type databases: BookDatabasesFactory
+    :param book: The stored book.
+    :type book: Book
+    :returns: The state of the page split, then of the geometry.
+    :rtype: list[StageState]
+    """
+    return (
+        await databases()
+        .open(book.book_id)
+        .read(
+            lambda repos: [
+                repos.page_stages.get(PageStageKey(book.page.id, stage)).state
+                for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
+            ],
+        )
+    )
+
+
+async def installed(container: AsyncContainer) -> frozenset[ProcessorRef]:
+    """Name the processors the application has installed, by key and version.
+
+    :param container: Container of the running application.
+    :type container: AsyncContainer
+    :returns: The processors of its catalogue.
+    :rtype: frozenset[ProcessorRef]
+    """
+    return frozenset(spec.ref for spec in (await container.get(ProcessorCatalog)).specs())
+
+
+class TestOpening:
+    """Tests for the check of the results of a book against the processors installed, when the book is first opened."""
 
     @pytest.mark.usefixtures('fx_app')
-    async def test_marks_a_fresh_stage_of_an_outdated_processor_stale_before_the_first_request(
+    async def test_the_start_alone_leaves_the_book_as_it_is(
         self, fx_fakes: JobFakes, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
-        """Verify the geometry record is stale once the application runs, and the record of the base version is not.
-
-        The running application is only started, and no request is made, so the mark can only come from the start
-        itself. No service announces it, and the commit of the change announces the stages of the book.
+        """Verify the outdated record stays fresh and nothing is announced while no request opens the book.
 
         :param fx_fakes: Adapters of the test, whose event bus records what is announced.
         :type fx_fakes: JobFakes
@@ -172,21 +211,75 @@ class TestStart:
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
-        states = (
-            await fx_databases()
+        assert (await states(fx_databases, fx_book), fx_fakes.events.published) == (
+            [StageState.FRESH, StageState.FRESH],
+            [],
+        )
+
+    @pytest.mark.parametrize('path', [pytest.param(BOOK_PATH, id='the-book'), pytest.param(BOOKS_PATH, id='library')])
+    async def test_the_first_opening_marks_a_fresh_stage_of_an_outdated_processor_stale(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_container: AsyncContainer,
+        fx_book: Book,
+        fx_databases: BookDatabasesFactory,
+        path: str,
+    ) -> None:
+        """Verify the geometry record is stale once the book is opened or shown, and the base version's is not.
+
+        The record of the book is given the processors installed, and what the request answered was read after the
+        check.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_container: Container of the running application.
+        :type fx_container: AsyncContainer
+        :param fx_book: The stored book.
+        :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        :param path: The address the request reads, of the book or of the library.
+        :type path: str
+        """
+        response = await fx_client.get(path.format(book_id=fx_book.book_id))
+        checked = await fx_databases().open(fx_book.book_id).read(lambda repos: repos.book_record.get())
+
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(await states(fx_databases, fx_book) == [StageState.FRESH, StageState.STALE])
+        expect(checked.checked_processors == await installed(fx_container))
+        assert_expectations()
+
+    async def test_a_book_checked_against_the_processors_installed_is_not_checked_again(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_container: AsyncContainer,
+        fx_book: Book,
+        fx_databases: BookDatabasesFactory,
+    ) -> None:
+        """Verify the outdated record stays fresh when the record says the book was checked with these processors.
+
+        The record stands for a book an earlier process checked, so this one reads the record and goes no further.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_container: Container of the running application.
+        :type fx_container: AsyncContainer
+        :param fx_book: The stored book.
+        :type fx_book: Book
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        """
+        processors = await installed(fx_container)
+        await (
+            fx_databases()
             .open(fx_book.book_id)
-            .read(
-                lambda repos: [
-                    repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
-                    for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
-                ],
+            .change(
+                lambda repos, book_record: repos.book_record.update(evolve(book_record, checked_processors=processors))
             )
         )
 
-        announced = [event for event in fx_fakes.events.published if not isinstance(event, BookChanged)]
-        changes = [event.resources for event in fx_fakes.events.published if isinstance(event, BookChanged)]
-        assert (states, announced, changes) == (
-            [StageState.FRESH, StageState.STALE],
-            [],
-            [frozenset({BookResource.STAGES})],
-        )
+        response = await fx_client.get(BOOK_PATH.format(book_id=fx_book.book_id))
+
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(await states(fx_databases, fx_book) == [StageState.FRESH, StageState.FRESH])
+        assert_expectations()

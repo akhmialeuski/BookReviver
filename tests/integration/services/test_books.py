@@ -378,7 +378,12 @@ class TestDelete:
         with pytest.raises(StoreFailedError):
             await fx_service().delete(book_id=book_id, book=book)
 
-        expect(await fx_open_book.catalogue().read(lambda repos: repos.library.list_all()) == [])
+        expect(
+            await fx_open_book.catalogue().read(
+                lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()).total
+            )
+            == 0
+        )
         expect(fx_files.kept(page))
         assert_expectations()
         await open_for(fx_actor, book_id).delete()

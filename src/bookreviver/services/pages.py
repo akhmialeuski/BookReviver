@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.slices import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.services.books import BooksService
     from bookreviver.services.pages_work import PageKeeping, PagesWork
 
 NOT_A_CUT_PAGE: str = 'The page {page_id} is not cut from a scan, so it has no scan to keep or to replace.'
@@ -66,16 +65,12 @@ class PageService:
 
     MAX_PAGES_PER_BATCH: ClassVar[int] = 1000
 
-    def __init__(self, *, books: BooksService, keeping: PageKeeping) -> None:
-        """Work over the ports of one request or job.
+    def __init__(self, *, keeping: PageKeeping) -> None:
+        """Work over what keeps the pages of the books, which keeps no state of a request.
 
-        :param books: Books service of the request or job, which opens the books of the library the passes of the
-                      start go over.
-        :type books: BooksService
         :param keeping: What keeps the pages of the books, which opens them for a transaction and holds their ports.
         :type keeping: PageKeeping
         """
-        self._books = books
         self._keeping = keeping
 
     async def manifest(self, book: Book, request: SliceRequest, *, included_only: bool = False) -> Slice[PageOverview]:
@@ -394,19 +389,23 @@ class PageService:
         if await book.change(work):
             PageJobs(book).prepare()
 
-    async def remake_outdated_leaves(self) -> None:
-        """Make again the leaves whose version of ``pages.blank`` was replaced, by the path that made them.
+    async def remake_outdated_leaves(self, book: Book) -> None:
+        """Make again the leaves of the book whose version of ``pages.blank`` was replaced, by the path that made them.
 
         A leaf is identified by the version of the processor too, so a leaf made by an older version is another version
-        than the one the current processor makes. Every page order record of every book of the library whose current
-        version is such a leaf is read, whatever its state, and its page gets the leaf of the current version as a
-        pending version, which the ``prepare-pages`` job writes and makes the current version of the stage, which is
-        fresh then. A page that has the pending leaf already keeps it. The start queues no job, since the board is empty
-        and no job begins before the user asks for one, so the pending leaf waits for the next ``prepare-pages`` job,
-        which a change of a page or a run queues, and that job takes every pending version of the book.
+        than the one the current processor makes. Every page order record of the book whose current version is such a
+        leaf is read, whatever its state, and its page gets the leaf of the current version as a pending version, which
+        the ``prepare-pages`` job writes and makes the current version of the stage, which is fresh then. A page that
+        has the pending leaf already keeps it. No job is queued, so the pending leaf waits for the next
+        ``prepare-pages`` job of the book, which a change of a page or a run queues, and that job takes every pending
+        version of the book.
 
-        The records of each book are read in a transaction of their own, and the book is written in a ``Book.change``
-        of its own, which reads its pages again. It is a pass of the start, before any request is served.
+        The records are read in a transaction of their own, and the book is written in a ``Book.change`` of its own,
+        which reads its pages again. ``BookOpening`` calls it when the book is first opened after its processors
+        changed.
+
+        :param book: The open book.
+        :type book: Book
         """
 
         def read_pages(repos: BookRepositories) -> list[PageId]:
@@ -433,10 +432,7 @@ class PageService:
             pages = [page for page in repos.pages.list_by_ids(page_ids) if page.blank_fill is not BlankFill.SCAN]
             self._leaves(self._pages(repos)).stand(pages, book_record)
 
-        for book in await self._books.listed():
-            page_ids = await book.read(read_pages)
-            if not page_ids:
-                continue
+        if page_ids := await book.read(read_pages):
             await book.change(partial(work, page_ids))
 
     async def delete(self, book: Book, page_id: PageId) -> None:

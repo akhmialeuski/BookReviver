@@ -323,7 +323,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageService
         """
-        return make_page_service(self.stores, (self.events, self.board))
+        return make_page_service((self.events, self.board))
 
     def edits(self) -> EditService:
         """Build the edit service over a new catalogue database.

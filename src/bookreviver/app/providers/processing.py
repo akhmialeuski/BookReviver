@@ -24,10 +24,8 @@ from bookreviver.app.recipe_defaults import load_default_recipes
 from bookreviver.app.settings import Settings
 from bookreviver.core.plugins import ProcessorCatalog
 from bookreviver.ports.processing import ProcessorSettings, StepExecutor
-from bookreviver.services.books import BooksService
 from bookreviver.services.edits import EditService
 from bookreviver.services.job_starter import JobStarter, ProcessingConfig
-from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
@@ -272,16 +270,3 @@ class ProcessingProvider(Provider):
         :rtype: ResultMarksService
         """
         return ResultMarksService()
-
-    @provide(scope=Scope.REQUEST)
-    def outdated_results(self, books: BooksService, processors: ProcessorCatalog) -> OutdatedResults:
-        """Build the finder of results that a replaced version of a processor made, over the database of the start.
-
-        :param books: Books service of the start of the application, which opens each stored book.
-        :type books: BooksService
-        :param processors: The processors the application can run, with the versions that are installed.
-        :type processors: ProcessorCatalog
-        :returns: The outdated results service.
-        :rtype: OutdatedResults
-        """
-        return OutdatedResults(books=books, processors=processors)

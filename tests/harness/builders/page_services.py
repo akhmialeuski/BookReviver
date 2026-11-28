@@ -11,7 +11,6 @@ from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.runtime import BookEvents, BookJobs
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book_steps import BookSteps
-from bookreviver.services.books import BooksService
 from bookreviver.services.pages import PageService
 from bookreviver.services.pages_work import PageKeeping
 from bookreviver.services.stage_records import StageRecords
@@ -25,7 +24,6 @@ if TYPE_CHECKING:
 
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
-    from tests.harness.builders.domain import BookOpener
     from tests.harness.fakes.board import FakeJobBoard
     from tests.harness.fakes.jobs import RecordingEventBus
 
@@ -98,16 +96,13 @@ def make_base_versions(tiler: Tiler | None = None) -> BaseVersions:
 
 
 def make_page_service(
-    stores: BookOpener,
     runtime: tuple[RecordingEventBus, FakeJobBoard],
     *,
     order_keys: OrderKeys | None = None,
     renditions: RenditionWriter | None = None,
 ) -> PageService:
-    """Build a page service over a catalogue database, as a new request or job would get one.
+    """Build a page service, as the application builds its one.
 
-    :param stores: Opens the catalogue database, the databases and the file stores of the service, over the test's own.
-    :type stores: BookOpener
     :param runtime: The event bus and the job board the books of the service open their channel and their queues on,
                     which are registered as the parts of a book.
     :type runtime: tuple[RecordingEventBus, FakeJobBoard]
@@ -125,7 +120,6 @@ def make_page_service(
     tiler = FakeTiler()
     catalogue = FakeCatalogue([SplitNone(), BlankPage(), BookSizedProcessor()])
     return PageService(
-        books=BooksService(catalogue=stores.catalogue()),
         keeping=PageKeeping(
             order_keys=order_keys or FractionalOrderKeys(),
             base_versions=BaseVersions(tiler=tiler, processors=catalogue),

@@ -1,4 +1,8 @@
-"""Tests for the start of the application: it begins no job, and removes what no job or request can use any more."""
+"""Tests for the start of the application, which begins no job and opens no book, and for the first opening of a book.
+
+What an interrupted import left in a book, which no job or request can use any more, is removed when a request first
+opens the book in the process, and never again in that process, so an upload of the process is never taken for it.
+"""
 
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -18,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    import httpx
     from dishka import Provider
 
     from bookreviver.app.settings import Settings
@@ -29,6 +34,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
+BOOKS_PATH: str = '/api/v1/books'
+BOOK_PATH: str = '/api/v1/books/{book_id}'
 UPLOAD_LIMIT_BYTES: int = 1024
 UPLOAD_NAME: str = 'book.pdf'
 PROMOTED_NAME: str = 'part.pdf'
@@ -119,32 +126,37 @@ def fx_extra_providers(fx_fakes: JobFakes, fx_uploads: Uploads) -> Sequence[Prov
     return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
 
 
+async def is_staged(sources: SourceStore, job_id: JobId) -> bool:
+    """Tell whether the upload of a job is still staged in a book.
+
+    :param sources: The source store of the book.
+    :type sources: SourceStore
+    :param job_id: The job the upload belongs to.
+    :type job_id: JobId
+    :returns: Whether the staged files of the job are there.
+    :rtype: bool
+    """
+    try:
+        async with sources.staged_files(job_id):
+            return True
+    except NotFoundError:
+        return False
+
+
 class TestStart:
     """Tests for what the lifespan of the application does before it serves a request."""
 
     @pytest.mark.usefixtures('fx_app')
-    async def test_removes_the_staged_uploads_and_keeps_the_sources(self, fx_uploads: Uploads) -> None:
-        """Verify the upload an interrupted import left in each book is gone, and a promoted source stays.
-
-        The running application is only started, and no request is made, so the removal can only come from the start.
+    async def test_leaves_the_books_alone(self, fx_uploads: Uploads) -> None:
+        """Verify the uploads an interrupted import left are still there when the application runs and no request came.
 
         :param fx_uploads: The uploads left on disk before the start.
         :type fx_uploads: Uploads
         """
-        gone: list[bool] = []
-        for book_id, job_id in fx_uploads.interrupted:
-            try:
-                async with fx_uploads.sources(book_id).staged_files(job_id):
-                    gone.append(False)
-            except NotFoundError:
-                gone.append(True)
-        assert fx_uploads.kept is not None
-        kept_book, kept_source = fx_uploads.kept
-        async with fx_uploads.sources(kept_book).source_files(kept_source) as files:
-            kept = [file.name for file in files]
-        expect(gone == [True, True])
-        expect(kept == [PROMOTED_NAME])
-        assert_expectations()
+        assert [await is_staged(fx_uploads.sources(book_id), job_id) for book_id, job_id in fx_uploads.interrupted] == [
+            True,
+            True,
+        ]
 
     @pytest.mark.usefixtures('fx_app')
     async def test_queues_no_job(self, fx_fakes: JobFakes) -> None:
@@ -156,3 +168,53 @@ class TestStart:
         expect(fx_fakes.board.put_jobs == [])
         expect(fx_fakes.events.published == [])
         assert_expectations()
+
+
+class TestFirstOpening:
+    """Tests for what the first opening of a book in the process removes from it."""
+
+    async def test_removes_the_staged_upload_of_the_book_alone_and_keeps_the_sources(
+        self, fx_client: httpx.AsyncClient, fx_uploads: Uploads
+    ) -> None:
+        """Verify the book opened loses its staged upload, another book keeps its own, and a promoted source stays.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_uploads: The uploads left on disk before the start.
+        :type fx_uploads: Uploads
+        """
+        (opened, opened_job), (other, other_job) = fx_uploads.interrupted
+        assert fx_uploads.kept is not None
+        kept_book, kept_source = fx_uploads.kept
+
+        for book_id in (opened, kept_book):
+            (await fx_client.get(BOOK_PATH.format(book_id=book_id))).raise_for_status()
+
+        async with fx_uploads.sources(kept_book).source_files(kept_source) as files:
+            kept = [file.name for file in files]
+        expect(not await is_staged(fx_uploads.sources(opened), opened_job))
+        expect(await is_staged(fx_uploads.sources(other), other_job))
+        expect(kept == [PROMOTED_NAME])
+        assert_expectations()
+
+    async def test_an_upload_of_the_process_survives_the_next_opening(
+        self, fx_client: httpx.AsyncClient, fx_uploads: Uploads
+    ) -> None:
+        """Verify an upload staged after the book was first opened is not removed when the book is opened again.
+
+        The library goes between the two openings, which lets go of the book, as the user does when they leave it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_uploads: The uploads left on disk before the start.
+        :type fx_uploads: Uploads
+        """
+        book_id, _ = fx_uploads.interrupted[0]
+        (await fx_client.get(BOOK_PATH.format(book_id=book_id))).raise_for_status()
+        job_id = JobId(uuid4())
+        await fx_uploads.sources(book_id).stage(job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+
+        (await fx_client.get(BOOKS_PATH)).raise_for_status()
+        (await fx_client.get(BOOK_PATH.format(book_id=book_id))).raise_for_status()
+
+        assert await is_staged(fx_uploads.sources(book_id), job_id)

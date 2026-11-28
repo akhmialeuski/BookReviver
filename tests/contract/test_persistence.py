@@ -442,21 +442,6 @@ class TestLibraryRepository:
         expect(paged == [entry.book_id for entry in tied])
         assert_expectations()
 
-    async def test_list_all_returns_the_entries_of_every_account_by_identifier(
-        self, fx_catalogue: CatalogueDatabaseFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify the pass over all books sees the books of every account, ordered by identifier.
-
-        :param fx_catalogue: Function opening a new catalogue database over the catalogue and the books of the test.
-        :type fx_catalogue: CatalogueDatabaseFactory
-        :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        entries = [_library_entry(await fx_new_owner(), minutes=minute) for minute in range(PAGE_COUNT)]
-        await fx_catalogue().change(lambda repos: [repos.library.add(entry) for entry in entries])
-        listed = await fx_catalogue().read(lambda repos: repos.library.list_all())
-        assert list(listed) == sorted(entries, key=attrgetter('book_id'))
-
 
 class TestSourceRepository:
     """Contract of SourceRepository."""
